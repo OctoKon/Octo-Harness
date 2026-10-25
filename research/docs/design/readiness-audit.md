@@ -47,7 +47,7 @@ The default host installs no optional memory/RAG/LSP/skill/server/model payloads
 ## Hard gates that remain open
 
 1. **F0 authority seam:** Pi's tool and user-shell hooks must block denied effects at actual dispatch. Direct OS operations in trusted extensions are outside tool-hook containment.
-2. **Output boundary:** a throwing result hook can be skipped by the inspected runner. Redaction must cover actual persistence, updates, structured content, errors, headless/export and provider surfaces. Choose a supported wrapper or the smallest qualified fork patch.
+2. **Output boundary:** a throwing result hook can be skipped by the inspected runner. Redaction must cover actual persistence, updates, structured content, errors, headless/export and provider surfaces. Implement this on the native Pi-derived publication/persistence path identified in the core-fusion patch map; an outer result wrapper cannot establish coverage.
 3. **Durability and ancestry:** separate Pi/session and operational stores require explicit joins/reconciliation. Splyce branch anchors map real entry ancestry; no fictional upstream branch ID.
 4. **Memory backend/runtime:** OMP's inspected Mnemopi code uses Bun SQLite and workspace-native dependencies. Node compatibility is not established. Compare total reuse/port/service cost against a simpler qualified store.
 5. **Deployment/release:** advertised local models and OS/device combinations need actual installed end-to-end evidence. Development fakes establish faults, not model quality or real containment.

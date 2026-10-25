@@ -33,6 +33,10 @@ Plugins may depend on other selected packages. Their complete dependency closure
 
 Pi extensions run as trusted in-process code with the host's OS authority. Tool hooks cannot contain arbitrary direct filesystem, process or network operations in such code. Installing user-created code is allowed, but must not be advertised as a sandbox or as fully audited effect coverage. Declared effects routed through Splyce get receipts; direct operations outside that path remain outside the enforcement guarantee. An untrusted-plugin isolation claim requires a separately qualified process/container/WASM execution boundary with narrow interfaces and lifecycle tests; it is not a prerequisite to an explicit trusted local plugin build, and cannot be manufactured by a permission checkbox.
 
+## Desktop compatibility
+
+V1 is the Windows desktop GUI. Pi terminal widgets/themes are not automatically desktop components. Backend tool/provider resources and GUI resources qualify separately; an incompatible terminal-only presentation reports unsupported instead of embedding a TUI. Desktop panels use the reviewed typed command/event/view contract or an explicit trusted local frontend build, with CSP/capability and lifecycle tests. Installing backend code cannot silently import arbitrary renderer scripts. The [desktop contract](desktop-application.md) owns actual GUI rendering and packaged-app evidence.
+
 ## Development and release path
 
 Ship one minimal documented example when P1/I1 is implemented: a local package with one namespaced tool, validated input/output, one scoped artifact and deterministic cleanup. Include a second opt-in provider example only when its real protocol adapter exists. Pin the example's host/API versions and source; install it through the same user path, not an internal test-only loader. Test interactive and supported headless registration, denial, reload, crash/restart and removal against the loaded Pi host. Removing registration, validation, admission or cleanup must make these tests fail.
