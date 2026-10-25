@@ -53,4 +53,6 @@ The validator checks record shape, URL form, dates, claims, and local documentat
 
 [desktop-stack-sources.json](desktop-stack-sources.json) records DESK-01–DESK-23 for the locked Windows GUI stack. [cloud-lifecycle-sources.json](cloud-lifecycle-sources.json) records cloud-profile lifecycle sources. Neither ledger establishes an installed application, provider support, or remote-operation behavior.
 
+[frontend-sources.json](frontend-sources.json) records FUI-01–34 for the dedicated interaction/component/Windows/rendering dossier. [codex-foundation-sources.json](codex-foundation-sources.json) records CFND-01–07 for the source-pinned Codex engine assessment. Counts are provenance records, not supported features or runtime results.
+
 [Main research index](../../README.md) · [Complete document map](../README.md)

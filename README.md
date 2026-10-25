@@ -25,6 +25,8 @@ Windows V1 is a desktop GUI: Tauri 2/Rust shell, Svelte 5 with strict TypeScript
 | Models  | Multiple local/cloud providers and profiles, explicit egress, live switches, and no silent fallback.    |
 | Modules | Selected Git-pinned packages; optional Monaco, LSP, memory, retrieval, tools, and custom local plugins. |
 
+The [frontend research](research/docs/frontend/README.md) develops an original Codex-led workbench with complementary Claude interaction patterns. The [Codex engine assessment](research/docs/foundations/codex-engine-assessment.md) separately evaluates its open Rust engine; the current Pi implementation contract remains until that decision is qualified.
+
 ## Where it stands
 
 This repository contains public-source research, a Windows desktop implementation plan, and documentation tooling. **The GUI and runtime are not built yet.** Performance and support claims remain hypotheses until measured.

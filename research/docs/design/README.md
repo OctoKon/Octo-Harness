@@ -22,4 +22,6 @@
 | [User-controlled models](user-controlled-models.md)               | Independent local selections, provisioning, asset rights, experimental/support status and switch/index tests |
 | [Capability/configuration map](capability-map.md)                 | Feature defaults, dependencies, owners, planned paths, toggles, worker/data lifecycle and tests              |
 
+[Second-pass audit](second-pass-audit.md) preserves six snapshot findings and traces their specification repairs. The [frontend dossier](../frontend/README.md) adds Codex/Claude design references, Windows accessibility, components, rendering and real packaged-test criteria; the [engine assessment](../foundations/codex-engine-assessment.md) keeps the separate foundation decision explicit.
+
 [Research index](../../README.md) · [Complete document map](../README.md)

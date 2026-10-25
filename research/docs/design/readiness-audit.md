@@ -4,6 +4,8 @@
 
 Audit date: **2026-10-25**. This is a traceability audit, not a runtime acceptance or a claim that every internet project has been discovered. All product qualification remains **n=0**. The [master plan](../../../MASTER-PLAN.md) is the active build authority; [implementation contracts](implementation-contracts.md) define proposed records and invariants.
 
+Current follow-up: the [second-pass audit](second-pass-audit.md) and [80-task delivery plan](team-delivery-plan.md) repair bootstrap, trusted-plugin, base-retention, release-manifest, runtime CI and implementation-skill handoffs. The [frontend dossier](../frontend/README.md) supplies the separate UI depth; all runtime qualification remains n=0.
+
 ## Coverage and handoff
 
 Each row requires public primary provenance, a reason to reuse/adapt/reject, a real entrypoint, a falsifiable fixture and an acceptance artifact. Research coverage is separate from implementation readiness. The gate/package column identifies who owns closing the implementation question.

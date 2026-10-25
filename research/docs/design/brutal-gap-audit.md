@@ -2,6 +2,8 @@
 
 **What this repo does:** Splyce is a researched plan for a Windows desktop coding application over a fused Pi-derived core. The base has no optional RAG/LSP/editor/model payloads; users choose local/cloud providers and custom modules. This audit assumes concurrent desktop/session/profile changes under one local authoritative store. Reconciled **2026-10-26**; runtime and installed-app results remain **n=0**.
 
+This is the first-pass snapshot. The [second-pass audit](second-pass-audit.md) preserves six later findings and their integration disposition; the current delivery plan expands the original 70 rows to 80. Earlier inventory counts below remain historical, not current corpus totals.
+
 ## Must-fix findings and specification disposition
 
 1. **Conflicting cloud rules — repaired.** An approved cloud profile previously could not collect required live-provider evidence because other chapters prohibited it. The master and Claude/Codex comparisons now separate explicit cloud trials from strict all-local profiles and excluded hosted execution/storage. Exact-provider qualification remains TD-14/50/52, not a claimed run.
