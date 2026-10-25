@@ -373,7 +373,8 @@
     "claims": [
       "Documents permissions associated with windows/webviews and merged permissions across capabilities.",
       "Remote command access is configurable rather than intrinsically impossible.",
-      "Application commands registered with invoke_handler are allowed across application windows/webviews by default unless enrolled with tauri_build::AppManifest::commands and explicit command permissions."
+      "Application commands registered with invoke_handler are allowed across bundled local application windows/webviews by default unless enrolled with tauri_build::AppManifest::commands and explicit command permissions.",
+      "The capability guide distinguishes core/plugin IPC permissions from custom application commands and makes remote API access an explicit capability choice."
     ],
     "verification": "primary-source-fetched",
     "notes": "Official moving docs fetched. Application-command enrollment plus explicit permissions and native caller/scope/argument validation are required. Capabilities do not sandbox trusted native/engine code; installed negative qualification remains n=0."
@@ -410,11 +411,11 @@
     "title": "HTML Standard - The textarea element",
     "accessed": "2026-10-26",
     "claims": [
-      "The textarea API value normalizes line breaks to U+000A LINE FEED.",
-      "The value is Unicode text rather than an unchanged clipboard or source-file byte stream."
+      "HTMLTextAreaElement.value returns the textarea API value with line breaks normalized to U+000A LF; the raw value is a distinct representation.",
+      "HTML form submission may additionally apply wrapping; it is not the composer API-value serialization contract."
     ],
     "verification": "primary-standard-fetched",
-    "notes": "Use an explicit LF-normalized Unicode text oracle; independently hash byte-preserved attachments. No Windows clipboard/IME execution was performed."
+    "notes": "Primary standard re-fetched 2026-10-26, sections describing raw/API/submission values inspected. Use the same LF-normalized API text for drafts and provider submission; independently hash byte-preserved attachments. No Windows clipboard/IME execution was performed."
   },
   {
     "id": "FUI-36",

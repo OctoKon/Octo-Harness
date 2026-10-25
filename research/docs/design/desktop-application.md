@@ -38,7 +38,7 @@ Every surface specifies initial, loading, empty, populated, validation-error, de
 
 The [frontend dossier](../frontend/README.md) refines composition, component/library choices, rendering and Windows acceptance. Codex is the workflow reference with complementary Claude patterns; Splyce owns original code/assets. TD-71–78 expand Dhanush/Shlok implementation under MdSiddiqx; the GUI consumes the same reviewed engine authority. TD-79 owns base session/artifact export/delete independently of optional memory.
 
-Privileged Tauri application commands must be explicitly enrolled with `AppManifest::commands` and their capability permissions; registration with `invoke_handler` alone does not restrict them to a chosen window. TD-07 validates native caller/window/scope as well as argument schema. TD-50 and FUI-W9 require a real unprivileged bundled local webview to receive denial for every privileged custom command, with no effect. [Official capabilities contract](https://tauri.app/security/capabilities/).
+Privileged Tauri application commands must be explicitly enrolled with `AppManifest::commands` and their capability permissions; registration with `invoke_handler` alone does not restrict them to a chosen bundled local window. TD-07 validates native caller/window/scope as well as argument schema. TD-50 and FUI-W9 require a real unprivileged bundled local webview to receive denial for every privileged custom command and shipped/enabled Tauri core/plugin IPC path outside its grants, with no effect; untrusted remote-origin content must also be denied. This IPC qualification does not sandbox arbitrary trusted engine-plugin OS operations. [Official capabilities contract](https://tauri.app/security/capabilities/).
 
 ## Native process, stream and restart contract
 
