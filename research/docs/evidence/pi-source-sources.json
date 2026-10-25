@@ -1,0 +1,134 @@
+[
+  {
+    "id": "PS-01",
+    "tool": "Pi SDK",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/sdk.ts#L191-L212",
+    "title": "createAgentSession construction",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SDK constructs session resources, restores branch context, and returns the AgentSession after configuring the agent stream and hooks."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Selected pinned source lines inspected; no package installation or runtime execution."
+  },
+  {
+    "id": "PS-02",
+    "tool": "Pi AgentSession",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/agent-session.ts#L644-L764",
+    "title": "Tool hooks and nested dispatch",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Session before/after hooks dispatch tool events; nested executeTool calls use the same hooks with a parent call ID."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Source order is observed; fail-closed end-to-end behavior remains a fixture target."
+  },
+  {
+    "id": "PS-03",
+    "tool": "Pi extension runner",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/extensions/runner.ts#L1190-L1297",
+    "title": "Tool call, result, and user shell events",
+    "accessed": "2026-10-25",
+    "claims": [
+      "tool_call returns on a block and propagates handler errors; tool_result catches handler errors and continues; user_bash propagates errors."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "These three event paths have different failure semantics."
+  },
+  {
+    "id": "PS-04",
+    "tool": "Pi extension declarations",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/extensions/types.ts#L1454-L1489",
+    "title": "Tool event results",
+    "accessed": "2026-10-25",
+    "claims": [
+      "A pre-call handler can block; post-call handlers can replace content, details, structured content, error flag, and usage."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "The declarations do not establish OS isolation or persistence durability."
+  },
+  {
+    "id": "PS-05",
+    "tool": "Pi nested call recorder",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/nested-tool-calls.ts#L21-L100",
+    "title": "Bounded nested call summaries",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Parent result nestedCalls is bounded and can mark the record incomplete when arguments or calls are omitted."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Not an authoritative effect ledger; upstream nested-call tests were inspected but not run."
+  },
+  {
+    "id": "PS-06",
+    "tool": "Pi session manager",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/session-manager.ts#L1464-L1486",
+    "title": "Active branch traversal",
+    "accessed": "2026-10-25",
+    "claims": [
+      "getBranch walks entries from current leaf to root; getLeafId and getSessionId expose distinct IDs; there is no observed upstream branchId field."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "New session, in-file branch and file fork were separately inspected; Splyce branchAnchor is proposed."
+  },
+  {
+    "id": "PS-07",
+    "tool": "Pi compaction",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/compaction/compaction.ts#L769-L880",
+    "title": "Compaction path and retained tail",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Compaction prepares a model-facing summary from a selected session path and retained tail."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Does not prove receipt retention or crash recovery."
+  },
+  {
+    "id": "PS-08",
+    "tool": "Pi MCP extension",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/extensions/mcp/index.ts#L387-L445",
+    "title": "MCP tool registration and execution recheck",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Discovered MCP tools become Pi tools; execution rechecks server enablement and tool availability."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "No actual MCP server was connected in this audit."
+  },
+  {
+    "id": "PS-09",
+    "tool": "Pi MCP runtime",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/extensions/mcp/runtime.ts#L274-L300",
+    "title": "MCP reconnect and retry boundary",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Transient HTTP retries are restricted to read-only requests; ordinary tool calls are not retried on that path because effects may have occurred."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Session-expired handling is a separate branch; no exactly-once claim."
+  },
+  {
+    "id": "PS-10",
+    "tool": "Pi print and JSON modes",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/modes/print-mode.ts#L42-L132",
+    "title": "Headless extension binding and disposal",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Print and JSON modes bind extensions before prompts and dispose their runtime on normal or signal shutdown."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "No hard-crash cleanup or approval parity was demonstrated."
+  },
+  {
+    "id": "PS-11",
+    "tool": "Pi interactive mode",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/modes/interactive/interactive-mode.ts#L6983-L6997",
+    "title": "Interactive user shell interception",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Interactive user shell commands emit user_bash and stop local execution when its handler throws."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "This path does not use ordinary tool_call; independent enforcement fixture required."
+  }
+]

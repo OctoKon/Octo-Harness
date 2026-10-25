@@ -1,5 +1,7 @@
 # Protocols, plugins, execution boundaries, and evaluation
 
+**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+
 **Research date:** 2026-10-25. **Status:** documentation verified; no installation, live integration, or benchmark run. “ACP” below means **Agent Client Protocol** (editor/client ↔ coding agent), never Agent Control Protocol or Agentic Commerce Protocol.
 
 ## Chained round: protocol map
@@ -83,8 +85,8 @@ Terminal-Bench's current official run material presents **4.0**, not 2.0. Its se
 
 ## Discovery queue and known gaps
 
-1. Fetch the exact MCP revision specification and authorization/security pages for protocol-level field details before implementation; current sources establish the 2026-07-28 change set but no local conformance test was run.
-2. Verify the canonical `agents.md` specification status and a canonical Agent Skills registry/specification; neither should be treated as universal solely from ecosystem adoption.
+1. Selected [MCP authorization 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization) and [SDK migration guidance](https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28) now resolve the documentation follow-up (`PX-auth-2026`, `PX-sdk-2026`). Authorization settings, issuer-bound credentials and resource scope must be qualified through Pi's actual built-in path. SDK opt-ins are not implied by protocol negotiation; no conformance test was run.
+2. Selected [Agent Skills specification](https://agentskills.io/specification) and [AGENTS.md guidance](https://agents.md/) resolve their canonical format references (`PX-agent-skills-format`, `PX-agents-format`). Consumer discovery/precedence and registry trust remain implementation-specific; neither text format grants authority.
 3. Obtain authoritative Docker/devcontainer, Firecracker and gVisor security-model sources, including nested-container and mount behavior.
 4. Resolve E2B and Daytona current API/lifecycle contracts against official SDK references before provider implementation.
 5. Add benchmark holdouts/live tasks and a documented contamination policy before using any score as a release gate.

@@ -1,0 +1,245 @@
+[
+  {
+    "id": "CA-01",
+    "tool": "Playwright MCP introduction",
+    "url": "https://playwright.dev/mcp",
+    "title": "Playwright MCP",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Playwright MCP exposes browser control through structured accessibility snapshots.",
+      "The documented server supports multiple browser engines and capability-gated tool groups."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Package/runtime behavior remains untested locally; adoption needs an exact version pin."
+  },
+  {
+    "id": "CA-02",
+    "tool": "Playwright MCP capabilities",
+    "url": "https://playwright.dev/mcp/capabilities",
+    "title": "Playwright MCP capabilities",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Core tools are enabled by default and other tool groups are opt-in.",
+      "Documented groups include storage, testing, developer tools, PDF, vision and network."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Capability exposure is not a Splyce authorization decision."
+  },
+  {
+    "id": "CA-03",
+    "tool": "Playwright MCP configuration",
+    "url": "https://playwright.dev/mcp/configuration/options",
+    "title": "Playwright MCP configuration",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documentation describes headed/headless modes, browser choice, device emulation and shared browser context options.",
+      "Configuration includes options that broaden file-access scope."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Use a dedicated profile and explicit policy for every expanded authority."
+  },
+  {
+    "id": "CA-04",
+    "tool": "Playwright MCP browser connection",
+    "url": "https://playwright.dev/mcp/configuration/browser-extension",
+    "title": "Connecting to browsers",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Playwright MCP can connect to an already-running Chromium-based browser through documented mechanisms."
+    ],
+    "verification": "primary-documentation",
+    "notes": "An existing authenticated browser is delegated authority and requires separate qualification."
+  },
+  {
+    "id": "CA-05",
+    "tool": "Chrome DevTools for agents",
+    "url": "https://developer.chrome.com/docs/devtools/agents/get-started",
+    "title": "Get started with Chrome DevTools for agents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Chrome DevTools for agents exposes Chrome control and inspection through MCP.",
+      "Its documentation warns that an agent can access and act through data available in an authenticated browser session."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Chrome-specific candidate; no local session was connected."
+  },
+  {
+    "id": "CA-06",
+    "tool": "WebDriver BiDi",
+    "url": "https://www.w3.org/TR/webdriver-bidi/",
+    "title": "WebDriver BiDi",
+    "accessed": "2026-10-25",
+    "claims": [
+      "WebDriver BiDi specifies bidirectional remote browser automation messages."
+    ],
+    "verification": "primary-specification",
+    "notes": "Target browser support and feature negotiation require runtime qualification."
+  },
+  {
+    "id": "CA-07",
+    "tool": "browser-use documentation",
+    "url": "https://docs.browser-use.com/",
+    "title": "browser-use documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "browser-use documents an agent-oriented browser-control library and browser/profile configuration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Candidate only; verify profile and data handling before integration."
+  },
+  {
+    "id": "CA-08",
+    "tool": "Stagehand documentation",
+    "url": "https://docs.stagehand.dev/",
+    "title": "Stagehand documentation",
+    "accessed": "2026-10-25",
+    "claims": ["Stagehand documents browser automation and extraction APIs."],
+    "verification": "primary-documentation",
+    "notes": "Candidate only; pin source and compare on controlled fixtures."
+  },
+  {
+    "id": "CA-09",
+    "tool": "Windows UI Automation",
+    "url": "https://learn.microsoft.com/windows/win32/winauto/entry-uiauto-win32",
+    "title": "UI Automation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Windows UI Automation provides programmatic access to desktop UI elements for accessibility and automated testing."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Application provider coverage still determines which controls are available."
+  },
+  {
+    "id": "CA-10",
+    "tool": "Apple accessibility",
+    "url": "https://developer.apple.com/documentation/accessibility",
+    "title": "Apple Accessibility",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Apple documents accessibility APIs and accessibility elements for its platforms."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Consent and target-app coverage need native qualification."
+  },
+  {
+    "id": "CA-11",
+    "tool": "AT-SPI documentation",
+    "url": "https://gnome.pages.gitlab.gnome.org/at-spi2-core/",
+    "title": "AT-SPI2 Core API reference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AT-SPI2 documents accessibility objects, roles and interfaces for desktop applications."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Linux desktop and toolkit coverage is variable."
+  },
+  {
+    "id": "CA-12",
+    "tool": "XDG Desktop Portal",
+    "url": "https://flatpak.github.io/xdg-desktop-portal/docs/",
+    "title": "XDG Desktop Portal documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "XDG Desktop Portal documents desktop services exposed through a portal interface."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Backend availability and semantics need session-specific tests."
+  },
+  {
+    "id": "CA-13",
+    "tool": "Android Debug Bridge",
+    "url": "https://developer.android.com/tools/adb",
+    "title": "Android Debug Bridge",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ADB is a command-line tool for communicating with Android devices and emulators."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Device authorization and disconnection handling remain qualification work."
+  },
+  {
+    "id": "CA-14",
+    "tool": "XCTest UI testing",
+    "url": "https://developer.apple.com/documentation/xctest/user-interface-tests",
+    "title": "XCTest user interface tests",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Apple documents XCTest user interface tests for interacting with an app's UI."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Apple toolchain and device/provisioning constraints need a real fixture."
+  },
+  {
+    "id": "CA-15",
+    "tool": "Appium documentation",
+    "url": "https://appium.io/docs/en/latest/",
+    "title": "Appium documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Appium documents a driver-based automation ecosystem for mobile and other platforms."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Driver, platform and server versions must be pinned together."
+  },
+  {
+    "id": "CA-16",
+    "tool": "MCP authorization",
+    "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
+    "title": "MCP authorization specification",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The MCP HTTP authorization specification documents issuer validation and resource-oriented authorization guidance."
+    ],
+    "verification": "primary-specification",
+    "notes": "Transport authorization is distinct from local per-effect policy."
+  },
+  {
+    "id": "CA-17",
+    "tool": "OAuth 2.0 for native apps",
+    "url": "https://www.rfc-editor.org/rfc/rfc8252",
+    "title": "OAuth 2.0 for Native Apps",
+    "accessed": "2026-10-25",
+    "claims": [
+      "RFC 8252 profiles OAuth 2.0 use by native applications and discusses public-client protections."
+    ],
+    "verification": "primary-specification",
+    "notes": "Credential issuance does not grant arbitrary tool or resource access."
+  },
+  {
+    "id": "CA-18",
+    "tool": "Screen Capture API",
+    "url": "https://developer.mozilla.org/docs/Web/API/MediaDevices/getDisplayMedia",
+    "title": "MediaDevices.getDisplayMedia",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Screen capture requires user selection/permission and transient user activation.",
+      "Permission to capture cannot be persisted for reuse."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Browser permission is not a Splyce approval receipt."
+  },
+  {
+    "id": "CA-19",
+    "tool": "Clipboard API",
+    "url": "https://developer.mozilla.org/docs/Web/API/Clipboard_API",
+    "title": "Clipboard API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The Clipboard API provides programmatic clipboard read/write facilities subject to browser security requirements."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Treat clipboard content as sensitive private artifact data."
+  },
+  {
+    "id": "CA-20",
+    "tool": "File System Access API",
+    "url": "https://developer.mozilla.org/docs/Web/API/File_System_API",
+    "title": "File System API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Web file-system access beyond origin-private storage is subject to user consent."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Local file access must be separately scoped and retained as a private artifact."
+  }
+]

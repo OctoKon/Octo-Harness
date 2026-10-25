@@ -1,0 +1,120 @@
+[
+  {
+    "id": "PI-01",
+    "tool": "Pi",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/README.md",
+    "title": "Pi package overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Extensible engine with SDK, RPC, interactive/headless modes and deliberately omitted built-in subagents/plan mode."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; no installation, compatibility or performance qualification."
+  },
+  {
+    "id": "PI-02",
+    "tool": "Pi extension runtime",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/extensions.md",
+    "title": "Pi extensions",
+    "accessed": "2026-10-25",
+    "claims": [
+      "TypeScript extensions execute in process; lifecycle, policy and context hooks are documented."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; no installation, compatibility or performance qualification."
+  },
+  {
+    "id": "PI-03",
+    "tool": "Pi extension declarations",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/extensions/types.ts",
+    "title": "Pi extension types",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Typed event and API contracts for extension integration and lifecycle."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; no installation, compatibility or performance qualification."
+  },
+  {
+    "id": "PI-04",
+    "tool": "Pi MCP",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/mcp.md",
+    "title": "Pi built-in MCP",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Built-in MCP server configuration and extension integration are documented."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; no installation, compatibility or performance qualification."
+  },
+  {
+    "id": "PI-05",
+    "tool": "Pi package manifest",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/package.json",
+    "title": "Pi package manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Version 1.4.0, MIT, ESM package, Node >=22.19.0 at the inspected source revision."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; no installation, compatibility or performance qualification."
+  },
+  {
+    "id": "PI-06",
+    "tool": "Oh My Pi",
+    "url": "https://github.com/can1357/oh-my-pi",
+    "title": "OMP upstream",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MIT Pi fork with Bun, TypeScript agent layers, native Rust components and integrated coding workflows."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; no installation, compatibility or performance qualification."
+  },
+  {
+    "id": "PI-07",
+    "tool": "OMP LSP",
+    "url": "https://github.com/can1357/oh-my-pi/blob/main/docs/lsp-config.md",
+    "title": "OMP LSP configuration",
+    "accessed": "2026-10-25",
+    "claims": ["LSP integration configuration for a coding-oriented Pi fork."],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; no installation, compatibility or performance qualification."
+  },
+  {
+    "id": "PI-08",
+    "tool": "Mnemopi",
+    "url": "https://github.com/can1357/oh-my-pi/blob/main/packages/mnemopi/README.md",
+    "title": "Mnemopi memory package",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SQLite working/episodic memory facade with banks, optional local ONNX embeddings and compatible remote model endpoints; host wrapper supplies project scoping."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected upstream README inspected through GitHub API; no installation or scope/deletion benchmark."
+  },
+  {
+    "id": "PI-09",
+    "tool": "Mnemopi compatibility",
+    "url": "https://github.com/can1357/oh-my-pi/blob/0b5c27ab24719c86a5986b95ee55f4e75bc1aaa0/packages/mnemopi/package.json",
+    "title": "Mnemopi runtime manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Bun >=1.3.14, source TypeScript exports, OMP workspace/native dependencies at inspected revision."
+    ],
+    "verification": "source-inspected",
+    "notes": "Selected public source inspected through GitHub API; inferred integration constraint, no Node/Bun compatibility run."
+  },
+  {
+    "id": "PI-10",
+    "tool": "Mnemopi compatibility",
+    "url": "https://github.com/can1357/oh-my-pi/blob/0b5c27ab24719c86a5986b95ee55f4e75bc1aaa0/packages/mnemopi/src/db.ts",
+    "title": "Mnemopi database source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The database module imports bun:sqlite and uses Bun-specific runtime facilities."
+    ],
+    "verification": "source-inspected",
+    "notes": "Selected public source inspected through GitHub API; inferred integration constraint, no Node/Bun compatibility run."
+  }
+]

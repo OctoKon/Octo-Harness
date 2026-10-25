@@ -1,8 +1,10 @@
 # ADR-002: Rust-owned host with replaceable model services
 
-## Status: Proposed
+## Status: Superseded for host selection
 
 Research date: 2026-10-25. This refines [ADR-001](../design/synthesis.md) for Splyce. It is a stack recommendation, not a measured speed or quality result. No candidate was installed or benchmarked here (**n=0**).
+
+The later [Pi-first foundation decision](pi-foundation.md) supersedes the proposed Rust-owned host. Pi remains the existing TypeScript engine; there is no approved replacement-loop or Rust-port path. The comparisons below are retained as research for optional support components or a separately justified existing Rust base. They are not the active implementation instruction.
 
 ## Context
 
@@ -17,9 +19,9 @@ Splyce needs one owner for CLI/headless runs, policy, action dispatch, receipts 
 | **Python host** with established agent/inference packages              | Richest direct ML integration and short research cycle.                                                                                        | Packaging and process isolation across platforms become host obligations; Python's inference libraries do not themselves solve effect journaling or authority.        | Two-way before stored user state.                                              |
 | **Fork or embed an existing harness** regardless of language           | Could remove most loop code.                                                                                                                   | Fatal if privileged actions cannot pass the host gate, or lifecycle/events cannot be journaled without invasive patches.                                              | Increasingly costly as upstream and local data diverge.                        |
 
-**Decision:** prefer a **Rust-owned CLI, run host, policy gate, journal, memory owner and adapter contracts**. Rust is not universally fastest. Compare a minimal Rust slice with the shortest viable reused-harness slice on identical tasks, model, policy, recovery faults and runtime costs. Retain reuse if it proves every gate with materially less owned code. Tokio's async I/O fits supervision but offers no advantage for ordinary file reads [S01].
+**Historical proposal, superseded:** a Rust-owned CLI, run host, policy gate, journal, memory owner and adapter contracts. This is no longer the build direction. The active decision reuses Pi's existing engine and admits Rust components only for a demonstrated support need. Tokio's async I/O may fit such a component, but offers no advantage for ordinary file reads [S01].
 
-The user preference makes Rust the starting implementation choice; an exception needs a documented, evidence-backed decision. Language is a **two-way door** before persisted contracts. Journal schema, authority and deletion semantics become **one-way doors** for stored user data; require crash/deletion tests, migration rehearsal and security review. Rust costs more adapter work for an inspectable authority boundary. A universal plugin framework, graph database and embedded GPU engine would grow faster than demonstrated risk removal.
+The earlier Rust preference does not override the later Pi-base decision. Journal schema, authority and deletion semantics become costly to reverse for stored user data; require crash/deletion tests, migration rehearsal and security review. A universal plugin framework, graph database and embedded GPU engine would grow faster than demonstrated risk removal.
 
 ## Component choices and boundaries
 

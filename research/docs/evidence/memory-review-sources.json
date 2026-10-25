@@ -1,0 +1,158 @@
+[
+  {
+    "id": "MR-01",
+    "tool": "claude-mem progressive recall",
+    "url": "https://github.com/thedotmack/claude-mem/blob/abd9aaab61995c53060a6bd15ce41e236f7c53e3/docs/public/usage/search-tools.mdx",
+    "title": "Pinned search, timeline and observation disclosure contract",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents compact search, bounded timeline and selected observation expansion.",
+      "Recommends checking neighbouring corrections and filtering before hydration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected documentation fetched; token savings not replicated. Followed into MR-02 and its imported semantic strategy; generated observations are not original evidence."
+  },
+  {
+    "id": "MR-02",
+    "tool": "claude-mem source control flow",
+    "url": "https://github.com/thedotmack/claude-mem/blob/abd9aaab61995c53060a6bd15ce41e236f7c53e3/src/services/worker/search/SearchOrchestrator.ts",
+    "title": "Search strategy selection, errors and empty-category supplementation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "executeWithFallback uses SQLite without a semantic strategy, propagates configured semantic failures and supplements empty categories.",
+      "At the same pin, strategies/ChromaSearchStrategy.ts applies project filters, recency filtering and database hydration."
+    ],
+    "verification": "source-inspected",
+    "notes": "Selected source methods fetched from upstream raw content. Code contradicts an older universal stripped-query fallback description. No installation, authorization or recall trial."
+  },
+  {
+    "id": "MR-03",
+    "tool": "Mem0 evaluation paper",
+    "url": "https://arxiv.org/html/2504.19413v1",
+    "title": "Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Paper describes summary/recent-message extraction and four-operation update decisions, plus graph memory.",
+      "Sections 4.3-4.5 separate query latency, memory footprint and construction analysis; full context has a higher overall judge score in its comparison."
+    ],
+    "verification": "primary-paper",
+    "notes": "Author-reported LoCoMo results, not independent replication. Followed into current Python source MR-04; paper algorithm and current implementation must not be conflated."
+  },
+  {
+    "id": "MR-04",
+    "tool": "Mem0 Python implementation",
+    "url": "https://github.com/mem0ai/mem0/blob/2c81af3bbe27d9bccb09c772d583df9e9be72ee5/mem0/memory/main.py",
+    "title": "Additive extraction, explicit non-inference path and deletion/history methods",
+    "accessed": "2026-10-25",
+    "claims": [
+      "_add_to_vector_store uses a phased additive extraction/embedding/persistence pipeline; infer=False directly stores eligible message content.",
+      "_delete_memory removes the vector and records previous content in history; entity cleanup is best effort; delete_all enumerates batches."
+    ],
+    "verification": "source-inspected",
+    "notes": "Selected add/delete/helper paths inspected, not the whole SDK or hosted Platform. Followed delete into history and entity-cleanup calls. No TypeScript parity, graph implementation, purge or provider trial claimed. Discovery configuration: https://docs.mem0.ai/open-source/overview."
+  },
+  {
+    "id": "MR-05",
+    "tool": "HippoRAG 2 primary evaluation",
+    "url": "https://arxiv.org/html/2502.14802v1",
+    "title": "From RAG to Memory: Non-Parametric Continual Learning for Large Language Models",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Combines passage/phrase graph, query-to-triple matching, recognition filtering and Personalized PageRank.",
+      "Appendix E diagnoses filtering and graph-ranking failures in 100 imperfect-recall cases; Appendix F specifies indexing hardware/provider conditions."
+    ],
+    "verification": "primary-paper",
+    "notes": "Selected method, ablation, error and cost sections inspected. Conditional error sample is not the overall failure rate. Followed into MR-06. No coding-memory or desktop cost extrapolation."
+  },
+  {
+    "id": "MR-06",
+    "tool": "HippoRAG implementation",
+    "url": "https://github.com/OSU-NLP-Group/HippoRAG/blob/d5c8329422e0a0b834a15874545cb6a74b4f9b26/src/hipporag/HippoRAG.py",
+    "title": "Retrieval fallback and source-aware graph deletion",
+    "accessed": "2026-10-25",
+    "claims": [
+      "retrieve falls back to dense passage retrieval when rerank_facts returns no facts.",
+      "delete updates persisted source mappings and shared graph contributions, removes unreferenced indexes and rejects legacy provenance-free graph deletion."
+    ],
+    "verification": "source-inspected",
+    "notes": "Selected retrieve, rerank_facts, delete and _remove_fact_sources_from_graph methods inspected at this pin. Source mitigations do not establish crash atomicity, tenancy, temporal correction or backup erasure; n=0 runtime."
+  },
+  {
+    "id": "MR-07",
+    "tool": "Graphiti deployment contract",
+    "url": "https://github.com/getzep/graphiti/blob/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/README.md",
+    "title": "Temporal graph, model and operator requirements",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents temporal facts and hybrid graph/semantic/keyword retrieval.",
+      "Operator supplies services and owns tenancy/access control; structured-output requirements can be problematic for smaller models."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Followed into temporal maintenance MR-08 and ingestion/search/removal MR-09. Supported database/runtime choices are deployment requirements, not installed-platform evidence."
+  },
+  {
+    "id": "MR-08",
+    "tool": "Graphiti temporal maintenance",
+    "url": "https://github.com/getzep/graphiti/blob/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/graphiti_core/utils/maintenance/edge_operations.py",
+    "title": "Temporal invalidation, contradiction intervals and timestamp extraction",
+    "accessed": "2026-10-25",
+    "claims": [
+      "_apply_temporal_invalidation and resolve_edge_contradictions compare dated validity intervals rather than ingestion order alone.",
+      "_extract_edge_timestamps can call an LLM and handles extraction failure; date comparison correctness depends on the extracted candidates/dates."
+    ],
+    "verification": "source-inspected",
+    "notes": "Selected temporal and resolver paths inspected. Correctness dependence is an inference from call structure; not a measured failure rate or assertion about every provider."
+  },
+  {
+    "id": "MR-09",
+    "tool": "Graphiti lifecycle",
+    "url": "https://github.com/getzep/graphiti/blob/5c27edfa8d3e0f49b2571bcebb4261bcc89ee037/graphiti_core/graphiti.py",
+    "title": "Episode ingestion, scoped search parameters and deletion-derived summary rebuild",
+    "accessed": "2026-10-25",
+    "claims": [
+      "add_episode accepts reference time/group identity; search_ exposes graph search configuration.",
+      "remove_episode preserves multiply supported facts and rebuilds surviving entity summaries; its rebuild failure path retains the previous summary."
+    ],
+    "verification": "source-inspected",
+    "notes": "Selected method control flow fetched, including post-removal summary rebuild and exception path. Does not establish runtime retention compliance, external cache/backup behavior or authenticated tenant ownership."
+  },
+  {
+    "id": "MR-10",
+    "tool": "OMP Mnemopi reuse contract",
+    "url": "https://github.com/can1357/oh-my-pi/blob/0b5c27ab24719c86a5986b95ee55f4e75bc1aaa0/packages/mnemopi/README.md",
+    "title": "Mnemopi lexical/local/remote roles and host bank scoping",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents SQLite memory, lexical recall, optional local ONNX and compatible model endpoints; no bundled GGUF generation model.",
+      "Banks belong to the library; project/global visibility belongs to the host wrapper."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Followed exports into src/core/memory.ts and its beam/store.ts implementation (MR-11). Reuses the existing Pi foundation/runtime comparison; no installation or local model trial."
+  },
+  {
+    "id": "MR-11",
+    "tool": "Mnemopi facade and persistence implementation",
+    "url": "https://github.com/can1357/oh-my-pi/blob/0b5c27ab24719c86a5986b95ee55f4e75bc1aaa0/packages/mnemopi/src/core/beam/store.ts",
+    "title": "Working-memory deletion and interrupted embedding rebuild reconciliation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Facade src/core/memory.ts forget delegates through BeamMemory to forgetWorking; that path removes the current-session working row transactionally, purges working artifacts and invalidates caches.",
+      "reconcileEmbeddingModel handles stamped model mismatches and re-enqueues missing embeddings after interrupted rebuild."
+    ],
+    "verification": "source-inspected",
+    "notes": "Inspected facade at https://github.com/can1357/oh-my-pi/blob/0b5c27ab24719c86a5986b95ee55f4e75bc1aaa0/packages/mnemopi/src/core/memory.ts, beam/index.ts forwarding and selected store methods. No assertion that working deletion erases all consolidated descendants; no migration/recovery execution."
+  },
+  {
+    "id": "MR-12",
+    "tool": "Mnemopi runtime compatibility",
+    "url": "https://github.com/can1357/oh-my-pi/blob/0b5c27ab24719c86a5986b95ee55f4e75bc1aaa0/packages/mnemopi/src/db.ts",
+    "title": "Bun SQLite dependency and explicit transaction helpers",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Database module imports bun:sqlite and exposes explicit transaction helpers.",
+      "Together with existing manifest record PI-09, this constrains an unqualified Node-only drop-in integration claim."
+    ],
+    "verification": "source-inspected",
+    "notes": "Database source rechecked; Bun version/workspace dependencies reuse the pinned Pi foundation manifest evidence. This is a source compatibility constraint, not proof that a supported service bridge is impossible; no package/platform qualification."
+  }
+]

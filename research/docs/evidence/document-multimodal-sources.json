@@ -1,0 +1,86 @@
+[
+  {
+    "id": "DM-01",
+    "tool": "MarkItDown",
+    "url": "https://github.com/microsoft/markitdown",
+    "title": "MarkItDown overview and security considerations",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Broad Markdown extraction targets text analysis, not guaranteed high-fidelity document conversion, and uses current-process I/O authority."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public upstream documentation inspected; no installation, corpus comparison or Splyce runtime result. Pin code, models, licenses and asset integrity before adoption."
+  },
+  {
+    "id": "DM-02",
+    "tool": "Docling",
+    "url": "https://github.com/docling-project/docling",
+    "title": "Docling features",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Structured multi-format document conversion with local, OCR/layout/VLM and MCP/service options."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public upstream documentation inspected; no installation, corpus comparison or Splyce runtime result. Pin code, models, licenses and asset integrity before adoption."
+  },
+  {
+    "id": "DM-03",
+    "tool": "docling.rs",
+    "url": "https://github.com/docling-project/docling.rs",
+    "title": "Rust Docling port",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Existing Rust CLI/library and Node distribution; publisher equivalence/performance claims require independent qualification."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public upstream documentation inspected; no installation, corpus comparison or Splyce runtime result. Pin code, models, licenses and asset integrity before adoption."
+  },
+  {
+    "id": "DM-04",
+    "tool": "Tesseract",
+    "url": "https://tesseract-ocr.github.io/tessdoc/ImproveQuality.html",
+    "title": "Improving OCR quality",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Image processing, skew, segmentation and tables affect OCR quality."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public upstream documentation inspected; no installation, corpus comparison or Splyce runtime result. Pin code, models, licenses and asset integrity before adoption."
+  },
+  {
+    "id": "DM-05",
+    "tool": "ColPali",
+    "url": "https://github.com/illuin-tech/colpali",
+    "title": "ColVision retrievers",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Visual multi-vector document retrieval implementations include ColPali and later model families."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public upstream documentation inspected; no installation, corpus comparison or Splyce runtime result. Pin code, models, licenses and asset integrity before adoption."
+  },
+  {
+    "id": "DM-06",
+    "tool": "whisper.cpp",
+    "url": "https://github.com/ggml-org/whisper.cpp",
+    "title": "Whisper C/C++ implementation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Local ASR includes CPU and platform/accelerator-specific execution paths."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public upstream documentation inspected; no installation, corpus comparison or Splyce runtime result. Pin code, models, licenses and asset integrity before adoption."
+  },
+  {
+    "id": "DM-07",
+    "tool": "Typst",
+    "url": "https://typst.app/docs/",
+    "title": "Typst documentation overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Open-source document language/compiler is distinct from the hosted collaborative editor and supports multiple export formats."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public upstream documentation inspected; no installation, corpus comparison or Splyce runtime result. Pin code, models, licenses and asset integrity before adoption."
+  }
+]

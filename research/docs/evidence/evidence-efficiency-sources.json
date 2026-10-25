@@ -1,0 +1,74 @@
+[
+  {
+    "id": "EF-01",
+    "tool": "SCIP",
+    "url": "https://github.com/scip-code/scip/blob/d556dd3c24b3c1787e0b62cd31f25188300e3098/docs/scip.md",
+    "title": "SCIP reference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Typed occurrence, symbol, range and relationship representation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public primary source inspected; no Splyce runtime, quality or storage qualification. Pin mutable sources before adoption."
+  },
+  {
+    "id": "EF-02",
+    "tool": "TOON",
+    "url": "https://github.com/toon-format/spec/blob/8c9edee5f22facef696ccddc7ce109574fe6da0e/SPEC.md",
+    "title": "TOON specification 4.4 working draft",
+    "accessed": "2026-10-25",
+    "claims": [
+      "JSON-data-model notation with conformance rules, not universal token savings."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public primary source inspected; no Splyce runtime, quality or storage qualification. Pin mutable sources before adoption."
+  },
+  {
+    "id": "EF-03",
+    "tool": "TOON benchmarks",
+    "url": "https://github.com/toon-format/toon/blob/main/benchmarks/README.md",
+    "title": "TOON benchmark method",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Token counting with o200k_base is separate from comprehension; comprehension is not generation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public primary source inspected; no Splyce runtime, quality or storage qualification. Pin mutable sources before adoption."
+  },
+  {
+    "id": "EF-04",
+    "tool": "Notation Matters",
+    "url": "https://arxiv.org/abs/2605.29676v2",
+    "title": "Notation Matters v2",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Authors report model-dependent quality and parsing trade-offs in agent benchmarks."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public primary source inspected; no Splyce runtime, quality or storage qualification. Pin mutable sources before adoption."
+  },
+  {
+    "id": "EF-05",
+    "tool": "SQLite WAL",
+    "url": "https://www.sqlite.org/wal.html",
+    "title": "Write-Ahead Logging",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Checkpoint and concurrency behavior includes same-host and cross-database atomicity limits."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public primary source inspected; no Splyce runtime, quality or storage qualification. Pin mutable sources before adoption."
+  },
+  {
+    "id": "EF-06",
+    "tool": "SQLite backup",
+    "url": "https://www.sqlite.org/backup.html",
+    "title": "Online Backup API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Supported consistent snapshots can be copied incrementally while a database is in use."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public primary source inspected; no Splyce runtime, quality or storage qualification. Pin mutable sources before adoption."
+  }
+]
