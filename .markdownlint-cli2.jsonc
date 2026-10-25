@@ -6,5 +6,5 @@
     "MD041": false,
     "MD060": false,
   },
-  "ignores": [".git/**", "node_modules/**"],
+  "ignores": [".git/**", "node_modules/**", "**/node_modules/**"],
 }

@@ -4,3 +4,6 @@ package-lock.json
 
 # Preserve supplied compendium layout/source formatting.
 research/site/index.html
+
+# UI prototype carries its own Svelte/Vite toolchain.
+apps/desktop/prototype/
