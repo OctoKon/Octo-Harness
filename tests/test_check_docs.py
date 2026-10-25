@@ -75,6 +75,35 @@ class CheckDocsTests(unittest.TestCase):
             )
             self.assertEqual(len(check_evidence(path, REPO_ROOT)), 1)
 
+    def test_main_rejects_duplicate_ids_across_ledgers(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            root = Path(directory)
+            evidence = root / "research" / "docs" / "evidence"
+            evidence.mkdir(parents=True)
+            entry = {"id": "SRC-01", "tool": "tool", "url": "https://example.com", "title": "title", "accessed": "2026-10-25", "claims": ["claim"], "verification": "primary", "notes": "notes"}
+            for name in ("first.json", "second.json"):
+                (evidence / name).write_text(json.dumps([entry]), encoding="utf-8")
+            with redirect_stderr(io.StringIO()) as diagnostics:
+                self.assertEqual(main(root), 1)
+            self.assertIn("duplicate evidence id", diagnostics.getvalue())
+            self.assertIn("first.json[0]", diagnostics.getvalue())
+
+    def test_rejects_empty_evidence_id(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            root = Path(directory)
+            path = root / "sources.json"
+            entry = {"id": " ", "tool": "tool", "url": "https://example.com", "title": "title", "accessed": "2026-10-25", "claims": ["claim"], "verification": "primary", "notes": "notes"}
+            path.write_text(json.dumps([entry]), encoding="utf-8")
+            self.assertEqual(check_evidence(path, root), ["sources.json[0]: id must be a non-empty string"])
+
+    def test_rejects_padded_evidence_id(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            root = Path(directory)
+            path = root / "sources.json"
+            entry = {"id": " SRC-01 ", "tool": "tool", "url": "https://example.com", "title": "title", "accessed": "2026-10-25", "claims": ["claim"], "verification": "primary", "notes": "notes"}
+            path.write_text(json.dumps([entry]), encoding="utf-8")
+            self.assertEqual(check_evidence(path, root), ["sources.json[0]: id must not contain surrounding whitespace"])
+
 
 if __name__ == "__main__":
     unittest.main()

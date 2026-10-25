@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: documentation-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   documentation-quality:
@@ -37,3 +37,12 @@ jobs:
       - run: npm run lint:markdown
       - run: npm run check:docs
       - run: npm run test:docs
+
+  deploy-pages:
+    needs: documentation-quality
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/static.yml
