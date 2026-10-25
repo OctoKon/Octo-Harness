@@ -1,6 +1,6 @@
 # Document and multimodal tools
 
-**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+**Active product scope:** Splyce keeps agent execution and stored state local. Each inference role may use a local runtime or an explicitly authorized cloud API profile with recorded endpoint, model/revision, and egress scope; it never silently switches provider or falls back. Hosted memory and executors below remain comparative research, not product dependencies. [Current master plan](../../../MASTER-PLAN.md).
 
 Snapshot: **2026-10-25**. Public-source findings and proposed tool contracts; extraction, rendering, retrieval and model-quality measurements are **n=0**. These optional capabilities use the existing [execution boundary](tool-access-and-execution.md), [model roles](inference-local-and-cloud.md) and [artifact contracts](../design/implementation-contracts.md). Sources: [DM-01–DM-07](../evidence/document-multimodal-sources.json).
 
@@ -24,7 +24,7 @@ An imported artifact keeps original bytes/digest, scoped source ID, media type, 
 
 Extraction does not execute embedded instructions, macros or linked programs. Decode/render/OCR runs in an owned worker with scoped filesystem and network grants. Linked assets and remote transcription/VLM requests require their own egress decision. Document text cannot approve a command or expand scope. Enforce declared memory/time/decoded-size limits at the worker boundary and report refusal or partial coverage; no hidden truncation marketed as complete parsing.
 
-For multimodal model calls, capability metadata distinguishes image, PDF, audio, video and structured tool input/output. Record page/image transformations, downsampling, frame/time selection and known omissions. Local-only applies to OCR, transcription, visual embedding, extraction and reranking as well as generation. Missing usage for images/audio remains unavailable or separately estimated with a stated method.
+For multimodal model calls, capability metadata distinguishes image, PDF, audio, video and structured tool input/output. Record page/image transformations, downsampling, frame/time selection, known omissions, and the selected local or explicitly authorized cloud inference profile. The local-only profile denies hosted dispatch for OCR, transcription, visual embedding, extraction, reranking, and generation. Missing usage for images/audio remains unavailable or separately estimated with a stated method.
 
 ## Negative and quality gates
 

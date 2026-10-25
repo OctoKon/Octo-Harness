@@ -1,14 +1,14 @@
 # Splyce research
 
-The evidence base for a unified coding-agent harness built on Pi. Snapshot: **2026-10-25**. Sources describe mechanisms; they do not establish that Splyce implements them or improves performance. The [readiness audit](docs/design/readiness-audit.md) connects capability coverage to contracts, fixtures and unresolved gates.
+The evidence base for a Windows desktop Pi-derived coding-agent application: OSS, barebones modular installation, local application/state and user-selected local/cloud inference. Snapshot: **2026-10-26**. Sources describe mechanisms, not implemented Splyce behavior. [Desktop stack](docs/foundations/desktop-stack-decision.md), [module installation](docs/design/modular-installation.md), [profiles](docs/design/providers-profiles-and-sessions.md), [core fusion](docs/design/core-fusion.md), [desktop application](docs/design/desktop-application.md) and the [delivery plan](docs/design/team-delivery-plan.md) connect the catalog to ownership, tests and unresolved gates.
 
 | Start here                                   | Contents                                                                          |
 | -------------------------------------------- | --------------------------------------------------------------------------------- |
 | [Complete document map](docs/README.md)      | Every research chapter in one compact table                                       |
 | [Agents and products](docs/agents/README.md) | Terminal CLIs, IDE agents, hosted products, forks and chained gap sweeps          |
-| [Foundations](docs/foundations/README.md)    | Harness², DeepSeek Harness, frameworks and workflow scaffolds                     |
+| [Foundations](docs/foundations/README.md)    | Pi, the Windows desktop stack, harnesses, frameworks and workflow scaffolds       |
 | [Capabilities](docs/capabilities/README.md)  | LSP, graphs, cross-session memory, retrieval, inference, protocols and evaluation |
-| [Design](docs/design/README.md)              | Proposed synthesis and README presentation references                             |
+| [Design](docs/design/README.md)              | Desktop/core contracts, delivery plan, qualification and audit                    |
 | [Governance](docs/governance/README.md)      | Repository controls, fleet management and policy boundaries                       |
 | [Supplied imports](imports/README.md)        | Original PDF, provenance and claim review                                         |
 | [Web compendium](site/README.md)             | Supplied HTML and deployment scope                                                |

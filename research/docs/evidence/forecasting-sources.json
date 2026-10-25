@@ -1,0 +1,145 @@
+[
+  {
+    "id": "FOR-01",
+    "tool": "Mistral announcement",
+    "url": "https://mistral.ai/news/timestral/",
+    "title": "Introducing Timestral",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official announcement identifies four model sizes and probabilistic multivariate forecasting with covariates."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Publisher leaderboard claims are not Splyce measurements."
+  },
+  {
+    "id": "FOR-02",
+    "tool": "Timestral repository",
+    "url": "https://github.com/mistralai/timestral/tree/a534bdbd244d64f3d9d743f46c7bf6fc330ed4ff",
+    "title": "Official Timestral standalone inference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Repository documents PyTorch-based CPU/GPU inference and separate code/weights licenses.",
+      "Listed checkpoint sizes exclude dependencies and runtime memory."
+    ],
+    "verification": "primary-documentation",
+    "notes": "README and source tree inspected; no installation."
+  },
+  {
+    "id": "FOR-03",
+    "tool": "Mistral model documentation",
+    "url": "https://docs.mistral.ai/models/timestral-1-0-28m",
+    "title": "Timestral 1.0 28M",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official docs describe up to 32K timesteps, past-only/known-future covariates and quantile outputs."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Model docs do not replace actual license text or calibration tests."
+  },
+  {
+    "id": "FOR-04",
+    "tool": "Timestral code license",
+    "url": "https://github.com/mistralai/timestral/blob/a534bdbd244d64f3d9d743f46c7bf6fc330ed4ff/LICENSE",
+    "title": "Timestral Apache-2.0 code LICENSE",
+    "accessed": "2026-10-25",
+    "claims": ["Fetched code LICENSE is Apache-2.0."],
+    "verification": "primary-license",
+    "notes": "Weights are governed separately."
+  },
+  {
+    "id": "FOR-05",
+    "tool": "Timestral-28M weights license",
+    "url": "https://huggingface.co/mistralai/Timestral-28M/blob/49b26409ac87b5935539a5d8ffe7f397b720db47/LICENSE",
+    "title": "Timestral-28M Modified MIT LICENSE",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Actual weights license withholds rights above USD 20 million company/employer global consolidated revenue in the preceding month."
+    ],
+    "verification": "primary-license",
+    "notes": "Fetched raw license after browser blob access failed; restricted weights, excluded from an unrestricted OSS default; permitted independently supplied local use is a separate product contract, not a relicensing claim. Other checkpoints require independent review."
+  },
+  {
+    "id": "FOR-06",
+    "tool": "Timestral model source",
+    "url": "https://github.com/mistralai/timestral/blob/a534bdbd244d64f3d9d743f46c7bf6fc330ed4ff/src/timestral/model.py",
+    "title": "Pinned Timestral causal patches and quantiles",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Source implements masked value patches, causal normalization, learned decoder queries and monotone quantile construction."
+    ],
+    "verification": "primary-source-code",
+    "notes": "Source inspection does not prove numerical calibration."
+  },
+  {
+    "id": "FOR-07",
+    "tool": "Timestral forecaster source",
+    "url": "https://github.com/mistralai/timestral/blob/a534bdbd244d64f3d9d743f46c7bf6fc330ed4ff/src/timestral/forecaster.py",
+    "title": "Pinned Timestral multiblock forecasting",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Source feeds medians back between blocks, distinguishes covariate roles and supports local model directories/local_files_only."
+    ],
+    "verification": "primary-source-code",
+    "notes": "Source inspection only; refinement/capping and multiblock uncertainty require runtime tests."
+  },
+  {
+    "id": "FOR-08",
+    "tool": "TimesFM repository",
+    "url": "https://github.com/google-research/timesfm",
+    "title": "Google TimesFM",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Repository documents pretrained patched forecasting and a TimesFM 2.5 200M path."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Bounded alternative survey only; pin code/model/dependency licenses before adoption."
+  },
+  {
+    "id": "FOR-09",
+    "tool": "Chronos repository",
+    "url": "https://github.com/amazon-science/chronos-forecasting",
+    "title": "Chronos-2 and Chronos-Bolt",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Chronos-2 supports multivariate and covariate-informed forecasting; Bolt uses direct multistep quantiles."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Cloud deployment examples are comparators; local assets/platform and exact rights remain unqualified."
+  },
+  {
+    "id": "FOR-10",
+    "tool": "Uni2TS repository",
+    "url": "https://github.com/SalesforceAIResearch/uni2ts",
+    "title": "Moirai and Uni2TS",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Primary project provides universal forecasting, fine-tuning and inference, with multiple Moirai versions."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No architecture/rights inference across all model versions; bounded survey."
+  },
+  {
+    "id": "FOR-11",
+    "tool": "Granite TSFM repository",
+    "url": "https://github.com/ibm-granite/granite-tsfm",
+    "title": "Granite time-series foundation models",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Primary project includes TinyTimeMixer forecasting candidates."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Exact checkpoint horizon/frequency/rights and costs remain open."
+  },
+  {
+    "id": "FOR-12",
+    "tool": "Timer repository",
+    "url": "https://github.com/thuml/Large-Time-Series-Model",
+    "title": "Timer large time-series models",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official project supplies generative pretrained time-series transformer research and checkpoints."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No runtime, adaptation or exact model-license qualification; bounded survey."
+  }
+]

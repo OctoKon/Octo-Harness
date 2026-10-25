@@ -1,0 +1,98 @@
+[
+  {
+    "id": "CLD-01",
+    "tool": "OpenAI data controls",
+    "url": "https://developers.openai.com/api/docs/guides/your-data",
+    "title": "Data controls in the OpenAI platform",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Abuse-monitoring logs, application state and feature/account-specific retention controls are distinct."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched; account/provider behavior not exercised. Applicability is per model/API/feature/arrangement; no universal retention or cancellation guarantee."
+  },
+  {
+    "id": "CLD-02",
+    "tool": "OpenAI Responses cancellation",
+    "url": "https://developers.openai.com/api/reference/ruby/resources/responses/methods/cancel",
+    "title": "Cancel a response",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documented cancellation applies to Responses created with background enabled."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched; account/provider behavior not exercised. Applicability is per model/API/feature/arrangement; no universal retention or cancellation guarantee."
+  },
+  {
+    "id": "CLD-03",
+    "tool": "Anthropic platform retention",
+    "url": "https://platform.claude.com/docs/en/manage-claude/api-and-data-retention",
+    "title": "API and data retention",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Processor, feature eligibility, arrangements and Covered Models affect retention; cloud-platform processing differs."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched; account/provider behavior not exercised. Applicability is per model/API/feature/arrangement; no universal retention or cancellation guarantee."
+  },
+  {
+    "id": "CLD-04",
+    "tool": "Anthropic commercial retention",
+    "url": "https://privacy.claude.com/en/articles/7996866-how-long-do-you-store-my-organization-s-data",
+    "title": "How long do you store my organization data",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Standard retention article gives a timeframe with controlled-storage, agreement, policy and legal exceptions."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched; account/provider behavior not exercised. Applicability is per model/API/feature/arrangement; no universal retention or cancellation guarantee."
+  },
+  {
+    "id": "CLD-05",
+    "tool": "Gemini abuse monitoring",
+    "url": "https://ai.google.dev/gemini-api/docs/usage-policies",
+    "title": "Abuse monitoring",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Abuse-monitoring retention is a distinct provider-controlled data path."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched; account/provider behavior not exercised. Applicability is per model/API/feature/arrangement; no universal retention or cancellation guarantee."
+  },
+  {
+    "id": "CLD-06",
+    "tool": "Gemini developer logs",
+    "url": "https://ai.google.dev/gemini-api/docs/logs-policy",
+    "title": "Data logging and sharing",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Developer-owned logs and datasets have separate choices and retention behavior from abuse monitoring."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched; account/provider behavior not exercised. Applicability is per model/API/feature/arrangement; no universal retention or cancellation guarantee."
+  },
+  {
+    "id": "CLD-07",
+    "tool": "Bedrock retention modes",
+    "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html",
+    "title": "Data retention",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Retention modes, model-specific requirements and processing regions constrain actual inference handling."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched; account/provider behavior not exercised. Applicability is per model/API/feature/arrangement; no universal retention or cancellation guarantee."
+  },
+  {
+    "id": "CLD-08",
+    "tool": "Azure Foundry data handling",
+    "url": "https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy",
+    "title": "Data privacy and security for Models sold by Azure",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Azure processing, feature storage and monitoring must be qualified for the actual deployment."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched; account/provider behavior not exercised. Applicability is per model/API/feature/arrangement; no universal retention or cancellation guarantee."
+  }
+]

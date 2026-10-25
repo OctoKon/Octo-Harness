@@ -1,0 +1,299 @@
+[
+  {
+    "id": "DESK-01",
+    "tool": "Tauri 2 platform WebViews",
+    "url": "https://v2.tauri.app/reference/webview-versions/",
+    "title": "Webview Versions",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Tauri uses WebView2 on Windows, WKWebView on macOS and WebKitGTK on Linux.",
+      "Platform WebView versions depend on the installed platform/runtime and must be recorded in qualification."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official moving Tauri v2 documentation fetched; not an installed support or footprint result. Do not adopt legacy OS support wording as Splyce's support policy. License anchors also fetched: https://raw.githubusercontent.com/tauri-apps/tauri/tauri-v2.0.0/LICENSE_MIT and https://raw.githubusercontent.com/tauri-apps/tauri/tauri-v2.0.0/LICENSE_APACHE-2.0. These tags anchor license inspection only, not implementation pins."
+  },
+  {
+    "id": "DESK-02",
+    "tool": "Tauri external binary and Node sidecar packaging",
+    "url": "https://v2.tauri.app/develop/sidecar/",
+    "title": "Embedding External Binaries",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Tauri can bundle external binaries with target-specific naming and launch an owned sidecar.",
+      "Shell-plugin execution requires configured permissions; packaging a binary alone does not grant frontend execution authority."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also fetched https://v2.tauri.app/learn/sidecar-nodejs/ as the official Node packaging example. Neither example qualifies Pi's dynamic loading/native dependencies, descendant cleanup or Node runtime compatibility. Proposed delivery includes pinned Node and Pi resources rather than requiring ambient Node or assuming Bun."
+  },
+  {
+    "id": "DESK-03",
+    "tool": "Tauri frontend capability boundary",
+    "url": "https://v2.tauri.app/security/capabilities/",
+    "title": "Capabilities and security boundaries",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Capabilities enable and constrain frontend exposure to core/plugin APIs with window-associated permissions.",
+      "The documented boundary does not protect against malicious Rust, incorrect command scope checks or overly broad configuration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Proposed narrow Rust commands must still validate every request and recheck effect grants in Pi; Tauri capabilities do not sandbox trusted in-process Pi extensions. No adversarial runtime test executed."
+  },
+  {
+    "id": "DESK-04",
+    "tool": "Tauri installed desktop automation",
+    "url": "https://v2.tauri.app/develop/tests/webdriver/",
+    "title": "WebDriver: embedded service and native driver routes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The accessed guide documents @wdio/tauri-service with embedded WebDriver support on Windows, Linux and macOS.",
+      "Direct tauri-driver desktop support is Windows and Linux; the guide directs macOS to embedded service or another qualified route.",
+      "Renderer-only browser mode can mock invoke calls and does not exercise an installed Tauri binary."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Important distinction from older macOS automation limitations. Test-only embedded plugins must not ship in production. Screen readers, real native dialogs, process cleanup and actual release installation still need individual platform tests; n=0."
+  },
+  {
+    "id": "DESK-05",
+    "tool": "Tauri Windows distribution",
+    "url": "https://v2.tauri.app/distribute/windows-installer/",
+    "title": "Windows Installer: WebView2 provisioning modes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The guide distinguishes downloadable/embedded bootstrapper, offline installer and fixed WebView2 runtime modes.",
+      "Offline or fixed-runtime delivery adds runtime payload; a bootstrapper is not a dependency-complete offline installation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Vendor example byte counts are intentionally not repeated as Splyce measurements. Actual app, Node, Pi, WebView and installed dependency costs remain n=0; Linux/macOS delivery must qualify their own package/runtime closures."
+  },
+  {
+    "id": "DESK-06",
+    "tool": "Tauri optional updater",
+    "url": "https://v2.tauri.app/plugin/updater/",
+    "title": "Updater: signed artifacts and platform targets",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Updater metadata identifies target artifacts and signatures; artifact signing is part of the documented updater path.",
+      "Update check and installation use configured endpoints and application APIs."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Explicit checks, no unsolicited network activity, interruption recovery and compatible app/Node/Pi updates are proposed Splyce requirements, not guarantees supplied by the plugin. Manual verified installers suffice initially; no update operation tested."
+  },
+  {
+    "id": "DESK-07",
+    "tool": "Electron runtime/process alternative",
+    "url": "https://www.electronjs.org/docs/latest/tutorial/process-model",
+    "title": "Process Model",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Electron separates its privileged Node main process from window renderer processes and supports Node utility processes.",
+      "An owned utility process is a potential Pi engine host, subject to Node compatibility and lifecycle tests."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also fetched official https://www.electronjs.org/docs/latest/tutorial/tutorial-prerequisites establishing bundled Chromium/Node and https://www.electronjs.org/docs/latest/tutorial/security/ for context isolation/sandbox boundaries. MIT license anchor fetched at https://raw.githubusercontent.com/electron/electron/v33.0.0/LICENSE; v33.0.0 is not a selected/current implementation version. No size or performance comparison measured."
+  },
+  {
+    "id": "DESK-08",
+    "tool": "Svelte 5 accessibility diagnostics",
+    "url": "https://svelte.dev/docs/svelte/compiler-warnings",
+    "title": "Compiler warnings: accessibility diagnostics",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Svelte exposes compiler diagnostics for labels, keyboard interactions, roles, focus and other accessibility markup concerns.",
+      "These diagnostics are a static gate; the proposed app still requires actual keyboard and screen-reader verification."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Svelte 5/TypeScript static frontend is a design choice, not a measured performance winner. MIT text fetched at https://raw.githubusercontent.com/sveltejs/svelte/svelte%405.0.0/LICENSE.md; this is a license inspection anchor, not a selected/current release."
+  },
+  {
+    "id": "DESK-09",
+    "tool": "Slint native UI alternative",
+    "url": "https://slint.dev/get-started",
+    "title": "Slint getting started and license choices",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Slint offers a Rust application integration route.",
+      "The official page distinguishes GPLv3, Community and commercial licensing paths; Slint cannot be assumed MIT."
+    ],
+    "verification": "primary-documentation",
+    "notes": "This research does not select a Slint distribution/license or establish AGPL compatibility of an actual combined package. Native accessibility, renderer footprint and Node/Pi lifecycle remain untested."
+  },
+  {
+    "id": "DESK-10",
+    "tool": "egui/eframe native UI alternative",
+    "url": "https://github.com/emilk/egui",
+    "title": "egui official repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "egui is an immediate-mode Rust GUI with native/web integration routes.",
+      "The accessed README documents optional AccessKit integration and platform-specific accessibility scope."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving README, not a qualified source pin. Also fetched https://raw.githubusercontent.com/emilk/egui/0.29.1/LICENSE-MIT as a license anchor only. Text selection, IME, screen-reader behavior, Linux accessibility and idle CPU need tests; do not infer unsupported behavior merely from documentation silence."
+  },
+  {
+    "id": "DESK-11",
+    "tool": "Pinned Pi SDK headless integration",
+    "url": "https://raw.githubusercontent.com/earendil-works/pi/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/sdk.ts",
+    "title": "Pi createAgentSession SDK inputs and result",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned SDK provides explicit model, runtime, resource loader and session inputs to createAgentSession.",
+      "The result includes extensionsResult and modelFallbackMessage; a GUI must qualify extension binding and reject silent model fallback under Splyce policy."
+    ],
+    "verification": "primary-source-code",
+    "notes": "Direct public pinned SDK fetched. Repository Pi source contracts supply the wider hook/lifecycle/branch audit; this record is source observation, not installed Pi or SDK/RPC parity testing."
+  },
+  {
+    "id": "DESK-12",
+    "tool": "Pinned Pi runtime contract",
+    "url": "https://raw.githubusercontent.com/earendil-works/pi/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/package.json",
+    "title": "Pi coding-agent package runtime and license manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The selected source snapshot identifies the Pi coding-agent package version, Node engine requirement and MIT license.",
+      "Node runtime packaging and the complete installed Pi dependency/resource closure require qualification; no Bun compatibility is inferred."
+    ],
+    "verification": "primary-source-code",
+    "notes": "Manifest at the same immutable source revision as DESK-11. Source identity does not establish registry publication, actual installed behavior, dynamic-plugin packaging or measured resource use."
+  },
+  {
+    "id": "DESK-13",
+    "tool": "Svelte frontend framework selection",
+    "url": "https://svelte.dev/docs/svelte/overview",
+    "title": "Svelte overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Svelte compiles declarative HTML/CSS/JavaScript components and documents TypeScript component syntax.",
+      "SvelteKit is a companion full-stack framework, distinct from using Svelte components for a static desktop UI."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Svelte 5 is the locked frontend family with Vite static assets and scoped CSS/custom-property tokens. No SSR server is needed by the product contract. No measured footprint or universal framework superiority follows from this choice."
+  },
+  {
+    "id": "DESK-14",
+    "tool": "Solid frontend alternative",
+    "url": "https://docs.solidjs.com/advanced-concepts/fine-grained-reactivity",
+    "title": "Fine-grained reactivity",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Solid documents signals and tracked computations for targeted reactive updates."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Credible streaming-UI alternative; mechanism is not a measured whole-app cost advantage over Svelte. No Solid build, installed test or dependency addition performed."
+  },
+  {
+    "id": "DESK-15",
+    "tool": "React frontend alternative",
+    "url": "https://react.dev/learn/thinking-in-react",
+    "title": "Thinking in React",
+    "accessed": "2026-10-25",
+    "claims": [
+      "React documents component hierarchy, explicit ownership of state and one-way data flow."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Candidate evaluated for the same desktop screen/state contract; not selected. No claim that React cannot satisfy the product or is universally slower/larger."
+  },
+  {
+    "id": "DESK-16",
+    "tool": "Vite desktop static build tool",
+    "url": "https://github.com/vitejs/vite/releases/tag/v8.3.5",
+    "title": "Vite v8.3.5 release",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official release v8.3.5 is available as an observed concrete patch candidate for the Vite 8 family.",
+      "The official support page identifies Vite 8.3 as the regular-patch line at access time."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also fetched https://vite.dev/guide/, https://vite.dev/blog/announcing-vite8 and https://v8.vite.dev/releases. Vite 8 is locked as build tooling; exact compatible Svelte plugin/compiler/TypeScript pins await TD-11 real build. npm registry latest endpoint was unavailable via web tool; no registry latest claim or local speed measurement. Build tool does not become a shipping server/runtime."
+  },
+  {
+    "id": "DESK-17",
+    "tool": "Node 24 LTS runtime candidate",
+    "url": "https://nodejs.org/en/blog/release/v24.22.0",
+    "title": "Node.js 24.22.0 (LTS)",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official release page labels Node 24.22.0 Krypton LTS and dates it 2026-10-14.",
+      "The official release table lists the Node 24 line as LTS."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also fetched https://nodejs.org/en/about/previous-releases. Node 24 LTS is the selected runtime family; 24.22.0 is a concrete candidate, not an asserted latest or installed/qualified patch. Pi's declared >=22.19.0 range alone does not prove plugin/native-dependency compatibility; TD-11 freezes a passing patch, binary identities and lockfiles."
+  },
+  {
+    "id": "DESK-18",
+    "tool": "Tauri maintained frontend templates",
+    "url": "https://v2.tauri.app/start/create-project/",
+    "title": "Create a Project",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The official create-tauri-app documentation lists Svelte, React and SolidJS among maintained framework templates.",
+      "Tauri can also integrate with an existing frontend project."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Template availability supports the bounded framework comparison; no scaffold/install was run. Selected Svelte/Vite assets are packaged locally with no Express or SvelteKit SSR server."
+  },
+  {
+    "id": "DESK-19",
+    "tool": "CodeMirror 6 editor comparator",
+    "url": "https://github.com/codemirror/dev",
+    "title": "CodeMirror development repository and source migration",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official development README directs consumers to separate npm packages rather than installing the development repository.",
+      "The archived GitHub repository records migration to code.haverbeke.berlin/codemirror/dev."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also fetched https://github.com/codemirror/view identifying its DOM view component. https://codemirror.net/docs/guide/, https://codemirror.net/ and the new forge returned HTTP 403; no unavailable content is treated as inspected. Legacy https://github.com/codemirror/codemirror redirects to version 5. CodeMirror 6 remains a comparator; Monaco is the user-selected optional editor module, never co-bundled; actual current package revisions, license closure, API, accessibility and installed tests remain open."
+  },
+  {
+    "id": "DESK-20",
+    "tool": "Monaco selected optional editor",
+    "url": "https://github.com/microsoft/monaco-editor",
+    "title": "Monaco Editor official repository and FAQ",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Monaco is an MIT-licensed browser code editor with web-worker-based language services.",
+      "The FAQ distinguishes Monaco from the VS Code extension host and documents worker-loading constraints."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also inspected official Monaco site/search and API worker documentation. Workers, URI/CSP, offline resources and disposal require real Tauri tests. Vendor assertions about worker overhead are not local measurements. Monaco is the user-selected separately installed editor; local ESM assets/workers, no CDN. Base contains zero editor/worker payload and retains simple text/diff views; LSP remains separately selected. CodeMirror is a comparator only."
+  },
+  {
+    "id": "DESK-21",
+    "tool": "Svelte lint and check tools",
+    "url": "https://sveltejs.github.io/eslint-plugin-svelte/",
+    "title": "Official Svelte ESLint plugin",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The official plugin documents Svelte-specific linting using svelte-eslint-parser.",
+      "Svelte check reports Svelte/CSS and JavaScript/TypeScript diagnostics."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also fetched https://svelte.dev/docs/cli/sv-check. These are selected development checks, not proof of accessibility or installed E2E. Exact tool versions await TD-11."
+  },
+  {
+    "id": "DESK-22",
+    "tool": "Svelte formatting and state",
+    "url": "https://github.com/sveltejs/prettier-plugin-svelte",
+    "title": "Prettier Svelte plugin",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Official Svelte formatting plugin provides Svelte component formatting for Prettier.",
+      "Svelte state documentation describes the built-in rune-based reactivity selected for the frontend."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also fetched https://svelte.dev/docs/svelte/$state. npm plugin page returned 403; official GitHub repository was inspected. Built-in stores/context remain available; no additional global state framework selected."
+  },
+  {
+    "id": "DESK-23",
+    "tool": "Tauri typed command and channel transport",
+    "url": "https://v2.tauri.app/reference/javascript/api/namespacecore/",
+    "title": "Tauri core JavaScript API",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The official API documents invoke and generic Channel types for Rust/frontend IPC."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Also fetched https://v2.tauri.app/develop/calling-frontend/. Selected @tauri-apps/api 2 commands/channels carry validated versioned records; TypeScript types do not validate hostile runtime messages. Windows-only V1 E2E must exercise actual packaged IPC and engine transport."
+  }
+]

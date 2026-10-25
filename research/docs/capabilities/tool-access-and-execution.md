@@ -1,6 +1,6 @@
 # Tool access and execution
 
-**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+**Active product scope:** Splyce keeps agent execution and stored state local. Each inference role may use a local runtime or an explicitly authorized cloud API profile with recorded endpoint, model/revision, and egress scope; it never silently switches provider or falls back. Hosted memory and executors below remain comparative research, not product dependencies. [Current master plan](../../../MASTER-PLAN.md).
 
 Research date: 2026-10-25. Evidence: [tool-execution sources](../evidence/tool-execution-sources.json). This is a Pi-first design and qualification chapter. It proposes Splyce-owned contracts around the pinned Pi coding-agent source `d5b3de22d0e24a3e9c38a9410d3329b099717283`; it does **not** claim an installed executor, sandbox, remote connection, or runtime result. All execution measurements are **n=0**.
 
@@ -110,7 +110,7 @@ interface ExecutorPort {
 }
 ```
 
-These interfaces are proposals, not Pi APIs. The authoritative Splyce `ReceiptPort.commitIntent(request)` is separate from `ExecutorPort.dispatch`; executors do not create an independent journal. The policy bridge checks current effective grants and commits intent before delegation. The executor refuses stale grants, changed workspace identity, unknown contracts or unavailable required isolation. Result presentation waits for a durable outcome. Memory consumes scoped receipt/artifact IDs after redaction, never terminal display alone. Remote/managed adapter shapes are research comparisons; the active local-only product admits no cloud executor.
+These interfaces are proposals, not Pi APIs. The authoritative Splyce `ReceiptPort.commitIntent(request)` is separate from `ExecutorPort.dispatch`; executors do not create an independent journal. The policy bridge checks current effective grants and commits intent before delegation. The executor refuses stale grants, changed workspace identity, unknown contracts or unavailable required isolation. Result presentation waits for a durable outcome. Memory consumes scoped receipt/artifact IDs after redaction, never terminal display alone. Cloud inference is a separately authorized provider route; remote/managed executors remain research comparisons and are not product dependencies.
 
 ## Negative physical E2E fixtures
 

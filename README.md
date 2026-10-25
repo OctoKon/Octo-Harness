@@ -7,28 +7,27 @@
 
 # Splyce
 
-A research-led foundation for one coding-agent harness: capable models, useful memory, and changes backed by evidence.
+A research-led foundation for a Windows desktop coding-agent application: capable models, useful memory, and changes backed by evidence.
 
-[Research](research/README.md) · [Master plan](MASTER-PLAN.md) · [Contributing](CONTRIBUTING.md)
+[Research](research/README.md) · [Master plan](MASTER-PLAN.md) · [Delivery plan](research/docs/design/team-delivery-plan.md) · [Contributing](CONTRIBUTING.md)
 
 [![Documentation quality](https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml/badge.svg?branch=main)](https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml)
 [![CodeQL](https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml)
 
 ## The direction
 
-Open source and fully local. Built on Pi, Splyce aims to bring the strongest ideas from coding agents, retrieval systems, and inference engines into one consistent tool.
+Windows V1 is a desktop GUI: Tauri 2/Rust shell, Svelte 5 with strict TypeScript and Vite 8, and a deeply integrated Pi-derived TypeScript core on packaged Node 24 LTS. The base stays barebones; setup fetches only selected pinned Git packages, while Monaco, LSP, RAG, memory, and model assets remain optional. Local and cloud inference use explicit per-role profiles; custom local or Git plugins stay user-controlled.
 
-| Area       | Planned behavior                                                                             |
-| ---------- | -------------------------------------------------------------------------------------------- |
-| Models     | Fully local generation, extraction, embeddings, and reranking; no cloud fallback.            |
-| Memory     | Native cross-session summaries with citations and selective recovery of original evidence.   |
-| Code       | Language-aware navigation, scoped edits, and actual verification receipts.                   |
-| Tools      | Files, terminals, local browsers/desktops, and authorized external tools with scoped access. |
-| Extensions | MCP, skills, plugins, and delegated agents under shared permissions and state.               |
+| Area    | Planned behavior                                                                                        |
+| ------- | ------------------------------------------------------------------------------------------------------- |
+| Desktop | Windows GUI with native dialogs, typed IPC, accessible local views, and installed-package E2E gates.    |
+| Engine  | One Pi-derived loop with local session/journal state, receipts, verification, and recovery.             |
+| Models  | Multiple local/cloud providers and profiles, explicit egress, live switches, and no silent fallback.    |
+| Modules | Selected Git-pinned packages; optional Monaco, LSP, memory, retrieval, tools, and custom local plugins. |
 
 ## Where it stands
 
-This repository contains public-source research, an implementation plan, and documentation tooling. **The agent runtime is not built yet.** Performance improvements remain hypotheses until measured.
+This repository contains public-source research, a Windows desktop implementation plan, and documentation tooling. **The GUI and runtime are not built yet.** Performance and support claims remain hypotheses until measured.
 
 Start with the [research index](research/README.md) for comparisons and sources, or the [master plan](MASTER-PLAN.md) for the build sequence and acceptance gates. Contributions should connect a mechanism to a source and a testable outcome.
 

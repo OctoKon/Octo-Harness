@@ -1,8 +1,12 @@
 # Inference: local, cloud, and mixed deployment
 
-**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+**Active product scope:** Splyce keeps agent execution and stored state local. Each inference role may use a local runtime or an explicitly authorized cloud API profile with recorded endpoint, model/revision, and egress scope; it never silently switches provider or falls back. Hosted memory and executors below remain comparative research, not product dependencies. The base install carries no optional model payload. [Current master plan](../../../MASTER-PLAN.md).
 
 **Research date:** 2026-10-25. **Evidence state:** documentation and source review only. No model was downloaded, server installed, credential used, or benchmark run. All performance decisions remain planned measurements (**n=0**).
+
+## User model choice
+
+The active [model-choice contract](../design/user-controlled-models.md) requires independent compatible local or cloud-profile selections for every implemented operation, explicit provisioning and ownership, experimental versus supported status, model-switch/index fences and no brand whitelist. Users may supply permitted local assets outside the distributed OSS set or explicitly authorize an API profile for one operation. API shape never proves that operation's runtime support, locality, retention, or cancellation behavior.
 
 ## Decision boundary
 
@@ -80,7 +84,7 @@ The memory agent owns model cards, embedding dimensions, chunking/retrieval and 
 - For a supported accelerated production generation service with shared prefixes and concurrent traffic, compare **SGLang and vLLM first** on identical models and prompts.
 - For private/offline local development, start with **LM Studio, Ollama or llama.cpp** according to desired model format and host OS, then promote only measured workloads to a serving runtime.
 - For macOS/Apple Silicon, evaluate **MLX-LM/LM Studio**; for NVIDIA fleets with fixed models and high operational tolerance, evaluate **TensorRT-LLM/Triton**; for Intel/ONNX paths, evaluate **OpenVINO/ORT GenAI**.
-- Use a managed endpoint/router only when its data handling, geography, cancellation, model revision and capability contract meet the workload; select **OpenRouter** for routing flexibility, and provider-specific endpoints when control over a chosen deployment matters.
+- Managed endpoints/routers may be selected only through an explicit per-role cloud profile with endpoint, model/revision, egress scope, retention boundary, and actual capability probe. They never become a silent fallback.
 - Use separate embedding and rerank deployments whenever model quality, dimension, sparse vectors or scoring semantics are material. Do not route them through a generation-only compatibility promise.
 
 ## Benchmark plan (n=0)
@@ -90,5 +94,5 @@ Use one immutable model revision, tokenizer/template, quantization, output cap, 
 ## Remaining evidence gaps
 
 1. Exact release/platform support for Windows, CUDA, ROCm, CPU, macOS/Metal and accelerators needs selection-time verification.
-2. Hosted pricing, retention, residency, rate limits and cancellation semantics were deliberately not asserted.
+2. Hosted pricing, retention, residency, rate limits, capability, and cancellation semantics need profile-specific verification.
 3. Tool/grammar streaming, multimodal limits and embedding/rerank availability must be probed per runtime/model version in controlled integration tests.

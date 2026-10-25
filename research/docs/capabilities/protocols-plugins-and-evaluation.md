@@ -1,6 +1,6 @@
 # Protocols, plugins, execution boundaries, and evaluation
 
-**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+**Active product scope:** Splyce keeps agent execution and stored state local. Each inference role may use a local runtime or an explicitly authorized cloud API profile with recorded endpoint, model/revision, and egress scope; it never silently switches provider or falls back. Hosted memory and executors below remain comparative research, not product dependencies. [Current master plan](../../../MASTER-PLAN.md).
 
 **Research date:** 2026-10-25. **Status:** documentation verified; no installation, live integration, or benchmark run. “ACP” below means **Agent Client Protocol** (editor/client ↔ coding agent), never Agent Control Protocol or Agentic Commerce Protocol.
 

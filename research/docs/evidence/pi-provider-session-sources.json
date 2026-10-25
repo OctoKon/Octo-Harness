@@ -1,0 +1,189 @@
+[
+  {
+    "id": "PST-01",
+    "tool": "Pi model documentation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/models.md",
+    "title": "Model choice, compatible endpoints and credential precedence",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Provider/model/API/endpoint are separate identities; several compatible providers can coexist.",
+      "models.json keys and headers can resolve environment or request-time credential commands; session model changes differ from persisted defaults."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official pinned raw documentation fetched after web discovery; no authentication or inference performed."
+  },
+  {
+    "id": "PST-02",
+    "tool": "Pi provider documentation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/providers.md",
+    "title": "API key, OAuth and ambient provider credentials",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Provider API keys, OAuth and Bedrock/Vertex ambient credentials follow distinct setup paths.",
+      "Stored-auth command output is cached for process lifetime; logout does not revoke provider-side credentials or unset other sources."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official pinned documentation inspected. Credential values and executable examples are excluded from the public chapter."
+  },
+  {
+    "id": "PST-03",
+    "tool": "Pi AI types",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/ai/src/types.ts",
+    "title": "Exact API and provider identity types",
+    "accessed": "2026-10-25",
+    "claims": [
+      "KnownApi declares ten distinct chat API IDs including Chat Completions, Responses, Messages, Gemini, Vertex and Bedrock families.",
+      "Api also permits extension strings; classifier/image API types are separate from chat."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned type definitions inspected; declared API families are not a claim of equal-depth transport qualification."
+  },
+  {
+    "id": "PST-04",
+    "tool": "Pi AI transport implementations",
+    "url": "https://github.com/earendil-works/pi/tree/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/ai/src/api",
+    "title": "Selected Chat Completions, Responses, Messages and Gemini source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenAI-compatible adapters invoke separate chat.completions.create and responses.create methods; Responses request construction sets store false.",
+      "Anthropic invokes beta.messages.create and Gemini invokes generateContentStream.",
+      "Gemini explicitly rejects a non-global custom fetch; a universal fetch-wrapper guarantee is unsupported."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned openai-completions.ts, openai-responses.ts, anthropic-messages.ts and google-generative-ai.ts fetched and inspected. No API request or vendor retention test was run."
+  },
+  {
+    "id": "PST-05",
+    "tool": "Pi ModelRuntime",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/model-runtime.ts",
+    "title": "Provider dispatch, auth resolution and virtual routing",
+    "accessed": "2026-10-25",
+    "claims": [
+      "prepareRequest resolves actual auth and endpoint/headers before provider dispatch; missing provider/auth errors are explicit.",
+      "Virtual cross-provider routes strip caller credentials before resolving destination auth; this is not an egress permission check."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned streamSimple, prepareRequest and provider registration paths inspected. ModelRegistry facade source additionally inspected; runtime n=0."
+  },
+  {
+    "id": "PST-06",
+    "tool": "Pi provider composer",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/provider-composer.ts",
+    "title": "Custom registration, request-time headers and API implementation binding",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Provider composition checks required API and auth configuration and supports configured endpoint/model overrides.",
+      "Configured keys/headers use uncached request-time resolution; registration alone does not establish transport observability or endpoint compatibility."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned source fetched and inspected. No custom provider extension was loaded."
+  },
+  {
+    "id": "PST-07",
+    "tool": "Pi auth storage",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/auth-storage.ts",
+    "title": "Stored credential resolution",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Stored API-key credentials resolve command-valued keys through the shared cached config resolver.",
+      "Credential storage is separate from model selection and session journal ownership."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned raw source inspected with provider docs and resolver; no secrets were read or commands executed."
+  },
+  {
+    "id": "PST-08",
+    "tool": "Pi config value resolver",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/resolve-config-value.ts",
+    "title": "Environment interpolation and executable credential-helper boundary",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Configuration values can resolve literals/environment references or execute local commands.",
+      "Cached and uncached resolution have distinct failure/retry lifetimes; throwing resolution paths can expose descriptive helper errors requiring redaction."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Correct core path resolved from imports after guessed utils path returned unavailable. Source read only; executable configuration was not evaluated."
+  },
+  {
+    "id": "PST-09",
+    "tool": "Pi session documentation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/sessions.md",
+    "title": "New/resume/tree/fork/clone and context persistence",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Tree navigation retains branches in one file while fork/clone create separate sessions; compaction retains original entries.",
+      "Session state is local; sharing/upload commands are distinct external effects."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Pinned sessions.md and companion session-format.md inspected. Guessed singular session.md was unavailable; no sessions were opened."
+  },
+  {
+    "id": "PST-10",
+    "tool": "Pi SessionManager",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/session-manager.ts",
+    "title": "JSONL tree projection, model entries and file creation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SessionManager exposes create/open/continueRecent/inMemory/forkFrom and same-file branch operations.",
+      "Initial file creation waits for a user or assistant message; model-change entries store provider/model ID without a full endpoint or egress contract.",
+      "Synchronous JSONL writes do not create an atomic transaction with Splyce receipts."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned projection, persistence, branching and construction source inspected. File recovery and deletion remain untested."
+  },
+  {
+    "id": "PST-11",
+    "tool": "Pi AgentSession",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/agent-session.ts",
+    "title": "Model mutation and tree-navigation guards",
+    "accessed": "2026-10-25",
+    "claims": [
+      "setModel checks auth, changes model state, appends model_change, optionally persists defaults and emits model_select.",
+      "Inspected setModel/cycleModel mutation paths have no streaming guard; navigateTree explicitly rejects streaming or concurrent compaction/navigation.",
+      "abort waits for idle; Splyce still needs admission and model-contract fencing."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned source reused from the preceding public package audit and inspected at model-management and navigation symbols. No concurrent model switch was run."
+  },
+  {
+    "id": "PST-12",
+    "tool": "Pi AgentSessionRuntime",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/agent-session-runtime.ts",
+    "title": "Session replacement ownership, cancellation and outgoing-turn settlement",
+    "accessed": "2026-10-25",
+    "claims": [
+      "newSession/switchSession/fork belong to AgentSessionRuntime and emit cancellable before-switch/fork hooks.",
+      "Teardown aborts and settles outgoing work before shutdown/disposal; replacement then constructs and rebinds fresh runtime state.",
+      "Fork validates entry/position and can reject unsaved persisted sources; failed construction is not proven atomic rollback."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Actual owner resolved from RPC imports after guessed runtime-host.ts was unavailable. Source observed, lifecycle runtime n=0."
+  },
+  {
+    "id": "PST-13",
+    "tool": "Pi RPC command reference",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/rpc-commands.md",
+    "title": "Model and session command IDs and cancellation responses",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Canonical commands include new_session/set_model/cycle_model/get_available_models/switch_session/fork/clone/get_tree.",
+      "Command success and data.cancelled are independent; get_tree is inspection rather than an inferred navigation command."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Pinned RPC overview and command reference fetched; documentation examples were not sent to a Pi process."
+  },
+  {
+    "id": "PST-14",
+    "tool": "Pi mode implementations",
+    "url": "https://github.com/earendil-works/pi/tree/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/modes",
+    "title": "RPC and print/JSON dispatch differences",
+    "accessed": "2026-10-25",
+    "claims": [
+      "RPC set_model resolves an available pair then calls the unguarded AgentSession setter; input handlers can overlap.",
+      "Print/JSON bind replacement actions to AgentSessionRuntime; print text maps error/aborted/truncated terminal responses to failure.",
+      "RPC supplies extension UI messaging while the extension runner defaults to false/undefined prompts without UI."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned rpc/rpc-mode.ts and print-mode.ts fetched; companion core/extensions/runner.ts inspected for no-UI defaults. No mode-parity or concurrency execution."
+  }
+]

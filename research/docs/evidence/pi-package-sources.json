@@ -1,0 +1,134 @@
+[
+  {
+    "id": "PKG-01",
+    "tool": "Pi package documentation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/packages.md",
+    "title": "Pi Packages at the selected source pin",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Packages expose extensions, skills, prompts and themes through conventions or a pi manifest.",
+      "Git, npm and local sources, resource filters, project/global ownership and dependency guidance are documented."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Discovered through public web search, then fetched the exact pinned raw file. No package installation; source observations are not runtime qualification."
+  },
+  {
+    "id": "PKG-02",
+    "tool": "Pi CLI reference",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/cli.md",
+    "title": "Pinned package commands, resource switches and offline option",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Install/remove/list/config and package update commands exist, with project-scope options and uninstall alias.",
+      "No-resource flags still permit explicitly supplied resources; these are not process isolation guarantees."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Pinned raw reference fetched and inspected; documented commands were not executed."
+  },
+  {
+    "id": "PKG-03",
+    "tool": "Pi DefaultPackageManager source",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/package-manager.ts",
+    "title": "Source resolution, provisioning, filters, dependencies and managed paths",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Missing configured sources can install before resource filtering; offline mode skips missing-source installation.",
+      "Git installation clones and installs dependencies; reconciliation and removal mutate managed checkouts.",
+      "Configured Git identity omits its ref; existing startup checkout resolution does not verify HEAD against the configured ref.",
+      "Local-source removal preserves original files; installation and settings persistence are separate operations."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned raw file fetched; focused source regions inspected. Installer arguments do not universally suppress lifecycle scripts. No code was executed; integrity, transaction and cleanup limits are source-bound findings."
+  },
+  {
+    "id": "PKG-04",
+    "tool": "Pi DefaultResourceLoader source",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/resource-loader.ts",
+    "title": "Reload ordering, package resolution and resource filtering",
+    "accessed": "2026-10-25",
+    "claims": [
+      "reload calls packageManager.resolve without an onMissing callback before noExtensions/noSkills resource selection.",
+      "The default loader includes project-trust resolution and conventional resource discovery integration."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned raw source inspected, especially reload lines 540-670. A resource-disabling flag is not proof of zero provisioning. Runtime n=0."
+  },
+  {
+    "id": "PKG-05",
+    "tool": "Pi SettingsManager source",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/settings-manager.ts",
+    "title": "Queued settings persistence, flush and error reporting",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Settings persistence uses locking and a write queue, separate from package filesystem changes.",
+      "Queued failures are recorded; flush waits for the queue and drainErrors exposes recorded errors."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned raw source inspected at persistence and package setters. No durability or failure-recovery test was run."
+  },
+  {
+    "id": "PKG-06",
+    "tool": "Pi AgentSession source",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/src/core/agent-session.ts",
+    "title": "Session reload and extension lifecycle sequence",
+    "accessed": "2026-10-25",
+    "claims": [
+      "reload emits session_shutdown, invalidates the old runner, reloads resources and rebuilds runtime bindings before session_start.",
+      "This sequence is an integration seam and does not certify cleanup of arbitrary extension-owned resources."
+    ],
+    "verification": "primary-source-inspection",
+    "notes": "Pinned raw source inspected at reload lines 3720-3758. Cleanup and in-flight removal fixtures remain unrun."
+  },
+  {
+    "id": "PKG-07",
+    "tool": "Pi configuration documentation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/configuration.md",
+    "title": "Agent directory, project resources and instruction discovery",
+    "accessed": "2026-10-25",
+    "claims": [
+      "PI_CODING_AGENT_DIR or SDK agentDir selects the user configuration directory.",
+      "Project resources are trust-gated, while context-file discovery has a separate boundary."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Pinned raw file inspected. Splyce directory isolation and minimal discovery are proposed integration obligations, not installed behavior."
+  },
+  {
+    "id": "PKG-08",
+    "tool": "Pi settings documentation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/settings.md",
+    "title": "Resource defaults, built-in extensions and telemetry settings",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Built-in mcp, llama.cpp, codemode and tool-search extensions load by default and can be selected through resource settings.",
+      "enableInstallTelemetry defaults true; analytics and update checks are separate concerns."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Pinned raw file inspected. Empty package settings alone establish neither barebones discovery nor no-network behavior."
+  },
+  {
+    "id": "PKG-09",
+    "tool": "Pi environment-variable documentation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/environment-variables.md",
+    "title": "Offline, telemetry and agent-directory process controls",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Pi documents PI_OFFLINE, PI_TELEMETRY and agent-directory overrides.",
+      "Documented host networking controls do not establish isolation of arbitrary package scripts or extensions."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Pinned raw file fetched and inspected; effective install/startup networking was not measured."
+  },
+  {
+    "id": "PKG-10",
+    "tool": "Pi extension documentation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/extensions.md",
+    "title": "Trusted extension lifecycle and shutdown responsibilities",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Session-scoped resources require idempotent session_shutdown cleanup.",
+      "Reload invalidates old session-bound contexts; extension registration is not a sandbox or Splyce cleanup receipt."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Pinned raw file inspected; no extension was loaded or executed."
+  }
+]

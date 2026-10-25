@@ -1,6 +1,6 @@
 # ADR-001: Shared contracts over an existing agent engine
 
-**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+**Active product scope:** Splyce is OSS with a barebones, modular local application and local authoritative state. Users explicitly select local and/or cloud inference per provider/profile/operation; a local-only profile forbids inference egress and silent fallback. Hosted execution, managed memory storage and unsolicited telemetry are not default dependencies. Current local+cloud direction supersedes the earlier global local-only ruling. [Current master plan](../../../MASTER-PLAN.md).
 
 ## Status: Refined by the Pi-first decision
 
