@@ -33,3 +33,7 @@ This repository contains public-source research, an implementation plan, and doc
 Start with the [research index](research/README.md) for comparisons and sources, or the [master plan](MASTER-PLAN.md) for the build sequence and acceptance gates. Contributions should connect a mechanism to a source and a testable outcome.
 
 [Contribution guide](CONTRIBUTING.md) · [Security reporting](SECURITY.md) · [AGPL-3.0-only](LICENSE) · [Discussions](https://github.com/OctoKon/Splyce/discussions)
+
+## Frontend prototype
+
+The [local frontend prototype](frontend/README.md) explores task entry, run review, cited memory and local model setup. It uses simulated activity and browser-local data; it does not implement or qualify the Pi runtime.

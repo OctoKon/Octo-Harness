@@ -5,7 +5,8 @@
     "format": "prettier --write .",
     "lint:markdown": "markdownlint-cli2 \"**/*.md\" \".skills/**/*.md\" \".github/**/*.md\" \"#node_modules\"",
     "check:docs": "python scripts/check_docs.py",
-    "test:docs": "python -m unittest tests/test_check_docs.py"
+    "test:docs": "python -m unittest tests/test_check_docs.py",
+    "test:frontend": "node --check frontend/app.js && node frontend/check.mjs"
   },
   "devDependencies": {
     "markdownlint-cli2": "0.24.0",
