@@ -3216,3 +3216,246 @@ body {
     margin-bottom: 15px;
   }
 }
+
+.task-details {
+  border-top: 1px solid var(--line);
+  margin: 0 24px;
+}
+.task-details summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 14px 0;
+  color: var(--ink);
+}
+.task-details summary > span {
+  font-size: 9px;
+  color: var(--muted);
+  font-weight: 400;
+}
+.task-details summary > svg {
+  width: 13px;
+  height: 13px;
+  margin-left: auto;
+}
+.task-details[open] summary > svg {
+  transform: rotate(180deg);
+}
+.task-details-fields {
+  padding: 5px 0 20px;
+}
+.task-details-fields label {
+  display: block;
+  font-size: 11px;
+  margin: 12px 0 9px;
+  font-weight: 600;
+}
+.task-details-fields textarea {
+  min-height: 85px;
+  font-size: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg);
+  resize: vertical;
+}
+.task-details-fields input {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 14px;
+}
+.task-details-fields > p {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+.run-plan {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 22px;
+  padding: 23px;
+  margin-bottom: 24px;
+}
+.run-plan h2 {
+  font-size: 14px;
+  letter-spacing: -0.3px;
+}
+.run-plan > p {
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  margin-top: 13px;
+}
+.planned-command {
+  margin-top: 17px;
+  border-top: 1px solid var(--line);
+  padding-top: 15px;
+}
+.planned-command > span {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 9px;
+}
+.planned-command code {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.harness-explainer {
+  padding: 25px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 24px;
+  margin-bottom: 28px;
+}
+.harness-explainer h2 {
+  font-size: 19px;
+}
+.harness-explainer p {
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 75ch;
+  margin: 14px 0 18px;
+}
+.harness-explainer a {
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+}
+.harness-explainer svg {
+  width: 13px;
+  height: 13px;
+}
+/* Neutral dark surfaces use consistent elevation and readable type. */
+.dark {
+  --bg: #151515;
+  --surface: #212121;
+  --subtle: #282828;
+  --sand: #2d2d2b;
+  --line: #3a3a38;
+  --muted: #b6b6b0;
+  --ink: #f4f4ef;
+}
+.dark .sidebar {
+  background: #1b1b1b;
+}
+.dark .app-header {
+  background: #191919;
+}
+.dark .side-nav button.active {
+  background: #30302e;
+  border: 1px solid #41413a;
+  padding: 12px 13px;
+}
+.dark .side-nav button > svg,
+.dark .role-symbol,
+.dark .theme-choice > svg {
+  color: #bdbdb4;
+}
+.dark .side-nav button.active > svg {
+  color: #efb18b;
+}
+.dark .composer {
+  background: #242424;
+  border-color: #484840;
+  box-shadow: 0 14px 34px #00000020;
+}
+.dark .composer-footer {
+  background: #1e1e1e;
+}
+.dark .panel {
+  border-color: #3d3d39;
+}
+.dark .theme-choice {
+  background: #1b1b1b;
+}
+.dark .theme-choice:has(input:checked) {
+  background: #2c2c28;
+  border-color: #b09274;
+  box-shadow: inset 0 0 0 1px #b09274;
+}
+.dark .build-intro h1 span {
+  color: #c8c4b5;
+}
+.dark .btn.primary {
+  background: #e9bb95;
+  color: #24211e;
+}
+.dark .btn.primary:hover {
+  background: #f5ccaa;
+}
+.dark .context-nudge {
+  background: #272724;
+  border: 1px solid #3c3c34;
+}
+.dark .tag.outline {
+  background: transparent;
+  color: #b6b6b0;
+}
+.side-nav button {
+  font-size: 13px;
+}
+.settings-row small,
+.model-role p,
+.model-summary {
+  font-size: 11px;
+}
+@media (max-width: 640px) {
+  .task-details {
+    margin: 0 18px;
+  }
+  .task-details summary {
+    font-size: 10px;
+  }
+  .task-details-fields textarea {
+    min-height: 90px;
+    padding: 12px;
+    font-size: 12px;
+  }
+  .task-details-fields input {
+    font-size: 10px;
+  }
+  .run-plan {
+    padding: 20px;
+    border-radius: 21px;
+  }
+  .run-plan > p {
+    font-size: 11px;
+  }
+  .planned-command code {
+    font-size: 11px;
+  }
+  .harness-explainer {
+    padding: 21px;
+  }
+  .harness-explainer h2 {
+    font-size: 18px;
+  }
+  .harness-explainer p {
+    font-size: 11px;
+  }
+  .settings-row small,
+  .model-role p,
+  .model-summary {
+    font-size: 10px;
+  }
+}
+.dark .btn.ink {
+  background: #f0ede4;
+  color: #242424;
+}
+.dark .btn.ink:hover {
+  background: #fffaf0;
+}

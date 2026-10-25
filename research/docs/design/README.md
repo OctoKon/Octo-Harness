@@ -14,3 +14,5 @@
 | [Readiness audit](readiness-audit.md)                   | Requirement-to-contract-to-test coverage and remaining research/build blockers      |
 
 [Research index](../../README.md) · [Complete document map](../README.md)
+
+[Frontend workflow review](frontend-workflow-review.md) records source-backed task, verification and settings design choices for the UI prototype.

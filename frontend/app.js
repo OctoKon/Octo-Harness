@@ -1,5 +1,6 @@
 "use strict";
 const REPO = "https://github.com/OctoKon/Splyce";
+const SOURCE_REF = "ShlokShah01/ui-ux-refresh";
 const icons = {
   arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
   external:
@@ -61,7 +62,7 @@ function esc(s) {
   );
 }
 function link(path) {
-  return REPO + (path ? "/blob/main/" + path : "");
+  return REPO + (path ? "/blob/" + SOURCE_REF + "/" + path : "");
 }
 const memory = [
   {
@@ -194,6 +195,7 @@ let state = {
   selected: "demo-101",
   tab: "diff",
   draft: "",
+  draftDetails: { acceptanceCriteria: "", verificationCommand: "" },
   bookmarks: [],
   homeTab: "plan",
 };
@@ -235,6 +237,17 @@ try {
         .slice(0, 100);
     if (typeof saved?.draft === "string")
       state.draft = saved.draft.slice(0, 2000);
+    for (const [key, limit] of [
+      ["acceptanceCriteria", 1000],
+      ["verificationCommand", 300],
+    ]) {
+      if (typeof saved?.draftDetails?.[key] === "string")
+        state.draftDetails[key] = saved.draftDetails[key].slice(0, limit);
+      state.runs = state.runs.map((r) => ({
+        ...r,
+        [key]: typeof r[key] === "string" ? r[key].slice(0, limit) : "",
+      }));
+    }
     if (typeof saved?.selected === "string") state.selected = saved.selected;
     if (Array.isArray(saved?.bookmarks))
       state.bookmarks = saved.bookmarks.filter((id) =>
@@ -386,7 +399,7 @@ function heading(title, desc, action = "") {
   return `<div class="page-heading"><div><h1>${title}</h1><p>${desc}</p></div>${action}</div>`;
 }
 function composer() {
-  return `<form id="run-form" class="composer"><div class="composer-title">${mark()}<label for="task">What are we working on?</label><kbd>/</kbd></div><textarea id="task" name="task" maxlength="2000" required placeholder="Describe a change, ask a question, or investigate a bug…">${esc(state.draft)}</textarea><div class="composer-footer"><label class="profile-picker">${icon("models")}<select name="profile" aria-label="Local model setup">${["Balanced", "Lightweight", "Custom"].map((p) => `<option ${state.settings.profile === p ? "selected" : ""}>${p}</option>`).join("")}</select>${icon("down")}</label><span class="draft-label" id="draft-label">${state.draft ? "Draft restored" : ""}</span><button class="btn primary" type="submit">Start demo run ${icon("arrow")}</button></div><p class="error-text" id="task-error" role="alert"></p></form>`;
+  return `<form id="run-form" class="composer"><div class="composer-title">${mark()}<label for="task">What are we working on?</label><kbd>/</kbd></div><textarea id="task" name="task" maxlength="2000" required placeholder="Describe a change, ask a question, or investigate a bug…">${esc(state.draft)}</textarea><details class="task-details"><summary>Define success <span>Optional</span>${icon("down")}</summary><div class="task-details-fields"><label for="acceptance">Acceptance criteria</label><textarea id="acceptance" name="acceptanceCriteria" maxlength="1000" placeholder="What should be true when this task is done?">${esc(state.draftDetails.acceptanceCriteria)}</textarea><label for="verification">Planned verification command</label><input id="verification" name="verificationCommand" maxlength="300" placeholder="For example: npm test" value="${esc(state.draftDetails.verificationCommand)}"><p>Saved as a plan only. This demo never executes commands.</p></div></details><div class="composer-footer"><label class="profile-picker">${icon("models")}<select name="profile" aria-label="Local model setup">${["Balanced", "Lightweight", "Custom"].map((p) => `<option ${state.settings.profile === p ? "selected" : ""}>${p}</option>`).join("")}</select>${icon("down")}</label><span class="draft-label" id="draft-label">${state.draft ? "Draft restored" : ""}</span><button class="btn primary" type="submit">Start demo run ${icon("arrow")}</button></div><p class="error-text" id="task-error" role="alert"></p></form>`;
 }
 function runItem(r) {
   return `<button class="run-item" data-run="${esc(r.id)}"><span class="run-symbol">${icon(r.status === "Completed" ? "check" : r.status === "Needs approval" ? "shield" : "code")}</span><span class="run-info"><strong>${esc(r.task)}</strong><small>${esc(r.model)} · ${esc(r.date)}</small></span>${tag(r.status)}${icon("chevron")}</button>`;
@@ -518,7 +531,7 @@ function researchPage() {
       "The thinking behind Splyce.",
       "Project evidence, architecture and delivery plans.",
     ) +
-    `<div class="doc-list">${[
+    `<section class="harness-explainer"><h2>What is an agent harness?</h2><p>The model proposes the next step. The harness supplies context, controls tool access, preserves session state, and records what was actually checked. Splyce plans to reuse Pi for the agent loop and add local policy, memory and evidence.</p><a href="${link("research/docs/design/frontend-workflow-review.md")}" target="_blank" rel="noopener">Read the frontend research review ${icon("external")}</a></section><div class="doc-list">${[
       [
         "MASTER-PLAN.md",
         "The master plan",
@@ -631,11 +644,11 @@ function detail() {
   const needs = r.status === "Needs approval",
     canceled = r.status === "Canceled",
     complete = r.status === "Completed";
-  return `<button class="back-link" data-nav="runs">${icon("back")} All runs</button><div class="detail-heading"><div><span class="run-id">${esc(r.id)} · ${esc(r.model)}</span><h1>${esc(r.task)}</h1></div>${tag(r.status)}</div>${banner()}<div class="review-layout"><section class="panel"><header class="panel-head"><h2>Activity</h2><span class="tag outline">Simulated</span></header><ol class="detail-events"><li>${icon("checkcircle")}<div><strong>Task captured</strong><p>Your task and workspace scope are recorded.</p></div><time>00:00</time></li><li>${icon("checkcircle")}<div><strong>Context selected</strong><p>Sample references: M-001 · shared host; M-004 · evidence.</p></div><time>00:02</time></li><li>${icon(needs ? "shield" : canceled ? "x" : "checkcircle")}<div><strong>${needs ? "Waiting for approval" : canceled ? "Simulation canceled" : "Example change prepared"}</strong><p>${needs ? "Approve the demo action to continue." : canceled ? "No files were changed." : "This example is not generated from your task."}</p></div><time>00:08</time></li>${!needs && !canceled ? `<li>${icon(complete ? "checkcircle" : "clock")}<div><strong>${complete ? "Reviewed in the demo" : "Ready for your review"}</strong><p>Nothing is applied to a repository.</p></div><time>00:12</time></li>` : ""}</ol><div class="detail-actions">${needs ? '<button class="btn primary" data-action="approve">Approve demo action</button>' : !canceled && !complete ? '<button class="btn primary" data-action="complete">Mark reviewed</button>' : ""}${!canceled && !complete ? '<button class="btn secondary" data-action="cancel">Cancel run</button>' : ""}<button class="text-button" data-action="retry">${icon("plus")} Reuse task</button></div></section><section class="panel artifact-panel"><div class="tablist" role="tablist" aria-label="Run evidence"><button id="diff-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "diff"}" tabindex="${state.tab === "diff" ? 0 : -1}" class="${state.tab === "diff" ? "active" : ""}" data-tab="diff">Example diff</button><button id="receipt-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "receipt"}" tabindex="${state.tab === "receipt" ? 0 : -1}" class="${state.tab === "receipt" ? "active" : ""}" data-tab="receipt">Receipt</button><button class="icon-btn" data-action="export-run" aria-label="Export run record">${icon("download")}</button></div><div id="artifact-content" role="tabpanel" aria-labelledby="${state.tab}-tab">${
+  return `<button class="back-link" data-nav="runs">${icon("back")} All runs</button><div class="detail-heading"><div><span class="run-id">${esc(r.id)} · ${esc(r.model)}</span><h1>${esc(r.task)}</h1></div>${tag(r.status)}</div>${banner()}${r.acceptanceCriteria || r.verificationCommand ? `<section class="run-plan"><h2>What success looks like</h2>${r.acceptanceCriteria ? `<p>${esc(r.acceptanceCriteria)}</p>` : ""}${r.verificationCommand ? `<div class="planned-command"><span>Planned check · not executed</span><code>${esc(r.verificationCommand)}</code></div>` : ""}</section>` : ""}<div class="review-layout"><section class="panel"><header class="panel-head"><h2>Activity</h2><span class="tag outline">Simulated</span></header><ol class="detail-events"><li>${icon("checkcircle")}<div><strong>Task captured</strong><p>Your task and workspace scope are recorded.</p></div><time>00:00</time></li><li>${icon("checkcircle")}<div><strong>Context selected</strong><p>Sample references: M-001 · shared host; M-004 · evidence.</p></div><time>00:02</time></li><li>${icon(needs ? "shield" : canceled ? "x" : "checkcircle")}<div><strong>${needs ? "Waiting for approval" : canceled ? "Simulation canceled" : "Example change prepared"}</strong><p>${needs ? "Approve the demo action to continue." : canceled ? "No files were changed." : "This example is not generated from your task."}</p></div><time>00:08</time></li>${!needs && !canceled ? `<li>${icon(complete ? "checkcircle" : "clock")}<div><strong>${complete ? "Reviewed in the demo" : "Ready for your review"}</strong><p>Nothing is applied to a repository.</p></div><time>00:12</time></li>` : ""}</ol><div class="detail-actions">${needs ? '<button class="btn primary" data-action="approve">Approve demo action</button>' : !canceled && !complete ? '<button class="btn primary" data-action="complete">Mark reviewed</button>' : ""}${!canceled && !complete ? '<button class="btn secondary" data-action="cancel">Cancel run</button>' : ""}<button class="text-button" data-action="retry">${icon("plus")} Reuse task</button></div></section><section class="panel artifact-panel"><div class="tablist" role="tablist" aria-label="Run evidence"><button id="diff-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "diff"}" tabindex="${state.tab === "diff" ? 0 : -1}" class="${state.tab === "diff" ? "active" : ""}" data-tab="diff">Example diff</button><button id="receipt-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "receipt"}" tabindex="${state.tab === "receipt" ? 0 : -1}" class="${state.tab === "receipt" ? "active" : ""}" data-tab="receipt">Receipt</button><button class="icon-btn" data-action="export-run" aria-label="Export run record">${icon("download")}</button></div><div id="artifact-content" role="tabpanel" aria-labelledby="${state.tab}-tab">${
     state.tab === "diff"
       ? `<div class="diff-file">${icon("code")} example-policy.ts <span>Illustrative only</span></div><pre class="detail-code"><code> function canRun(action: Action) {
 <span class="remove">−  return true;</span><span class="add">+  return action.scope === workspace.scope;</span> }</code></pre><p class="artifact-note">A fictional workspace guard, not a complete policy implementation. No patch exists for this run.</p>`
-      : `<div class="receipt"><span class="tag warning">Not executed</span><h3>Evidence should be inspectable.</h3><p>This demo shows the intended receipt format. No verification command actually ran.</p><dl><dt>Example command</dt><dd><code>node --test example-policy.test.mjs</code></dd><dt>Exit code</dt><dd>Unavailable</dd><dt>Final revision</dt><dd>Unavailable</dd><dt>Verified result</dt><dd>Not performed</dd></dl></div>`
+      : `<div class="receipt"><span class="tag warning">Not executed</span><h3>Evidence should be inspectable.</h3><p>This demo shows the intended receipt format. No verification command actually ran.</p><dl><dt>Planned verification command</dt><dd><code>${esc(r.verificationCommand || "Not specified for this run")}</code></dd><dt>Exit code</dt><dd>Unavailable</dd><dt>Final revision</dt><dd>Unavailable</dd><dt>Verified result</dt><dd>Not performed</dd></dl></div>`
   }</div></section></div>`;
 }
 const pages = {
@@ -852,6 +865,7 @@ document.addEventListener("click", (e) => {
     };
     state.extensions = { mcp: false, skills: true, lsp: false };
     state.draft = "";
+    state.draftDetails = { acceptanceCriteria: "", verificationCommand: "" };
     state.bookmarks = [];
     saved("Samples restored. You can undo this in Settings.");
     render();
@@ -867,6 +881,10 @@ document.addEventListener("click", (e) => {
     if (!r) return;
     if (a === "retry") {
       state.draft = r.task;
+      state.draftDetails = {
+        acceptanceCriteria: r.acceptanceCriteria || "",
+        verificationCommand: r.verificationCommand || "",
+      };
       save();
       navigate("new");
       return;
@@ -914,11 +932,18 @@ document.addEventListener("submit", (e) => {
         month: "short",
       }),
       events: true,
+      acceptanceCriteria: String(data.get("acceptanceCriteria") || "")
+        .trim()
+        .slice(0, 1000),
+      verificationCommand: String(data.get("verificationCommand") || "")
+        .trim()
+        .slice(0, 300),
     });
     state.runs = state.runs.slice(0, 100);
     state.selected = id;
     state.tab = "diff";
     state.draft = "";
+    state.draftDetails = { acceptanceCriteria: "", verificationCommand: "" };
     saved("Demo run created. No commands were executed.");
     navigate("run");
   }
@@ -952,6 +977,13 @@ document.addEventListener("submit", (e) => {
   }
 });
 document.addEventListener("input", (e) => {
+  if (["acceptanceCriteria", "verificationCommand"].includes(e.target.name)) {
+    state.draftDetails[e.target.name] = e.target.value;
+    const ok = save();
+    document.getElementById("draft-label").textContent = ok
+      ? "Draft saved"
+      : "Draft for this visit";
+  }
   if (["run-search", "memory-search"].includes(e.target.id)) filter();
   if (e.target.id === "task") {
     state.draft = e.target.value;

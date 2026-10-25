@@ -17,3 +17,5 @@ The evidence base for a unified coding-agent harness built on Pi. Snapshot: **20
 [Methodology](docs/methodology.md) explains evidence depth and coverage limits. [Candidate catalog](docs/catalog.md) maps names to layers. The root [master plan](../MASTER-PLAN.md) translates the findings into contracts, implementation phases and acceptance gates.
 
 Discovery remains open when a sweep finds another eligible candidate. See the dated [gap journal](docs/agents/gap-sweep-candidates.md); no global-exhaustiveness claim is made. Runtime, retrieval and inference qualification still require actual tests.
+
+The [frontend workflow review](docs/design/frontend-workflow-review.md) connects primary-source harness lessons to the browser-local UI prototype without claiming runtime qualification.

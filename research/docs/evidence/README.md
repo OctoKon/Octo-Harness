@@ -2,6 +2,8 @@
 
 Each JSON file is an array of source records. Required fields: `id`, `tool`, `url`, `title`, `accessed`, `claims`, `verification`, and `notes`. URLs identify public primary documents. Access dates describe this research snapshot; they do not pin a release or prove runtime behavior.
 
+[Frontend workflow sources](frontend-workflow-sources.json) records the Pi, Aider, long-running harness and MCP documents used for the task/verification UI review.
+
 | Ledger                                                 | Coverage                                                                |
 | ------------------------------------------------------ | ----------------------------------------------------------------------- |
 | [skill-sources.json](skill-sources.json)               | Skill authoring, diagnosis, Rust checks and focused workflow references |

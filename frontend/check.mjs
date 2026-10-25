@@ -142,6 +142,31 @@ assert.match(vm.runInContext("modelsPage()", context), /&lt;b&gt;local-model/);
 assert.doesNotMatch(vm.runInContext("modelsPage()", context), /Cloud endpoint/);
 vm.runInContext("state.draft='<script>draft</script>'", context);
 assert.match(vm.runInContext("composer()", context), /&lt;script&gt;draft/);
+listeners.submit({
+  preventDefault() {},
+  target: {
+    id: "run-form",
+    values: {
+      task: "Check the task acceptance contract",
+      profile: "Balanced",
+      acceptanceCriteria: "<b>All checks pass</b>",
+      verificationCommand: "npm test",
+    },
+  },
+});
+assert.equal(
+  vm.runInContext("state.runs[0].verificationCommand", context),
+  "npm test",
+);
+assert.match(vm.runInContext("detail()", context), /&lt;b&gt;All checks pass/);
+assert.match(
+  vm.runInContext("detail()", context),
+  /Planned check · not executed/,
+);
+assert.equal(
+  vm.runInContext("state.draftDetails.acceptanceCriteria", context),
+  "",
+);
 console.log(
-  "PASS: task validation, escaped input/drafts, run creation, profile normalization, settings validation, deep links and workspace views.",
+  "PASS: task plans, input escaping, run creation, local roles, settings, appearance, deep links and workspace views.",
 );

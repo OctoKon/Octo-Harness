@@ -28,7 +28,7 @@ A task-first workspace with four main destinations: Build, Runs, Memory and Mode
 
 ## Colors
 
-Warm charcoal, ivory and sand establish the light interface; copper identifies primary actions and olive supports secondary emphasis. Dark mode uses neutral gray: page `#191919`, panels `#232323` and sidebar `#202020`. No blue or purple palette is used. Status colors always include text. Light, Dark and System modes apply to the complete page. System follows the device setting and updates when it changes.
+Warm charcoal, ivory and sand establish the light interface; copper identifies primary actions and olive supports secondary emphasis. Dark mode uses neutral gray: page `#151515`, panels `#212121` and sidebar `#1b1b1b`, with separate header and composer elevation. No blue or purple palette is used. Status colors always include text. Light, Dark and System modes apply to the complete page. System follows the device setting and updates when it changes.
 
 ## Typography
 
@@ -51,6 +51,8 @@ The splice-junction emblem pairs an open octagonal loop with a copper interlocki
 Appearance choices and the header theme switch apply immediately, save to browser storage and preserve unsaved workspace-name edits. A separate reduced-motion preference is saved immediately. Navigation uses consistently sized, outlined SVG icons on a shared alignment grid. Local model summaries show saved model IDs without promising connected providers. Memory entries expose their original sources and saved state. Run detail shows fictional evidence as fictional. Reset offers undo while Settings remains open.
 
 The sidebar omits the former storage-status block and expanded controls list. Settings tabs keep configuration in the content area. The website closes with a dedicated call to action and structured workspace, research, contribution and license links.
+
+The optional Define success section captures acceptance criteria and a planned verification command. It stays collapsed by default. Drafts, run records and task reuse preserve these fields; planned checks never appear as executed receipts.
 
 ## Do's and Don'ts
 

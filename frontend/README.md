@@ -17,6 +17,7 @@ Open `http://127.0.0.1:4175`. No package installation, build step, hosted servic
 - A product introduction with interactive Plan, Context and Review tabs.
 - Four main workspace destinations: Build, Runs, Memory and Models.
 - Saved task drafts, task starters, simulated run review and ID-based run links.
+- Optional acceptance criteria and a planned verification command, retained in drafts, runs and reused tasks.
 - Source-linked memory entries with saved-entry filtering.
 - Local-only model setup templates and explicit model-ID labels.
 - Light, Dark and System appearance options that apply immediately and survive reload.
@@ -41,6 +42,8 @@ This package is authorized frontend design work. It does not claim to satisfy a 
 | Done              | The interface renders responsively, theme changes paint the complete page, local data survives reload, and all enabled model roles remain local |
 
 ## Validation
+
+See the [frontend verification record](QA.md) for the screen-by-screen checks, dependency audit and remaining runtime limits.
 
 ```sh
 npm run test:frontend

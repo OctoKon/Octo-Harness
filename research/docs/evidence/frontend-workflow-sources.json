@@ -1,0 +1,50 @@
+[
+  {
+    "id": "FW-01",
+    "tool": "Pi SDK",
+    "url": "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md",
+    "title": "Pi SDK and session lifecycle",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AgentSession owns conversation and tools; SessionManager controls persisted branch context."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Current primary documentation inspected for UI design. No Pi integration run; pin mutable source before adoption."
+  },
+  {
+    "id": "FW-02",
+    "tool": "Aider",
+    "url": "https://aider.chat/docs/usage/lint-test.html",
+    "title": "Linting and testing",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Configurable lint and test commands provide an explicit verification path."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Mechanism comparison only. No Aider code, model or service was installed."
+  },
+  {
+    "id": "FW-03",
+    "tool": "Anthropic harness research",
+    "url": "https://www.anthropic.com/research/effective-harnesses-for-long-running-agents",
+    "title": "Effective harnesses for long-running agents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Explicit requirements and incremental progress artifacts address lost context and premature completion."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Source-reported design lessons, not Splyce measurements or a mandate for a second loop."
+  },
+  {
+    "id": "FW-04",
+    "tool": "Model Context Protocol",
+    "url": "https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture",
+    "title": "MCP architecture overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MCP distinguishes hosts, clients and servers and defines tools and resources as protocol primitives."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Protocol documentation is not evidence of Splyce authorization or executor containment."
+  }
+]

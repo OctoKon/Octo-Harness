@@ -50,3 +50,5 @@ The root [MASTER-PLAN.md](../../MASTER-PLAN.md) is the implementation handoff. I
 | [Agent skills](design/agent-skills.md)                                         | Rationale and evidence for the seven focused repository skills               |
 
 [Main research index](../README.md) · [Supplied imports](../imports/README.md) · [Web compendium](../site/README.md)
+
+[Frontend workflow review](design/frontend-workflow-review.md): primary-source lessons for task acceptance, planned verification, session continuity and honest UI boundaries.
