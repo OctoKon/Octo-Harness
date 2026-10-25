@@ -118,6 +118,27 @@ assert.equal(
   "Local endpoint",
 );
 assert.match(vm.runInContext("settingsPage()", context), /value="System"/);
+assert.match(
+  vm.runInContext("settingsTabs('settings')", context),
+  /Appearance & data/,
+);
+assert.doesNotMatch(
+  vm.runInContext("shell('settings',settingsPage())", context),
+  /local-status|advanced-nav/,
+);
+assert.match(vm.runInContext("home()", context), /Build what comes next/);
+listeners.change({ target: { name: "reduceMotion", checked: true } });
+assert.equal(vm.runInContext("state.settings.reduceMotion", context), true);
+assert.equal(context.document.documentElement.style.scrollBehavior, "auto");
+assert.equal(
+  vm.runInContext(
+    "normalizeSettings({reduceMotion:'yes'}).reduceMotion",
+    context,
+  ),
+  false,
+);
+vm.runInContext("state.models.generation='<b>local-model</b>'", context);
+assert.match(vm.runInContext("modelsPage()", context), /&lt;b&gt;local-model/);
 assert.doesNotMatch(vm.runInContext("modelsPage()", context), /Cloud endpoint/);
 vm.runInContext("state.draft='<script>draft</script>'", context);
 assert.match(vm.runInContext("composer()", context), /&lt;script&gt;draft/);

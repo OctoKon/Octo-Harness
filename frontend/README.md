@@ -20,10 +20,11 @@ Open `http://127.0.0.1:4175`. No package installation, build step, hosted servic
 - Source-linked memory entries with saved-entry filtering.
 - Local-only model setup templates and explicit model-ID labels.
 - Light, Dark and System appearance options that apply immediately and survive reload.
-- A new rounded S monogram, curved controls and panels, mobile navigation and reduced-motion support.
+- A saved reduced-motion preference and visible model-ID labels in role summaries.
+- An interlocking splice-junction emblem and favicon, curved controls and panels, mobile navigation and reduced-motion support.
 - Browser-local settings, JSON export and undo for sample resets.
 
-Advanced controls stay under Workspace controls. Model labels do not load models. Sample diffs and receipts are explicitly fictional; no commands execute and no changes apply to a repository. The application does not make inference calls or send telemetry. Source-document links open GitHub only when selected.
+One Settings entry opens Appearance & data, Permissions, Extensions and Research tabs. Model labels do not load models. Sample diffs and receipts are explicitly fictional; no commands execute and no changes apply to a repository. The application does not make inference calls or send telemetry. Source-document links open GitHub only when selected.
 
 ## UI work contract
 
@@ -47,7 +48,7 @@ npm run test:frontend
 
 The focused Node checks execute the actual application script in a VM with minimal browser-API fixtures. They verify input escaping, task validation, run creation, settings normalization, local-only model roles, appearance resolution and deep links. They are unit checks, not browser integration or Pi qualification.
 
-Direct browser checks cover theme switching and persistence, task drafts, run reload, memory filtering, model-label saving and mobile navigation. These are local UI observations, not CI or runtime performance claims. No real Pi, model, executor or permission enforcement has been tested.
+Direct browser checks cover theme switching and persistence, preservation of an unsaved workspace name during a header theme change, reduced-motion persistence, JSON export, reset/undo, task drafts, run reload, memory filtering, model-label saving and mobile navigation. These are local UI observations, not CI or runtime performance claims. No real Pi, model, executor or permission enforcement has been tested.
 
 ## Source and license
 

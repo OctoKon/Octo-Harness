@@ -5,10 +5,11 @@ const icons = {
   external:
     '<path d="M14 4h6v6m0-6L10 14M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
-  play: '<path d="m9 5 11 7-11 7z"/>',
+  play: '<path d="m9 6 9 6-9 6z"/>',
   memory:
-    '<path d="M9 3H6a3 3 0 0 0-3 3v3m6 12H6a3 3 0 0 1-3-3v-3M15 3h3a3 3 0 0 1 3 3v3m-6 12h3a3 3 0 0 0 3-3v-3"/><rect x="8" y="8" width="8" height="8" rx="2"/>',
-  models: '<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/>',
+    '<path d="M5 4h12a2 2 0 0 1 2 2v14H7a3 3 0 0 1-3-3V5a1 1 0 0 1 1-1Zm-1 13a3 3 0 0 1 3-3h12M9 4v6l3-2 3 2V4"/>',
+  models:
+    '<rect x="6" y="6" width="12" height="12" rx="3"/><rect x="10" y="10" width="4" height="4" rx="1"/><path d="M9 3v3m6-3v3m-6 12v3m6-3v3M3 9h3m-3 6h3m12-6h3m-3 6h3"/>',
   plug: '<path d="M8 2v6m8-6v6M5 8h14v4a7 7 0 0 1-14 0V8Zm7 11v3"/>',
   shield:
     '<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/>',
@@ -17,11 +18,12 @@ const icons = {
   git: '<circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><path d="M6 7v10M18 7v2a6 6 0 0 1-6 6H6"/>',
   book: '<path d="M12 5C8 2 4 3 3 4v15c3-2 6-1 9 1 3-2 6-3 9-1V4c-3-2-6-1-9 1Zm0 0v15"/>',
   settings:
-    '<path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="3" fill="currentColor"/><circle cx="16" cy="17" r="3" fill="currentColor"/>',
+    '<path d="M3 7h3m4 0h11M3 17h11m4 0h3"/><circle cx="8" cy="7" r="2"/><circle cx="16" cy="17" r="2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>',
   code: '<path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16"/>',
-  terminal: '<path d="m5 6 6 6-6 6m9 0h6"/>',
+  terminal:
+    '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/>',
   folder: '<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10H3V6Z"/>',
   chevron: '<path d="m9 5 7 7-7 7"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
@@ -34,12 +36,17 @@ const icons = {
   download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/>',
   x: '<path d="m6 6 12 12M6 18 18 6"/>',
+  moon: '<path d="M20.4 13.1A8.5 8.5 0 0 1 10.9 3.6a8.5 8.5 0 1 0 9.5 9.5Z"/>',
+  monitor:
+    '<rect x="3" y="4" width="18" height="13" rx="3"/><path d="M8 21h8m-4-4v4"/>',
+  activity:
+    '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m6 13 3-4 3 6 3-5 3 3"/>',
 };
 function icon(name) {
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.code}</svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.code}</svg>`;
 }
 function mark() {
-  return '<svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect x="2" y="2" width="36" height="36" rx="13" fill="#29233d"/><path d="M27 11H18a6 6 0 0 0 0 12h4a3 3 0 0 1 0 6H13M13 29h9a6 6 0 0 0 0-12h-4a3 3 0 0 1 0-6h9" stroke="#ffb399" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  return '<svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M24 4H14L4 14v12l10 10h12l10-10v-8h-8v5l-5 5h-6l-5-5v-6l5-5h8Z" fill="currentColor"/><path d="m28 3 10 10-10 10-6-6 4-4-4-4Z" fill="#b56842"/></svg>';
 }
 function brand(small = false) {
   return `<a href="#home" class="brand" aria-label="Splyce home">${mark()}splyce${small ? "<small>by OctoKon</small>" : ""}</a>`;
@@ -158,6 +165,7 @@ const defaults = {
   approval: true,
   network: false,
   theme: "Light",
+  reduceMotion: false,
 };
 const roles = ["generation", "extraction", "embeddings", "reranking"];
 const templates = [
@@ -199,7 +207,7 @@ function normalizeSettings(value) {
   if (["Balanced", "Lightweight", "Custom"].includes(value.profile))
     s.profile = value.profile;
   if (["Light", "Dark", "System"].includes(value.theme)) s.theme = value.theme;
-  for (const k of ["approval", "network"])
+  for (const k of ["approval", "network", "reduceMotion"])
     if (typeof value[k] === "boolean") s[k] = value[k];
   for (const k of roles) s[k] = "Local endpoint";
   return s;
@@ -260,6 +268,10 @@ function resolvedDark(theme) {
   );
 }
 function applyTheme() {
+  document.documentElement.style.scrollBehavior = state.settings.reduceMotion
+    ? "auto"
+    : "";
+  document.body.classList.toggle("reduce-motion", state.settings.reduceMotion);
   document.body.classList.toggle("dark", resolvedDark(state.settings.theme));
   document.documentElement.style.colorScheme = resolvedDark(
     state.settings.theme,
@@ -337,29 +349,38 @@ function siteSpecimen() {
 }
 function home() {
   applyTheme();
-  return `<div class="site-wrap"><header class="site-nav">${brand(true)}<nav aria-label="Main navigation"><a href="#how">How it works</a><a href="${link("research/README.md")}" target="_blank" rel="noopener">Research ${icon("external")}</a></nav>${button("Open workspace", "overview", "ink")}</header><main id="main" tabindex="-1"><section class="home-hero"><div class="hero-copy"><h1>A little less<br>tool switching.<br><span>A lot more building.</span></h1><p>One coding-agent workspace for your task, your models, and the context worth keeping.</p><div class="hero-actions">${button("Try the workspace", "overview")}<a class="text-link" href="${REPO}" target="_blank" rel="noopener">View on GitHub ${icon("external")}</a></div><div class="hero-note"><span class="dot"></span> Splyce by OctoKon · In development</div></div><div class="hero-workflow">${siteSpecimen()}<div class="specimen-caption">A connected workflow. An interactive frontend preview.</div></div></section><section class="intro-strip"><p>Good work needs more than a prompt.</p><div><span>${icon("models")} Your model choice</span><span>${icon("memory")} Context with sources</span><span>${icon("git")} Changes you can inspect</span></div></section><section class="how-section" id="how"><div class="section-title"><h2>Start with the task.<br>Keep the rest connected.</h2><p>A small, deliberate workflow. The detail is there when you need it.</p></div><div class="journey"><article><span class="journey-icon">${icon("terminal")}</span><h3>Tell it what matters.</h3><p>Describe the change and choose a model profile. Start from a template if you need a nudge.</p></article><article><span class="journey-icon">${icon("memory")}</span><h3>Carry the context.</h3><p>Browse prior decisions with original sources. Useful memory stays close to the work.</p></article><article><span class="journey-icon">${icon("git")}</span><h3>Make the review count.</h3><p>Inspect the proposed change and its evidence together, then decide what comes next.</p></article></div></section><section class="research-block"><div><h2>Built in the open.<br>Grounded in research.</h2><p>Built on Pi, Splyce keeps every model role, memory and state local, with one policy boundary for tools. The runtime is not implemented yet; this demo explores its future interface.</p></div><div class="research-links"><a href="${link("MASTER-PLAN.md")}" target="_blank" rel="noopener"><span><strong>The master plan</strong><small>Architecture, contracts & acceptance gates</small></span>${icon("arrow")}</a><a href="${link("research/README.md")}" target="_blank" rel="noopener"><span><strong>The research library</strong><small>Sources behind the product direction</small></span>${icon("arrow")}</a><a href="${link("CONTRIBUTING.md")}" target="_blank" rel="noopener"><span><strong>Build it with us</strong><small>Questions, ideas & focused contributions</small></span>${icon("arrow")}</a></div></section><section class="closing"><h2>Your next change starts here.</h2>${button("Explore Splyce", "overview", "ink")}</section></main><footer class="site-footer">${brand()}<span>Practical tools. Shared progress.</span><a href="https://github.com/OctoKon" target="_blank" rel="noopener">OctoKon ${icon("external")}</a><a href="${link("SECURITY.md")}" target="_blank" rel="noopener">Security</a></footer></div>`;
+  return `<div class="site-wrap"><header class="site-nav">${brand(true)}<nav aria-label="Main navigation"><a href="#how">How it works</a><a href="${link("research/README.md")}" target="_blank" rel="noopener">Research ${icon("external")}</a></nav>${button("Open workspace", "overview", "ink")}</header><main id="main" tabindex="-1"><section class="home-hero"><div class="hero-copy"><h1>A little less<br>tool switching.<br><span>A lot more building.</span></h1><p>One coding-agent workspace for your task, your models, and the context worth keeping.</p><div class="hero-actions">${button("Try the workspace", "overview")}<a class="text-link" href="${REPO}" target="_blank" rel="noopener">View on GitHub ${icon("external")}</a></div><div class="hero-note"><span class="dot"></span> Splyce by OctoKon · In development</div></div><div class="hero-workflow">${siteSpecimen()}<div class="specimen-caption">A connected workflow. An interactive frontend preview.</div></div></section><section class="intro-strip"><p>Good work needs more than a prompt.</p><div><span>${icon("models")} Your model choice</span><span>${icon("memory")} Context with sources</span><span>${icon("git")} Changes you can inspect</span></div></section><section class="how-section" id="how"><div class="section-title"><h2>Start with the task.<br>Keep the rest connected.</h2><p>A small, deliberate workflow. The detail is there when you need it.</p></div><div class="journey"><article><span class="journey-icon">${icon("terminal")}</span><h3>Tell it what matters.</h3><p>Describe the change and choose a model profile. Start from a template if you need a nudge.</p></article><article><span class="journey-icon">${icon("memory")}</span><h3>Carry the context.</h3><p>Browse prior decisions with original sources. Useful memory stays close to the work.</p></article><article><span class="journey-icon">${icon("git")}</span><h3>Make the review count.</h3><p>Inspect the proposed change and its evidence together, then decide what comes next.</p></article></div></section><section class="research-block"><div><h2>Built in the open.<br>Grounded in research.</h2><p>Built on Pi, Splyce keeps every model role, memory and state local, with one policy boundary for tools. The runtime is not implemented yet; this demo explores its future interface.</p></div><div class="research-links"><a href="${link("MASTER-PLAN.md")}" target="_blank" rel="noopener"><span><strong>The master plan</strong><small>Architecture, contracts & acceptance gates</small></span>${icon("arrow")}</a><a href="${link("research/README.md")}" target="_blank" rel="noopener"><span><strong>The research library</strong><small>Sources behind the product direction</small></span>${icon("arrow")}</a><a href="${link("CONTRIBUTING.md")}" target="_blank" rel="noopener"><span><strong>Build it with us</strong><small>Questions, ideas & focused contributions</small></span>${icon("arrow")}</a></div></section><section class="closing"><div class="closing-copy"><h2>Keep the context.<br>Build what comes next.</h2><p>Your task, your local models, and the evidence behind the work. A clearer place to start the next change.</p><div class="closing-actions">${button("Open your workspace", "overview", "ink")}<a class="text-link" href="${link("MASTER-PLAN.md")}" target="_blank" rel="noopener">Explore the plan ${icon("arrow")}</a></div></div><div class="closing-side">${mark()}<p>Separate strands.<br>One coherent workflow.</p><span>Pi-based · Local-first · In development</span></div></section></main><footer class="site-footer"><div class="footer-identity">${brand()}<p>Practical tools.<br>Shared progress.</p><span>© 2026 OctoKon</span></div><div class="footer-group"><h3>Explore</h3><a href="#overview">Workspace</a><a href="#models">Local models</a><a href="#research">Research library</a></div><div class="footer-group"><h3>Build together</h3><a href="${REPO}" target="_blank" rel="noopener">GitHub ${icon("external")}</a><a href="${link("CONTRIBUTING.md")}" target="_blank" rel="noopener">Contribute</a><a href="${link("SECURITY.md")}" target="_blank" rel="noopener">Security</a></div><div class="footer-note"><span>Frontend preview</span><p>A working interface prototype.<br>Agent activity is simulated.</p><a href="${link("LICENSE")}" target="_blank" rel="noopener">AGPL-3.0-only ${icon("external")}</a></div></footer></div>`;
 }
 const navs = [
   ["terminal", "overview", "Build"],
-  ["play", "runs", "Runs"],
+  ["activity", "runs", "Runs"],
   ["memory", "memory", "Memory"],
   ["models", "models", "Models"],
 ];
-function shell(view, content) {
-  applyTheme();
-  return `<div class="workspace"><button class="drawer-backdrop" data-action="close-menu" aria-label="Close navigation" tabindex="-1"></button><aside class="sidebar" id="sidebar">${brand()}<div class="workspace-name"><span class="avatar">O</span><span>${esc(state.settings.workspace)}<small>Personal demo workspace</small></span></div><nav class="side-nav" aria-label="Workspace navigation">${navs.map(([i, r, t]) => `<button data-nav="${r}" class="${view === r || (r === "overview" && view === "new") ? "active" : ""}" ${view === r ? 'aria-current="page"' : ""}>${icon(i)}${t}${r === "runs" ? `<span class="count">${state.runs.length}</span>` : ""}</button>`).join("")}</nav><div class="sidebar-lower"><details class="advanced-nav" ${["permissions", "extensions", "settings", "research"].includes(view) ? "open" : ""}><summary>${icon("settings")} Workspace controls ${icon("down")}</summary><nav class="side-nav" aria-label="Workspace controls">${[
-    ["shield", "permissions", "Permissions"],
-    ["plug", "extensions", "Extensions"],
-    ["book", "research", "Research"],
-    ["settings", "settings", "Settings"],
+function settingsTabs(view) {
+  if (!["settings", "permissions", "extensions", "research"].includes(view))
+    return "";
+  return `<nav class="workspace-tabs" aria-label="Settings sections">${[
+    ["settings", "Appearance & data"],
+    ["permissions", "Permissions"],
+    ["extensions", "Extensions"],
+    ["research", "Research"],
   ]
     .map(
-      ([i, r, t]) =>
-        `<button data-nav="${r}" class="${view === r ? "active" : ""}">${icon(i)}${t}</button>`,
+      ([route, title]) =>
+        `<a href="#${route}" class="${view === route ? "active" : ""}" ${view === route ? 'aria-current="page"' : ""}>${title}</a>`,
     )
-    .join(
-      "",
-    )}</nav></details><a class="sidebar-home" href="#home">${icon("back")} About Splyce</a><div class="local-status"><span class="dot"></span> Saved on this device<small>Frontend prototype · no live agent</small></div></div></aside><div class="workspace-main"><header class="app-header"><div class="breadcrumb"><button class="icon-btn mobile-only" data-action="menu" aria-label="Toggle navigation" aria-expanded="false">${icon("menu")}</button><span>${view === "overview" || view === "new" ? "Build" : view === "run" ? "Run detail" : view[0].toUpperCase() + view.slice(1)}</span></div><div class="app-tools"><span class="tag outline">Interactive demo</span><button class="icon-btn" data-action="theme" aria-label="Cycle appearance: Light, Dark, System">${icon("sun")}</button><a class="icon-btn" href="${REPO}" target="_blank" rel="noopener" aria-label="Splyce on GitHub">${icon("github")}</a></div></header><main id="main" class="app-content" tabindex="-1">${content}<footer class="app-footer"><span>${storageOK ? "Your demo data stays in this browser." : "Storage unavailable. Changes last for this visit."}</span><a href="${link("MASTER-PLAN.md")}" target="_blank" rel="noopener">Project plan ${icon("external")}</a></footer></main></div></div>`;
+    .join("")}</nav>`;
+}
+function shell(view, content) {
+  applyTheme();
+  const settingsArea = [
+    "settings",
+    "permissions",
+    "extensions",
+    "research",
+  ].includes(view);
+  return `<div class="workspace"><button class="drawer-backdrop" data-action="close-menu" aria-label="Close navigation" tabindex="-1"></button><aside class="sidebar" id="sidebar">${brand()}<div class="workspace-name"><span class="avatar">O</span><span>${esc(state.settings.workspace)}<small>Local workspace</small></span></div><nav class="side-nav" aria-label="Workspace navigation">${navs.map(([i, r, t]) => `<button data-nav="${r}" class="${view === r || (r === "overview" && view === "new") ? "active" : ""}" ${view === r ? 'aria-current="page"' : ""}>${icon(i)}${t}${r === "runs" ? `<span class="count">${state.runs.length}</span>` : ""}</button>`).join("")}</nav><div class="sidebar-lower"><nav class="side-nav" aria-label="Workspace preferences"><button data-nav="settings" class="${settingsArea ? "active" : ""}">${icon("settings")}Settings</button></nav></div></aside><div class="workspace-main"><header class="app-header"><div class="breadcrumb"><button class="icon-btn mobile-only" data-action="menu" aria-label="Toggle navigation" aria-expanded="false">${icon("menu")}</button><span>${settingsArea ? "Workspace settings" : view === "overview" || view === "new" ? "Build" : view === "run" ? "Run detail" : view[0].toUpperCase() + view.slice(1)}</span></div><div class="app-tools"><span class="tag outline">Interactive demo</span><button class="icon-btn" data-action="theme" aria-label="Cycle appearance: Light, Dark, System">${icon("sun")}</button><a class="icon-btn" href="${REPO}" target="_blank" rel="noopener" aria-label="Splyce on GitHub">${icon("github")}</a></div></header><main id="main" class="app-content" tabindex="-1">${settingsTabs(view)}${content}<footer class="app-footer"><span>${storageOK ? "Demo data stays in this browser." : "Storage unavailable. Changes last for this visit."}</span><a href="${link("MASTER-PLAN.md")}" target="_blank" rel="noopener">Project plan ${icon("external")}</a></footer></main></div></div>`;
 }
 function heading(title, desc, action = "") {
   return `<div class="page-heading"><div><h1>${title}</h1><p>${desc}</p></div>${action}</div>`;
@@ -439,7 +460,7 @@ function modelsPage() {
     ]
       .map(
         ([k, t, d]) =>
-          `<div class="model-role"><span class="role-symbol">${icon(k === "generation" ? "code" : "memory")}</span><div><h3>${t}</h3><p>${d}</p></div><span class="tag success">Local</span></div>`,
+          `<div class="model-role"><span class="role-symbol">${icon(k === "generation" ? "code" : "memory")}</span><div><h3>${t}</h3><p>${d}</p>${state.models[k] ? `<span class="model-id">${esc(state.models[k])}</span>` : ""}</div><span class="tag success">Local</span></div>`,
       )
       .join(
         "",
@@ -581,8 +602,8 @@ function researchPage() {
 function themeOptions() {
   return `<fieldset class="theme-options"><legend>Appearance</legend>${[
     ["Light", "sun", "A bright workspace"],
-    ["Dark", "memory", "Comfortable in low light"],
-    ["System", "settings", "Follow this device"],
+    ["Dark", "moon", "Comfortable in low light"],
+    ["System", "monitor", "Follow this device"],
   ]
     .map(
       ([t, i, d]) =>
@@ -596,7 +617,7 @@ function settingsPage() {
       "Make it your workspace.",
       "Appearance, naming and local demo data.",
     ) +
-    `<form id="settings-form"><section class="panel"><div class="settings-row"><label for="workspace-name"><strong>Workspace name</strong><small>Shown in the sidebar.</small></label><input id="workspace-name" type="text" name="workspace" maxlength="50" required value="${esc(state.settings.workspace)}"></div><div class="theme-section">${themeOptions()}<p class="section-note">Appearance applies immediately and is saved on this device. System follows the operating system’s light or dark preference.</p></div></section><div class="settings-footer"><button class="btn primary">Save workspace name ${icon("check")}</button></div></form><section class="panel" style="margin-top:28px"><div class="settings-row"><span><strong>Export demo data</strong><small>Runs, model labels and saved preferences.</small></span><button class="btn secondary" data-action="export">${icon("download")} Export JSON</button></div><div class="settings-row"><span><strong>Restore original samples</strong><small>Reset the demo. You can undo this until you leave Settings.</small></span><button class="btn secondary" data-action="reset">Restore samples</button></div>${resetSnapshot ? '<div class="undo-row">Samples restored. <button class="text-button" data-action="undo-reset">Undo reset</button></div>' : ""}</section><p class="section-note">No server sync, telemetry, or hosted model calls. Avoid storing secrets in this prototype.</p>`
+    `<form id="settings-form"><section class="panel"><div class="settings-row"><label for="workspace-name"><strong>Workspace name</strong><small>Shown in the sidebar.</small></label><input id="workspace-name" type="text" name="workspace" maxlength="50" required value="${esc(state.settings.workspace)}"></div><div class="theme-section">${themeOptions()}<p class="section-note">Appearance applies immediately and is saved on this device. System follows the operating system’s light or dark preference.</p></div><label class="settings-row motion-setting"><span><strong>Reduce interface motion</strong><small>Keep transitions and hover movement still. Device accessibility preferences are always respected.</small></span><input type="checkbox" name="reduceMotion" ${state.settings.reduceMotion ? "checked" : ""}></label></section><div class="settings-footer"><button class="btn primary">Save workspace name ${icon("check")}</button></div></form><section class="panel" style="margin-top:28px"><div class="settings-row"><span><strong>Export demo data</strong><small>Runs, model labels and saved preferences.</small></span><button class="btn secondary" data-action="export">${icon("download")} Export JSON</button></div><div class="settings-row"><span><strong>Restore original samples</strong><small>Reset the demo. You can undo this until you leave Settings.</small></span><button class="btn secondary" data-action="reset">Restore samples</button></div>${resetSnapshot ? '<div class="undo-row">Samples restored. <button class="text-button" data-action="undo-reset">Undo reset</button></div>' : ""}</section><p class="section-note">No server sync, telemetry, or hosted model calls. Avoid storing secrets in this prototype.</p>`
   );
 }
 function detail() {
@@ -800,7 +821,10 @@ document.addEventListener("click", (e) => {
       (["Light", "Dark", "System"].indexOf(state.settings.theme) + 1) % 3
     ];
     saved("Appearance: " + state.settings.theme);
-    render();
+    applyTheme();
+    document.querySelectorAll('input[name="theme"]').forEach((input) => {
+      input.checked = input.value === state.settings.theme;
+    });
   }
   if (a === "export")
     download(
@@ -940,6 +964,11 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("change", (e) => {
   if (["run-status", "memory-type"].includes(e.target.id)) filter();
+  if (e.target.name === "reduceMotion") {
+    state.settings.reduceMotion = e.target.checked;
+    saved("Motion preference saved.");
+    applyTheme();
+  }
   if (
     e.target.name === "theme" &&
     ["Light", "Dark", "System"].includes(e.target.value)

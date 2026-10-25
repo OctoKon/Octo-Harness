@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">
+  <style>
+    .ring {
+      fill: #292923;
+    }
+    @media (prefers-color-scheme: dark) {
+      .ring {
+        fill: #f2f2ef;
+      }
+    }
+  </style>
+  <path
+    class="ring"
+    d="M24 4H14L4 14v12l10 10h12l10-10v-8h-8v5l-5 5h-6l-5-5v-6l5-5h8Z"
+  />
+  <path d="m28 3 10 10-10 10-6-6 4-4-4-4Z" fill="#b56842" />
+</svg>
