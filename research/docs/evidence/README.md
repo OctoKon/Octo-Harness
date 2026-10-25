@@ -23,29 +23,29 @@ Each JSON file is an array of source records. Required fields: `id`, `tool`, `ur
 
 The validator checks record shape, URL form, dates, claims, and local documentation links. It cannot establish that a paper's conclusion is true, that a vendor implemented its documentation, or that a configuration is safe. Qualification requires a pinned artifact and actual tests.
 
-| Additional chapter / ledger                                            | Coverage                                                                          |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [pi-sources.json](pi-sources.json)                                     | Pi/OMP foundation documentation and runtime metadata                              |
-| [pi-source-sources.json](pi-source-sources.json)                       | Pinned Pi implementation paths and source-observed semantics                      |
-| [lightweight-runtime-sources.json](lightweight-runtime-sources.json)   | Pinned README, manifest, license, provider and seam sources for seven comparators |
-| [lineage-sources.json](lineage-sources.json)                           | Additional major runtime families and license lineage                             |
-| [import-closure-sources.json](import-closure-sources.json)             | Selected-source follow-up for imported claims                                     |
-| [platform-sources.json](platform-sources.json)                         | Host security and release mechanisms                                              |
-| [workflow-engineering-sources.json](workflow-engineering-sources.json) | Agent evaluation and workflow engineering                                         |
-| [evidence-efficiency-sources.json](evidence-efficiency-sources.json)   | SCIP, TOON, contradictory notation research and SQLite durability                 |
-| [tool-execution-sources.json](tool-execution-sources.json)             | Filesystem, shell, process and remote execution                                   |
-| [computer-access-sources.json](computer-access-sources.json)           | Browser, desktop, device and connector implementations                            |
-| [competitive-sources.json](competitive-sources.json)                   | Direct competitor mechanism and limitation chains                                 |
-| [claude-product-sources.json](claude-product-sources.json)             | Official Claude and Cowork capabilities and boundaries                            |
-| [memory-review-sources.json](memory-review-sources.json)               | Pinned current memory implementations and counterevidence                         |
-| [document-multimodal-sources.json](document-multimodal-sources.json)   | Document, OCR, visual retrieval, audio and rendering tools                        |
-| [codex-product-sources.json](codex-product-sources.json)               | Official Codex/OpenAI capability, client and local-provider documentation         |
-| [efficiency-sources.json](efficiency-sources.json)                     | Recursive improvement, caching, decoding and host measurement                     |
-| [failure-mode-sources.json](failure-mode-sources.json)                 | Primary studies and engineering sources for agent limitations                     |
-| [decision-model-sources.json](decision-model-sources.json)             | Laya, D3, pinned implementations/licenses and counterevidence                     |
-| [forecasting-sources.json](forecasting-sources.json)                   | Timestral source/weight rights, implementation and alternative models             |
-| [desktop-stack-sources.json](desktop-stack-sources.json)               | Windows GUI stack, Tauri/Svelte/Vite/Node and desktop E2E provenance              |
-| [cloud-lifecycle-sources.json](cloud-lifecycle-sources.json)           | Provider profile, egress, cancellation and retention lifecycle sources            |
+| Additional chapter / ledger                                            | Coverage                                                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [pi-sources.json](pi-sources.json)                                     | Pi/OMP foundation documentation and runtime metadata                                 |
+| [pi-source-sources.json](pi-source-sources.json)                       | Pinned Pi implementation paths and source-observed semantics                         |
+| [lightweight-runtime-sources.json](lightweight-runtime-sources.json)   | Pinned README, manifest, license, provider and seam sources for seven comparators    |
+| [lineage-sources.json](lineage-sources.json)                           | Additional major runtime families and license lineage                                |
+| [import-closure-sources.json](import-closure-sources.json)             | Selected-source follow-up for imported claims                                        |
+| [platform-sources.json](platform-sources.json)                         | Host security and release mechanisms                                                 |
+| [workflow-engineering-sources.json](workflow-engineering-sources.json) | Agent evaluation, workflow engineering and constrained interaction/sequence coverage |
+| [evidence-efficiency-sources.json](evidence-efficiency-sources.json)   | SCIP, TOON, contradictory notation research and SQLite durability                    |
+| [tool-execution-sources.json](tool-execution-sources.json)             | Filesystem, shell, process and remote execution                                      |
+| [computer-access-sources.json](computer-access-sources.json)           | Browser, desktop, device and connector implementations                               |
+| [competitive-sources.json](competitive-sources.json)                   | Direct competitor mechanism and limitation chains                                    |
+| [claude-product-sources.json](claude-product-sources.json)             | Official Claude and Cowork capabilities and boundaries                               |
+| [memory-review-sources.json](memory-review-sources.json)               | Pinned current memory implementations and counterevidence                            |
+| [document-multimodal-sources.json](document-multimodal-sources.json)   | Document, OCR, visual retrieval, audio and rendering tools                           |
+| [codex-product-sources.json](codex-product-sources.json)               | Official Codex/OpenAI capability, client and local-provider documentation            |
+| [efficiency-sources.json](efficiency-sources.json)                     | Recursive improvement, caching, decoding and host measurement                        |
+| [failure-mode-sources.json](failure-mode-sources.json)                 | Primary studies and engineering sources for agent limitations                        |
+| [decision-model-sources.json](decision-model-sources.json)             | Laya, D3, pinned implementations/licenses and counterevidence                        |
+| [forecasting-sources.json](forecasting-sources.json)                   | Timestral source/weight rights, implementation and alternative models                |
+| [desktop-stack-sources.json](desktop-stack-sources.json)               | Windows GUI stack, Tauri/Svelte/Vite/Node and desktop E2E provenance                 |
+| [cloud-lifecycle-sources.json](cloud-lifecycle-sources.json)           | Provider profile, egress, cancellation and retention lifecycle sources               |
 
 [pi-package-sources.json](pi-package-sources.json) records PKG-01–PKG-10: pinned Pi package commands, source resolution, resource loading, settings persistence and reload lifecycle. The [package audit](../foundations/pi-package-installation.md) separates source findings from unrun installation/cleanup tests.
 

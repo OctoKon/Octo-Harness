@@ -1,15 +1,15 @@
 # Design proposals
 
-| Document                                      | Purpose                                                                         |
-| --------------------------------------------- | ------------------------------------------------------------------------------- |
-| [Architecture synthesis](synthesis.md)        | Foundation alternatives, one host, contracts, owners and acceptance experiments |
-| [Agent skills](agent-skills.md)               | Primary-source rationale for the small conditional workflow set                 |
-| [README references](readme-design.md)         | Public visual/editorial precedents and original Splyce presentation choices     |
-| [Root master plan](../../../MASTER-PLAN.md)   | Implementation sequence and release gates derived from the corpus               |
-| [Desktop application](desktop-application.md) | Windows GUI entrypoints, IPC, lifecycle and installed E2E contract              |
-| [Core fusion](core-fusion.md)                 | Pi-derived deep core, shared records and one-loop integration boundaries        |
-| [Delivery plan](team-delivery-plan.md)        | Nine-role task/dependency and domain-review handoff                             |
-| [Brutal gap audit](brutal-gap-audit.md)       | Closed specification repairs and prioritized open research/qualification gates  |
+| Document                                      | Purpose                                                                               |
+| --------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [Historical synthesis](synthesis.md)          | Historical alternatives; current build guidance is in core fusion and the master plan |
+| [Agent skills](agent-skills.md)               | Primary-source rationale for the small conditional workflow set                       |
+| [README references](readme-design.md)         | Public visual/editorial precedents and original Splyce presentation choices           |
+| [Root master plan](../../../MASTER-PLAN.md)   | Implementation sequence and release gates derived from the corpus                     |
+| [Desktop application](desktop-application.md) | Windows GUI entrypoints, IPC, lifecycle and installed E2E contract                    |
+| [Core fusion](core-fusion.md)                 | Pi-derived core, composition ownership, interaction coverage and contribution gates   |
+| [Delivery plan](team-delivery-plan.md)        | Nine-role task/dependency and domain-review handoff                                   |
+| [Brutal gap audit](brutal-gap-audit.md)       | Closed specification repairs and prioritized open research/qualification gates        |
 
 | Additional chapter / ledger                                       | Coverage                                                                                                     |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |

@@ -19,4 +19,6 @@ The evidence base for a Windows desktop Pi-derived coding-agent application: OSS
 
 The [runtime lineage review](docs/foundations/additional-runtimes-and-lineage.md#open-interpreter-current-rust-fork-and-legacy-identity) now separates current Rust Open Interpreter from its legacy Python lineage and evaluates its Workstation client as a source-level comparator; neither changes the selected engine or frontend stack.
 
+The [composition contract](docs/design/core-fusion.md#composition-acceptance) links donor mechanisms to one native authority, selected-configuration interaction/sequence coverage, retention and whole-task contribution trials. Components are not assumed to compose safely or profitably.
+
 Discovery remains open when a sweep finds another eligible candidate. See the dated [gap journal](docs/agents/gap-sweep-candidates.md); no global-exhaustiveness claim is made. Runtime, retrieval and inference qualification still require actual tests.

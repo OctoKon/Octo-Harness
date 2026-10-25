@@ -27,7 +27,7 @@ The active foundation is a [Pi-derived core](foundations/pi-foundation.md) insid
 | [Extended internals](capabilities/extended-internals.md)                     | Serena, RTK, OpenViking, provider gateways, durable work and optimizers                                        |
 | [Gap sweeps](agents/gap-sweep-candidates.md)                                 | Additional candidates, canonical corrections, actual queries and residual gaps                                 |
 | [Governance and control planes](governance/governance-and-control-planes.md) | Paperclip, governance, gateways and distinct Warden projects                                                   |
-| [Proposed synthesis](design/synthesis.md)                                    | How mechanisms map to contracts, owners, experiments, and phases                                               |
+| [Historical synthesis](design/synthesis.md)                                  | Superseded early alternatives; current native composition and task contracts govern builds                     |
 | [README design](design/readme-design.md)                                     | Public references and the original Splyce visual direction                                                     |
 | [Source ledgers](evidence/README.md)                                         | Machine-readable public-source provenance                                                                      |
 | [Repository baseline](governance/repository-baseline.md)                     | Free repository controls, CI scope, and paid-feature limitations                                               |

@@ -31,6 +31,6 @@ The [frontend research](research/docs/frontend/README.md) develops an original C
 
 This repository contains public-source research, a Windows desktop implementation plan, and documentation tooling. **The GUI and runtime are not built yet.** Performance and support claims remain hypotheses until measured.
 
-Start with the [research index](research/README.md) for comparisons and sources, or the [master plan](MASTER-PLAN.md) for the build sequence and acceptance gates. Contributions should connect a mechanism to a source and a testable outcome.
+Start with the [research index](research/README.md) for comparisons and sources, or the [master plan](MASTER-PLAN.md) for the build sequence and acceptance gates. Contributions should connect a mechanism to a source and a testable outcome. The [composition contract](research/docs/design/core-fusion.md#composition-acceptance) requires the selected mechanisms to work together, with shared ownership and evidence for recommended combinations.
 
 [Contribution guide](CONTRIBUTING.md) · [Security reporting](SECURITY.md) · [AGPL-3.0-only](LICENSE) · [Discussions](https://github.com/OctoKon/Splyce/discussions)
