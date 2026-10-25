@@ -22,6 +22,6 @@
 
 [Desktop stack sources](../evidence/desktop-stack-sources.json) record DESK-01–DESK-23 for the Windows GUI decision. The stack is a locked plan, not an installed application or a runtime qualification.
 
-[Codex engine assessment](codex-engine-assessment.md) verifies the OSS Rust engine and distinguishes default stdio from experimental TCP WebSocket, provider-protocol limits and the still-unrun foundation comparison. [CFND-01–07](../evidence/codex-foundation-sources.json) bind the public primary sources.
+[Codex engine assessment](codex-engine-assessment.md) verifies the OSS Rust engine and distinguishes default stdio, the guide's command/WebSocket support warning, API-field stability, provider-protocol limits and the still-unrun foundation comparison. [CFND-01–09](../evidence/codex-foundation-sources.json) bind the public primary sources.
 
 [Research index](../../README.md) · [Complete document map](../README.md) · [Proposed design](../design/synthesis.md)

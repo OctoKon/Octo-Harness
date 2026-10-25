@@ -42,10 +42,10 @@
     "title": "Codex App Server",
     "accessed": "2026-10-26",
     "claims": [
-      "Thread/turn/approval/event protocol with default stdio; experimental methods and the experimental unsupported TCP WebSocket transport are separate from the stable API surface."
+      "The guide documents default stdio, separate experimental-field opt-in, and an experimental/production-support warning for the app-server command and WebSocket transport."
     ],
     "verification": "primary-documentation",
-    "notes": "Official guide re-fetched 2026-10-26; corrects the earlier overbroad command/transport maturity wording. No Splyce runtime or production compatibility was exercised."
+    "notes": "Full guide re-fetched 2026-10-26, including the remote Code Mode host warning and experimental API section. Stable-field wording does not prove production support for stdio or the command. No Splyce runtime qualification."
   },
   {
     "id": "CP-05",

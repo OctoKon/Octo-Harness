@@ -372,10 +372,11 @@
     "accessed": "2026-10-26",
     "claims": [
       "Documents permissions associated with windows/webviews and merged permissions across capabilities.",
-      "Remote command access is configurable rather than intrinsically impossible."
+      "Remote command access is configurable rather than intrinsically impossible.",
+      "Application commands registered with invoke_handler are allowed across application windows/webviews by default unless enrolled with tauri_build::AppManifest::commands and explicit command permissions."
     ],
     "verification": "primary-source-fetched",
-    "notes": "Official moving docs fetched. Capabilities do not sandbox trusted native/engine code or replace command validation, safe rendering and explicit preview isolation."
+    "notes": "Official moving docs fetched. Application-command enrollment plus explicit permissions and native caller/scope/argument validation are required. Capabilities do not sandbox trusted native/engine code; installed negative qualification remains n=0."
   },
   {
     "id": "FUI-33",
@@ -401,5 +402,56 @@
     ],
     "verification": "primary-source-fetched",
     "notes": "Direct fetch observed redirect on access date. Broad destination is not used to assert absent app-specific navigation detail; current narrow sources FUI-02/03 used instead."
+  },
+  {
+    "id": "FUI-35",
+    "tool": "WHATWG textarea text normalization",
+    "url": "https://html.spec.whatwg.org/multipage/form-elements.html#the-textarea-element",
+    "title": "HTML Standard - The textarea element",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The textarea API value normalizes line breaks to U+000A LINE FEED.",
+      "The value is Unicode text rather than an unchanged clipboard or source-file byte stream."
+    ],
+    "verification": "primary-standard-fetched",
+    "notes": "Use an explicit LF-normalized Unicode text oracle; independently hash byte-preserved attachments. No Windows clipboard/IME execution was performed."
+  },
+  {
+    "id": "FUI-36",
+    "tool": "Melt next pinned package identity",
+    "url": "https://github.com/melt-ui/next-gen/blob/3450a91f47c1c7392c5c9385c12b3d4897e85ffe/packages/melt/package.json",
+    "title": "Melt next package manifest at immutable revision",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Manifest identifies package melt 0.44.0, MIT, and Svelte peer ^5.30.1.",
+      "The next route uses melt-ui/next-gen, distinct from the historical @melt-ui/svelte repository."
+    ],
+    "verification": "pinned-primary-source-fetched",
+    "notes": "Source observation only, not a selected installation pin, transitive closure clearance, API compatibility result or installed Windows qualification."
+  },
+  {
+    "id": "FUI-37",
+    "tool": "Melt next pinned license",
+    "url": "https://github.com/melt-ui/next-gen/blob/3450a91f47c1c7392c5c9385c12b3d4897e85ffe/LICENSE",
+    "title": "Melt next LICENSE at immutable revision",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Fetched LICENSE identifies MIT terms for the inspected next-gen source."
+    ],
+    "verification": "pinned-primary-source-fetched",
+    "notes": "Preserve applicable notices; package dependencies and local modifications require their own inventory. No blanket legal clearance is established."
+  },
+  {
+    "id": "FUI-38",
+    "tool": "Bits UI pinned compatibility floor",
+    "url": "https://github.com/huntabyte/bits-ui/blob/33186c8cc7bb3e0fb8b665063fa29663b606c416/packages/bits-ui/package.json",
+    "title": "Bits UI package manifest at immutable revision",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Manifest identifies bits-ui 2.20.2, MIT, and Svelte peer ^5.33.0.",
+      "Its manifest includes additional dependencies and peer requirements; Svelte 5 alone is not an exact compatible dependency closure."
+    ],
+    "verification": "pinned-primary-source-fetched",
+    "notes": "Source observation only; TD-11 must lock the complete compatible closure. No installed package, bundle-size, Narrator, portal, IME or WebView2 result is claimed."
   }
 ]

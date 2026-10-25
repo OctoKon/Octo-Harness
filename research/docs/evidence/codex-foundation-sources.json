@@ -30,11 +30,11 @@
     "title": "Codex App Server",
     "accessed": "2026-10-26",
     "claims": [
-      "The guide documents default stdio JSONL, a separately experimental unsupported TCP WebSocket transport, and an experimentalApi opt-in separate from the stable surface.",
-      "Version-specific TypeScript and JSON Schema generation and thread/turn/item lifecycle methods are documented."
+      "The guide documents default stdio JSONL, experimental API opt-in and stable-field terminology; it also retains an app-server command/WebSocket experimental production-support warning under remote Code Mode host.",
+      "Version-specific TypeScript/JSON Schema generation and thread/turn/item methods are documented."
     ],
     "verification": "primary-documentation",
-    "notes": "Selected official guide fetched 2026-10-26. No server was started, binary packaged, provider called or protocol qualified for Splyce."
+    "notes": "Full official page re-fetched 2026-10-26. Section context and field maturity do not establish a general production-support guarantee. Pin and qualify each used command, transport and API; no Splyce server or provider was exercised."
   },
   {
     "id": "CFND-04",
@@ -84,5 +84,30 @@
     ],
     "verification": "pinned-source-read",
     "notes": "Manifest identity does not measure linked or resident payload. Audit actual build features, native helpers and optional closure before any lightweight claim."
+  },
+  {
+    "id": "CFND-08",
+    "tool": "Codex Rust embedding surface",
+    "url": "https://github.com/openai/codex/blob/970111f6cb62cc02fe36a82ea7d71b37a2889c97/codex-rs/core/src/lib.rs",
+    "title": "Pinned codex-core exports",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The inspected core library exports ThreadManager, thread startup types and configuration modules."
+    ],
+    "verification": "pinned-source-read",
+    "notes": "Public Rust exports make an owned-source embedding experiment possible to investigate, not a promised stable third-party SDK or smaller measured binary. Workspace coupling/build/runtime lifetime remain unqualified."
+  },
+  {
+    "id": "CFND-09",
+    "tool": "Codex automation versus rich-client integration",
+    "url": "https://learn.chatgpt.com/docs/codex-sdk",
+    "title": "Codex SDK integration guidance",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Official guidance distinguishes SDK automation from app-server custom clients handling authentication, history, approvals and streamed events.",
+      "The TypeScript SDK requires Node.js and the Python SDK uses app-server with a pinned runtime dependency."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Fetched current official guide. SDK availability does not imply the same UI API, footprint, support promise or dependency-free Rust embedding; no SDK was installed or called."
   }
 ]
