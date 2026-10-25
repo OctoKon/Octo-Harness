@@ -1,8 +1,10 @@
 # Cross-session memory: a narrow research frontier
 
-**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+**Active product scope:** Splyce keeps agent execution, memory, and stored state local. Each inference role may use a local runtime or an explicitly authorized cloud API profile with recorded endpoint, model/revision, and egress scope; it never silently switches provider or falls back. Hosted memory and executors below remain comparative research, not product dependencies. [Current master plan](../../../MASTER-PLAN.md).
 
 **Research date:** 2026-10-25. **Method:** selected primary documentation, upstream repositories, and papers; no candidate was installed, connected to a real memory store, or benchmarked locally. Therefore every proposed design and local-gain statement is **n=0**. This is a bounded frontier, not an exhaustive market survey and not a claim that any system is "best."
+
+The later [pinned memory mechanism review](memory-mechanism-review.md) follows selected implementations beyond this overview. Its source-specific findings and counterevidence govern any conflicting mechanism assumptions; neither chapter is runtime qualification.
 
 ## What makes claude-mem unusually token-efficient
 
@@ -44,7 +46,7 @@ Its recovery and scope model is useful but should not be over-read. Project filt
 
 Scopes should be hierarchical—organization (if any), workspace/project, task, session, and user—with default retrieval confined to the active workspace and task. Cross-workspace recall needs an explicit grant and a returned provenance marker. The stable prompt prefix should change slowly to maximize provider prompt-cache reuse; volatile retrieved evidence belongs after it. “Neural” or “hippocampal” graph ideas become testable typed retrieval alternatives, never a claim of biological memory.
 
-## One owner, fully local model roles
+## One owner, explicit model profiles
 
 The unified CLI/app should own the receipt log, access policy, lifecycle, and retrieval experiment registry. Providers are replaceable role adapters, never nested autonomous memory stacks. A role contract must persist: `role`, provider/endpoint, immutable model revision, tokenizer or documented tokenization behavior, context/input limit, batch limit, request/response schema, usage fields, vector dimension, distance metric, normalization state, query/document instruction or task type, and failure/retry policy. Every derived vector records the exact embedding contract and source receipt hash. A changed embedding model, revision, dimension, normalization, tokenizer, or query/document instruction creates a new index generation and forces reindexing before mixed comparisons; it must not be silently mixed with old vectors.
 
@@ -55,7 +57,7 @@ The unified CLI/app should own the receipt log, access policy, lifecycle, and re
 | Reranker   | `rerank(query, candidates)` with model revision, max candidates, per-item/context limits, ordering, score semantics and usage | [Qwen3 Reranker](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B), [BAAI BGE reranker](https://huggingface.co/BAAI/bge-reranker-v2-m3), [FlagEmbedding](https://github.com/FlagOpen/FlagEmbedding), [Jina Rerank](https://docs.jina.ai/), [Cohere Rerank](https://docs.cohere.com/docs/rerank)    | A reranker is an optional second-stage capability. Do not represent it as a completion endpoint or fabricate generation/tool-call support. |
 | Extractor  | structured extraction endpoint/model revision, JSON schema, prompt template, evidence IDs, confidence and cost                | qualified local generation role under a strict schema                                                                                                                                                                                                                                             | It may propose observations/entities/edges; the owner validates scope and provenance before storage.                                       |
 
-The active product has one locality rule: generation, extraction, embeddings, reranking, raw artifacts and derived stores remain local. Cloud and mixed modes are excluded. A failed/missing local role cannot select a hosted fallback. Secrets stay outside receipts; local deployment still needs scope checks, tombstones, exports and recovery tests. Provider APIs below are comparison material; only qualified local OSS implementations can be adopted.
+Raw artifacts, derived stores, and memory lifecycle remain local. Generation, extraction, embeddings, and reranking each use a recorded local or explicitly authorized cloud profile with least egress needed for that operation. A failed/missing role cannot select another provider as fallback. Secrets stay outside receipts; every profile needs scope checks, tombstones, exports, recovery tests, and actual capability evidence. Provider APIs below are sources, not qualified runtime support.
 
 Provider facts illustrate why the contract must be explicit. Nomic exposes task type, output dimensionality, long-text handling, and local/remote/dynamic inference modes. Jina exposes separate embeddings and rerank endpoints, optional normalized vectors, task selection, and dimensionality where supported. Gemini documents embedding dimensions, task types, token limits, usage metadata, and an incompatible embedding-space change between `gemini-embedding-001` and `gemini-embedding-2`; that is a concrete reindex trigger. Cohere documents reranking as a distinct endpoint and limits/constraints for candidate ranking. Model cards and APIs can change, so these are discovery candidates, not pinned defaults.
 

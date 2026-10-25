@@ -1,0 +1,157 @@
+[
+  {
+    "id": "PAPI-01",
+    "tool": "OpenAI Responses streaming documentation",
+    "url": "https://developers.openai.com/api/docs/guides/streaming-responses",
+    "title": "Streaming API responses",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Responses streaming emits typed lifecycle, item, text, function-argument and error events.",
+      "Chat Completions streams delta structures rather than the same Responses event contract."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official OpenAI documentation fetched directly; selected lifecycle details verified. No API call or compatibility run."
+  },
+  {
+    "id": "PAPI-02",
+    "tool": "OpenAI function-calling documentation",
+    "url": "https://developers.openai.com/api/docs/guides/function-calling",
+    "title": "Function calling and streamed argument accumulation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Streaming function calls require reconstruction of argument fragments with their call identities.",
+      "Chat Completions and Responses expose different function-call event/object structures."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official OpenAI page fetched and selected streaming sections inspected; proposed Splyce schema/admission checks remain unimplemented."
+  },
+  {
+    "id": "PAPI-03",
+    "tool": "Anthropic Messages documentation",
+    "url": "https://platform.claude.com/docs/en/build-with-claude/streaming",
+    "title": "Streaming Messages content blocks and usage",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Messages uses indexed content-block lifecycle and partial JSON tool-input deltas.",
+      "Usage in message_delta is cumulative; stream errors and ping events can appear before final message_stop."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official page fetched, input_json_delta and cumulative usage sections verified. No Anthropic endpoint called."
+  },
+  {
+    "id": "PAPI-04",
+    "tool": "Google Gemini function-calling documentation",
+    "url": "https://ai.google.dev/gemini-api/docs/function-calling",
+    "title": "Gemini function calling and current API examples",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Function calling connects declared functions with structured arguments and returned results.",
+      "Current documentation includes Interactions examples; this does not establish Interactions support in pinned Pi generateContentStream."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official page fetched; current API example differs from pinned Pi implementation and is explicitly separated in the chapter."
+  },
+  {
+    "id": "PAPI-05",
+    "tool": "AWS Bedrock API reference",
+    "url": "https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html",
+    "title": "ConverseStream request and response contract",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Streaming availability is model-specific and ConverseStream returns structured events including messageStop and metadata.",
+      "Stream errors include throttling, model-stream and service errors, not merely HTTP status failures."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official AWS reference fetched and metadata/error sections inspected. AWS event-stream handling is not inferred from an SSE parser."
+  },
+  {
+    "id": "PAPI-06",
+    "tool": "Google Cloud model tools documentation",
+    "url": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/tools/function-calling",
+    "title": "Function calls and ordered function response parts",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Cloud function-calling examples preserve model function calls and corresponding functionResponse parts in conversation history.",
+      "Parallel function results remain individually represented rather than collapsed into unrelated text."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Requested Vertex URL redirected to Gemini Enterprise Agent Platform naming. Canonical destination fetched; pinned Pi Vertex identity/auth remains separately sourced."
+  },
+  {
+    "id": "PAPI-07",
+    "tool": "Ollama native API documentation",
+    "url": "https://docs.ollama.com/api/streaming",
+    "title": "Native streaming uses NDJSON",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Native endpoints such as api/generate can stream application/x-ndjson records with terminal done state."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official page fetched. Candidate native parser only; no Pi native Ollama adapter is invented or claimed qualified."
+  },
+  {
+    "id": "PAPI-08",
+    "tool": "Microsoft Azure Responses documentation",
+    "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses",
+    "title": "Azure Responses deployments and authentication",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Azure examples use a resource endpoint and deployment name with API-key or Microsoft Entra authentication.",
+      "Model/deployment and region availability remain separate configuration constraints."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Original ai-foundry URL redirected to foundry. Public body inspected despite an authorization banner; no restricted account content accessed and no deployment called."
+  },
+  {
+    "id": "PAPI-09",
+    "tool": "Google Gemini thinking documentation",
+    "url": "https://ai.google.dev/gemini-api/docs/thinking",
+    "title": "Thinking metadata and signatures across API versions",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Current guide distinguishes generateContent signatures attached as part metadata from Interactions dedicated thought steps.",
+      "Opaque reasoning-state metadata is not interchangeable with ordinary user-visible text."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Old thought-signatures page explicitly moved to this guide; followed its official link. Preserve API-version distinction rather than assume adapter support."
+  },
+  {
+    "id": "PAPI-10",
+    "tool": "Ollama embedding API documentation",
+    "url": "https://docs.ollama.com/api/embed",
+    "title": "Embedding output and truncation controls",
+    "accessed": "2026-10-25",
+    "claims": [
+      "api/embed returns vector arrays and processed-input counts.",
+      "truncate defaults true; false returns an error for input beyond context limits; dimensions is separately configurable."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official endpoint reference fetched. Shape/index checks are proposed; no embedding model was installed or queried."
+  },
+  {
+    "id": "PAPI-11",
+    "tool": "Hugging Face TEI documentation",
+    "url": "https://huggingface.co/docs/text-embeddings-inference/quick_tour",
+    "title": "Embedding and rerank service operations",
+    "accessed": "2026-10-25",
+    "claims": [
+      "TEI exposes embed and rerank endpoints for appropriate loaded models.",
+      "Rerank takes a query and candidate texts; service installation is distinct from chat compatibility."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official quick tour fetched and rerank/batching sections inspected. No container, service or model downloaded or started."
+  },
+  {
+    "id": "PAPI-12",
+    "tool": "OpenAI WebSocket documentation",
+    "url": "https://developers.openai.com/api/docs/guides/websocket-mode",
+    "title": "Responses WebSocket continuation and connection state",
+    "accessed": "2026-10-25",
+    "claims": [
+      "WebSocket mode is a distinct Responses transport with continuation identity.",
+      "Connection-local continuation state can be unavailable; retry/reconstruction must not be assumed equivalent to replaying a local effect."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official OpenAI page fetched; continuation and previous_response_not_found discussion inspected. Optional transport qualification only, not a claim that every Pi Responses endpoint supports WebSocket."
+  }
+]

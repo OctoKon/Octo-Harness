@@ -1,0 +1,98 @@
+[
+  {
+    "id": "PF-01",
+    "tool": "Harness2 paper",
+    "url": "https://arxiv.org/html/2610.14224v1",
+    "title": "Harness2 paper v1: recursive harness improvement",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Fixed-weight harness improvement, editable surfaces and sequential/parallel exploration motivate separate held-out evaluation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Author method/results, not Splyce replication; improvement and execution budgets must be accounted separately."
+  },
+  {
+    "id": "PF-02",
+    "tool": "Harness2 recursion",
+    "url": "https://github.com/google-research/harness2/blob/1cfe254e8d25b15f37048c3730134686abe60335/harness2/core/recursion.py",
+    "title": "Pinned Harness2 recursion implementation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected source header describes 4*k rollouts and 3*k improvement stages, not token limits; STAGE_ATTEMPTS=2 and stage USD/attempt/cache-status/error fields are present."
+    ],
+    "verification": "primary-source-code",
+    "notes": "Revision-specific code observation; not a universal bound or measured local-resource cost."
+  },
+  {
+    "id": "PF-03",
+    "tool": "DeepSeek Harness architecture",
+    "url": "https://github.com/deepseek-ai/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/docs/architecture.md",
+    "title": "Pinned dsh architecture",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Separates session facts/live events, freezes model history for streaming, describes tool pre/execute/post phases and disposal ownership."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Developer-preview design documentation; no Splyce lifecycle, overhead or crash-recovery qualification."
+  },
+  {
+    "id": "PF-04",
+    "tool": "vLLM prefix cache",
+    "url": "https://docs.vllm.ai/en/latest/features/automatic_prefix_caching/",
+    "title": "Automatic Prefix Caching",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Reuses shared-prefix prefill computation; does not accelerate decoding of new tokens."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving latest documentation; pin runtime/model and qualify cache lifecycle before adoption."
+  },
+  {
+    "id": "PF-05",
+    "tool": "SGLang HiCache",
+    "url": "https://www.sglang.io/blog/hicache",
+    "title": "SGLang HiCache hierarchical caching",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Hierarchical cache restore trades transfer/storage work against recomputation; published results depend on the tested configuration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Publisher engineering account and benchmarks, not independent reproduction or local-host savings."
+  },
+  {
+    "id": "PF-06",
+    "tool": "SGLang unified radix cache",
+    "url": "https://www.sglang.io/blog/unified-radix-cache",
+    "title": "SGLang unified radix cache",
+    "accessed": "2026-10-25",
+    "claims": [
+      "FULL, sliding-window and Mamba state have distinct reuse/state-boundary requirements."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No universal byte-slicing guarantee or scope-invalidation API inferred; selected engine/model must be qualified."
+  },
+  {
+    "id": "PF-07",
+    "tool": "Speculative decoding",
+    "url": "https://arxiv.org/abs/2211.17192",
+    "title": "Fast Inference from Transformers via Speculative Decoding",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Draft generation with target verification preserves the target distribution under the algorithm's assumptions; speed depends on the workload and draft/target relation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Paper claim, not seeded-output equality across implementations, arbitrary draft skipping, or measured Splyce quality/speed."
+  },
+  {
+    "id": "PF-08",
+    "tool": "Node performance hooks",
+    "url": "https://nodejs.org/docs/latest-v24.x/api/perf_hooks.html",
+    "title": "Node.js v24 performance measurement APIs",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Provides host performance timing and event-loop instrumentation useful for attributing local overhead."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving v24 documentation; host instrumentation alone cannot measure task correctness, accelerator energy or end-to-end model performance."
+  }
+]

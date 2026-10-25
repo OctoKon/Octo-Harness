@@ -1,0 +1,105 @@
+[
+  {
+    "id": "FM-01",
+    "tool": "METR task-completion time horizon paper",
+    "url": "https://arxiv.org/abs/2503.14499",
+    "title": "Measuring AI Ability to Complete Long Tasks",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Defines 50%-task-completion time horizon using skilled-human task duration and evaluated task-suite success rates.",
+      "Discusses external-validity limits; horizon is not agent wall-clock duration or a universal real-world automation claim."
+    ],
+    "verification": "primary-paper",
+    "notes": "Method/result source. Its task, model and harness outcomes do not measure a local Pi/Splyce deployment."
+  },
+  {
+    "id": "FM-02",
+    "tool": "Long-context position study",
+    "url": "https://aclanthology.org/2024.tacl-1.9.pdf",
+    "title": "Lost in the Middle: How Language Models Use Long Contexts",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Varies relevant-information position in multi-document question answering and key-value retrieval.",
+      "Reports position-sensitive long-context use in evaluated models."
+    ],
+    "verification": "primary-paper",
+    "notes": "Controlled retrieval/QA evidence, not a transfer claim for every model, codebase, summary, or retrieval architecture."
+  },
+  {
+    "id": "FM-03",
+    "tool": "MAST multi-agent failure study",
+    "url": "https://arxiv.org/abs/2503.13657",
+    "title": "Why Do Multi-Agent LLM Systems Fail?",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Studies 1,642 annotated multi-agent execution traces.",
+      "Organizes observed failures into specification/system design, inter-agent misalignment, and task verification/termination categories."
+    ],
+    "verification": "primary-paper",
+    "notes": "Trace taxonomy; it does not establish that multi-agent designs always underperform or predict Pi behavior."
+  },
+  {
+    "id": "FM-04",
+    "tool": "SWE-agent ACI paper",
+    "url": "https://arxiv.org/abs/2405.15793",
+    "title": "SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Evaluates a purpose-built agent-computer interface for repository navigation, editing and command use.",
+      "Attributes evaluated software-engineering performance in part to interface design."
+    ],
+    "verification": "primary-paper",
+    "notes": "Benchmark/harness evidence, not a claim that the interface transfers to Pi or acts as a security boundary."
+  },
+  {
+    "id": "FM-05",
+    "tool": "Agentless paper and source",
+    "url": "https://arxiv.org/abs/2407.01489",
+    "title": "Agentless: Demystifying LLM-based Software Engineering Agents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Evaluates a localization, repair and patch-validation pipeline without model-directed tool loops.",
+      "Documents problematic SWE-bench Lite instances and introduces a filtered comparison variant."
+    ],
+    "verification": "primary-paper",
+    "notes": "Benchmark-specific baseline; not evidence that a static pipeline replaces exploratory or user-specific agent work. Source repository is MIT but any code reuse requires revision and dependency pinning."
+  },
+  {
+    "id": "FM-06",
+    "tool": "OpenAI evaluation guidance",
+    "url": "https://openai.com/index/trustworthy-third-party-evaluations-foundations/",
+    "title": "A shared playbook for trustworthy third party evaluations",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Identifies harness, scorer, tool/browsing contamination, broken-task and shortcut hazards in evaluations.",
+      "Recommends making checks for these hazards visible in evaluation reports."
+    ],
+    "verification": "official-engineering-guidance",
+    "notes": "Guidance is not a demonstrated Splyce verifier or a proof of semantic correctness for arbitrary repositories."
+  },
+  {
+    "id": "FM-07",
+    "tool": "OpenAI harness engineering",
+    "url": "https://openai.com/index/harness-engineering/",
+    "title": "Harness engineering",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Describes repository knowledge and executable constraints as coding-agent engineering mechanisms."
+    ],
+    "verification": "official-engineering-guidance",
+    "notes": "Engineering account, not controlled evidence that a particular instruction, index, or lifecycle design improves every task."
+  },
+  {
+    "id": "FM-08",
+    "tool": "Anthropic agent evaluation and long-running harness guidance",
+    "url": "https://www.anthropic.com/research/demystifying-evals-for-ai-agents",
+    "title": "Agent evaluations",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Distinguishes isolated trials, graders and final-environment outcomes.",
+      "Supports making task quality observable; paired long-running-harness guidance separates generation and evaluation responsibilities."
+    ],
+    "verification": "official-engineering-guidance",
+    "notes": "See also https://www.anthropic.com/research/harness-design-long-running-apps. Neither source demonstrates a Splyce supervisor or cancellation mechanism."
+  }
+]

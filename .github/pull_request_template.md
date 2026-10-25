@@ -1,7 +1,5 @@
-## Change
-
-<!-- What changed and why? -->
-
-## Validation
-
-<!-- Commands run, or why none were needed. -->
+- **Task/change:** <!-- Task IDs; concrete behavior and why. Link the contract/research. -->
+- **Integration:** <!-- Affected paths/callers; compatibility/migration if relevant. -->
+- **Validation:** <!-- Exact commands + observed results; applicable E2E must pass before opening. Link evidence; N/A needs a scope-based reason. -->
+- **Review/evidence:** <!-- UI/UX: @MdSiddiqx + rendered/keyboard/error-state evidence. Backend: @Itachi-1824. Mixed: both; no self-approval. -->
+- **Limits:** <!-- Material risk or remaining limitation; no failed/unrun applicable E2E. -->

@@ -146,7 +146,7 @@ def check_markdown(path: Path, root: Path = REPO_ROOT) -> list[str]:
     return errors
 
 
-def check_evidence(path: Path, root: Path = REPO_ROOT) -> list[str]:
+def check_evidence(path: Path, root: Path = REPO_ROOT, seen_ids: dict[str, str] | None = None) -> list[str]:
     source = display_path(path, root)
     try:
         entries = json.loads(path.read_text(encoding="utf-8"))
@@ -156,6 +156,7 @@ def check_evidence(path: Path, root: Path = REPO_ROOT) -> list[str]:
         return [f"{source}: evidence must be a JSON array"]
 
     errors: list[str] = []
+    seen_ids = {} if seen_ids is None else seen_ids
     for index, entry in enumerate(entries):
         prefix = f"{source}[{index}]"
         if not isinstance(entry, dict):
@@ -164,6 +165,15 @@ def check_evidence(path: Path, root: Path = REPO_ROOT) -> list[str]:
         missing = REQUIRED_EVIDENCE_FIELDS - entry.keys()
         if missing:
             errors.append(f"{prefix}: missing fields: {', '.join(sorted(missing))}")
+        evidence_id = entry.get("id")
+        if not isinstance(evidence_id, str) or not evidence_id.strip():
+            errors.append(f"{prefix}: id must be a non-empty string")
+        elif evidence_id != evidence_id.strip():
+            errors.append(f"{prefix}: id must not contain surrounding whitespace")
+        elif evidence_id in seen_ids:
+            errors.append(f"{prefix}: duplicate evidence id {evidence_id!r}; first declared at {seen_ids[evidence_id]}")
+        else:
+            seen_ids[evidence_id] = prefix
         claims = entry.get("claims")
         if not isinstance(claims, list) or not claims or not all(isinstance(claim, str) and claim.strip() for claim in claims):
             errors.append(f"{prefix}: claims must be a non-empty array of strings")
@@ -187,7 +197,8 @@ def main(root: Path = REPO_ROOT) -> int:
     evidence_files = {path.resolve() for path in (root / "research/docs/evidence").glob("*.json")}
     evidence_files.update(path.resolve() for path in (root / "docs/research/evidence").glob("*.json"))
     errors = [error for path in sorted(markdown_files) for error in check_markdown(path, root)]
-    errors.extend(error for path in sorted(evidence_files) for error in check_evidence(path, root))
+    seen_ids: dict[str, str] = {}
+    errors.extend(error for path in sorted(evidence_files) for error in check_evidence(path, root, seen_ids))
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

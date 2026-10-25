@@ -1,0 +1,218 @@
+[
+  {
+    "id": "LR-01",
+    "tool": "ZeroClaw README",
+    "url": "https://github.com/zeroclaw-labs/zeroclaw/blob/5d4b18d335780af8bf15979b2f45e541f91c5eb9/README.md",
+    "title": "ZeroClaw README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ZeroClaw describes a single Rust-binary agent runtime with tools, channels, local Ollama, and configurable providers."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Source claim only; no local install, binary-size, RSS, offline, or policy test."
+  },
+  {
+    "id": "LR-02",
+    "tool": "ZeroClaw manifest",
+    "url": "https://github.com/zeroclaw-labs/zeroclaw/blob/5d4b18d335780af8bf15979b2f45e541f91c5eb9/Cargo.toml",
+    "title": "ZeroClaw Cargo workspace manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned workspace declares Rust 1.96, version 0.8.7, MIT OR Apache-2.0, and numerous runtime/provider/memory/channel/tool crates."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Workspace scale counters a simple single-small-binary inference."
+  },
+  {
+    "id": "LR-03",
+    "tool": "IronClaw README",
+    "url": "https://github.com/IronSecCo/ironclaw/blob/843b0e37ca49a31c36cb6af83bd912bd12ca2f39/README.md",
+    "title": "IronClaw README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "IronClaw describes self-hosted sandboxed agents with a network-disabled sandbox and host model proxy."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Project is labelled alpha; source claims require identical local proof."
+  },
+  {
+    "id": "LR-04",
+    "tool": "IronClaw license",
+    "url": "https://github.com/IronSecCo/ironclaw/blob/843b0e37ca49a31c36cb6af83bd912bd12ca2f39/LICENSING.md",
+    "title": "IronClaw licensing",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned README identifies AGPLv3 plus commercial licensing."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "License suitability needs legal review before any reuse."
+  },
+  {
+    "id": "LR-05",
+    "tool": "PicoClaw README",
+    "url": "https://github.com/sipeed/picoclaw/blob/bbf6893ca7afad27f1d00a0f5a45982a549c6ed6/README.md",
+    "title": "PicoClaw README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "PicoClaw is a Go personal assistant and labels itself early rapid development; its advertised RAM figures are project claims."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Advertised resource figures exclude a qualified Splyce workload, local model server, assets, and OS baseline."
+  },
+  {
+    "id": "LR-06",
+    "tool": "PicoClaw module manifest",
+    "url": "https://github.com/sipeed/picoclaw/blob/bbf6893ca7afad27f1d00a0f5a45982a549c6ed6/go.mod",
+    "title": "PicoClaw Go module manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned module requires Go 1.25.13 and includes PTY, MCP, SQLite, cloud-provider, channel, and OAuth dependencies."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Dependency list is a source observation, not an installed-size or egress measurement."
+  },
+  {
+    "id": "LR-07",
+    "tool": "NanoClaw README",
+    "url": "https://github.com/nanocoai/nanoclaw/blob/b1a9b65806d2c4d3c6981bd96448068fb6c62606/README.md",
+    "title": "NanoClaw README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "NanoClaw describes per-agent Linux containers and a setup path that installs Node, pnpm, Docker, and a credential gateway."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Messaging/container architecture is not a coding-CLI or local-only proof."
+  },
+  {
+    "id": "LR-08",
+    "tool": "NanoClaw manifest",
+    "url": "https://github.com/nanocoai/nanoclaw/blob/b1a9b65806d2c4d3c6981bd96448068fb6c62606/package.json",
+    "title": "NanoClaw package manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned package declares Node >=22, TypeScript build scripts, SQLite dependency, and a CLI binary."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "No model role, local-only, lifecycle, or recovery result was run."
+  },
+  {
+    "id": "LR-09",
+    "tool": "Moltis README",
+    "url": "https://github.com/moltis-org/moltis/blob/8a12400dc10551dfb9a6b568414b91a343ef2d5d/README.md",
+    "title": "Moltis README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Moltis describes a MIT Rust personal-agent server with sandboxed commands, local-model option, memory, MCP, SSH and messaging surfaces."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Its messaging-server focus and large multi-crate workspace differ from a bounded coding CLI."
+  },
+  {
+    "id": "LR-10",
+    "tool": "Moltis manifest",
+    "url": "https://github.com/moltis-org/moltis/blob/8a12400dc10551dfb9a6b568414b91a343ef2d5d/Cargo.toml",
+    "title": "Moltis Cargo workspace manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned workspace contains 76 members across broad channel, browser, provider, memory, tool, gateway and session surfaces."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Source structure is counterevidence to treating the full project as the lightest base."
+  },
+  {
+    "id": "LR-11",
+    "tool": "OpenCrabs README",
+    "url": "https://github.com/opencrabs/opencrabs/blob/baaa9bc543990588d88dce6c63263170c016a38a/README.md",
+    "title": "OpenCrabs README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenCrabs describes a Rust terminal agent with local LLM use, local persistence, tools, memory and multi-channel operation."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Built-in and optional provider/network routes must be disabled and proven for an all-local profile."
+  },
+  {
+    "id": "LR-12",
+    "tool": "OpenCrabs manifest",
+    "url": "https://github.com/opencrabs/opencrabs/blob/baaa9bc543990588d88dce6c63263170c016a38a/Cargo.toml",
+    "title": "OpenCrabs Cargo manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned package declares Rust 1.95, MIT, version 0.5.14, TUI, SQLite, HTTP and gateway dependencies."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Single binary does not establish total deployed resource cost or local-only behavior."
+  },
+  {
+    "id": "LR-13",
+    "tool": "Pi foundation",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/README.md",
+    "title": "Pi coding-agent README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Pinned Pi exposes extensible interactive and headless coding-agent surfaces."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Active starting base; no local performance measurement is recorded."
+  },
+  {
+    "id": "LR-14",
+    "tool": "nearai/IronClaw README",
+    "url": "https://github.com/nearai/ironclaw/blob/b0b999d96781516ee05e6ba961d6f3ead900da96/README.md",
+    "title": "nearai/IronClaw README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "nearai/IronClaw describes a Rust personal-agent system with WASM and Docker execution, extensions, memory, channels, and multiple model-provider routes."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Distinct Rust namesake from IronSecCo/IronClaw; README feature claims are not local qualification or a resource measurement."
+  },
+  {
+    "id": "LR-15",
+    "tool": "nearai/IronClaw manifest",
+    "url": "https://github.com/nearai/ironclaw/blob/b0b999d96781516ee05e6ba961d6f3ead900da96/Cargo.toml",
+    "title": "nearai/IronClaw Cargo workspace manifest",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned workspace declares Rust 1.96 and separate loop, extension, sandbox, memory, network, channel, product, and LLM crates."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Source structure does not establish installed size, lifecycle behavior, or a qualified profile."
+  },
+  {
+    "id": "LR-16",
+    "tool": "nearai/IronClaw license",
+    "url": "https://github.com/nearai/ironclaw/blob/b0b999d96781516ee05e6ba961d6f3ead900da96/LICENSE-MIT",
+    "title": "nearai/IronClaw dual license",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned repository provides MIT and Apache-2.0 license texts."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "License suitability still requires review before reuse."
+  },
+  {
+    "id": "LR-17",
+    "tool": "nearai/IronClaw provider documentation",
+    "url": "https://github.com/nearai/ironclaw/blob/b0b999d96781516ee05e6ba961d6f3ead900da96/docs/capabilities/llm-providers.md",
+    "title": "nearai/IronClaw inference-provider documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned provider documentation lists Ollama as local inference alongside hosted and OpenAI-compatible provider routes."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Documented local inference does not prove egress denial, model residency, or all-local operation."
+  },
+  {
+    "id": "LR-18",
+    "tool": "nearai/IronClaw extension contracts",
+    "url": "https://github.com/nearai/ironclaw/blob/b0b999d96781516ee05e6ba961d6f3ead900da96/crates/contracts/ironclaw_extension_contracts/README.md",
+    "title": "nearai/IronClaw extension-contract documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The pinned extension-contract documentation describes generic adapter, manifest, lifecycle, runtime, and verified-inbound extension surfaces."
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "This is a seam inspection only; it does not establish F0 authority or lifecycle equivalence."
+  }
+]

@@ -1,0 +1,218 @@
+[
+  {
+    "id": "CP-01",
+    "tool": "Codex CLI",
+    "url": "https://learn.chatgpt.com/docs/codex/cli",
+    "title": "Codex CLI",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Interactive and noninteractive local repository workflows include tools and review."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-02",
+    "tool": "Codex IDE",
+    "url": "https://learn.chatgpt.com/docs/codex/ide",
+    "title": "Codex IDE extension",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Editor context, in-place review and delegation differ from other clients."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-03",
+    "tool": "Codex SDK",
+    "url": "https://learn.chatgpt.com/docs/codex-sdk",
+    "title": "Codex SDK",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Local thread lifecycle automation and custom-client app-server use are distinct; old MCP-server integrations are removed."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-04",
+    "tool": "Codex app-server",
+    "url": "https://learn.chatgpt.com/docs/app-server",
+    "title": "Codex App Server",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Thread/turn/approval/event protocol; current command/WebSocket transport has experimental production-support limits."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-05",
+    "tool": "Codex local models",
+    "url": "https://learn.chatgpt.com/docs/config-file/config-advanced",
+    "title": "Advanced configuration: OSS mode",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Local providers are supported; headless OSS invocation needs an explicit provider."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-06",
+    "tool": "Codex worktrees",
+    "url": "https://learn.chatgpt.com/docs/environments/git-worktrees",
+    "title": "Worktrees",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Managed/permanent worktrees, snapshots and handoff have distinct lifecycle behavior."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-07",
+    "tool": "Scheduled tasks",
+    "url": "https://learn.chatgpt.com/docs/automations",
+    "title": "Scheduled tasks",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Scheduling surfaces and execution availability differ; local work requires its host."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-08",
+    "tool": "Skills and plugins",
+    "url": "https://learn.chatgpt.com/docs/skills-and-plugins",
+    "title": "Skills and Plugins",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Reusable skills and MCP/hook-containing bundles have different authoring/distribution roles."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-09",
+    "tool": "Plugin support",
+    "url": "https://learn.chatgpt.com/docs/plugins",
+    "title": "Plugins",
+    "accessed": "2026-10-25",
+    "claims": [
+      "IDE plugin support is absent and some plugins require desktop execution."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-10",
+    "tool": "Codex subagents",
+    "url": "https://learn.chatgpt.com/docs/agent-configuration/subagents",
+    "title": "Subagents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Subagent model/tool work adds tokens and remains constrained by parent settings."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-11",
+    "tool": "Remote connections",
+    "url": "https://learn.chatgpt.com/docs/remote-connections",
+    "title": "Remote connections",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Connected-host projects/tools and cloud coordination are different execution paths."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-12",
+    "tool": "Artifacts",
+    "url": "https://learn.chatgpt.com/docs/artifacts-viewer",
+    "title": "Work with files",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Preview and annotation support varies between desktop, CLI and IDE."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-13",
+    "tool": "Computer Use",
+    "url": "https://learn.chatgpt.com/docs/computer-use",
+    "title": "Computer Use",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Local application interaction has platform, permission and availability limits."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-14",
+    "tool": "Codex review rules",
+    "url": "https://developers.openai.com/blog/custom-code-review-rules-for-codex",
+    "title": "Custom Code Review rules",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Repository guidance can inform review; tests and required approvals remain separate enforcement."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-15",
+    "tool": "Codex Cloud",
+    "url": "https://learn.chatgpt.com/docs/environments/cloud-environments",
+    "title": "Cloud environments",
+    "accessed": "2026-10-25",
+    "claims": [
+      "New isolated task environments and legacy integrations are distinct; comparison only for Splyce."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-16",
+    "tool": "Agents API",
+    "url": "https://developers.openai.com/api/docs/guides/agents-api/overview",
+    "title": "Agents API overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Managed Codex harness services own orchestration; excluded from local-only Splyce dependencies."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-17",
+    "tool": "Codex platform",
+    "url": "https://developers.openai.com/blog/codex-as-a-platform",
+    "title": "Codex as a platform",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Open harness components support reuse, while the embedding application owns context/tools/approval integration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  },
+  {
+    "id": "CP-18",
+    "tool": "Agent import",
+    "url": "https://learn.chatgpt.com/docs/import",
+    "title": "Import from another agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected setup/history migration preserves source setup and flags unresolved authentication and permission semantics."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+  }
+]

@@ -1,0 +1,108 @@
+[
+  {
+    "id": "DEC-01",
+    "tool": "Laya repository",
+    "url": "https://github.com/NandhaKishorM/laya/tree/73c9c0cd7ef9bcd22bdb727042e04164a64bd073",
+    "title": "Laya typed decision engine",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Upstream describes non-autoregressive choice, score and yes/no outputs with English, multilingual and typed-decision checkpoints."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Canonical public source identified; publisher performance claims are not local measurements."
+  },
+  {
+    "id": "DEC-02",
+    "tool": "Laya router source",
+    "url": "https://github.com/NandhaKishorM/laya/blob/73c9c0cd7ef9bcd22bdb727042e04164a64bd073/laya/router.py",
+    "title": "Pinned Laya checkpoint lifecycle",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Router lazily loads checkpoints, defaults max_loaded to two and raises resident capacity during preloading."
+    ],
+    "verification": "primary-source-code",
+    "notes": "Inspected constructor, eviction and preload excerpts; no runtime execution."
+  },
+  {
+    "id": "DEC-03",
+    "tool": "System-1 paired evaluation",
+    "url": "https://arxiv.org/abs/2610.02267v1",
+    "title": "Fast Models, Slow Evidence",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Paper reports option-order sensitivity, poor zero-shot model routing and candidate-similarity limitations for its evaluated models.",
+      "Self-audit corrects omitted screening cost, end-to-end quality conflation and in-sample threshold claims."
+    ],
+    "verification": "primary-paper",
+    "notes": "Paper evidence is bounded to its models/tasks; no local reproduction."
+  },
+  {
+    "id": "DEC-04",
+    "tool": "Evaluation artifacts",
+    "url": "https://github.com/David-DL-Space/sys1-eval",
+    "title": "Paired System-1 evaluation code and data",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Authors release cases, outputs and analysis supporting the paired evaluation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Artifact repository reviewed as evidence lead, not execution or exhaustive source audit."
+  },
+  {
+    "id": "DEC-05",
+    "tool": "D3-edge model card",
+    "url": "https://huggingface.co/vllm-sr/d3-edge/tree/c454ee39b862248d70abd7f84195d2f54ffe6d43",
+    "title": "D3-edge Decision 3.0",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Card describes 0.59B multimodal typed decisions with probabilities and custom-code loading.",
+      "Publisher notes edge is not on the text board parameter/score Pareto frontier and reports serving-mode footprint differences."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No custom-code audit, weights download or runtime test; hosted Decision API excluded."
+  },
+  {
+    "id": "DEC-06",
+    "tool": "D3-edge license",
+    "url": "https://huggingface.co/vllm-sr/d3-edge/blob/c454ee39b862248d70abd7f84195d2f54ffe6d43/LICENSE",
+    "title": "D3-edge actual LICENSE",
+    "accessed": "2026-10-25",
+    "claims": ["Fetched actual model LICENSE is Apache-2.0."],
+    "verification": "primary-license",
+    "notes": "Does not certify every dependency, processor, native binary or conversion."
+  },
+  {
+    "id": "DEC-07",
+    "tool": "D3 runtime documentation",
+    "url": "https://vllm-sr.ai/docs/next/model-runtime/choose-a-model/",
+    "title": "Choose a decision model, size and hardware",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official documentation distinguishes decision checkpoints, model sizes and quantized package formats."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Mutable development documentation; parity and speed remain publisher-configuration claims."
+  },
+  {
+    "id": "DEC-08",
+    "tool": "Laya actual code license",
+    "url": "https://github.com/NandhaKishorM/laya/blob/73c9c0cd7ef9bcd22bdb727042e04164a64bd073/LICENSE",
+    "title": "Laya Apache-2.0 LICENSE",
+    "accessed": "2026-10-25",
+    "claims": ["Fetched repository LICENSE is Apache-2.0."],
+    "verification": "primary-license",
+    "notes": "Model asset licenses require independent exact-file checks."
+  },
+  {
+    "id": "DEC-09",
+    "tool": "LAVOIR paper",
+    "url": "https://arxiv.org/abs/2609.30706v1",
+    "title": "LAVOIR: amortized value-of-information routing",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Paper jointly predicts decision distribution and expected benefit of asking about candidate missing-information slots."
+    ],
+    "verification": "primary-paper",
+    "notes": "Controlled and reported application evidence does not qualify local runtime, assets or general clarification quality."
+  }
+]
