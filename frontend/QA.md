@@ -47,3 +47,7 @@ Pi execution, local model loading, MCP connections, actual shell commands, Git e
 ## Shared frontend additions
 
 An isolated browser preview completed ten checks for scoped denial, combined research search, an empty runtime-tested filter, filter reset, diagram loading/containment, recovery-template population and honest setup notes. The user's existing local records were preserved. The preview card's hover state was observed with a five-pixel lift, a slight rotation and a 0.42-second transition after disabling its explicit reduced-motion setting at the user's request. Device reduced-motion preferences remain honored.
+
+## Chat controls qualification
+
+Verified locally: send and empty-send validation, Copy clipboard contents, Edit and escaped rendering, Add files menu, attachment-only messages, persisted file download after reload, saved drafts across navigation, configured local model labels, JSON chat export and New chat. Automated failure checks cover unavailable/denied microphone and clipboard, file-size limits, session-only file storage and sending while a file is pending. Dark dropdown options use explicit neutral foreground/background tokens. No physical microphone recording or backend inference was tested. See [the chat guide](CHAT.md) for package scope and limits.

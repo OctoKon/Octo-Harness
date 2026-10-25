@@ -61,3 +61,5 @@ Direct browser checks cover theme switching and persistence, preservation of an 
 `index.html` loads `app.js` and `styles.css`. State is stored under `splyce-frontend-v2` in browser storage; older v1 data can migrate without removing the original key. No secrets belong in this data.
 
 Splyce-authored code follows the repository's [AGPL-3.0-only license](../LICENSE). Manrope retains its [SIL Open Font License](fonts/OFL.txt). No Pi source or third-party interface artwork is vendored here.
+
+Conversation controls and local storage limits are described in [the chat frontend guide](CHAT.md).

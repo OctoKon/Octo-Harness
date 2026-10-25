@@ -2,6 +2,14 @@
 const REPO = "https://github.com/OctoKon/Splyce";
 const SOURCE_REF = "ShlokShah01/ui-ux-refresh";
 const icons = {
+  compose: '<path d="m15 4 5 5M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15v5Z"/>',
+  chat: '<path d="M21 11a8 8 0 0 1-8 8H7l-5 3 2-6a8 8 0 1 1 17-5Z"/>',
+  copy: '<rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
+  paperclip: '<path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2"/>',
+  image:
+    '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1"/><path d="m3 17 5-5 4 4 4-6 5 7"/>',
+  mic: '<rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/>',
+  send: '<path d="M12 20V4m-6 6 6-6 6 6"/>',
   arrow: '<path d="M5 12h14m-6-6 6 6-6 6"/>',
   external:
     '<path d="M14 4h6v6m0-6L10 14M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/>',
@@ -204,6 +212,9 @@ templates.push(
 );
 const statuses = ["Review ready", "Completed", "Needs approval", "Canceled"];
 let state = {
+  chats: [],
+  chatModels: [],
+  chatDraft: { draft: "", attachments: [], model: "Workspace default" },
   runs: seedRuns.map((x) => ({ ...x })),
   settings: { ...defaults },
   extensions: { mcp: false, skills: true, lsp: false },
@@ -237,6 +248,21 @@ try {
   if (raw) {
     const saved = JSON.parse(raw);
     state.settings = normalizeSettings(saved?.settings);
+    state.chats = normalizeChats(saved?.chats);
+    state.chatModels = Array.isArray(saved?.chatModels)
+      ? saved.chatModels
+          .filter((m) => typeof m === "string" && m.trim())
+          .slice(0, 10)
+          .map((m) => m.slice(0, 100))
+      : [];
+    state.chatDraft = {
+      draft: "",
+      model: String(saved?.chatDraft?.model || "Workspace default").slice(
+        0,
+        100,
+      ),
+      attachments: normalizeAttachments(saved?.chatDraft?.attachments),
+    };
     if (Array.isArray(saved?.runs))
       state.runs = saved.runs
         .filter(
@@ -409,12 +435,13 @@ function shell(view, content) {
     "extensions",
     "research",
   ].includes(view);
-  return `<div class="workspace"><button class="drawer-backdrop" data-action="close-menu" aria-label="Close navigation" tabindex="-1"></button><aside class="sidebar" id="sidebar">${brand()}<div class="workspace-name"><span class="avatar">O</span><span>${esc(state.settings.workspace)}<small>Local workspace</small></span></div><nav class="side-nav" aria-label="Workspace navigation">${navs.map(([i, r, t]) => `<button data-nav="${r}" class="${view === r || (r === "overview" && view === "new") ? "active" : ""}" ${view === r ? 'aria-current="page"' : ""}>${icon(i)}${t}${r === "runs" ? `<span class="count">${state.runs.length}</span>` : ""}</button>`).join("")}</nav><div class="sidebar-lower"><nav class="side-nav" aria-label="Workspace preferences"><button data-nav="settings" class="${settingsArea ? "active" : ""}">${icon("settings")}Settings</button></nav></div></aside><div class="workspace-main"><header class="app-header"><div class="breadcrumb"><button class="icon-btn mobile-only" data-action="menu" aria-label="Toggle navigation" aria-expanded="false">${icon("menu")}</button><span>${settingsArea ? "Workspace settings" : view === "overview" || view === "new" ? "Build" : view === "run" ? "Run detail" : view[0].toUpperCase() + view.slice(1)}</span></div><div class="app-tools"><span class="tag outline">Interactive demo</span><button class="icon-btn" data-action="theme" aria-label="Cycle appearance: Light, Dark, System">${icon("sun")}</button><a class="icon-btn" href="${REPO}" target="_blank" rel="noopener" aria-label="Splyce on GitHub">${icon("github")}</a></div></header><main id="main" class="app-content" tabindex="-1">${settingsTabs(view)}${content}<footer class="app-footer"><span>${storageOK ? "Demo data stays in this browser." : "Storage unavailable. Changes last for this visit."}</span><a href="${link("MASTER-PLAN.md")}" target="_blank" rel="noopener">Project plan ${icon("external")}</a></footer></main></div></div>`;
+  return `<div class="workspace"><button class="drawer-backdrop" data-action="close-menu" aria-label="Close navigation" tabindex="-1"></button><aside class="sidebar" id="sidebar">${brand()}<div class="workspace-name"><span class="avatar">O</span><span>${esc(state.settings.workspace)}<small>Local workspace</small></span></div>${chatSidebar()}<nav class="side-nav" aria-label="Workspace navigation">${navs.map(([i, r, t]) => `<button data-nav="${r}" class="${view === r || (r === "overview" && view === "new") ? "active" : ""}" ${view === r ? 'aria-current="page"' : ""}>${icon(i)}${t}${r === "runs" ? `<span class="count">${state.runs.length}</span>` : ""}</button>`).join("")}</nav><div class="sidebar-lower"><nav class="side-nav" aria-label="Workspace preferences"><button data-nav="settings" class="${settingsArea ? "active" : ""}">${icon("settings")}Settings</button></nav></div></aside><div class="workspace-main"><header class="app-header"><div class="breadcrumb"><button class="icon-btn mobile-only" data-action="menu" aria-label="Toggle navigation" aria-expanded="false">${icon("menu")}</button><span>${settingsArea ? "Workspace settings" : view === "overview" || view === "new" ? "Build" : view === "run" ? "Run detail" : view[0].toUpperCase() + view.slice(1)}</span></div><div class="app-tools"><span class="tag outline">Interactive demo</span><button class="icon-btn" data-action="theme" aria-label="Cycle appearance: Light, Dark, System">${icon("sun")}</button><a class="icon-btn" href="${REPO}" target="_blank" rel="noopener" aria-label="Splyce on GitHub">${icon("github")}</a></div></header><main id="main" class="app-content" tabindex="-1">${settingsTabs(view)}${content}<footer class="app-footer"><span>${storageOK ? "Demo data stays in this browser." : "Storage unavailable. Changes last for this visit."}</span><a href="${link("MASTER-PLAN.md")}" target="_blank" rel="noopener">Project plan ${icon("external")}</a></footer></main></div></div>`;
 }
 function heading(title, desc, action = "") {
   return `<div class="page-heading"><div><h1>${title}</h1><p>${desc}</p></div>${action}</div>`;
 }
-function composer() {
+function composer(taskMode = false) {
+  if (!taskMode) return chatComposer();
   return `<form id="run-form" class="composer"><div class="composer-title">${mark()}<label for="task">What are we working on?</label><kbd>/</kbd></div><textarea id="task" name="task" maxlength="2000" required placeholder="Describe a change, ask a question, or investigate a bug…">${esc(state.draft)}</textarea><details class="task-details"><summary>Define success <span>Optional</span>${icon("down")}</summary><div class="task-details-fields"><label for="acceptance">Acceptance criteria</label><textarea id="acceptance" name="acceptanceCriteria" maxlength="1000" placeholder="What should be true when this task is done?">${esc(state.draftDetails.acceptanceCriteria)}</textarea><label for="verification">Planned verification command</label><input id="verification" name="verificationCommand" maxlength="300" placeholder="For example: npm test" value="${esc(state.draftDetails.verificationCommand)}"><p>Saved as a plan only. This demo never executes commands.</p></div></details><div class="composer-footer"><label class="profile-picker">${icon("models")}<select name="profile" aria-label="Local model setup">${["Balanced", "Lightweight", "Custom"].map((p) => `<option ${state.settings.profile === p ? "selected" : ""}>${p}</option>`).join("")}</select>${icon("down")}</label><span class="draft-label" id="draft-label">${state.draft ? "Draft restored" : ""}</span><button class="btn primary" type="submit">Start demo run ${icon("arrow")}</button></div><p class="error-text" id="task-error" role="alert"></p></form>`;
 }
 function runItem(r) {
@@ -509,7 +536,7 @@ function modelsPage() {
       )
       .join(
         "",
-      )}</section><details class="advanced-models"><summary>Configure local model IDs ${icon("down")}</summary><p class="section-note">Enter labels for models supplied by a future local Pi setup. These fields do not load models, benchmark hardware, or ask for credentials.</p>${roles.map((k) => `<div class="custom-role"><label for="model-${k}">${k[0].toUpperCase() + k.slice(1)} model ID</label><div><span class="tag success">Local only</span><input id="model-${k}" type="text" name="model-${k}" maxlength="100" placeholder="Not configured" value="${esc(state.models[k])}"></div></div>`).join("")}<button type="submit" class="btn primary">Save local model labels ${icon("check")}</button></details></form><details class="local-setup"><summary>Before connecting a local runtime ${icon("down")}</summary><div class="setup-check"><span>Model labels saved</span><strong>${roles.filter((k) => state.models[k]).length} of 4</strong></div><div class="setup-check"><span>Pi runtime adapter</span><strong>Not connected</strong></div><div class="setup-check"><span>Role capabilities and hardware</span><strong>Not measured</strong></div><div class="setup-check"><span>Execution and verification</span><strong>Not performed</strong></div><p>These are setup notes, not a readiness test. The future local adapter must verify capabilities before work can run.</p></details><a class="source-note" href="${link("research/docs/foundations/pi-foundation.md")}" target="_blank" rel="noopener">Read the Pi foundation decision ${icon("external")}</a>`
+      )}</section><details class="advanced-models"><summary>Configure local model IDs ${icon("down")}</summary><p class="section-note">Enter labels for models supplied by a future local Pi setup. These fields do not load models, benchmark hardware, or ask for credentials.</p>${roles.map((k) => `<div class="custom-role"><label for="model-${k}">${k[0].toUpperCase() + k.slice(1)} model ID</label><div><span class="tag success">Local only</span><input id="model-${k}" type="text" name="model-${k}" maxlength="100" placeholder="Not configured" value="${esc(state.models[k])}"></div></div>`).join("")}<div class="custom-role"><label for="chat-model-labels">Additional chat model IDs</label><div><textarea id="chat-model-labels" name="chat-model-labels" maxlength="1010" rows="3" placeholder="One local model ID per line">${esc(state.chatModels.join("\n"))}</textarea><small>Optional &middot; up to 10 local labels. No models are downloaded.</small></div></div><button type="submit" class="btn primary">Save local model labels ${icon("check")}</button></details></form><details class="local-setup"><summary>Before connecting a local runtime ${icon("down")}</summary><div class="setup-check"><span>Model labels saved</span><strong>${roles.filter((k) => state.models[k]).length} of 4</strong></div><div class="setup-check"><span>Pi runtime adapter</span><strong>Not connected</strong></div><div class="setup-check"><span>Role capabilities and hardware</span><strong>Not measured</strong></div><div class="setup-check"><span>Execution and verification</span><strong>Not performed</strong></div><p>These are setup notes, not a readiness test. The future local adapter must verify capabilities before work can run.</p></details><a class="source-note" href="${link("research/docs/foundations/pi-foundation.md")}" target="_blank" rel="noopener">Read the Pi foundation decision ${icon("external")}</a>`
   );
 }
 function permissionsPage() {
@@ -782,7 +809,7 @@ function settingsPage() {
       "Make it your workspace.",
       "Appearance, naming and local demo data.",
     ) +
-    `<form id="settings-form"><section class="panel"><div class="settings-row"><label for="workspace-name"><strong>Workspace name</strong><small>Shown in the sidebar.</small></label><input id="workspace-name" type="text" name="workspace" maxlength="50" required value="${esc(state.settings.workspace)}"></div><div class="theme-section">${themeOptions()}<p class="section-note">Appearance applies immediately and is saved on this device. System follows the operating system’s light or dark preference.</p></div><label class="settings-row motion-setting"><span><strong>Reduce interface motion</strong><small>Keep transitions and hover movement still. Device accessibility preferences are always respected.</small></span><input type="checkbox" name="reduceMotion" ${state.settings.reduceMotion ? "checked" : ""}></label></section><div class="settings-footer"><button class="btn primary">Save workspace name ${icon("check")}</button></div></form><section class="panel" style="margin-top:28px"><div class="settings-row"><span><strong>Export demo data</strong><small>Runs, model labels and saved preferences.</small></span><button class="btn secondary" data-action="export">${icon("download")} Export JSON</button></div><div class="settings-row"><span><strong>Restore original samples</strong><small>Reset the demo. You can undo this until you leave Settings.</small></span><button class="btn secondary" data-action="reset">Restore samples</button></div>${resetSnapshot ? '<div class="undo-row">Samples restored. <button class="text-button" data-action="undo-reset">Undo reset</button></div>' : ""}</section><p class="section-note">No server sync, telemetry, or hosted model calls. Avoid storing secrets in this prototype.</p>`
+    `<form id="settings-form"><section class="panel"><div class="settings-row"><label for="workspace-name"><strong>Workspace name</strong><small>Shown in the sidebar.</small></label><input id="workspace-name" type="text" name="workspace" maxlength="50" required value="${esc(state.settings.workspace)}"></div><div class="theme-section">${themeOptions()}<p class="section-note">Appearance applies immediately and is saved on this device. System follows the operating system’s light or dark preference.</p></div><label class="settings-row motion-setting"><span><strong>Reduce interface motion</strong><small>Keep transitions and hover movement still. Device accessibility preferences are always respected.</small></span><input type="checkbox" name="reduceMotion" ${state.settings.reduceMotion ? "checked" : ""}></label></section><div class="settings-footer"><button class="btn primary">Save workspace name ${icon("check")}</button></div></form><section class="panel" style="margin-top:28px"><div class="settings-row"><span><strong>Export demo data</strong><small>Chats, run records, file metadata and preferences. Download attachments separately.</small></span><button class="btn secondary" data-action="export">${icon("download")} Export JSON</button></div><div class="settings-row"><span><strong>Restore original samples</strong><small>Reset the demo. You can undo this until you leave Settings.</small></span><button class="btn secondary" data-action="reset">Restore samples</button></div>${resetSnapshot ? '<div class="undo-row">Samples restored. <button class="text-button" data-action="undo-reset">Undo reset</button></div>' : ""}</section><p class="section-note">No server sync, telemetry, or hosted model calls. Avoid storing secrets in this prototype.</p>`
   );
 }
 function detail() {
@@ -796,7 +823,7 @@ function detail() {
   const needs = r.status === "Needs approval",
     canceled = r.status === "Canceled",
     complete = r.status === "Completed";
-  return `<button class="back-link" data-nav="runs">${icon("back")} All runs</button><div class="detail-heading"><div><span class="run-id">${esc(r.id)} · ${esc(r.model)}</span><h1>${esc(r.task)}</h1></div>${tag(r.status)}</div>${banner()}${r.acceptanceCriteria || r.verificationCommand ? `<section class="run-plan"><h2>What success looks like</h2>${r.acceptanceCriteria ? `<p>${esc(r.acceptanceCriteria)}</p>` : ""}${r.verificationCommand ? `<div class="planned-command"><span>Planned check · not executed</span><code>${esc(r.verificationCommand)}</code></div>` : ""}</section>` : ""}<div class="review-layout"><section class="panel"><header class="panel-head"><h2>Activity</h2><span class="tag outline">Simulated</span></header><ol class="detail-events"><li>${icon("checkcircle")}<div><strong>Task captured</strong><p>Your task and workspace scope are recorded.</p></div><time>00:00</time></li><li>${icon("checkcircle")}<div><strong>Context selected</strong><p>Sample references: M-001 · shared host; M-004 · evidence.</p></div><time>00:02</time></li><li>${icon(needs ? "shield" : canceled ? "x" : "checkcircle")}<div><strong>${needs ? "Waiting for approval" : canceled ? (r.stopReason === "permission-denied" ? "Demo action denied" : "Simulation canceled") : "Example change prepared"}</strong><p>${needs ? "Approve the demo action to continue." : canceled ? "No files were changed." : "This example is not generated from your task."}</p></div><time>00:08</time></li>${!needs && !canceled ? `<li>${icon(complete ? "checkcircle" : "clock")}<div><strong>${complete ? "Reviewed in the demo" : "Ready for your review"}</strong><p>Nothing is applied to a repository.</p></div><time>00:12</time></li>` : ""}</ol>${needs ? `<details class="action-scope"><summary>Inspect requested scope ${icon("down")}</summary><dl><dt>Capability</dt><dd>Workspace file edit · simulated</dd><dt>Target</dt><dd>example-policy.ts · synthetic fixture</dd><dt>Grant scope</dt><dd>Current workspace, this demo action only</dd><dt>Executor</dt><dd>Not connected</dd></dl><p>No file is accessed or changed by this prototype.</p></details>` : ""}<div class="detail-actions">${needs ? '<button class="btn primary" data-action="approve">Approve demo action</button>' : !canceled && !complete ? '<button class="btn primary" data-action="complete">Mark reviewed</button>' : ""}${!canceled && !complete ? `<button class="btn secondary" data-action="cancel">${needs ? "Deny demo action" : "Cancel run"}</button>` : ""}<button class="text-button" data-action="retry">${icon("plus")} Reuse task</button></div></section><section class="panel artifact-panel"><div class="tablist" role="tablist" aria-label="Run evidence"><button id="diff-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "diff"}" tabindex="${state.tab === "diff" ? 0 : -1}" class="${state.tab === "diff" ? "active" : ""}" data-tab="diff">Example diff</button><button id="receipt-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "receipt"}" tabindex="${state.tab === "receipt" ? 0 : -1}" class="${state.tab === "receipt" ? "active" : ""}" data-tab="receipt">Receipt</button><button class="icon-btn" data-action="export-run" aria-label="Export run record">${icon("download")}</button></div><div id="artifact-content" role="tabpanel" aria-labelledby="${state.tab}-tab">${
+  return `<button class="back-link" data-nav="runs">${icon("back")} All runs</button><div class="detail-heading"><div><span class="run-id">${esc(r.id)} · ${esc(r.model)}</span><h1>${esc(r.task)}</h1></div>${tag(r.status)}</div>${banner()}${r.acceptanceCriteria || r.verificationCommand ? `<section class="run-plan"><h2>What success looks like</h2>${r.acceptanceCriteria ? `<p>${esc(r.acceptanceCriteria)}</p>` : ""}${r.verificationCommand ? `<div class="planned-command"><span>Planned check · not executed</span><code>${esc(r.verificationCommand)}</code></div>` : ""}</section>` : ""}<div class="review-layout"><section class="panel"><header class="panel-head"><h2>Activity</h2><span class="tag outline">Simulated</span></header><ol class="detail-events"><li>${icon("checkcircle")}<div><strong>Task captured</strong><p>Your task and workspace scope are recorded.</p></div><time>00:00</time></li><li>${icon("checkcircle")}<div><strong>Context selected</strong><p>Sample references: M-001 · shared host; M-004 · evidence.</p></div><time>00:02</time></li><li>${icon(needs ? "shield" : canceled ? "x" : "checkcircle")}<div><strong>${needs ? "Waiting for approval" : canceled ? (r.stopReason === "permission-denied" ? "Demo action denied" : "Simulation canceled") : "Example change prepared"}</strong><p>${needs ? "Approve the demo action to continue." : canceled ? "No files were changed." : "This example is not generated from your task."}</p></div><time>00:08</time></li>${!needs && !canceled ? `<li>${icon(complete ? "checkcircle" : "clock")}<div><strong>${complete ? "Reviewed in the demo" : "Ready for your review"}</strong><p>Nothing is applied to a repository.</p></div><time>00:12</time></li>` : ""}</ol>${needs ? `<details class="action-scope"><summary>Inspect requested scope ${icon("down")}</summary><dl><dt>Capability</dt><dd>Workspace file edit · simulated</dd><dt>Target</dt><dd>example-policy.ts · synthetic fixture</dd><dt>Grant scope</dt><dd>Current workspace, this demo action only</dd><dt>Executor</dt><dd>Not connected</dd></dl><p>No file is accessed or changed by this prototype.</p></details>` : ""}<div class="detail-actions">${needs ? '<button class="btn primary" data-action="approve">Approve demo action</button>' : !canceled && !complete ? '<button class="btn primary" data-action="complete">Mark reviewed</button>' : ""}${!canceled && !complete ? `<button class="btn secondary" data-action="cancel">${needs ? "Deny demo action" : "Cancel run"}</button>` : ""}<button class="text-button" data-chat-action="copy-run">${icon("copy")} Copy task</button><button class="text-button" data-action="retry">${icon("plus")} Edit / reuse task</button></div></section><section class="panel artifact-panel"><div class="tablist" role="tablist" aria-label="Run evidence"><button id="diff-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "diff"}" tabindex="${state.tab === "diff" ? 0 : -1}" class="${state.tab === "diff" ? "active" : ""}" data-tab="diff">Example diff</button><button id="receipt-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "receipt"}" tabindex="${state.tab === "receipt" ? 0 : -1}" class="${state.tab === "receipt" ? "active" : ""}" data-tab="receipt">Receipt</button><button class="icon-btn" data-action="export-run" aria-label="Export run record">${icon("download")}</button></div><div id="artifact-content" role="tabpanel" aria-labelledby="${state.tab}-tab">${
     state.tab === "diff"
       ? `<div class="diff-file">${icon("code")} example-policy.ts <span>Illustrative only</span></div><pre class="detail-code"><code> function canRun(action: Action) {
 <span class="remove">−  return true;</span><span class="add">+  return action.scope === workspace.scope;</span> }</code></pre><p class="artifact-note">A fictional workspace guard, not a complete policy implementation. No patch exists for this run.</p>`
@@ -804,6 +831,8 @@ function detail() {
   }</div></section></div>`;
 }
 const pages = {
+  chat: chatPage,
+  chats: chatHistoryPage,
   overview,
   runs,
   memory: memoryPage,
@@ -817,10 +846,15 @@ const pages = {
     heading(
       "A clear task is a good start.",
       "What should change, and how will you know it worked?",
-    ) + composer(),
+    ) + composer(true),
 };
 function route() {
   const hash = location.hash.slice(1) || "home";
+  if (hash.startsWith("chat/")) {
+    activeChat = hash.slice(5);
+    return "chat";
+  }
+  activeChat = "";
   if (hash.startsWith("run/")) {
     state.selected = hash.slice(4);
     return "run";
@@ -828,6 +862,7 @@ function route() {
   return Object.hasOwn(pages, hash) ? hash : "home";
 }
 function render() {
+  if (recorder) stopChatRecording(true);
   const view = route();
   document.body.classList.remove("menu-open");
   document.title =
@@ -836,6 +871,7 @@ function render() {
       : `${view === "overview" ? "Build" : view === "run" ? "Run detail" : view[0].toUpperCase() + view.slice(1)} · Splyce`;
   document.getElementById("root").innerHTML =
     view === "home" ? home() : shell(view, pages[view]());
+  hydrateChatFiles();
   if (view === "home" && location.hash === "#how")
     requestAnimationFrame(() =>
       document.getElementById("how")?.scrollIntoView(),
@@ -902,6 +938,7 @@ function filter() {
   }
 }
 document.addEventListener("click", (e) => {
+  if (handleChatClick(e)) return;
   const el = e.target.closest(
     "[data-nav],[data-action],[data-run],[data-extension],[data-tab],[data-template],[data-preset],[data-bookmark],[data-home-tab]",
   );
@@ -1075,6 +1112,7 @@ document.addEventListener("click", (e) => {
   }
 });
 document.addEventListener("submit", (e) => {
+  if (handleChatSubmit(e)) return;
   e.preventDefault();
   const form = e.target,
     data = new FormData(form);
@@ -1123,6 +1161,14 @@ document.addEventListener("submit", (e) => {
         .trim()
         .slice(0, 100);
     }
+    state.chatModels = [
+      ...new Set(
+        String(data.get("chat-model-labels") || "")
+          .split(/\r?\n/)
+          .map((m) => m.trim().slice(0, 100))
+          .filter(Boolean),
+      ),
+    ].slice(0, 10);
     state.settings.profile = "Custom";
     saved("Local model labels saved. No models were loaded.");
     render();
@@ -1146,6 +1192,7 @@ document.addEventListener("submit", (e) => {
   }
 });
 document.addEventListener("input", (e) => {
+  if (handleChatInput(e)) return;
   if (["acceptanceCriteria", "verificationCommand"].includes(e.target.name)) {
     state.draftDetails[e.target.name] = e.target.value;
     const ok = save();
@@ -1165,6 +1212,7 @@ document.addEventListener("input", (e) => {
   }
 });
 document.addEventListener("change", (e) => {
+  if (handleChatChange(e)) return;
   if (["run-status", "memory-type"].includes(e.target.id)) filter();
   if (["research-topic", "research-evidence"].includes(e.target.id))
     updateResearch();
@@ -1204,7 +1252,10 @@ document.addEventListener("keydown", (e) => {
   }
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && e.target.id === "task") {
     e.preventDefault();
-    document.getElementById("run-form").requestSubmit();
+    (
+      document.getElementById("chat-form") ||
+      document.getElementById("run-form")
+    ).requestSubmit();
   }
   if (
     e.target.matches('[role="tab"][data-tab]') &&

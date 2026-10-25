@@ -59,3 +59,7 @@ Research filters, optional task starters and local setup notes stay in the exist
 ## Do's and Don'ts
 
 Do preserve local-only product scope and clear prototype labels. Do keep one obvious next action. Do retain readable focus indicators and status text. Do not present a model label as a loaded model, a sample receipt as executed evidence, or a UI switch as runtime enforcement.
+
+## Conversation controls
+
+Keep the warm neutral palette and existing shell. Build uses a single rounded composer with attachments and model selection on the left, microphone and Send on the right. Optional planning stays collapsed. Messages group Edit and Copy at the lower-right. Sidebar history is limited to three recent chats with an All Chats destination. Voice is a local note, never a claim of transcription or inference.

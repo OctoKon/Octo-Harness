@@ -45,6 +45,7 @@ const context = vm.createContext({
     }
   },
 });
+vm.runInContext(fs.readFileSync("chat.js", "utf8"), context);
 vm.runInContext(fs.readFileSync("app.js", "utf8"), context);
 assert.match(element("root").innerHTML, /A lot more building/);
 assert.equal(
@@ -210,4 +211,122 @@ assert.match(vm.runInContext("detail()", context), /Demo action denied/);
 assert.ok(fs.existsSync("assets/harness-flow.svg"));
 console.log(
   "PASS: task plans, escaping, local settings, run identity, research filters, template population and scoped denial.",
+);
+
+// Chat is tested through the same submit/click handlers used by the browser.
+listeners.submit({
+  preventDefault() {},
+  target: { id: "chat-form", values: { task: "" } },
+});
+assert.match(element("task-error").textContent, /Write a message/);
+listeners.submit({
+  preventDefault() {},
+  target: { id: "chat-form", values: { task: "Hi" } },
+});
+assert.equal(vm.runInContext("state.chats.length", context), 1);
+assert.equal(vm.runInContext("state.chats[0].messages[0].text", context), "Hi");
+context.location.hash =
+  "#chat/" + vm.runInContext("state.chats[0].id", context);
+assert.equal(vm.runInContext("route()", context), "chat");
+assert.match(vm.runInContext("chatPage()", context), /Copy message 1/);
+assert.match(vm.runInContext("chatPage()", context), /Add files and more/);
+assert.match(vm.runInContext("chatPage()", context), /backend not connected/);
+const firstMessage = vm.runInContext("state.chats[0].messages[0].id", context);
+listeners.submit({
+  preventDefault() {},
+  target: {
+    id: "edit-message-form",
+    dataset: { message: firstMessage },
+    values: { message: "<script>edited</script>" },
+  },
+});
+assert.match(vm.runInContext("chatPage()", context), /&lt;script&gt;edited/);
+assert.doesNotMatch(vm.runInContext("chatPage()", context), /<script>edited/);
+assert.equal(
+  vm.runInContext("state.chats[0].messages[0].edited", context),
+  true,
+);
+listeners.change({ target: { id: "chat-model", value: "local-test-model" } });
+assert.equal(
+  vm.runInContext("currentChat().model", context),
+  "local-test-model",
+);
+assert.equal(
+  vm.runInContext(
+    "normalizeChats(JSON.parse(JSON.stringify(state.chats)))[0].messages.length",
+    context,
+  ),
+  1,
+);
+assert.equal(
+  vm.runInContext("normalizeChats([{id:'bad',messages:[]}]).length", context),
+  0,
+);
+assert.equal(
+  vm.runInContext(
+    "normalizeAttachments([{id:'c-test',name:'x',size:11000000}]).length",
+    context,
+  ),
+  0,
+);
+vm.runInContext(
+  "currentChat().attachments=[{id:'c-file',name:'file.txt',type:'text/plain',size:5}]",
+  context,
+);
+listeners.submit({
+  preventDefault() {},
+  target: { id: "chat-form", values: { task: "" } },
+});
+assert.equal(
+  vm.runInContext("currentChat().messages[1].attachments[0].name", context),
+  "file.txt",
+);
+vm.runInContext("addingFiles=true", context);
+listeners.submit({
+  preventDefault() {},
+  target: { id: "chat-form", values: { task: "Do not lose a pending file" } },
+});
+assert.equal(vm.runInContext("currentChat().messages.length", context), 2);
+vm.runInContext("addingFiles=false", context);
+context.navigator = {};
+await vm.runInContext("recordChatVoice()", context);
+assert.match(element("toast").textContent, /unavailable/);
+assert.equal(vm.runInContext("recorder", context), null);
+console.log(
+  "PASS: chat send/edit/escaping, model choice, attachment-only send, pending-file guard, storage normalization and unavailable audio.",
+);
+
+context.navigator = {
+  clipboard: {
+    writeText: async () => {
+      throw new Error("denied");
+    },
+  },
+};
+await vm.runInContext("copyChatText('test')", context);
+assert.match(element("toast").textContent, /Clipboard unavailable/);
+context.navigator = {
+  mediaDevices: {
+    getUserMedia: async () => {
+      throw new Error("denied");
+    },
+  },
+};
+context.MediaRecorder = class {};
+await vm.runInContext("recordChatVoice()", context);
+assert.match(element("toast").textContent, /permission denied/);
+assert.equal(vm.runInContext("requestingMicrophone", context), false);
+await vm.runInContext(
+  "addChatFiles([{name:'too-large',size:11000000,type:'text/plain'}])",
+  context,
+);
+assert.equal(vm.runInContext("currentChat().attachments.length", context), 0);
+await vm.runInContext(
+  "addChatFiles([{name:'test.txt',size:4,type:'text/plain'}])",
+  context,
+);
+assert.equal(vm.runInContext("currentChat().attachments.length", context), 1);
+assert.equal(vm.runInContext("addingFiles", context), false);
+console.log(
+  "PASS: clipboard denial, microphone denial, file-size limit and session-only attachment fallback.",
 );
