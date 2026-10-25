@@ -19,6 +19,7 @@ Open `http://127.0.0.1:4175`. No package installation, build step, hosted servic
 - Saved task drafts, task starters, simulated run review and ID-based run links.
 - Optional acceptance criteria and a planned verification command, retained in drafts, runs and reused tasks.
 - Source-linked memory entries with saved-entry filtering.
+- Research search, topic/evidence filters, additional recovery/research starters, and inspectable demo permission scope.
 - Local-only model setup templates and explicit model-ID labels.
 - Light, Dark and System appearance options that apply immediately and survive reload.
 - A saved reduced-motion preference and visible model-ID labels in role summaries.
@@ -26,6 +27,8 @@ Open `http://127.0.0.1:4175`. No package installation, build step, hosted servic
 - Browser-local settings, JSON export and undo for sample resets.
 
 One Settings entry opens Appearance & data, Permissions, Extensions and Research tabs. Model labels do not load models. Sample diffs and receipts are explicitly fictional; no commands execute and no changes apply to a repository. The application does not make inference calls or send telemetry. Source-document links open GitHub only when selected.
+
+The [shared frontend integration record](INTEGRATION.md) describes the adapted workflows. The Research diagram is [original, locally bundled SVG artwork](assets/README.md).
 
 ## UI work contract
 

@@ -186,6 +186,22 @@ const templates = [
     text: "Review the proposed change for correctness, permission boundaries, and missing verification.",
   },
 ];
+templates.push(
+  {
+    name: "Recover interrupted work",
+    icon: "clock",
+    text: "Inspect the prior session and any action without a confirmed outcome. Establish what changed before proposing a safe next step.",
+    acceptanceCriteria:
+      "Separate confirmed effects from uncertainty. Do not retry an uncertain action without reconciliation.",
+  },
+  {
+    name: "Investigate with sources",
+    icon: "book",
+    text: "Investigate a focused implementation question using public primary sources. Compare mechanisms, limits and a testable next step.",
+    acceptanceCriteria:
+      "Cite original sources, distinguish documented behavior from proposals, and record unresolved gaps.",
+  },
+);
 const statuses = ["Review ready", "Completed", "Needs approval", "Canceled"];
 let state = {
   runs: seedRuns.map((x) => ({ ...x })),
@@ -405,7 +421,23 @@ function runItem(r) {
   return `<button class="run-item" data-run="${esc(r.id)}"><span class="run-symbol">${icon(r.status === "Completed" ? "check" : r.status === "Needs approval" ? "shield" : "code")}</span><span class="run-info"><strong>${esc(r.task)}</strong><small>${esc(r.model)} · ${esc(r.date)}</small></span>${tag(r.status)}${icon("chevron")}</button>`;
 }
 function overview() {
-  return `<div class="build-intro"><h1>Make room for<br><span>your next idea.</span></h1><p>The task, the context, the review.<br>One place to bring them together.</p></div>${composer()}<div class="quick-starts" aria-label="Task starters">${templates.map((t, i) => `<button data-template="${i}">${icon(t.icon)}${t.name}${icon("plus")}</button>`).join("")}</div><div class="build-footnote">${icon("info")} A frontend preview. Runs and results are simulated.</div><section class="recent-section"><div class="section-head"><h2>Pick up a thread</h2><button class="text-button" data-nav="runs">All runs ${icon("arrow")}</button></div><div class="run-list">${state.runs.slice(0, 3).map(runItem).join("") || '<div class="empty">Your first run starts with the task above.</div>'}</div></section><div class="context-nudge">${icon("memory")}<div><strong>Good context doesn’t have to start over.</strong><p>Explore the decisions behind Splyce, with original sources.</p></div><button class="text-button" data-nav="memory">Browse memory ${icon("arrow")}</button></div>`;
+  return `<div class="build-intro"><h1>Make room for<br><span>your next idea.</span></h1><p>The task, the context, the review.<br>One place to bring them together.</p></div>${composer()}<div class="quick-starts" aria-label="Task starters">${templates
+    .slice(0, 3)
+    .map(
+      (t, i) =>
+        `<button data-template="${i}">${icon(t.icon)}${t.name}${icon("plus")}</button>`,
+    )
+    .join(
+      "",
+    )}</div><details class="template-shelf"><summary>Additional workflows ${icon("down")}</summary><div>${templates
+    .slice(3)
+    .map(
+      (t, i) =>
+        `<button data-template="${i + 3}">${icon(t.icon)}<span><strong>${esc(t.name)}</strong><small>Fills a task and its acceptance criteria</small></span>${icon("arrow")}</button>`,
+    )
+    .join(
+      "",
+    )}</div></details><div class="build-footnote">${icon("info")} A frontend preview. Runs and results are simulated.</div><section class="recent-section"><div class="section-head"><h2>Pick up a thread</h2><button class="text-button" data-nav="runs">All runs ${icon("arrow")}</button></div><div class="run-list">${state.runs.slice(0, 3).map(runItem).join("") || '<div class="empty">Your first run starts with the task above.</div>'}</div></section><div class="context-nudge">${icon("memory")}<div><strong>Good context doesn’t have to start over.</strong><p>Explore the decisions behind Splyce, with original sources.</p></div><button class="text-button" data-nav="memory">Browse memory ${icon("arrow")}</button></div>`;
 }
 function runs() {
   return (
@@ -477,7 +509,7 @@ function modelsPage() {
       )
       .join(
         "",
-      )}</section><details class="advanced-models"><summary>Configure local model IDs ${icon("down")}</summary><p class="section-note">Enter labels for models supplied by a future local Pi setup. These fields do not load models, benchmark hardware, or ask for credentials.</p>${roles.map((k) => `<div class="custom-role"><label for="model-${k}">${k[0].toUpperCase() + k.slice(1)} model ID</label><div><span class="tag success">Local only</span><input id="model-${k}" type="text" name="model-${k}" maxlength="100" placeholder="Not configured" value="${esc(state.models[k])}"></div></div>`).join("")}<button type="submit" class="btn primary">Save local model labels ${icon("check")}</button></details></form><a class="source-note" href="${link("research/docs/foundations/pi-foundation.md")}" target="_blank" rel="noopener">Read the Pi foundation decision ${icon("external")}</a>`
+      )}</section><details class="advanced-models"><summary>Configure local model IDs ${icon("down")}</summary><p class="section-note">Enter labels for models supplied by a future local Pi setup. These fields do not load models, benchmark hardware, or ask for credentials.</p>${roles.map((k) => `<div class="custom-role"><label for="model-${k}">${k[0].toUpperCase() + k.slice(1)} model ID</label><div><span class="tag success">Local only</span><input id="model-${k}" type="text" name="model-${k}" maxlength="100" placeholder="Not configured" value="${esc(state.models[k])}"></div></div>`).join("")}<button type="submit" class="btn primary">Save local model labels ${icon("check")}</button></details></form><details class="local-setup"><summary>Before connecting a local runtime ${icon("down")}</summary><div class="setup-check"><span>Model labels saved</span><strong>${roles.filter((k) => state.models[k]).length} of 4</strong></div><div class="setup-check"><span>Pi runtime adapter</span><strong>Not connected</strong></div><div class="setup-check"><span>Role capabilities and hardware</span><strong>Not measured</strong></div><div class="setup-check"><span>Execution and verification</span><strong>Not performed</strong></div><p>These are setup notes, not a readiness test. The future local adapter must verify capabilities before work can run.</p></details><a class="source-note" href="${link("research/docs/foundations/pi-foundation.md")}" target="_blank" rel="noopener">Read the Pi foundation decision ${icon("external")}</a>`
   );
 }
 function permissionsPage() {
@@ -525,91 +557,211 @@ function extensionsPage() {
       )}</section><p class="section-note">Selecting an integration stores a UI preference. Nothing is installed or launched.</p>`
   );
 }
+const researchDocs = [
+  {
+    path: "MASTER-PLAN.md",
+    title: "The master plan",
+    topic: "Design & readiness",
+    evidence: "Proposed design",
+    description: "Product boundaries, delivery phases and acceptance gates.",
+  },
+  {
+    path: "research/docs/foundations/pi-foundation.md",
+    title: "Pi foundation",
+    topic: "Foundations",
+    evidence: "Proposed design",
+    description:
+      "The selected base, extension seams and remaining qualification.",
+  },
+  {
+    path: "research/docs/foundations/pi-source-contracts.md",
+    title: "Pinned Pi source contracts",
+    topic: "Foundations",
+    evidence: "Documented source",
+    description: "Source-observed sessions, tools, hooks and persistence.",
+  },
+  {
+    path: "research/docs/agents/terminal-agents.md",
+    title: "Terminal agents",
+    topic: "Agents",
+    evidence: "Documented source",
+    description: "Mechanisms from Pi, Aider, Codex and other coding CLIs.",
+  },
+  {
+    path: "research/docs/agents/competitive-mechanism-review.md",
+    title: "Competitive mechanisms",
+    topic: "Agents",
+    evidence: "Documented source",
+    description: "Strengths, limitations and comparative test gates.",
+  },
+  {
+    path: "research/docs/capabilities/context-retrieval-and-memory.md",
+    title: "Context and retrieval",
+    topic: "Capabilities",
+    evidence: "Documented source",
+    description: "Code context, source freshness and lexical fallback.",
+  },
+  {
+    path: "research/docs/capabilities/cross-session-memory.md",
+    title: "Cross-session memory",
+    topic: "Capabilities",
+    evidence: "Documented source",
+    description: "Cited capture, recovery, correction and deletion.",
+  },
+  {
+    path: "research/docs/capabilities/memory-mechanism-review.md",
+    title: "Memory source review",
+    topic: "Capabilities",
+    evidence: "Documented source",
+    description: "Pinned mechanisms, counterevidence and qualification gaps.",
+  },
+  {
+    path: "research/docs/capabilities/inference-local-and-cloud.md",
+    title: "Local inference research",
+    topic: "Capabilities",
+    evidence: "Documented source",
+    description:
+      "Independent local roles; hosted systems are comparison material only.",
+  },
+  {
+    path: "research/docs/capabilities/tool-access-and-execution.md",
+    title: "Tool access and execution",
+    topic: "Capabilities",
+    evidence: "Documented source",
+    description: "Scoped file, process and terminal effects.",
+  },
+  {
+    path: "research/docs/capabilities/protocols-plugins-and-evaluation.md",
+    title: "Protocols and extensions",
+    topic: "Capabilities",
+    evidence: "Documented source",
+    description: "MCP, skills, plugins and distinct permission boundaries.",
+  },
+  {
+    path: "research/docs/capabilities/platform-security-and-release.md",
+    title: "Platform and release controls",
+    topic: "Capabilities",
+    evidence: "Proposed design",
+    description:
+      "Process ownership, packaging and security acceptance contracts.",
+  },
+  {
+    path: "research/docs/design/implementation-contracts.md",
+    title: "Implementation contracts",
+    topic: "Design & readiness",
+    evidence: "Proposed design",
+    description: "Records, effect ordering, recovery and synthetic scenarios.",
+  },
+  {
+    path: "research/docs/design/qualification-register.md",
+    title: "Qualification register",
+    topic: "Design & readiness",
+    evidence: "Proposed design",
+    description:
+      "Tie adoption decisions to pinned sources and actual experiments.",
+  },
+  {
+    path: "research/docs/design/readiness-audit.md",
+    title: "Readiness audit",
+    topic: "Design & readiness",
+    evidence: "Proposed design",
+    description:
+      "Requirements, implementation gates and unfulfilled runtime proof.",
+  },
+  {
+    path: "research/docs/design/synthesis.md",
+    title: "Architecture synthesis",
+    topic: "Design & readiness",
+    evidence: "Proposed design",
+    description: "One existing engine with explicit owners and boundaries.",
+  },
+  {
+    path: "research/docs/design/frontend-workflow-review.md",
+    title: "Frontend workflow review",
+    topic: "Design & readiness",
+    evidence: "Documented source",
+    description: "Source-backed task and verification interface decisions.",
+  },
+  {
+    path: "research/docs/governance/repository-baseline.md",
+    title: "Repository controls",
+    topic: "Governance",
+    evidence: "Documented source",
+    description: "Review, CI and repository baseline controls.",
+  },
+  {
+    path: "research/docs/methodology.md",
+    title: "Method and evidence",
+    topic: "Evidence & guides",
+    evidence: "Documented source",
+    description: "How research labels, source depth and discovery limits work.",
+  },
+  {
+    path: "research/docs/evidence/README.md",
+    title: "Primary-source ledgers",
+    topic: "Evidence & guides",
+    evidence: "Documented source",
+    description:
+      "Machine-readable documentary provenance, not runtime receipts.",
+  },
+  {
+    path: "research/docs/README.md",
+    title: "Complete document map",
+    topic: "Evidence & guides",
+    evidence: "Documented source",
+    description: "Navigate every chapter in the maintained research index.",
+  },
+  {
+    path: "CONTRIBUTING.md",
+    title: "Contribution guide",
+    topic: "Evidence & guides",
+    evidence: "Documented source",
+    description: "Connect a useful idea to a source and a testable outcome.",
+  },
+];
+function findResearch(
+  query = "",
+  topic = "All topics",
+  evidence = "All evidence",
+) {
+  const q = query.trim().toLowerCase();
+  return researchDocs.filter(
+    (d) =>
+      (topic === "All topics" || d.topic === topic) &&
+      (evidence === "All evidence" || d.evidence === evidence) &&
+      [d.title, d.topic, d.evidence, d.description, d.path]
+        .join(" ")
+        .toLowerCase()
+        .includes(q),
+  );
+}
+function researchRows(items) {
+  return items.length
+    ? items
+        .map(
+          (d) =>
+            `<a class="research-item" href="${link(d.path)}" target="_blank" rel="noopener"><span><span class="research-metadata"><span>${esc(d.topic)}</span><span class="tag outline">${esc(d.evidence)}</span></span><strong>${esc(d.title)}</strong><small>${esc(d.description)}</small></span>${icon("external")}</a>`,
+        )
+        .join("")
+    : `<div class="empty"><strong>No matching research</strong><p>Runtime-tested results are not available yet. Try another topic or evidence state.</p><button class="text-button" data-action="reset-research">Clear filters ${icon("back")}</button></div>`;
+}
+function updateResearch() {
+  const items = findResearch(
+    document.getElementById("research-search").value,
+    document.getElementById("research-topic").value,
+    document.getElementById("research-evidence").value,
+  );
+  document.getElementById("research-results").innerHTML = researchRows(items);
+  document.getElementById("research-count").textContent =
+    items.length + " of " + researchDocs.length + " sources";
+}
 function researchPage() {
   return (
     heading(
       "The thinking behind Splyce.",
-      "Project evidence, architecture and delivery plans.",
+      "Find a source, inspect its evidence state, and keep proposals separate from proof.",
     ) +
-    `<section class="harness-explainer"><h2>What is an agent harness?</h2><p>The model proposes the next step. The harness supplies context, controls tool access, preserves session state, and records what was actually checked. Splyce plans to reuse Pi for the agent loop and add local policy, memory and evidence.</p><a href="${link("research/docs/design/frontend-workflow-review.md")}" target="_blank" rel="noopener">Read the frontend research review ${icon("external")}</a></section><div class="doc-list">${[
-      [
-        "MASTER-PLAN.md",
-        "The master plan",
-        "Architecture, contracts and the build sequence",
-      ],
-      [
-        "research/README.md",
-        "Research library",
-        "Models, memory, coding agents and protocols",
-      ],
-      [
-        "research/docs/design/synthesis.md",
-        "Architecture synthesis",
-        "One run contract and one owner per concern",
-      ],
-      [
-        "CONTRIBUTING.md",
-        "Contribution guide",
-        "Connect useful ideas to testable outcomes",
-      ],
-      [
-        "research/docs/README.md",
-        "Complete document map",
-        "Navigate every research chapter",
-      ],
-      [
-        "research/docs/foundations/pi-foundation.md",
-        "Pi foundation",
-        "Selected engine, integration seams and open gates",
-      ],
-      [
-        "research/docs/design/implementation-contracts.md",
-        "Implementation contracts",
-        "Records, ordering, recovery and truthful outcomes",
-      ],
-      [
-        "research/docs/design/qualification-register.md",
-        "Qualification register",
-        "Separate source leads from tested capabilities",
-      ],
-      [
-        "research/docs/capabilities/cross-session-memory.md",
-        "Cross-session memory",
-        "Capture, cited recovery, correction and deletion",
-      ],
-      [
-        "research/docs/capabilities/inference-local-and-cloud.md",
-        "Local inference research",
-        "Independent local model roles and comparison evidence",
-      ],
-      [
-        "research/docs/capabilities/tool-access-and-execution.md",
-        "Tool access and execution",
-        "Scoped effects and executor boundaries",
-      ],
-      [
-        "research/docs/capabilities/protocols-plugins-and-evaluation.md",
-        "Protocols and extensions",
-        "MCP, plugins, conformance and evaluation",
-      ],
-      [
-        "research/docs/capabilities/platform-security-and-release.md",
-        "Platform and release controls",
-        "Packaging, process ownership and security contracts",
-      ],
-      [
-        "research/docs/evidence/README.md",
-        "Primary-source ledgers",
-        "Provenance behind the research",
-      ],
-    ]
-      .map(
-        ([p, t, d]) =>
-          `<a href="${link(p)}" target="_blank" rel="noopener"><span><strong>${t}</strong><small>${d}</small></span>${icon("arrow")}</a>`,
-      )
-      .join(
-        "",
-      )}</div><div class="research-status"><h2>Where the project stands</h2><p>Research → qualify the foundation → prove one edit, verify and recover path → add usable memory and model profiles → expand with evidence.</p><span class="tag warning">Runtime not implemented</span></div>`
+    `<details class="harness-explainer"><summary>How does the harness fit together? ${icon("down")}</summary><p>Pi owns the agent loop. Splyce plans to connect local context, scoped tools, operational evidence and memory around it. This illustration describes the proposed architecture.</p><figure class="architecture-figure"><div class="architecture-scroll" tabindex="0" role="region" aria-label="Architecture diagram, scroll horizontally on small screens"><img class="architecture-image" src="assets/harness-flow.svg" width="760" height="200" alt="Task flows through Pi, a policy gate and tools. Outcomes are recorded as evidence, then used by scoped memory." loading="lazy"></div><figcaption>Original Splyce illustration · proposed architecture, not a connected runtime.</figcaption></figure><a href="${link("research/docs/design/frontend-workflow-review.md")}" target="_blank" rel="noopener">Read the workflow research review ${icon("external")}</a></details><div class="research-filters"><div class="search-box">${icon("search")}<input type="search" id="research-search" placeholder="Search research, mechanisms or sources…" aria-label="Search research"></div><div class="research-selects"><label>Topic<select id="research-topic"><option>All topics</option>${[...new Set(researchDocs.map((d) => d.topic))].map((t) => `<option>${esc(t)}</option>`).join("")}</select></label><label>Evidence<select id="research-evidence"><option>All evidence</option><option>Documented source</option><option>Proposed design</option><option>Runtime tested</option></select></label></div></div><div class="research-results-head"><span id="research-count" role="status" aria-live="polite">${researchDocs.length} of ${researchDocs.length} sources</span><span>No runtime-tested claims</span></div><div class="doc-list" id="research-results">${researchRows(researchDocs)}</div><p class="section-note">Evidence states describe these documents, not a working integration. Source links open the current project branch.</p>`
   );
 }
 function themeOptions() {
@@ -644,7 +796,7 @@ function detail() {
   const needs = r.status === "Needs approval",
     canceled = r.status === "Canceled",
     complete = r.status === "Completed";
-  return `<button class="back-link" data-nav="runs">${icon("back")} All runs</button><div class="detail-heading"><div><span class="run-id">${esc(r.id)} · ${esc(r.model)}</span><h1>${esc(r.task)}</h1></div>${tag(r.status)}</div>${banner()}${r.acceptanceCriteria || r.verificationCommand ? `<section class="run-plan"><h2>What success looks like</h2>${r.acceptanceCriteria ? `<p>${esc(r.acceptanceCriteria)}</p>` : ""}${r.verificationCommand ? `<div class="planned-command"><span>Planned check · not executed</span><code>${esc(r.verificationCommand)}</code></div>` : ""}</section>` : ""}<div class="review-layout"><section class="panel"><header class="panel-head"><h2>Activity</h2><span class="tag outline">Simulated</span></header><ol class="detail-events"><li>${icon("checkcircle")}<div><strong>Task captured</strong><p>Your task and workspace scope are recorded.</p></div><time>00:00</time></li><li>${icon("checkcircle")}<div><strong>Context selected</strong><p>Sample references: M-001 · shared host; M-004 · evidence.</p></div><time>00:02</time></li><li>${icon(needs ? "shield" : canceled ? "x" : "checkcircle")}<div><strong>${needs ? "Waiting for approval" : canceled ? "Simulation canceled" : "Example change prepared"}</strong><p>${needs ? "Approve the demo action to continue." : canceled ? "No files were changed." : "This example is not generated from your task."}</p></div><time>00:08</time></li>${!needs && !canceled ? `<li>${icon(complete ? "checkcircle" : "clock")}<div><strong>${complete ? "Reviewed in the demo" : "Ready for your review"}</strong><p>Nothing is applied to a repository.</p></div><time>00:12</time></li>` : ""}</ol><div class="detail-actions">${needs ? '<button class="btn primary" data-action="approve">Approve demo action</button>' : !canceled && !complete ? '<button class="btn primary" data-action="complete">Mark reviewed</button>' : ""}${!canceled && !complete ? '<button class="btn secondary" data-action="cancel">Cancel run</button>' : ""}<button class="text-button" data-action="retry">${icon("plus")} Reuse task</button></div></section><section class="panel artifact-panel"><div class="tablist" role="tablist" aria-label="Run evidence"><button id="diff-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "diff"}" tabindex="${state.tab === "diff" ? 0 : -1}" class="${state.tab === "diff" ? "active" : ""}" data-tab="diff">Example diff</button><button id="receipt-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "receipt"}" tabindex="${state.tab === "receipt" ? 0 : -1}" class="${state.tab === "receipt" ? "active" : ""}" data-tab="receipt">Receipt</button><button class="icon-btn" data-action="export-run" aria-label="Export run record">${icon("download")}</button></div><div id="artifact-content" role="tabpanel" aria-labelledby="${state.tab}-tab">${
+  return `<button class="back-link" data-nav="runs">${icon("back")} All runs</button><div class="detail-heading"><div><span class="run-id">${esc(r.id)} · ${esc(r.model)}</span><h1>${esc(r.task)}</h1></div>${tag(r.status)}</div>${banner()}${r.acceptanceCriteria || r.verificationCommand ? `<section class="run-plan"><h2>What success looks like</h2>${r.acceptanceCriteria ? `<p>${esc(r.acceptanceCriteria)}</p>` : ""}${r.verificationCommand ? `<div class="planned-command"><span>Planned check · not executed</span><code>${esc(r.verificationCommand)}</code></div>` : ""}</section>` : ""}<div class="review-layout"><section class="panel"><header class="panel-head"><h2>Activity</h2><span class="tag outline">Simulated</span></header><ol class="detail-events"><li>${icon("checkcircle")}<div><strong>Task captured</strong><p>Your task and workspace scope are recorded.</p></div><time>00:00</time></li><li>${icon("checkcircle")}<div><strong>Context selected</strong><p>Sample references: M-001 · shared host; M-004 · evidence.</p></div><time>00:02</time></li><li>${icon(needs ? "shield" : canceled ? "x" : "checkcircle")}<div><strong>${needs ? "Waiting for approval" : canceled ? (r.stopReason === "permission-denied" ? "Demo action denied" : "Simulation canceled") : "Example change prepared"}</strong><p>${needs ? "Approve the demo action to continue." : canceled ? "No files were changed." : "This example is not generated from your task."}</p></div><time>00:08</time></li>${!needs && !canceled ? `<li>${icon(complete ? "checkcircle" : "clock")}<div><strong>${complete ? "Reviewed in the demo" : "Ready for your review"}</strong><p>Nothing is applied to a repository.</p></div><time>00:12</time></li>` : ""}</ol>${needs ? `<details class="action-scope"><summary>Inspect requested scope ${icon("down")}</summary><dl><dt>Capability</dt><dd>Workspace file edit · simulated</dd><dt>Target</dt><dd>example-policy.ts · synthetic fixture</dd><dt>Grant scope</dt><dd>Current workspace, this demo action only</dd><dt>Executor</dt><dd>Not connected</dd></dl><p>No file is accessed or changed by this prototype.</p></details>` : ""}<div class="detail-actions">${needs ? '<button class="btn primary" data-action="approve">Approve demo action</button>' : !canceled && !complete ? '<button class="btn primary" data-action="complete">Mark reviewed</button>' : ""}${!canceled && !complete ? `<button class="btn secondary" data-action="cancel">${needs ? "Deny demo action" : "Cancel run"}</button>` : ""}<button class="text-button" data-action="retry">${icon("plus")} Reuse task</button></div></section><section class="panel artifact-panel"><div class="tablist" role="tablist" aria-label="Run evidence"><button id="diff-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "diff"}" tabindex="${state.tab === "diff" ? 0 : -1}" class="${state.tab === "diff" ? "active" : ""}" data-tab="diff">Example diff</button><button id="receipt-tab" role="tab" aria-controls="artifact-content" aria-selected="${state.tab === "receipt"}" tabindex="${state.tab === "receipt" ? 0 : -1}" class="${state.tab === "receipt" ? "active" : ""}" data-tab="receipt">Receipt</button><button class="icon-btn" data-action="export-run" aria-label="Export run record">${icon("download")}</button></div><div id="artifact-content" role="tabpanel" aria-labelledby="${state.tab}-tab">${
     state.tab === "diff"
       ? `<div class="diff-file">${icon("code")} example-policy.ts <span>Illustrative only</span></div><pre class="detail-code"><code> function canRun(action: Action) {
 <span class="remove">−  return true;</span><span class="add">+  return action.scope === workspace.scope;</span> }</code></pre><p class="artifact-note">A fictional workspace guard, not a complete policy implementation. No patch exists for this run.</p>`
@@ -783,6 +935,14 @@ document.addEventListener("click", (e) => {
     const t = templates[Number(el.dataset.template)];
     if (!t) return;
     state.draft = t.text;
+    state.draftDetails = {
+      acceptanceCriteria: t.acceptanceCriteria || "",
+      verificationCommand: t.verificationCommand || "",
+    };
+    document.getElementById("acceptance").value =
+      state.draftDetails.acceptanceCriteria;
+    document.getElementById("verification").value =
+      state.draftDetails.verificationCommand;
     save();
     const input = document.getElementById("task");
     input.value = t.text;
@@ -815,6 +975,13 @@ document.addEventListener("click", (e) => {
     return;
   }
   const a = el.dataset.action;
+  if (a === "reset-research") {
+    document.getElementById("research-search").value = "";
+    document.getElementById("research-topic").value = "All topics";
+    document.getElementById("research-evidence").value = "All evidence";
+    updateResearch();
+    document.getElementById("research-search").focus();
+  }
   if (a === "sample") {
     state.selected = "demo-101";
     navigate("run");
@@ -889,6 +1056,8 @@ document.addEventListener("click", (e) => {
       navigate("new");
       return;
     }
+    if (a === "cancel" && r.status === "Needs approval")
+      r.stopReason = "permission-denied";
     r.status =
       a === "approve"
         ? "Review ready"
@@ -985,6 +1154,7 @@ document.addEventListener("input", (e) => {
       : "Draft for this visit";
   }
   if (["run-search", "memory-search"].includes(e.target.id)) filter();
+  if (e.target.id === "research-search") updateResearch();
   if (e.target.id === "task") {
     state.draft = e.target.value;
     const ok = save();
@@ -996,6 +1166,8 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("change", (e) => {
   if (["run-status", "memory-type"].includes(e.target.id)) filter();
+  if (["research-topic", "research-evidence"].includes(e.target.id))
+    updateResearch();
   if (e.target.name === "reduceMotion") {
     state.settings.reduceMotion = e.target.checked;
     saved("Motion preference saved.");

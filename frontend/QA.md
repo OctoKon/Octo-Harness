@@ -17,7 +17,7 @@ The in-app browser completed 33 interaction checks with no failed assertion in t
 | Models      | Setup templates keep all roles local; model-ID labels save, survive reload and appear in the role summary                                            |
 | Permissions | Both preference switches persist; original preferences were restored after the check; no runtime-enforcement claim is made                           |
 | Extensions  | MCP, skills and language-intelligence preferences toggle and were restored after checking                                                            |
-| Research    | The harness explanation and 14 source-document links are present; the new review is linked from maintained indexes                                   |
+| Research    | The harness explanation and categorized source-document links are present; the new review is linked from maintained indexes                          |
 | Settings    | Blank workspace names are rejected; the header appearance control preserves an unsaved name; Dark mode persists after reload                         |
 | Appearance  | Neutral page and panel grays are observed; Light/Dark/System and reduced motion persist; the operating-system setting is respected                   |
 | Data        | JSON export contains the observed preferences; reset/undo restores prior settings and local records                                                  |
@@ -43,3 +43,7 @@ The frontend check executes the actual application script with minimal browser-A
 `npm ls --omit=dev --depth=0` reports no production npm dependencies. Fonts, logo and favicon are bundled locally. `npm audit --json` reports four low-severity advisories in the documentation-tool chain: katex, markdownlint, markdownlint-cli2 and micromark-extension-math. No moderate, high or critical advisory was reported in that audit. npm proposes a major-version tool change; the repository's pinned tools were not changed during this UI audit.
 
 Pi execution, local model loading, MCP connections, actual shell commands, Git edits, sandbox enforcement and final-revision verification receipts are not implemented by this frontend. Sample activity remains simulated. No backend qualification, benchmark improvement or CI success is inferred from the local checks.
+
+## Shared frontend additions
+
+An isolated browser preview completed ten checks for scoped denial, combined research search, an empty runtime-tested filter, filter reset, diagram loading/containment, recovery-template population and honest setup notes. The user's existing local records were preserved. The preview card's hover state was observed with a five-pixel lift, a slight rotation and a 0.42-second transition after disabling its explicit reduced-motion setting at the user's request. Device reduced-motion preferences remain honored.

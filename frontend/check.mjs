@@ -167,6 +167,47 @@ assert.equal(
   vm.runInContext("state.draftDetails.acceptanceCriteria", context),
   "",
 );
+assert.equal(vm.runInContext("findResearch().length", context), 22);
+assert.equal(
+  vm.runInContext(
+    "findResearch('', 'All topics', 'Runtime tested').length",
+    context,
+  ),
+  0,
+);
+assert.equal(
+  vm.runInContext(
+    "findResearch('', 'Capabilities', 'Proposed design').length",
+    context,
+  ),
+  1,
+);
+assert.ok(
+  vm.runInContext("findResearch('PI', 'Foundations').length", context) >= 2,
+);
+for (const doc of vm.runInContext("researchDocs", context))
+  assert.ok(fs.existsSync("../" + doc.path), doc.path);
+listeners.click({
+  target: { closest: () => ({ dataset: { template: "3" } }) },
+});
+assert.match(vm.runInContext("state.draft", context), /prior session/);
+assert.match(
+  vm.runInContext("state.draftDetails.acceptanceCriteria", context),
+  /uncertainty/,
+);
+vm.runInContext(
+  "state.selected='demo-103';state.runs.find(r=>r.id==='demo-103').status='Needs approval'",
+  context,
+);
+listeners.click({
+  target: { closest: () => ({ dataset: { action: "cancel" } }) },
+});
+assert.equal(
+  vm.runInContext("state.runs.find(r=>r.id==='demo-103').stopReason", context),
+  "permission-denied",
+);
+assert.match(vm.runInContext("detail()", context), /Demo action denied/);
+assert.ok(fs.existsSync("assets/harness-flow.svg"));
 console.log(
-  "PASS: task plans, input escaping, run creation, local roles, settings, appearance, deep links and workspace views.",
+  "PASS: task plans, escaping, local settings, run identity, research filters, template population and scoped denial.",
 );

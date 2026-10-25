@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 200" fill="none">
+  <title>The proposed local Splyce workflow</title>
+  <desc>
+    A task passes through Pi, policy and tools. Observed outcomes become
+    evidence and scoped memory.
+  </desc>
+  <g stroke="#b56842" stroke-width="2" stroke-linecap="round">
+    <path
+      d="M90 79h60m-6-5 6 5-6 5M218 79h60m-6-5 6 5-6 5M346 79h60m-6-5 6 5-6 5M474 79h60m-6-5 6 5-6 5M602 79h60m-6-5 6 5-6 5"
+    />
+  </g>
+  <g stroke="#858273" stroke-width="1.8">
+    <circle cx="60" cy="79" r="29" />
+    <circle cx="188" cy="79" r="29" />
+    <circle cx="316" cy="79" r="29" />
+    <circle cx="444" cy="79" r="29" />
+    <circle cx="572" cy="79" r="29" />
+    <circle cx="700" cy="79" r="29" />
+    <rect x="48" y="69" width="24" height="20" rx="5" />
+    <path d="m54 75 5 4-5 4m9 0h4" />
+    <path d="m316 66 11 4v9c0 8-11 13-11 13s-11-5-11-13v-9l11-4Z" />
+    <path d="m311 78 4 4 7-8" />
+    <path d="m433 75 5-5 6 6 8-8m-17 21 10-10m2 4 7 7" />
+    <rect x="562" y="65" width="20" height="28" rx="4" />
+    <path d="M567 73h10m-10 6h10m-10 6h6" />
+    <path
+      d="M689 66h18a4 4 0 0 1 4 4v22h-18a4 4 0 0 1-4-4V66Zm0 22a4 4 0 0 1 4-4h18m-17-18v10l5-3 5 3V66"
+    />
+  </g>
+  <g fill="#66645b" font-family="Arial,sans-serif" text-anchor="middle">
+    <text x="188" y="85" font-size="19" font-weight="600">Pi</text>
+    <g font-size="14">
+      <text x="60" y="136">Task</text>
+      <text x="188" y="136">Existing engine</text>
+      <text x="316" y="136">Policy</text>
+      <text x="444" y="136">Scoped tools</text>
+      <text x="572" y="136">Evidence</text>
+      <text x="700" y="136">Memory</text>
+    </g>
+  </g>
+  <path
+    d="M700 156v18H188v-18"
+    stroke="#858273"
+    stroke-width="1.5"
+    stroke-dasharray="4 5"
+  />
+  <path d="m183 161 5-5 5 5" stroke="#858273" stroke-width="1.5" />
+</svg>

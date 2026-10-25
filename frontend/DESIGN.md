@@ -40,7 +40,7 @@ The desktop sidebar is 216px and narrows to 185px at 880px. Below 640px it becom
 
 ## Elevation & Depth
 
-Fine borders and tonal fields separate most content. The interactive specimen and notifications use soft neutral shadows. The specimen stays level. Device and explicit reduced-motion preferences disable interface transitions.
+Fine borders and tonal fields separate most content. The specimen and notifications use soft neutral shadows. On fine-pointer devices the specimen rests at a slight angle, lifts gently on hover or focus, and responds subtly to a press. Device and explicit reduced-motion preferences keep it still.
 
 ## Shapes
 
@@ -53,6 +53,8 @@ Appearance choices and the header theme switch apply immediately, save to browse
 The sidebar omits the former storage-status block and expanded controls list. Settings tabs keep configuration in the content area. The website closes with a dedicated call to action and structured workspace, research, contribution and license links.
 
 The optional Define success section captures acceptance criteria and a planned verification command. It stays collapsed by default. Drafts, run records and task reuse preserve these fields; planned checks never appear as executed receipts.
+
+Research filters, optional task starters and local setup notes stay in the existing content area. The architecture SVG reuses neutral strokes and copper paths from the established palette.
 
 ## Do's and Don'ts
 

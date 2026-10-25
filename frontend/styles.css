@@ -3459,3 +3459,331 @@ body {
 .dark .btn.ink:hover {
   background: #fffaf0;
 }
+
+.harness-explainer summary {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+}
+.harness-explainer summary > svg {
+  margin-left: auto;
+  width: 15px;
+  height: 15px;
+}
+.harness-explainer[open] summary > svg {
+  transform: rotate(180deg);
+}
+.architecture-figure {
+  margin: 22px 0;
+}
+.architecture-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--bg);
+  padding: 12px;
+}
+.architecture-image {
+  display: block;
+  width: 100%;
+  min-width: 620px;
+  height: auto;
+  max-height: 240px;
+}
+.architecture-figure figcaption {
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin-top: 12px;
+}
+.dark .architecture-image {
+  filter: brightness(1.5);
+}
+.research-filters {
+  margin: 25px 0 0;
+}
+.research-filters .search-box {
+  margin-bottom: 15px;
+}
+.research-selects {
+  display: flex;
+  gap: 14px;
+}
+.research-selects label {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 10px;
+  color: var(--muted);
+}
+.research-selects select {
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface);
+  font-size: 11px;
+  padding: 11px 13px;
+  max-width: 230px;
+}
+.research-results-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  font-size: 10px;
+  color: var(--muted);
+  margin: 23px 0 15px;
+}
+.research-metadata {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.research-metadata .tag {
+  font-size: 8px;
+  padding: 4px 7px;
+}
+.doc-list .research-item {
+  padding: 22px 4px;
+}
+.research-item small {
+  max-width: 74ch;
+  line-height: 1.8;
+}
+.doc-list .empty > strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 10px;
+  color: var(--ink);
+}
+.doc-list .empty > p {
+  font-size: 11px;
+  max-width: 55ch;
+  margin: 0 auto 18px;
+}
+.template-shelf {
+  margin-top: 15px;
+}
+.template-shelf summary {
+  font-size: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  list-style: none;
+  padding: 7px 0;
+}
+.template-shelf summary svg {
+  width: 12px;
+  height: 12px;
+}
+.template-shelf > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 10px;
+}
+.template-shelf button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 17px;
+  background: var(--surface);
+  text-align: left;
+}
+.template-shelf button:hover {
+  background: var(--subtle);
+}
+.template-shelf button > svg {
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+}
+.template-shelf button > svg:last-child {
+  margin-left: auto;
+  width: 13px;
+}
+.template-shelf strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.template-shelf small {
+  display: block;
+  font-size: 9px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.local-setup {
+  margin-top: 25px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.local-setup summary,
+.action-scope summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+.local-setup summary svg,
+.action-scope summary svg {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+}
+.setup-check {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+}
+.setup-check > span {
+  color: var(--muted);
+}
+.setup-check strong {
+  font-size: 10px;
+  font-weight: 500;
+}
+.local-setup > p,
+.action-scope > p {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 17px;
+  line-height: 1.8;
+}
+.action-scope {
+  margin: 0 23px 20px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--bg);
+}
+.action-scope dl {
+  font-size: 10px;
+  line-height: 1.8;
+  margin: 18px 0 0;
+}
+.action-scope dt {
+  color: var(--muted);
+  margin-top: 12px;
+}
+.action-scope dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .harness-explainer summary {
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .research-selects {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .research-selects label {
+    display: grid;
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+  .research-selects select {
+    width: 100%;
+    max-width: none;
+    font-size: 10px;
+  }
+  .research-results-head {
+    font-size: 9px;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+  .research-metadata {
+    gap: 8px;
+    flex-wrap: wrap;
+    line-height: 1.6;
+  }
+  .research-item strong {
+    font-size: 13px;
+  }
+  .research-item small {
+    font-size: 10px;
+  }
+  .template-shelf > div {
+    grid-template-columns: 1fr;
+  }
+  .template-shelf strong {
+    font-size: 11px;
+  }
+  .local-setup summary {
+    font-size: 11px;
+    line-height: 1.7;
+  }
+  .setup-check {
+    font-size: 10px;
+  }
+  .setup-check strong {
+    font-size: 9px;
+    text-align: right;
+  }
+  .action-scope {
+    margin: 0 18px 18px;
+    padding: 16px;
+  }
+  .action-scope summary {
+    font-size: 10px;
+  }
+  .architecture-scroll {
+    padding: 6px;
+  }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .specimen {
+    transform: rotate(0.45deg);
+    transition:
+      transform 420ms cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 420ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .specimen:hover,
+  .specimen:focus-within {
+    transform: translateY(-5px) rotate(-0.45deg);
+    box-shadow: 0 22px 44px #00000030;
+  }
+  .specimen:active {
+    transform: translateY(-2px) rotate(0deg) scale(0.995);
+  }
+}
+.workspace-tabs,
+.architecture-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.workspace-tabs::-webkit-scrollbar,
+.architecture-scroll::-webkit-scrollbar {
+  height: 5px;
+}
+.workspace-tabs::-webkit-scrollbar-track,
+.architecture-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.workspace-tabs::-webkit-scrollbar-thumb,
+.architecture-scroll::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 8px;
+}
+html:has(body.dark) {
+  background: #151515;
+  scrollbar-color: #555550 #151515;
+}
