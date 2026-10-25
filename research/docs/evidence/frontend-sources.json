@@ -1,0 +1,405 @@
+[
+  {
+    "id": "FUI-01",
+    "tool": "OpenAI Codex desktop workflow reference",
+    "url": "https://openai.com/index/introducing-the-codex-app/",
+    "title": "Introducing the Codex app",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The February 2026 launch article describes project-organized agent threads and in-thread review with diff comments.",
+      "The article describes worktree support and includes a March 2026 Windows availability update."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Historical launch article fetched; not an installed current-layout, usability, performance or accessibility audit. No desktop artwork/code reuse inferred."
+  },
+  {
+    "id": "FUI-02",
+    "tool": "OpenAI Codex managed worktree workflow",
+    "url": "https://learn.chatgpt.com/docs/environments/git-worktrees",
+    "title": "Worktrees",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Current guide distinguishes managed and permanent worktrees, handoff between environments and recoverable managed cleanup."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Specific current page fetched after legacy app documentation redirects. Splyce does not adopt its cleanup limits, hidden-file policy or worktree authority semantics."
+  },
+  {
+    "id": "FUI-03",
+    "tool": "OpenAI Codex review provenance",
+    "url": "https://learn.chatgpt.com/docs/reference/troubleshooting",
+    "title": "Troubleshooting",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The review panel can show project Git changes that Codex did not make.",
+      "The guide distinguishes staged, unstaged, branch comparison and Last turn views."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Fetched exact review-panel section. Supports explicit comparison/provenance labels, not an assertion of agent authorship for all changed files."
+  },
+  {
+    "id": "FUI-04",
+    "tool": "Anthropic Claude Code Desktop interaction reference",
+    "url": "https://code.claude.com/docs/en/desktop",
+    "title": "Desktop application",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documents file-by-file diff review and line comments submitted together.",
+      "Documents rearrangeable/resizable panes and narrow-window controls moving into a menu."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Fetched current Desktop page and selected review/layout sections. Product behavior only; no source-code/asset license or measured usability superiority inferred."
+  },
+  {
+    "id": "FUI-05",
+    "tool": "Anthropic Claude Code input interaction reference",
+    "url": "https://code.claude.com/docs/en/interactive-mode",
+    "title": "Interactive mode",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documents keyboard editing, multiline input methods and transcript inspection."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Terminal reference fetched as an interaction comparator. Terminal shortcuts do not become Windows GUI requirements; proposed Splyce composer shortcuts need packaged IME tests."
+  },
+  {
+    "id": "FUI-06",
+    "tool": "Svelte compiler accessibility diagnostics",
+    "url": "https://svelte.dev/docs/svelte/compiler-warnings",
+    "title": "Compiler warnings",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Svelte warns at compile time about potential mistakes including inaccessible markup."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Official documentation fetched. Static warnings do not establish application accessibility, focus behavior or runtime IPC validation."
+  },
+  {
+    "id": "FUI-07",
+    "tool": "Bits UI Svelte headless primitives",
+    "url": "https://www.bits-ui.com/docs/introduction",
+    "title": "Introduction - Bits UI",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Describes mostly unstyled Svelte primitives with TypeScript support.",
+      "Documents keyboard navigation, focus management and screen-reader support as component design goals."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Introduction and Dialog/Combobox pages fetched. Vendor accessibility claims require actual selected-pin WebView2/Narrator/IME qualification; no bundle-size ranking."
+  },
+  {
+    "id": "FUI-08",
+    "tool": "Melt UI next Svelte 5 route",
+    "url": "https://next.melt-ui.com/guides/installation",
+    "title": "Installation - Melt UI",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Lists Svelte 5.0.0 or higher as prerequisite.",
+      "Shows installation of package melt and builder/component usage routes."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Fetched next-route documentation. Do not conflate melt with historical @melt-ui/svelte; exact next-package repository/revision/license remains unresolved."
+  },
+  {
+    "id": "FUI-09",
+    "tool": "shadcn-svelte source-distributed components",
+    "url": "https://www.shadcn-svelte.com/docs",
+    "title": "Introduction - shadcn-svelte",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Describes a community-led Svelte port with components built on Bits UI and Tailwind.",
+      "Distributes editable component source, distinguishing top-layer local code from headless dependencies."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Canonical project introduction fetched; moving page is not an adoption pin. Selective reuse proposal, no registry installation or design-asset copying performed."
+  },
+  {
+    "id": "FUI-10",
+    "tool": "Microsoft Fluent 2 accessibility guidance",
+    "url": "https://fluent2.microsoft.design/accessibility",
+    "title": "Accessibility - Fluent 2 Design System",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Guidance covers logical hierarchy, keyboard focus, contrast and responsive reflow."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Fetched public primary design guidance. Fluent component conformance statements do not certify Splyce's Svelte/WebView2 implementation or chosen palette."
+  },
+  {
+    "id": "FUI-11",
+    "tool": "Monaco optional editor accessibility",
+    "url": "https://github.com/microsoft/monaco-editor/wiki/Monaco-Editor-Accessibility-Guide",
+    "title": "Monaco Editor Accessibility Guide",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documents editable-editor Tab trapping and a Windows/Linux Ctrl+M focus-toggle route.",
+      "Describes screen-reader-oriented text paging and suggestion navigation."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Official project wiki fetched. Guide includes historical details; qualify exact selected editor/version behavior on Windows. Does not justify editor/LSP assets in base."
+  },
+  {
+    "id": "FUI-12",
+    "tool": "Bits UI license inspection",
+    "url": "https://github.com/huntabyte/bits-ui/blob/main/LICENSE",
+    "title": "bits-ui LICENSE",
+    "accessed": "2026-10-26",
+    "claims": ["Fetched file identifies the MIT license."],
+    "verification": "primary-source-fetched",
+    "notes": "Moving main branch inspection anchor only; freeze selected revision and preserve applicable notices before reuse. Transitive dependencies not cleared."
+  },
+  {
+    "id": "FUI-13",
+    "tool": "shadcn-svelte license inspection",
+    "url": "https://github.com/huntabyte/shadcn-svelte/blob/main/LICENSE.md",
+    "title": "shadcn-svelte LICENSE.md",
+    "accessed": "2026-10-26",
+    "claims": ["Fetched file identifies the MIT license."],
+    "verification": "primary-source-fetched",
+    "notes": "Moving main branch inspection anchor only; copied code/dependencies require pinned provenance, notices and maintenance ownership."
+  },
+  {
+    "id": "FUI-14",
+    "tool": "Historical Melt UI license inspection",
+    "url": "https://github.com/melt-ui/melt-ui/blob/develop/LICENSE",
+    "title": "melt-ui LICENSE",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Fetched historical repository file identifies the MIT license."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Develop-branch inspection does not establish license/source identity of the separate next-route melt package. Resolve actual package source before selection."
+  },
+  {
+    "id": "FUI-15",
+    "tool": "Monaco license inspection",
+    "url": "https://github.com/microsoft/monaco-editor/blob/main/LICENSE.txt",
+    "title": "monaco-editor LICENSE.txt",
+    "accessed": "2026-10-26",
+    "claims": ["Fetched file identifies the MIT license."],
+    "verification": "primary-source-fetched",
+    "notes": "Moving branch anchor only; optional editor package and transitive asset notices still need selected-pin inventory. No legal compatibility opinion."
+  },
+  {
+    "id": "FUI-16",
+    "tool": "Microsoft Fluent semantic design tokens",
+    "url": "https://fluent2.microsoft.design/design-tokens",
+    "title": "Design tokens - Fluent 2 Design System",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Describes global raw-value tokens and semantic alias tokens for styles/theming."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Primary design guidance fetched. Splyce palette, spacing and motion values are original proposals, not extracted vendor tokens or verified contrast results."
+  },
+  {
+    "id": "FUI-17",
+    "tool": "Microsoft Windows keyboard interaction guidance",
+    "url": "https://learn.microsoft.com/en-us/windows/apps/develop/input/keyboard-interactions",
+    "title": "Keyboard interactions - Windows apps",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Describes keyboard input as a primary Windows interaction and accessibility route."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Fetched main content despite page chrome showing authorization notices; design guidance is readable. Native/XAML control behavior is not assumed for DOM controls."
+  },
+  {
+    "id": "FUI-18",
+    "tool": "W3C UI Events composition state",
+    "url": "https://w3c.github.io/uievents/#dom-keyboardevent-iscomposing",
+    "title": "UI Events",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Defines KeyboardEvent composition state and keyboard/composition event semantics."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Editor draft fetched; standard definition is not evidence that a particular WebView2/IME sequence is correct. Real packaged composition tests remain n=0."
+  },
+  {
+    "id": "FUI-19",
+    "tool": "Microsoft Windows app qualification guidance",
+    "url": "https://learn.microsoft.com/en-us/windows/apps/get-started/best-practices",
+    "title": "Windows app development best practices",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Calls for keyboard access, accurate accessibility information, contrast-theme testing and text/display scaling, including 200 percent text scaling."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Readable main content fetched despite authorization notices in page chrome. Actual supported OS/hardware cells remain release gates."
+  },
+  {
+    "id": "FUI-20",
+    "tool": "W3C reduced-motion preference",
+    "url": "https://www.w3.org/TR/mediaqueries-5/#prefers-reduced-motion",
+    "title": "Media Queries Level 5",
+    "accessed": "2026-10-26",
+    "claims": ["Defines reduced-motion preference media-query semantics."],
+    "verification": "primary-source-fetched",
+    "notes": "Working draft fetched. Proposed Splyce transition durations are design targets, not standard-mandated values; WebView2/system preference propagation untested."
+  },
+  {
+    "id": "FUI-21",
+    "tool": "W3C forced-color adjustment",
+    "url": "https://www.w3.org/TR/css-color-adjust-1/#forced-colors-mode",
+    "title": "CSS Color Adjustment Module Level 1",
+    "accessed": "2026-10-26",
+    "claims": ["Defines forced-colors mode and color-adjustment mechanisms."],
+    "verification": "primary-source-fetched",
+    "notes": "Candidate recommendation snapshot fetched. System-color/focus rendering must be tested in real Windows contrast themes; no blanket adjustment opt-out recommended."
+  },
+  {
+    "id": "FUI-22",
+    "tool": "W3C right-to-left structural markup",
+    "url": "https://www.w3.org/International/questions/qa-html-dir",
+    "title": "Structural markup and right-to-left text in HTML",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Explains base direction through the dir attribute and handling structural right-to-left content."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "W3C internationalization guidance fetched. Mixed-direction paths/code, selection and copy behavior remain proposed packaged tests."
+  },
+  {
+    "id": "FUI-23",
+    "tool": "markdown-it explicit source-HTML policy",
+    "url": "https://markdown-it.github.io/markdown-it/interfaces/MarkdownItOptions.html",
+    "title": "MarkdownItOptions",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documents html as false for the ordinary default and true for the CommonMark preset."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Exact option documentation fetched. Set configuration explicitly; a parser default cannot establish safe plugins, highlighters, URLs or application IPC boundaries."
+  },
+  {
+    "id": "FUI-24",
+    "tool": "Marked HTML output boundary",
+    "url": "https://marked.js.org/",
+    "title": "Marked Documentation",
+    "accessed": "2026-10-26",
+    "claims": ["Explicitly warns that Marked output HTML is not sanitized."],
+    "verification": "primary-source-fetched",
+    "notes": "Primary parser documentation fetched. Alternative only with qualified sanitization/rendering boundary; no local parser performance measurement or speed ranking."
+  },
+  {
+    "id": "FUI-25",
+    "tool": "Shiki grammar/theme distribution cost",
+    "url": "https://shiki.style/guide/bundles",
+    "title": "Bundles - Shiki",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Warns that lazy grammar/theme imports can still increase browser/worker distribution size.",
+      "Describes fine-grained bundles for explicit grammar/theme selection."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Official guide fetched. Selective highlighter is conditional; exact assets/worker/WASM bytes and runtime cost unmeasured. No highlighter license clearance inferred."
+  },
+  {
+    "id": "FUI-26",
+    "tool": "markdown-it safety boundaries",
+    "url": "https://github.com/markdown-it/markdown-it/blob/master/docs/safety.md",
+    "title": "markdown-it safety.md",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Describes disabling source HTML and using external sanitization when source HTML is enabled as distinct strategies.",
+      "Warns that plugins can affect safe output."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Fetched actual safety.md after attempted docs/security.md returned 404. Qualified renderer/link/image/highlighter policy still required; no exploit payloads reproduced."
+  },
+  {
+    "id": "FUI-27",
+    "tool": "markdown-it license inspection",
+    "url": "https://github.com/markdown-it/markdown-it/blob/master/LICENSE",
+    "title": "markdown-it LICENSE",
+    "accessed": "2026-10-26",
+    "claims": ["Fetched file identifies the MIT license."],
+    "verification": "primary-source-fetched",
+    "notes": "Moving branch license text and https://raw.githubusercontent.com/markdown-it/markdown-it/master/package.json fetched; package declares MIT. Exact package pin and dependency notices remain unqualified. No runtime install performed."
+  },
+  {
+    "id": "FUI-28",
+    "tool": "TanStack Virtual long-list candidate",
+    "url": "https://github.com/TanStack/virtual",
+    "title": "TanStack Virtual",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Public headless virtualization project documents multiple framework integrations including Svelte."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Official repository fetched. Dynamic-height transcript behavior, exact Svelte 5 adapter compatibility, accessibility and speed/resource benefit remain untested."
+  },
+  {
+    "id": "FUI-29",
+    "tool": "TanStack Virtual license inspection",
+    "url": "https://github.com/TanStack/virtual/blob/main/LICENSE",
+    "title": "TanStack Virtual LICENSE",
+    "accessed": "2026-10-26",
+    "claims": ["Fetched file identifies the MIT license."],
+    "verification": "primary-source-fetched",
+    "notes": "Moving branch inspection only; no selected dependency/revision or transitive license clearance."
+  },
+  {
+    "id": "FUI-30",
+    "tool": "WAI-ARIA feed accessibility contract",
+    "url": "https://www.w3.org/WAI/ARIA/apg/patterns/feed/",
+    "title": "Feed Pattern - ARIA Authoring Practices Guide",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Describes a feed as a structure with a specific scrolling/loading interoperability agreement with assistive technologies."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "W3C APG primary guidance fetched. Adding a feed role alone does not qualify virtualization, focus retention or Narrator support."
+  },
+  {
+    "id": "FUI-31",
+    "tool": "Google web responsiveness measurement context",
+    "url": "https://web.dev/articles/optimize-inp",
+    "title": "Optimize Interaction to Next Paint",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Explains interaction responsiveness and causes involving main-thread JavaScript and rendering."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Primary web platform performance guidance fetched. Local target numbers in dossier are proposed engineering budgets, not vendor measurements or desktop certification."
+  },
+  {
+    "id": "FUI-32",
+    "tool": "Tauri capability and preview authority boundary",
+    "url": "https://tauri.app/security/capabilities/",
+    "title": "Capabilities - Tauri",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documents permissions associated with windows/webviews and merged permissions across capabilities.",
+      "Remote command access is configurable rather than intrinsically impossible."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Official moving docs fetched. Capabilities do not sandbox trusted native/engine code or replace command validation, safe rendering and explicit preview isolation."
+  },
+  {
+    "id": "FUI-33",
+    "tool": "Tauri packaged WebDriver routes",
+    "url": "https://tauri.app/develop/tests/webdriver/",
+    "title": "WebDriver - Tauri",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Recommends WebdriverIO tauri-service, distinguishes embedded WebDriver from external tauri-driver and identifies test-plugin requirements.",
+      "Separately documents renderer-only browser mode with mocked IPC."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Current page fetched, last-updated June 29 2026. Embedded default is not the same route as external Edge driver matching. Pin route/tools and exclude test privileges from release; all installed results n=0."
+  },
+  {
+    "id": "FUI-34",
+    "tool": "Legacy Codex app-features documentation migration",
+    "url": "https://developers.openai.com/codex/app/features",
+    "title": "Features - ChatGPT Learn redirect",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Fetch resolved to https://learn.chatgpt.com/docs/features rather than the former narrow Codex app page."
+    ],
+    "verification": "primary-source-fetched",
+    "notes": "Direct fetch observed redirect on access date. Broad destination is not used to assert absent app-specific navigation detail; current narrow sources FUI-02/03 used instead."
+  }
+]

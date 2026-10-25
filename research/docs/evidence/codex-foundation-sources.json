@@ -1,0 +1,88 @@
+[
+  {
+    "id": "CFND-01",
+    "tool": "OpenAI Codex source license",
+    "url": "https://github.com/openai/codex/blob/970111f6cb62cc02fe36a82ea7d71b37a2889c97/LICENSE",
+    "title": "Codex Apache License 2.0",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The pinned open Codex repository carries the Apache License 2.0."
+    ],
+    "verification": "primary-source-read",
+    "notes": "License content fetched at the immutable revision; redistribution still requires the applicable license and third-party inventory. This does not license proprietary desktop assets, hosted models or services."
+  },
+  {
+    "id": "CFND-02",
+    "tool": "OpenAI Codex notices",
+    "url": "https://github.com/openai/codex/blob/970111f6cb62cc02fe36a82ea7d71b37a2889c97/NOTICE",
+    "title": "Codex NOTICE",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The pinned NOTICE identifies OpenAI Codex and MIT-licensed Ratatui-derived code."
+    ],
+    "verification": "primary-source-read",
+    "notes": "A NOTICE read is not a full native/transitive dependency audit; keep all applicable notices in any adopted build."
+  },
+  {
+    "id": "CFND-03",
+    "tool": "Codex app-server protocol",
+    "url": "https://learn.chatgpt.com/docs/app-server",
+    "title": "Codex App Server",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The guide documents default stdio JSONL, a separately experimental unsupported TCP WebSocket transport, and an experimentalApi opt-in separate from the stable surface.",
+      "Version-specific TypeScript and JSON Schema generation and thread/turn/item lifecycle methods are documented."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official guide fetched 2026-10-26. No server was started, binary packaged, provider called or protocol qualified for Splyce."
+  },
+  {
+    "id": "CFND-04",
+    "tool": "Codex provider configuration",
+    "url": "https://github.com/openai/codex/blob/970111f6cb62cc02fe36a82ea7d71b37a2889c97/codex-rs/model-provider-info/src/lib.rs",
+    "title": "Pinned model-provider-info implementation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The inspected WireApi enum exposes Responses and explicitly rejects the removed chat wire setting.",
+      "Provider definitions include dedicated Amazon Bedrock/GCP entries and Responses-based Ollama/LM Studio defaults."
+    ],
+    "verification": "pinned-source-read",
+    "notes": "Do not infer native Messages/Gemini/legacy-Chat parity from a configured endpoint or from dedicated cloud implementations; each advertised role needs exact source and actual conformance evidence."
+  },
+  {
+    "id": "CFND-05",
+    "tool": "Codex gateway interoperability",
+    "url": "https://learn.chatgpt.com/docs/enterprise/gateway-compatibility",
+    "title": "Gateway compatibility requirements",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The official guide requires Responses-compatible gateway behavior; a working Chat Completions or Anthropic Messages endpoint does not establish Responses compatibility."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official page fetched; gateway conversion fidelity, operational cost and provider privacy remain untested. A required hosted gateway would conflict with local-only deployment."
+  },
+  {
+    "id": "CFND-06",
+    "tool": "Codex approvals and Windows security",
+    "url": "https://learn.chatgpt.com/docs/agent-approvals-security",
+    "title": "Agent approvals and security",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The guide distinguishes approval policy from sandbox controls and documents native Windows versus WSL execution boundaries."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official page fetched; this is not installed Windows containment or descendant cleanup proof. Splyce must retain independent durable admission/recovery tests."
+  },
+  {
+    "id": "CFND-07",
+    "tool": "Codex native core dependencies",
+    "url": "https://github.com/openai/codex/blob/970111f6cb62cc02fe36a82ea7d71b37a2889c97/codex-rs/core/Cargo.toml",
+    "title": "Pinned codex-core Cargo manifest",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The inspected core manifest includes a code-mode dependency among its runtime components."
+    ],
+    "verification": "pinned-source-read",
+    "notes": "Manifest identity does not measure linked or resident payload. Audit actual build features, native helpers and optional closure before any lightweight claim."
+  }
+]

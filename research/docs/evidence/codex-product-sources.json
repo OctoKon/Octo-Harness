@@ -40,12 +40,12 @@
     "tool": "Codex app-server",
     "url": "https://learn.chatgpt.com/docs/app-server",
     "title": "Codex App Server",
-    "accessed": "2026-10-25",
+    "accessed": "2026-10-26",
     "claims": [
-      "Thread/turn/approval/event protocol; current command/WebSocket transport has experimental production-support limits."
+      "Thread/turn/approval/event protocol with default stdio; experimental methods and the experimental unsupported TCP WebSocket transport are separate from the stable API surface."
     ],
     "verification": "primary-documentation",
-    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+    "notes": "Official guide re-fetched 2026-10-26; corrects the earlier overbroad command/transport maturity wording. No Splyce runtime or production compatibility was exercised."
   },
   {
     "id": "CP-05",
