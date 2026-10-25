@@ -1,0 +1,249 @@
+[
+  {
+    "id": "claude-cli",
+    "tool": "Claude Code",
+    "url": "https://code.claude.com/docs/en/cli-usage",
+    "title": "CLI reference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "documents CLI flags, permission modes, continuation, subagents, and structured operation"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "codex-sdk-ts",
+    "tool": "OpenAI Codex CLI+SDK",
+    "url": "https://github.com/openai/codex/blob/main/sdk/typescript/README.md",
+    "title": "Codex SDK",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SDK spawns the CLI and exchanges JSONL",
+      "same Thread continues a conversation",
+      "streamed events are available"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official repository documentation."
+  },
+  {
+    "id": "gemini-config",
+    "tool": "Gemini CLI",
+    "url": "https://geminicli.com/docs/reference/configuration/",
+    "title": "Gemini CLI configuration",
+    "accessed": "2026-10-25",
+    "claims": [
+      "documents context files, session controls, extension/MCP administration, and experimental context management"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "copilot-permissions",
+    "tool": "GitHub Copilot CLI",
+    "url": "https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools",
+    "title": "Allowing and denying tool use",
+    "accessed": "2026-10-25",
+    "claims": [
+      "destructive actions require approval by default",
+      "documents allowed/denied tool rules and sandbox guidance"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "opencode-providers",
+    "tool": "OpenCode",
+    "url": "https://docs.opencode.ai/docs/providers/",
+    "title": "Providers",
+    "accessed": "2026-10-25",
+    "claims": [
+      "supports multiple providers and local models",
+      "providers are configurable"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "opencode-legacy",
+    "tool": "OpenCode legacy",
+    "url": "https://github.com/opencode-ai/opencode",
+    "title": "Archived OpenCode repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "repository is archived",
+      "project continuation is identified as Crush"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official repository."
+  },
+  {
+    "id": "aider-repomap",
+    "tool": "Aider",
+    "url": "https://aider.chat/docs/repomap.html",
+    "title": "Repository map",
+    "accessed": "2026-10-25",
+    "claims": ["repo map is graph-ranked and token-budgeted"],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "goose-extensions",
+    "tool": "Goose",
+    "url": "https://goose-docs.ai/docs/getting-started/using-extensions/",
+    "title": "Using Extensions",
+    "accessed": "2026-10-25",
+    "claims": [
+      "extensions are MCP-based",
+      "autonomous default and permission controls are documented"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "amp-tools",
+    "tool": "Amp",
+    "url": "https://ampcode.com/docs/tools",
+    "title": "Tools",
+    "accessed": "2026-10-25",
+    "claims": [
+      "tools run without approval by default",
+      "subagents have separate contexts"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "pi-repo",
+    "tool": "Pi coding agent",
+    "url": "https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent",
+    "title": "Pi coding-agent package",
+    "accessed": "2026-10-25",
+    "claims": [
+      "official package location and extension documentation are identified"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Repository identity verified; detailed controls remain an evidence gap."
+  },
+  {
+    "id": "qwen-subagents",
+    "tool": "Qwen Code",
+    "url": "https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/sub-agents.md",
+    "title": "Subagents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "subagents have separate context and controlled tools",
+      "some declared memory/isolation fields are not yet implemented"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official repository documentation."
+  },
+  {
+    "id": "mistral-vibe",
+    "tool": "Mistral Vibe",
+    "url": "https://docs.mistral.ai/vibe",
+    "title": "Vibe",
+    "accessed": "2026-10-25",
+    "claims": [
+      "unified agent runs Code in terminal/editor/remote sessions",
+      "sensitive actions use approval according to overview"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "crush-config",
+    "tool": "Crush",
+    "url": "https://github.com/charmbracelet/crush/blob/main/docs/config/README.md",
+    "title": "Crush configuration reference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "provider/MCP/LSP/hooks/permissions are configured",
+      "crushrc is trusted Bash"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official repository documentation."
+  },
+  {
+    "id": "kimi-current",
+    "tool": "Kimi Code CLI",
+    "url": "https://github.com/MoonshotAI/kimi-code",
+    "title": "Kimi Code CLI",
+    "accessed": "2026-10-25",
+    "claims": [
+      "current CLI can read/edit/run shell/search/fetch",
+      "supports compatible providers and ACP"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official repository."
+  },
+  {
+    "id": "kimi-legacy",
+    "tool": "Kimi CLI legacy",
+    "url": "https://github.com/MoonshotAI/kimi-cli/blob/main/CHANGELOG.md",
+    "title": "Kimi CLI changelog",
+    "accessed": "2026-10-25",
+    "claims": [
+      "legacy Kimi CLI is archived and directs migration to Kimi Code CLI"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official repository documentation."
+  },
+  {
+    "id": "continue-cli",
+    "tool": "Continue CLI",
+    "url": "https://github.com/continuedev/continue/blob/main/docs/cli/quickstart.mdx",
+    "title": "Continue CLI quickstart",
+    "accessed": "2026-10-25",
+    "claims": [
+      "cn supports terminal editing/commands/multi-step tasks",
+      "documents interactive and headless modes and permissions"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official repository documentation."
+  },
+  {
+    "id": "factory-droid",
+    "tool": "Factory Droid",
+    "url": "https://docs.factory.com/droid-cli/overview",
+    "title": "Droid CLI",
+    "accessed": "2026-10-25",
+    "claims": [
+      "CLI supports terminal/editor/tests/Git workflow",
+      "MCP, hooks, and plugins extend the harness"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "letta-code",
+    "tool": "Letta Code",
+    "url": "https://docs.letta.com/quickstart",
+    "title": "Letta quickstart",
+    "accessed": "2026-10-25",
+    "claims": ["documents Letta Code installation and agent memory bootstrap"],
+    "verification": "primary-documentation",
+    "notes": "License and execution controls remain unverified."
+  },
+  {
+    "id": "hermes-agent",
+    "tool": "Hermes Agent",
+    "url": "https://hermes-agent.nousresearch.com/docs/user-guide/features/code-execution/",
+    "title": "Code execution",
+    "accessed": "2026-10-25",
+    "claims": [
+      "large command output is cached and exposed by path instead of requiring rerun"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation."
+  },
+  {
+    "id": "openclaw-agents",
+    "tool": "OpenClaw",
+    "url": "https://docs.openclaw.ai/cli/agents",
+    "title": "Agents CLI",
+    "accessed": "2026-10-25",
+    "claims": ["documents named agents, workspaces, bindings, and teams"],
+    "verification": "primary-documentation",
+    "notes": "Retrieved official documentation; permission model remains an evidence gap."
+  }
+]

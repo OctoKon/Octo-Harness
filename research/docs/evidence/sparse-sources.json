@@ -1,0 +1,110 @@
+[
+  {
+    "id": "SX-01",
+    "tool": "FlyVec",
+    "url": "https://github.com/bhoov/flyvec/blob/master/README.md",
+    "title": "FlyVec author repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Sparse binary word embeddings and pretrained per-word codes, linked to ICLR 2021 paper."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  },
+  {
+    "id": "SX-02",
+    "tool": "Fly-LSH",
+    "url": "https://arxiv.org/abs/1812.01844",
+    "title": "Improving Similarity Search with High-dimensional Locality-sensitive Hashing",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Sparse high-dimensional locality-sensitive hashes and multiprobe approximate search."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  },
+  {
+    "id": "SX-03",
+    "tool": "BioHash",
+    "url": "https://proceedings.mlr.press/v119/ryali20a.html",
+    "title": "Bio-Inspired Hashing for Unsupervised Similarity Search",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Learned sparse hash codes distinguish BioHash from random-projection FlyHash; paper also presents BioConvHash."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  },
+  {
+    "id": "SX-04",
+    "tool": "Comply",
+    "url": "https://arxiv.org/html/2502.01706v3",
+    "title": "Comply paper v3",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Complex phase/positional representations extend FlyVec-style word features to sentence representations."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  },
+  {
+    "id": "SX-05",
+    "tool": "Comply",
+    "url": "https://github.com/DATEXIS/comply",
+    "title": "Comply author repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Implementation identifies itself as code for the Comply paper."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  },
+  {
+    "id": "SX-06",
+    "tool": "Ruflo / Claude Flow",
+    "url": "https://github.com/ruvnet/ruflo/blob/fe99f748c577158ec3e517c7b421670a4601f54f/README.md",
+    "title": "Ruflo pinned README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "CLI/MCP coordination, hooks, memory and separate installation profiles; conceptual flows are not runtime evidence."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  },
+  {
+    "id": "SX-07",
+    "tool": "RuVector",
+    "url": "https://github.com/ruvnet/RuVector",
+    "title": "RuVector repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Vector/graph memory features, HNSW and flat search; known limitations require qualification."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  },
+  {
+    "id": "SX-08",
+    "tool": "AgentDB",
+    "url": "https://github.com/ruvnet/agentdb",
+    "title": "AgentDB repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent-memory npm/CLI/MCP surfaces and feedback-driven retrieval; performance claims not reproduced."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  },
+  {
+    "id": "SX-09",
+    "tool": "ruvnet MetaHarness",
+    "url": "https://github.com/ruvnet/metaharness",
+    "title": "ruvnet MetaHarness repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Focused harness scaffolding with host adapters, MCP, memory, governance and release checks; different from Stanford Meta-Harness."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Document or paper inspected; no implementation, training, retrieval or agent benchmarks run."
+  }
+]

@@ -1,0 +1,74 @@
+[
+  {
+    "id": "RD-01",
+    "tool": "Goblin AI",
+    "url": "https://github.com/Itachi-1824/goblin-ai",
+    "title": "Goblin AI public README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected public README reviewed for presentation, information hierarchy and navigation."
+    ],
+    "verification": "primary-overview",
+    "notes": "Visual/editorial reference only; no upstream artwork or protected prose copied."
+  },
+  {
+    "id": "RD-02",
+    "tool": "Ouroboros public log",
+    "url": "https://github.com/Itachi-1824/ouroboros",
+    "title": "Ouroboros public log public README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected public README reviewed for presentation, information hierarchy and navigation."
+    ],
+    "verification": "primary-overview",
+    "notes": "Visual/editorial reference only; no upstream artwork or protected prose copied."
+  },
+  {
+    "id": "RD-03",
+    "tool": "Glow",
+    "url": "https://github.com/charmbracelet/glow",
+    "title": "Glow public README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected public README reviewed for presentation, information hierarchy and navigation."
+    ],
+    "verification": "primary-overview",
+    "notes": "Visual/editorial reference only; no upstream artwork or protected prose copied."
+  },
+  {
+    "id": "RD-04",
+    "tool": "uv",
+    "url": "https://github.com/astral-sh/uv",
+    "title": "uv public README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected public README reviewed for presentation, information hierarchy and navigation."
+    ],
+    "verification": "primary-overview",
+    "notes": "Visual/editorial reference only; no upstream artwork or protected prose copied."
+  },
+  {
+    "id": "RD-05",
+    "tool": "Zed",
+    "url": "https://github.com/zed-industries/zed",
+    "title": "Zed public README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected public README reviewed for presentation, information hierarchy and navigation."
+    ],
+    "verification": "primary-overview",
+    "notes": "Visual/editorial reference only; no upstream artwork or protected prose copied."
+  },
+  {
+    "id": "RD-06",
+    "tool": "OpenCode",
+    "url": "https://github.com/anomalyco/opencode",
+    "title": "OpenCode public README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected public README reviewed for presentation, information hierarchy and navigation."
+    ],
+    "verification": "primary-overview",
+    "notes": "Visual/editorial reference only; no upstream artwork or protected prose copied."
+  }
+]

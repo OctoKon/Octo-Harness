@@ -1,0 +1,254 @@
+[
+  {
+    "id": "CX-lsp",
+    "tool": "Language Server Protocol",
+    "url": "https://microsoft.github.io/language-server-protocol/",
+    "title": "Language Server Protocol",
+    "accessed": "2026-10-25",
+    "claims": [
+      "LSP defines JSON-RPC messages between development tools and language servers",
+      "latest specification is 3.18"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Live protocol, not a durable repository-index guarantee."
+  },
+  {
+    "id": "CX-tree-sitter",
+    "tool": "Tree-sitter",
+    "url": "https://tree-sitter.github.io/tree-sitter/",
+    "title": "Introduction",
+    "accessed": "2026-10-25",
+    "claims": [
+      "incremental parser builds concrete syntax trees",
+      "aims to remain useful with syntax errors"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Parser edits must be synchronized with source edits."
+  },
+  {
+    "id": "CX-ast-grep",
+    "tool": "ast-grep",
+    "url": "https://ast-grep.github.io/",
+    "title": "ast-grep",
+    "accessed": "2026-10-25",
+    "claims": [
+      "structural search/rewrite is Tree-sitter based",
+      "Node API exposes syntax trees"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Syntax matching is not semantic binding."
+  },
+  {
+    "id": "CX-lsif",
+    "tool": "LSIF",
+    "url": "https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/lsif/0.6.0/specification.md",
+    "title": "LSIF Specification",
+    "accessed": "2026-10-25",
+    "claims": [
+      "LSIF serializes workspace knowledge",
+      "mutating-document requests are typically excluded because changes invalidate data"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Current spec is marked under construction."
+  },
+  {
+    "id": "CX-scip",
+    "tool": "SCIP",
+    "url": "https://github.com/scip-code/scip/blob/main/docs/scip.md",
+    "title": "SCIP protocol",
+    "accessed": "2026-10-25",
+    "claims": [
+      "an index is rooted at one workspace directory",
+      "occurrences associate source positions with symbols"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Workspace identity should be part of every lookup."
+  },
+  {
+    "id": "CX-ripgrep",
+    "tool": "ripgrep",
+    "url": "https://ripgrep.dev/docs/guide/",
+    "title": "ripgrep User Guide",
+    "accessed": "2026-10-25",
+    "claims": [
+      "search observes ignore files and filters hidden/binary files by default",
+      "--files exposes selected file inventory"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Ignore policy is part of retrieval provenance."
+  },
+  {
+    "id": "CX-ctags",
+    "tool": "Universal Ctags",
+    "url": "https://docs.ctags.io/en/stable/man/ctags-json-output.5.html",
+    "title": "ctags JSON output",
+    "accessed": "2026-10-25",
+    "claims": [
+      "JSON Lines output includes tag name/path/language/kind and optional scope"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Tags are not compiler-level references."
+  },
+  {
+    "id": "CX-graphrag",
+    "tool": "Microsoft GraphRAG",
+    "url": "https://github.com/microsoft/graphrag/blob/main/docs/index/overview.md",
+    "title": "GraphRAG indexing",
+    "accessed": "2026-10-25",
+    "claims": [
+      "pipeline extracts entities/relations/claims, communities and summaries",
+      "outputs structured tables and embeddings"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Indexing cost and freshness need evaluation."
+  },
+  {
+    "id": "CX-hipporag",
+    "tool": "HippoRAG",
+    "url": "https://github.com/OSU-NLP-Group/HippoRAG",
+    "title": "HippoRAG 2: From RAG to Memory",
+    "accessed": "2026-10-25",
+    "claims": [
+      "repository identifies HippoRAG 2 as a memory framework",
+      "repository links HippoRAG and follow-up papers"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Published benchmark claims are not local harness measurements."
+  },
+  {
+    "id": "CX-lightrag",
+    "tool": "LightRAG",
+    "url": "https://github.com/HKUDS/LightRAG",
+    "title": "LightRAG",
+    "accessed": "2026-10-25",
+    "claims": [
+      "canonical project distinguishes naive text-chunk RAG from knowledge-graph retrieval",
+      "documents processing and reproduction material"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Corrected from a fork; deletion guarantees were not established in this pass."
+  },
+  {
+    "id": "CX-graphiti",
+    "tool": "Graphiti",
+    "url": "https://github.com/getzep/graphiti",
+    "title": "Graphiti",
+    "accessed": "2026-10-25",
+    "claims": [
+      "official repository identifies Graphiti as real-time knowledge graphs for AI agents"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Temporal and tenant guarantees require a dedicated review."
+  },
+  {
+    "id": "CX-llamaindex",
+    "tool": "LlamaIndex",
+    "url": "https://developers.llamaindex.ai/python/framework/module_guides/indexing/lpg_index_guide/",
+    "title": "Using a Property Graph Index",
+    "accessed": "2026-10-25",
+    "claims": ["framework documents a property graph index module"],
+    "verification": "primary-documentation",
+    "notes": "Framework abstraction is not compiler-authoritative semantics."
+  },
+  {
+    "id": "CX-mem0",
+    "tool": "Mem0",
+    "url": "https://docs.mem0.ai/open-source/overview",
+    "title": "Open Source Overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "self-hosted engine allows configurable LLM/embedder/vector/history/reranker",
+      "documents library and server forms"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Component configuration does not itself establish isolation."
+  },
+  {
+    "id": "CX-letta",
+    "tool": "Letta",
+    "url": "https://docs.letta.com/v1-sdk/memory/memory-blocks",
+    "title": "Memory blocks",
+    "accessed": "2026-10-25",
+    "claims": [
+      "memory blocks persist in context across interactions",
+      "blocks are always injected rather than retrieved"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Use for small explicit policy, not unbounded history."
+  },
+  {
+    "id": "CX-claude-mem",
+    "tool": "claude-mem",
+    "url": "https://github.com/thedotmack/claude-mem",
+    "title": "claude-mem repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "captures tool observations, compresses summaries and injects future context",
+      "documents local settings"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Memory data needs ownership, provenance and deletion tests."
+  },
+  {
+    "id": "CX-raptor",
+    "tool": "RAPTOR",
+    "url": "https://github.com/parthsarthi03/raptor",
+    "title": "RAPTOR official implementation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "official implementation identifies recursive clustering/summarization hierarchy",
+      "retrieval can operate at multiple granularities"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Corrected from a different later implementation; derived summaries require reverse invalidation."
+  },
+  {
+    "id": "CX-repocoder",
+    "tool": "RepoCoder",
+    "url": "https://aclanthology.org/2023.emnlp-main.151.pdf",
+    "title": "RepoCoder",
+    "accessed": "2026-10-25",
+    "claims": [
+      "paper proposes iterative retrieval-generation for repository code completion",
+      "introduces RepoEval"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Research result is not local agent evidence."
+  },
+  {
+    "id": "CX-repoformer",
+    "tool": "Repoformer",
+    "url": "https://arxiv.org/abs/2403.10059",
+    "title": "Repoformer",
+    "accessed": "2026-10-25",
+    "claims": [
+      "paper proposes selective repository retrieval rather than retrieval for every request"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Gate use by local evaluation."
+  },
+  {
+    "id": "CX-joern",
+    "tool": "Joern",
+    "url": "https://github.com/joernio/joern",
+    "title": "Joern",
+    "accessed": "2026-10-25",
+    "claims": [
+      "repository identifies an open-source code analysis platform based on code property graphs"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Adjacent candidate only."
+  },
+  {
+    "id": "CX-qdrant",
+    "tool": "Qdrant",
+    "url": "https://qdrant.tech/documentation/search/filtering/",
+    "title": "Filtering",
+    "accessed": "2026-10-25",
+    "claims": [
+      "documentation exposes filtering, hybrid/sparse search, multitenancy and indexing topics"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Prove scope filtering and deletion behavior before adoption."
+  }
+]

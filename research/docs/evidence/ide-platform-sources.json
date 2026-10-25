@@ -1,0 +1,353 @@
+[
+  {
+    "id": "cline-overview",
+    "tool": "Cline Overview",
+    "url": "https://docs.cline.bot/cline-overview",
+    "title": "Cline Overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "One agent core is presented behind Desktop, CLI, VS Code, JetBrains, SDK and Kanban.",
+      "Cline documents human-in-the-loop approval, per-card worktrees and dependency chains for Kanban."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public documentation; no installation or runtime test."
+  },
+  {
+    "id": "cursor-overview",
+    "tool": "Cursor Agent",
+    "url": "https://cursor.com/docs/agent/overview",
+    "title": "Cursor Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Cursor documents tools, model and instructions as agent components.",
+      "Checkpoints are local file snapshots separate from Git."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed implementation; mechanics are documentation claims only."
+  },
+  {
+    "id": "cursor-run-modes",
+    "tool": "Cursor Run Modes",
+    "url": "https://cursor.com/docs/agent/security/run-modes",
+    "title": "Cursor Run Modes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Local modes distinguish allowlisted, sandboxed/classifier-reviewed and unrestricted calls.",
+      "Sandbox configuration controls workspace, network and path access."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No security behavior was tested."
+  },
+  {
+    "id": "cursor-cloud",
+    "tool": "Cursor Background Agents",
+    "url": "https://docs.cursor.com/background-agent",
+    "title": "Cursor Background Agents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Background agents run in isolated Ubuntu machines and push a separate branch.",
+      "Environment setup supports install/start commands, terminals and Dockerfile configuration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Product naming may now use Cloud Agents."
+  },
+  {
+    "id": "zed-agent-panel",
+    "tool": "Zed Agent Panel",
+    "url": "https://zed.dev/docs/ai/agent-panel",
+    "title": "Zed Agent Panel",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Zed supports parallel threads, Git worktree isolation, checkpoints and change review.",
+      "Zed exposes tools, profiles, permissions and MCP in its Agent Panel."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Native Zed behavior, not a claim about every ACP agent."
+  },
+  {
+    "id": "zed-external-agents",
+    "tool": "Zed External Agents",
+    "url": "https://zed.dev/docs/ai/external-agents",
+    "title": "Zed External Agents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ACP external agents run through their own process/provider relationship.",
+      "Zed hosts threads while external agents usually own runtime, auth, model, tools and native configuration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Primary source for the editor/agent ownership boundary."
+  },
+  {
+    "id": "copilot-agent-mode",
+    "tool": "Using agent mode in your IDE",
+    "url": "https://docs.github.com/en/copilot/how-tos/copilot-in-your-ide/use-copilot-agents/use-agent-mode",
+    "title": "Using agent mode in your IDE",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Copilot agent mode chooses files, offers edits and commands, and iterates.",
+      "Terminal commands require approval by default and agent mode can use MCP."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Applies to supported IDEs; availability can be administrator-controlled."
+  },
+  {
+    "id": "copilot-custom-agents",
+    "tool": "Custom agents",
+    "url": "https://docs.github.com/en/copilot/concepts/customizations/custom-agents",
+    "title": "Custom agents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Profiles are Markdown with YAML frontmatter and can restrict tools/MCP.",
+      "Subagents are separate-context delegated work and profile semantics can vary by environment."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed service; profile portability caveat is documented."
+  },
+  {
+    "id": "openhands-sandbox",
+    "tool": "OpenHands Sandboxes",
+    "url": "https://docs.openhands.dev/openhands/usage/sandboxes/overview",
+    "title": "OpenHands Sandboxes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenHands V1 documents Docker, process and remote sandbox providers.",
+      "Docker is recommended while process execution is marked unsafe."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Terminology changed from legacy runtime to sandbox."
+  },
+  {
+    "id": "openhands-runtime-architecture",
+    "tool": "OpenHands Runtime Architecture",
+    "url": "https://github.com/OpenHands/docs/blob/main/openhands/usage/architecture/runtime.mdx",
+    "title": "OpenHands Runtime Architecture",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The documented Docker architecture separates agent/backend from container action execution.",
+      "Actions and observations communicate through a REST API."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public source documentation."
+  },
+  {
+    "id": "openhands-readme",
+    "tool": "OpenHands README",
+    "url": "https://github.com/OpenHands/OpenHands/blob/main/README.md",
+    "title": "OpenHands README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent Canvas can use local, Docker, VM, cloud and ACP-compatible agent backends.",
+      "Direct local agent-server execution has full filesystem access according to the README."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public source repository."
+  },
+  {
+    "id": "minisweagent-control-flow",
+    "tool": "mini-SWE-agent control flow",
+    "url": "https://github.com/SWE-agent/mini-swe-agent/blob/main/docs/advanced/control_flow.md",
+    "title": "mini-SWE-agent control flow",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The default loop queries a model, executes actions and records observations until exit.",
+      "Documented interruption states include submit, limits, format, timeout and user interruption."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public source documentation."
+  },
+  {
+    "id": "minisweagent-modes",
+    "tool": "mini-SWE-agent interactive mode",
+    "url": "https://github.com/SWE-agent/mini-swe-agent/blob/main/docs/usage/mini.md",
+    "title": "mini-SWE-agent interactive mode",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Interactive CLI supports confirmation, yolo and human takeover modes.",
+      "Confirm is documented as the default mode."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public source documentation."
+  },
+  {
+    "id": "swe-agent-readme",
+    "tool": "SWE-agent README",
+    "url": "https://github.com/SWE-agent/SWE-agent/blob/main/README.md",
+    "title": "SWE-agent README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SWE-agent states that mini-SWE-agent supersedes it.",
+      "SWE-agent describes one-YAML configuration and research orientation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Public source repository."
+  },
+  {
+    "id": "devin-blueprints",
+    "tool": "Devin Blueprint reference",
+    "url": "https://cognitionai.mintlify.app/onboard-devin/environment/environment-yaml-reference",
+    "title": "Devin Blueprint reference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Blueprints separate initialize, maintenance and non-executed knowledge sections.",
+      "Snapshots save results while credentials are scrubbed from the saved image."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed implementation; official documentation only."
+  },
+  {
+    "id": "replit-task-board",
+    "tool": "Replit Agent task board",
+    "url": "https://docs.replit.com/references/agent/task-board",
+    "title": "Replit Agent task board",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Tasks progress through Drafts, Active, Ready and Done.",
+      "Accepted tasks run in isolated project copies until their work is applied."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed implementation; official documentation only."
+  },
+  {
+    "id": "replit-agent-modes",
+    "tool": "Replit Agent modes",
+    "url": "https://docs.replit.com/replitai/assistant/",
+    "title": "Replit Agent modes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Modes expose speed/cost/capability tradeoffs.",
+      "Advanced options include automatic browser app testing and code optimization."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Product capability claims were not tested."
+  },
+  {
+    "id": "roo-docs",
+    "tool": "Roo Code Docs",
+    "url": "https://roocodeinc.github.io/Roo-Code/",
+    "title": "Roo Code Docs",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The page states that the Roo Code extension was shut down on 2026-05-15.",
+      "The page identifies ZooCode as a community fork and describes historical modes, auto-approve, MCP and orchestrator concepts."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Treat as archived/discontinued product documentation."
+  },
+  {
+    "id": "zoo-home",
+    "tool": "Zoo Code",
+    "url": "https://www.zoocode.dev/",
+    "title": "Zoo Code",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Zoo calls itself a community-maintained continuation of Roo Code.",
+      "It claims Roo-compatible settings, Apache-2.0 provenance, modes, diffs, MCP and semantic/partial-file context."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Repository, license and release verification remain follow-up work."
+  },
+  {
+    "id": "kilo-docs",
+    "tool": "Kilo Documentation",
+    "url": "https://kilo.ai/docs",
+    "title": "Kilo Documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Kilo documents VS Code, JetBrains and CLI surfaces.",
+      "Docs enumerate modes, custom rules, MCP, sessions, teams, automation and a model gateway."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Permission and isolation details were not established in this pass."
+  },
+  {
+    "id": "continue-docs",
+    "tool": "What is Continue?",
+    "url": "https://docs.continue.dev/",
+    "title": "What is Continue?",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Continue describes itself as an open source VS Code and JetBrains assistant.",
+      "Docs enumerate Agent, Chat, Edit, Autocomplete, CLI, YAML config, rules and MCP."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Isolation semantics not established by this source."
+  },
+  {
+    "id": "lovable-docs",
+    "tool": "Welcome to Lovable",
+    "url": "https://docs.lovable.dev/introduction/welcome",
+    "title": "Welcome to Lovable",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Lovable describes natural-language full-stack app generation backed by editable code.",
+      "Projects can sync with GitHub, GitLab or Bitbucket."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed hosted product."
+  },
+  {
+    "id": "firebase-studio-ai",
+    "tool": "AI assistance within Firebase Studio",
+    "url": "https://firebase.google.com/docs/studio/ai-assistance",
+    "title": "AI assistance within Firebase Studio",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Coding workspace Gemini can update files, run terminal commands and interpret output.",
+      "App Prototyping workspace targets no-code Next.js/Firebase App Hosting/Genkit flows."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed hosted product; separate workspace types are documented."
+  },
+  {
+    "id": "bolt-github",
+    "tool": "Bolt GitHub integration",
+    "url": "https://bolt.new/blog/github-hackathon",
+    "title": "Bolt GitHub integration",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Bolt documents two-way GitHub synchronization, import, branch switching and automatic pull of GitHub changes.",
+      "It states that agent or manual edits passing runtime checks can auto-push to GitHub."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed product; no agent-internal or isolation claim inferred."
+  },
+  {
+    "id": "antigravity-overview",
+    "tool": "Antigravity IDE overview",
+    "url": "https://www.antigravity.google/docs/ide/overview/",
+    "title": "Antigravity IDE overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Antigravity IDE documents asynchronous local agents and parallel work across workspaces.",
+      "Agents use editor, terminal and browser tools and create artifacts such as plans, diffs and browser recordings."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed Google product; sandbox and approval detail still requires primary-source verification."
+  },
+  {
+    "id": "antigravity-home",
+    "tool": "Google Antigravity Docs",
+    "url": "https://www.antigravity.google/docs/home/",
+    "title": "Google Antigravity Docs",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Google documents desktop command-center, CLI, SDK and IDE surfaces.",
+      "The platform includes workspaces, worktrees, skills, MCP and lifecycle hooks."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official documentation."
+  },
+  {
+    "id": "junie-agent",
+    "tool": "Junie by JetBrains",
+    "url": "https://www.jetbrains.com/help/ai-assistant/junie-agent.html",
+    "title": "Junie by JetBrains",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Junie autonomously plans and executes multi-step work, including project edits, tests, terminal commands and external tools.",
+      "Junie can receive active-file and selected-text IDE context automatically."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed product; permissions and isolation not established by this source."
+  }
+]

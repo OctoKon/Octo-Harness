@@ -1,0 +1,122 @@
+[
+  {
+    "id": "ST-01",
+    "tool": "Tokio tutorial",
+    "url": "https://tokio.rs/tokio/tutorial",
+    "title": "Tokio tutorial",
+    "accessed": "2026-10-25",
+    "claims": ["async runtime; no advantage for plain file reads"],
+    "verification": "primary-documentation",
+    "notes": "Workload fit is an inference. No runtime measurement."
+  },
+  {
+    "id": "ST-02",
+    "tool": "Official MCP Rust SDK",
+    "url": "https://github.com/modelcontextprotocol/rust-sdk",
+    "title": "Official MCP Rust SDK",
+    "accessed": "2026-10-25",
+    "claims": ["`rmcp`; Tokio; version/capability negotiation"],
+    "verification": "primary-documentation",
+    "notes": "Pin stable release/protocol version. No runtime measurement."
+  },
+  {
+    "id": "ST-03",
+    "tool": "Rig providers",
+    "url": "https://docs.rs/rig-core/latest/rig_core/providers/",
+    "title": "Rig providers",
+    "accessed": "2026-10-25",
+    "claims": ["separate completion/embedding traits"],
+    "verification": "primary-documentation",
+    "notes": "Agent loop ownership not adopted. No runtime measurement."
+  },
+  {
+    "id": "ST-04",
+    "tool": "rusqlite",
+    "url": "https://docs.rs/rusqlite/latest/rusqlite/",
+    "title": "rusqlite",
+    "accessed": "2026-10-25",
+    "claims": ["SQLite bindings; WAL/backup facilities"],
+    "verification": "primary-documentation",
+    "notes": "SQLite itself is native. No runtime measurement."
+  },
+  {
+    "id": "ST-05",
+    "tool": "Tantivy",
+    "url": "https://docs.rs/tantivy/latest/tantivy/",
+    "title": "Tantivy",
+    "accessed": "2026-10-25",
+    "claims": ["full-text index; BM25"],
+    "verification": "primary-documentation",
+    "notes": "Search speed unmeasured here. No runtime measurement."
+  },
+  {
+    "id": "ST-06",
+    "tool": "fastembed",
+    "url": "https://docs.rs/fastembed/latest/fastembed/",
+    "title": "fastembed",
+    "accessed": "2026-10-25",
+    "claims": ["embedding/rerank; default ONNX Runtime"],
+    "verification": "primary-documentation",
+    "notes": "Native dependency changes packaging. No runtime measurement."
+  },
+  {
+    "id": "ST-07",
+    "tool": "Tree-sitter",
+    "url": "https://tree-sitter.github.io/",
+    "title": "Tree-sitter",
+    "accessed": "2026-10-25",
+    "claims": ["incremental parsing; C11 runtime; Rust binding"],
+    "verification": "primary-documentation",
+    "notes": "Language grammars add distribution review. No runtime measurement."
+  },
+  {
+    "id": "ST-08",
+    "tool": "Wasmtime security",
+    "url": "https://docs.wasmtime.dev/security.html",
+    "title": "Wasmtime security",
+    "accessed": "2026-10-25",
+    "claims": ["WebAssembly isolation model"],
+    "verification": "primary-documentation",
+    "notes": "Host-granted capabilities still determine exposure. No runtime measurement."
+  },
+  {
+    "id": "ST-09",
+    "tool": "vLLM server",
+    "url": "https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/",
+    "title": "vLLM server",
+    "accessed": "2026-10-25",
+    "claims": ["HTTP generation/embedding APIs; auth caveat"],
+    "verification": "primary-documentation",
+    "notes": "Protect service boundary separately. No runtime measurement."
+  },
+  {
+    "id": "ST-10",
+    "tool": "SGLang documentation",
+    "url": "https://sgl-project.github.io/",
+    "title": "SGLang documentation",
+    "accessed": "2026-10-25",
+    "claims": ["model server; OpenAI/HF compatibility"],
+    "verification": "primary-documentation",
+    "notes": "Performance is hardware/workload dependent. No runtime measurement."
+  },
+  {
+    "id": "ST-11",
+    "tool": "sqlite-vec Rust use",
+    "url": "https://github.com/asg017/sqlite-vec/blob/main/site/using/rust.md",
+    "title": "sqlite-vec Rust use",
+    "accessed": "2026-10-25",
+    "claims": ["Rust integration to SQLite extension"],
+    "verification": "primary-documentation",
+    "notes": "Extension is native; qualify scale and deletion. No runtime measurement."
+  },
+  {
+    "id": "ST-12",
+    "tool": "Ratatui installation",
+    "url": "https://ratatui.rs/installation/",
+    "title": "Ratatui installation",
+    "accessed": "2026-10-25",
+    "claims": ["Crossterm default backend"],
+    "verification": "primary-documentation",
+    "notes": "Optional until TUI requirement exists. No runtime measurement."
+  }
+]

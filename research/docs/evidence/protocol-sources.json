@@ -1,0 +1,244 @@
+[
+  {
+    "id": "PX-mcp-primitives",
+    "tool": "MCP server overview",
+    "url": "https://modelcontextprotocol.io/specification/draft/server/index",
+    "title": "MCP server overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MCP distinguishes user-controlled prompts, application-controlled resources and model-controlled tools."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Use the control distinction when mapping adapters."
+  },
+  {
+    "id": "PX-mcp-2026-07-28",
+    "tool": "The 2026-07-28 MCP specification",
+    "url": "https://blog.modelcontextprotocol.io/posts/2026-07-28/",
+    "title": "The 2026-07-28 MCP specification",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The revision removes protocol-level Streamable HTTP sessions and uses explicit server-minted handles for cross-call state.",
+      "List/read responses gain ttlMs and cacheScope; authorization guidance adds issuer validation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Version-aware source; implementation was not tested."
+  },
+  {
+    "id": "PX-mcp-changelog",
+    "tool": "MCP key changes",
+    "url": "https://modelcontextprotocol.io/specification/draft/changelog",
+    "title": "MCP key changes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Streamable HTTP request headers and deterministic tool listing are documented.",
+      "OpenTelemetry trace context propagation conventions are documented for MCP metadata."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Draft changelog; pin exact protocol revision in an implementation."
+  },
+  {
+    "id": "PX-mcp-tasks",
+    "tool": "MCP Tasks extension overview",
+    "url": "https://tasks.extensions.modelcontextprotocol.io/",
+    "title": "MCP Tasks extension overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "tasks/cancel expresses cooperative cancellation intent.",
+      "The Tasks extension currently augments tools/call and supports task status notifications."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Do not equate task cancellation with OS process teardown."
+  },
+  {
+    "id": "PX-acp-v2",
+    "tool": "ACP v2 is available in Draft",
+    "url": "https://github.com/agentclientprotocol/agent-client-protocol/blob/main/docs/announcements/acp-v2-draft.mdx",
+    "title": "ACP v2 is available in Draft",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ACP v2 is draft and should be version-negotiated alongside v1.",
+      "v2 describes session updates outside prompt turns, stable-ID patch semantics, structured file changes and flexible permission requests."
+    ],
+    "verification": "primary-documentation",
+    "notes": "ACP means Agent Client Protocol in this document."
+  },
+  {
+    "id": "PX-acp-tck",
+    "tool": "ACP TCK",
+    "url": "https://github.com/agentclientprotocol/acp-tck/blob/main/README.md",
+    "title": "ACP TCK",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The TCK checks that agents do not call client methods whose capabilities were not advertised.",
+      "It covers version negotiation, session cancellation, permission flow, stdio JSON-RPC and resume/replay behavior."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Test-suite documentation, not a local test result."
+  },
+  {
+    "id": "PX-a2a-v1",
+    "tool": "A2A v1.0.1 specification",
+    "url": "https://a2a-protocol.org/v1.0.1/specification/",
+    "title": "A2A v1.0.1 specification",
+    "accessed": "2026-10-25",
+    "claims": [
+      "A2A uses Agent Cards, stateful Tasks, Messages and Artifacts with polling, streaming and optional push updates.",
+      "Clients must validate declared capability support and send a compatible major.minor protocol version."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Version-specific primary specification."
+  },
+  {
+    "id": "PX-a2a-discovery",
+    "tool": "A2A agent discovery",
+    "url": "https://a2a-protocol.org/latest/topics/agent-discovery/",
+    "title": "A2A agent discovery",
+    "accessed": "2026-10-25",
+    "claims": [
+      "A2A documentation recommends out-of-band dynamic credentials rather than static secrets in Agent Cards."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Discovery metadata is not an authorization grant."
+  },
+  {
+    "id": "PX-e2b-security",
+    "tool": "E2B security",
+    "url": "https://changelog.e2b.dev/security",
+    "title": "E2B security",
+    "accessed": "2026-10-25",
+    "claims": [
+      "E2B documents a Firecracker microVM with dedicated kernel per sandbox.",
+      "Sandbox state can persist across pause/resume and sandboxes are destroyed on timeout or shutdown."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Provider claim; no penetration or lifecycle test performed."
+  },
+  {
+    "id": "PX-daytona-sandboxes",
+    "tool": "Daytona Sandboxes",
+    "url": "https://daytona-website-website-prod.daytona.workers.dev/docs/en/sandboxes",
+    "title": "Daytona Sandboxes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Daytona documents hypervisor-isolated virtual machines with lifecycle and persistence.",
+      "The toolbox can expose code/process/filesystem/Git/PTY/computer-use/LSP/log capabilities."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Provider claim; exact selected capabilities must be recorded per run."
+  },
+  {
+    "id": "PX-modal-sandboxes",
+    "tool": "Modal Sandboxes",
+    "url": "https://modal.com/docs/guide/sandboxes",
+    "title": "Modal Sandboxes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Modal documents lifecycle events and explicit termination for Sandboxes.",
+      "It exposes gVisor and VM runtime choices."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Runtime choice is not a complete network or secret policy."
+  },
+  {
+    "id": "PX-browser-use",
+    "tool": "Browser Use Browser Harness",
+    "url": "https://browser-use.com/browser-harness",
+    "title": "Browser Use Browser Harness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Browser Use documents control of the user's Chrome profile including tabs, cookies and logins.",
+      "It distinguishes local real-browser and cloud-browser operation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Treat authenticated browser control as high-impact authority."
+  },
+  {
+    "id": "PX-opentelemetry",
+    "tool": "OpenTelemetry general semantic conventions",
+    "url": "https://opentelemetry.io/docs/specs/semconv/general/",
+    "title": "OpenTelemetry general semantic conventions",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenTelemetry publishes semantic conventions for spans, metrics, logs and events."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Conventions alone do not guarantee audit completeness or redaction."
+  },
+  {
+    "id": "PX-langfuse-masking",
+    "tool": "Langfuse masking",
+    "url": "https://langfuse.com/docs/observability/features/masking",
+    "title": "Langfuse masking",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Langfuse supports masking trace/observation input, output and metadata before data leaves an application.",
+      "mask_otel_spans operates at export stage for OpenTelemetry spans."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Export masking does not replace application-side secret minimization."
+  },
+  {
+    "id": "PX-phoenix",
+    "tool": "Arize Phoenix",
+    "url": "https://arize.com/docs/phoenix/",
+    "title": "Arize Phoenix",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Phoenix is an open-source observability/evaluation tool using OpenTelemetry and OpenInference."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No collector or evaluation workflow was run."
+  },
+  {
+    "id": "PX-atif",
+    "tool": "ATIF specification",
+    "url": "https://github.com/harbor-framework/harbor/blob/main/rfcs/0001-trajectory-format.md",
+    "title": "ATIF specification",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ATIF is a JSON format for complete autonomous-agent interaction histories.",
+      "It supports run-scoped trajectories and subagent/continuation relationships."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Trajectory exports require independent access control/redaction."
+  },
+  {
+    "id": "PX-swebench-faq",
+    "tool": "SWE-bench FAQ",
+    "url": "https://www.swebench.com/SWE-bench/faq/",
+    "title": "SWE-bench FAQ",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SWE-bench evaluates patches by preparing Docker environments, applying patches and running tests.",
+      "It lists full, Lite, Verified, Multimodal and Multilingual datasets."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Benchmark result is not a general reliability claim."
+  },
+  {
+    "id": "PX-terminal-bench-4",
+    "tool": "Terminal-Bench 4.0",
+    "url": "https://www.tbench.ai/news/terminal-bench-4-0",
+    "title": "Terminal-Bench 4.0",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Terminal-Bench 4.0 is the current documented run version and uses Harbor.",
+      "Major versions require rerun when agent-environment/task/resource changes occur; 4.0 removes saturated tasks and recalibrates resources."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Do not call Terminal-Bench 2.0 latest."
+  },
+  {
+    "id": "PX-terminal-bench-release",
+    "tool": "Terminal-Bench releases",
+    "url": "https://github.com/harbor-framework/terminal-bench/releases",
+    "title": "Terminal-Bench releases",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The official v4.0.0 release documents the dataset invocation terminal-bench/terminal-bench@4.0.0."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No benchmark command was executed."
+  }
+]

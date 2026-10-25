@@ -1,0 +1,245 @@
+[
+  {
+    "id": "IF-sglang",
+    "tool": "SGLang documentation",
+    "url": "https://sgl-project.github.io/",
+    "title": "SGLang documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SGLang documents RadixAttention prefix caching and multi-GPU parallelism for low-latency, high-throughput serving.",
+      "It presents itself as a serving framework for language and multimodal models."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No hardware, model or runtime was tested."
+  },
+  {
+    "id": "IF-vllm-prefix-cache",
+    "tool": "vLLM Automatic Prefix Caching",
+    "url": "https://docs.vllm.cc/en/latest/design/automatic_prefix_caching.html",
+    "title": "vLLM Automatic Prefix Caching",
+    "accessed": "2026-10-25",
+    "claims": [
+      "vLLM documents PagedAttention KV blocks and automatic prefix caching using token and prefix identity."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Cache efficiency depends on actual request prefixes and configuration."
+  },
+  {
+    "id": "IF-vllm-engineering",
+    "tool": "Inside vLLM",
+    "url": "https://vllm-project.github.io/2025/09/05/anatomy-of-vllm.html",
+    "title": "Inside vLLM",
+    "accessed": "2026-10-25",
+    "claims": [
+      "vLLM engineering material discusses continuous batching, chunked prefill and prefix caching."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Not a benchmark result for this project."
+  },
+  {
+    "id": "IF-lmstudio-api",
+    "tool": "LM Studio API",
+    "url": "https://lmstudio.ai/docs/developer/rest",
+    "title": "LM Studio API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "LM Studio documents a native REST API for local inference and model management plus OpenAI- and Anthropic-compatible interfaces.",
+      "Its v1 API documents stateful chats, API-token configuration and model lifecycle endpoints."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Version/model support needs runtime verification."
+  },
+  {
+    "id": "IF-lmstudio-developer",
+    "tool": "LM Studio developer documentation",
+    "url": "https://lmstudio.ai/docs/developer",
+    "title": "LM Studio developer documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "LM Studio documents local tool/MCP workflows, structured output, embeddings, SDKs and CLI model management."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Feature availability is not assumed for every loaded model."
+  },
+  {
+    "id": "IF-tensorrt-triton",
+    "tool": "TensorRT-LLM Triton backend",
+    "url": "https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/tensorrtllm_backend/README.html",
+    "title": "TensorRT-LLM Triton backend",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The TensorRT-LLM Triton backend documents in-flight batching, paged attention, KV cache reuse, chunked context, quantization and speculative decoding.",
+      "It documents cancellation through a stop request using the same request ID."
+    ],
+    "verification": "primary-documentation",
+    "notes": "NVIDIA deployment was not created or tested."
+  },
+  {
+    "id": "IF-tgi",
+    "tool": "Text Generation Inference",
+    "url": "https://huggingface.co/docs/text-generation-inference/main/en/index",
+    "title": "Text Generation Inference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Hugging Face marks TGI as maintenance mode and recommends vLLM, SGLang or local interoperable engines for future optimized serving.",
+      "TGI documents continuous batching, tensor parallelism, streaming, PagedAttention, quantization, LoRA and schema-guided generation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No TGI deployment was run."
+  },
+  {
+    "id": "IF-tei",
+    "tool": "Text Embeddings Inference API",
+    "url": "https://huggingface.github.io/text-embeddings-inference/",
+    "title": "Text Embeddings Inference API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "TEI documents separate embedding, sparse embedding, classification and rerank endpoints plus an OpenAI-compatible embeddings route."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No embedding or rerank quality was measured."
+  },
+  {
+    "id": "IF-exllamav3",
+    "tool": "ExLlamaV3",
+    "url": "https://github.com/turboderp-org/exllamav3",
+    "title": "ExLlamaV3",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ExLlamaV3 documents EXL3 and cache quantization, consumer-GPU tensor/expert parallelism, CPU offload, dynamic batching, speculative decoding and multimodal support.",
+      "It recommends TabbyAPI for an OpenAI-compatible server and embedding support."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No consumer GPU setup was tested."
+  },
+  {
+    "id": "IF-mlc-llm",
+    "tool": "MLC-LLM introduction",
+    "url": "https://github.com/mlc-ai/mlc-llm/blob/main/docs/get_started/introduction.rst",
+    "title": "MLC-LLM introduction",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MLC-LLM documents compiler-accelerated deployment across multiple GPU backends and a REST server."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Model compilation and backend compatibility were not tested."
+  },
+  {
+    "id": "IF-mlc-rest",
+    "tool": "MLC-LLM REST API",
+    "url": "https://llm.mlc.ai/docs/deploy/rest.html",
+    "title": "MLC-LLM REST API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MLC-LLM documents CUDA, Metal, Vulkan, ROCm and OpenCL device choices and local, interactive and server presets."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Availability is release and hardware dependent."
+  },
+  {
+    "id": "IF-openvino-genai",
+    "tool": "OpenVINO GenAI",
+    "url": "https://docs.openvino.ai/2024/learn-openvino/llm_inference_guide/genai-guide.html",
+    "title": "OpenVINO GenAI",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenVINO GenAI documents generative pipelines extending OpenVINO runtime and examples with LoRA adapters."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Exact model/device support was not tested."
+  },
+  {
+    "id": "IF-ort-genai",
+    "tool": "ONNX Runtime Generate API",
+    "url": "https://onnxruntime.ai/docs/genai/",
+    "title": "ONNX Runtime Generate API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ONNX Runtime GenAI documents greedy and beam search, top-p/top-k sampling, chat templates and structured output for tool calling."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Exact execution-provider support requires separate verification."
+  },
+  {
+    "id": "IF-openrouter-rag",
+    "tool": "OpenRouter RAG guide",
+    "url": "https://openrouter.ai/docs/guides/evaluate-and-optimize/rag",
+    "title": "OpenRouter RAG guide",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenRouter documents distinct embedding, rerank and chat operations and provider routing."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No provider, price or retention assertion is made."
+  },
+  {
+    "id": "IF-litellm-providers",
+    "tool": "LiteLLM documentation",
+    "url": "https://docs.litellm.ai/docs/",
+    "title": "LiteLLM documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "LiteLLM documents a provider abstraction and gateway-oriented documentation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "A gateway does not establish a backend feature contract."
+  },
+  {
+    "id": "IF-ollama-api",
+    "tool": "Ollama API",
+    "url": "https://docs.ollama.com/api",
+    "title": "Ollama API",
+    "accessed": "2026-10-25",
+    "claims": ["Ollama publishes local API documentation."],
+    "verification": "primary-documentation",
+    "notes": "Feature and hardware support remain model and release specific."
+  },
+  {
+    "id": "IF-mlx-lm",
+    "tool": "MLX-LM",
+    "url": "https://github.com/ml-explore/mlx-lm",
+    "title": "MLX-LM",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MLX-LM provides MLX-based text generation and LoRA or QLoRA fine-tuning documentation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Apple-platform suitability is a deployment choice, not a measured comparison."
+  },
+  {
+    "id": "IF-ktransformers",
+    "tool": "KTransformers",
+    "url": "https://github.com/kvcache-ai/ktransformers",
+    "title": "KTransformers",
+    "accessed": "2026-10-25",
+    "claims": [
+      "KTransformers documents CPU-GPU heterogeneous inference, quantization, MoE optimization and SGLang integration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Repository performance examples were not adopted as results."
+  },
+  {
+    "id": "IF-ray-serve",
+    "tool": "Ray Serve",
+    "url": "https://docs.ray.io/en/latest/serve/",
+    "title": "Ray Serve",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Ray Serve documents scalable online inference APIs with response streaming, dynamic batching and multi-node or multi-GPU serving."
+    ],
+    "verification": "primary-documentation",
+    "notes": "It is a deployment layer and does not establish model-runtime support."
+  },
+  {
+    "id": "IF-openrouter-rag-capabilities",
+    "tool": "OpenRouter RAG capabilities",
+    "url": "https://openrouter.ai/docs/guides/evaluate-and-optimize/rag",
+    "title": "OpenRouter RAG capabilities",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenRouter documents provider routing and separate embedding, rerank and chat operations."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Endpoint availability is provider and model dependent."
+  }
+]

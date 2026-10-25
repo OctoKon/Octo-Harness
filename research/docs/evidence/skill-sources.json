@@ -1,0 +1,98 @@
+[
+  {
+    "id": "SK-01",
+    "tool": "Agent workflow sources",
+    "url": "https://github.com/obra/superpowers/blob/main/skills/systematic-debugging/SKILL.md",
+    "title": "Agent workflow and skill authoring primary source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected primary guidance informs the documented trigger and verification workflow; no measured improvement is asserted."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Project-authored skill instructions; no vendor prose or code copied."
+  },
+  {
+    "id": "SK-02",
+    "tool": "Agent workflow sources",
+    "url": "https://github.com/obra/superpowers/blob/main/skills/verification-before-completion/SKILL.md",
+    "title": "Agent workflow and skill authoring primary source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected primary guidance informs the documented trigger and verification workflow; no measured improvement is asserted."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Project-authored skill instructions; no vendor prose or code copied."
+  },
+  {
+    "id": "SK-03",
+    "tool": "Agent workflow sources",
+    "url": "https://doc.rust-lang.org/cargo/commands/cargo-test.html",
+    "title": "Agent workflow and skill authoring primary source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected primary guidance informs the documented trigger and verification workflow; no measured improvement is asserted."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Project-authored skill instructions; no vendor prose or code copied."
+  },
+  {
+    "id": "SK-04",
+    "tool": "Agent workflow sources",
+    "url": "https://doc.rust-lang.org/book/ch11-00-testing.html",
+    "title": "Agent workflow and skill authoring primary source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected primary guidance informs the documented trigger and verification workflow; no measured improvement is asserted."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Project-authored skill instructions; no vendor prose or code copied."
+  },
+  {
+    "id": "SK-05",
+    "tool": "Agent workflow sources",
+    "url": "https://doc.rust-lang.org/clippy/",
+    "title": "Agent workflow and skill authoring primary source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected primary guidance informs the documented trigger and verification workflow; no measured improvement is asserted."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Project-authored skill instructions; no vendor prose or code copied."
+  },
+  {
+    "id": "SK-06",
+    "tool": "Agent workflow sources",
+    "url": "https://agentskills.io/specification",
+    "title": "Agent workflow and skill authoring primary source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected primary guidance informs the documented trigger and verification workflow; no measured improvement is asserted."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Project-authored skill instructions; no vendor prose or code copied."
+  },
+  {
+    "id": "SK-07",
+    "tool": "Agent workflow sources",
+    "url": "https://learn.chatgpt.com/docs/build-skills",
+    "title": "Agent workflow and skill authoring primary source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected primary guidance informs the documented trigger and verification workflow; no measured improvement is asserted."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Project-authored skill instructions; no vendor prose or code copied."
+  },
+  {
+    "id": "SK-08",
+    "tool": "Agent workflow sources",
+    "url": "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices",
+    "title": "Agent workflow and skill authoring primary source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Selected primary guidance informs the documented trigger and verification workflow; no measured improvement is asserted."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Project-authored skill instructions; no vendor prose or code copied."
+  }
+]

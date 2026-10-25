@@ -1,0 +1,1473 @@
+[
+  {
+    "id": "GX-grok-build",
+    "tool": "Grok Build overview",
+    "url": "https://docs.x.ai/build/overview",
+    "title": "Grok Build overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Grok Build supports interactive TUI, headless use and ACP.",
+      "Its headless output can be streaming JSON."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No local install or ACP session was tested."
+  },
+  {
+    "id": "GX-grok-build-source",
+    "tool": "Grok Build is now open source",
+    "url": "https://x.ai/news/grok-build-open-source",
+    "title": "Grok Build is now open source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "xAI announced that Grok Build’s coding agent and TUI were open-sourced."
+    ],
+    "verification": "primary-documentation",
+    "notes": "License and repository revision need direct verification before use."
+  },
+  {
+    "id": "GX-zcode-repo",
+    "tool": "ZCode repository",
+    "url": "https://github.com/zai-org/ZCode",
+    "title": "ZCode repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The public Apache-2.0 repository includes desktop, web, backend, CLI and runtime source."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Source was not built or audited."
+  },
+  {
+    "id": "GX-zcode-agent",
+    "tool": "ZCode Agent",
+    "url": "https://zcode.z.ai/en/docs/agents",
+    "title": "ZCode Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ZCode documents workspace context, execution modes and goal-mode completion/state recovery."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Data and network policy were not tested."
+  },
+  {
+    "id": "GX-warp-agents",
+    "tool": "Warp Agents overview",
+    "url": "https://docs.warp.dev/agents/",
+    "title": "Warp Agents overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Warp documents local/CLI/cloud agent surfaces, approval and diff review, parallel conversations and a cloud automation platform."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Cloud isolation/lifecycle details require separate verification."
+  },
+  {
+    "id": "GX-warp-products",
+    "tool": "Warp products overview",
+    "url": "https://docs.warp.dev/",
+    "title": "Warp products overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Warp documents terminal, agent, automation platform and Factory product layers."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Product overview only."
+  },
+  {
+    "id": "GX-jules-faq",
+    "tool": "Jules FAQ",
+    "url": "https://jules.google/docs/faq",
+    "title": "Jules FAQ",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Jules is a public-beta asynchronous coding agent.",
+      "Each task runs in a fresh VM that clones a repository and installs dependencies."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No VM execution was tested."
+  },
+  {
+    "id": "GX-trae",
+    "tool": "TRAE Agent and IDE windows",
+    "url": "https://docs.trae.cn/ide_get-started-with-trae",
+    "title": "TRAE Agent and IDE windows",
+    "accessed": "2026-10-25",
+    "claims": [
+      "TRAE documents distinct Agent and IDE workspaces.",
+      "The Agent workspace can manage multiple tasks and hand long tasks to cloud execution."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Chinese official documentation; policy details not established."
+  },
+  {
+    "id": "GX-omp",
+    "tool": "oh-my-pi",
+    "url": "https://github.com/can1357/oh-my-pi",
+    "title": "oh-my-pi",
+    "accessed": "2026-10-25",
+    "claims": [
+      "oh-my-pi identifies itself as a Pi fork and documents a coding-agent package, in-process tools and worktree-isolated subagents."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Canonical OMP source selected in the final sweep; downstream forks are excluded from canonical identity claims."
+  },
+  {
+    "id": "GX-command-code",
+    "tool": "Command Code Docs",
+    "url": "https://commandcode.ai/docs",
+    "title": "Command Code Docs",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Command Code documents CLI and desktop surfaces and broad model support."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Marketing performance claims excluded; lifecycle and licensing unresolved."
+  },
+  {
+    "id": "GX-tabby",
+    "tool": "What is Tabby",
+    "url": "https://tabby.tabbyml.com/docs/welcome/",
+    "title": "What is Tabby",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Tabby is an open-source self-hosted coding assistant with deployment, editor extension and API documentation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Agent behavior requires separate verification."
+  },
+  {
+    "id": "GX-plandex",
+    "tool": "Plandex repository",
+    "url": "https://github.com/plandex-ai/plandex",
+    "title": "Plandex repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Plandex presents itself as an open-source terminal agent for large multi-step coding work."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No plan/edit lifecycle was tested."
+  },
+  {
+    "id": "GX-tabnine-agent",
+    "tool": "Tabnine Agent",
+    "url": "https://docs.tabnine.com/main/getting-started/tabnine-agent",
+    "title": "Tabnine Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Tabnine distinguishes autonomous Agent from chat and documents developer check-ins for input or approval."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed product; plan-specific governance needs review."
+  },
+  {
+    "id": "GX-refact-archive",
+    "tool": "Refact archive",
+    "url": "https://github.com/smallcloudai/refact",
+    "title": "Refact archive",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The original Refact repository is archived and identifies a successor development home.",
+      "Refact Cloud is stated as retired."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Do not treat archive as active integration target."
+  },
+  {
+    "id": "GX-amazon-q",
+    "tool": "Amazon Q Developer Documentation",
+    "url": "https://aws.amazon.com/documentation-overview/q-developer/",
+    "title": "Amazon Q Developer Documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Amazon Q documents IDE/CLI workspace context and an agent that can plan, implement and test approved work."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Service policies require AWS-specific review."
+  },
+  {
+    "id": "GX-flowise",
+    "tool": "Flowise introduction",
+    "url": "https://docs.flowiseai.com/",
+    "title": "Flowise introduction",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Flowise documents visual Assistant, Chatflow and Agentflow builders, orchestration, logging, evaluations and MCP support."
+    ],
+    "verification": "primary-documentation",
+    "notes": "General workflow platform, not a coding harness claim."
+  },
+  {
+    "id": "GX-open-autoglm",
+    "tool": "Open-AutoGLM README",
+    "url": "https://github.com/zai-org/Open-AutoGLM/blob/main/README_en.md",
+    "title": "Open-AutoGLM README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Open-AutoGLM is a phone agent framework using ADB and vision-language control.",
+      "It documents confirmation for sensitive operations and manual takeover."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Excluded from coding-harness corpus; retained as computer-use lead."
+  },
+  {
+    "id": "GX-openviking",
+    "tool": "OpenViking repository",
+    "url": "https://github.com/volcengine/OpenViking/",
+    "title": "OpenViking repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenViking describes a context/memory/knowledge/skills database and coding-agent plugin integration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Deduplicated to context lane."
+  },
+  {
+    "id": "GX-rtk",
+    "tool": "RTK",
+    "url": "https://www.rtk-ai.app/",
+    "title": "RTK",
+    "accessed": "2026-10-25",
+    "claims": [
+      "RTK describes filtering/compressing tool output before it enters agent context across supported coding agents."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Deduplicated to context lane."
+  },
+  {
+    "id": "GX-pi-current",
+    "tool": "Pi",
+    "url": "https://github.com/earendil-works/pi",
+    "title": "Pi",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Pi presents itself as a minimal extensible agent harness with extensions, skills, prompt templates, themes and packages.",
+      "The coding-agent README documents interactive, print/JSON, RPC and TypeScript SDK modes."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Canonical active source; badlogic/pi-mono redirects here. The previously cited pi-packages source was a mirror."
+  },
+  {
+    "id": "GX-omp-current",
+    "tool": "oh-my-pi",
+    "url": "https://github.com/can1357/oh-my-pi",
+    "title": "oh-my-pi",
+    "accessed": "2026-10-25",
+    "claims": [
+      "oh-my-pi identifies itself as a fork of Pi and documents its own package, in-process tools and worktree-isolated subagents."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Canonical OMP source; downstream forks are not treated as separate canonical candidates."
+  },
+  {
+    "id": "GX-vllm-server",
+    "tool": "vLLM OpenAI-compatible server",
+    "url": "https://github.com/vllm-project/vllm/blob/main/docs/serving/online_serving/openai_compatible_server.md",
+    "title": "vLLM OpenAI-compatible server",
+    "accessed": "2026-10-25",
+    "claims": [
+      "vLLM documents an OpenAI-compatible serving interface and warns that its API-key option does not protect every endpoint."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Provider endpoint, not a coding agent; no deployment was tested."
+  },
+  {
+    "id": "GX-autocoderover",
+    "tool": "AutoCodeRover",
+    "url": "https://github.com/AutoCodeRoverSG/auto-code-rover",
+    "title": "AutoCodeRover",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AutoCodeRover describes repository-structure-aware autonomous program improvement."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Research/tooling lineage; maintenance and operational controls were not evaluated."
+  },
+  {
+    "id": "GX-agentless-canonical",
+    "tool": "Agentless",
+    "url": "https://github.com/OpenAutoCoder/Agentless",
+    "title": "Agentless",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agentless documents localization, repair and patch-validation phases."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Research system, not evidence of a durable interactive harness."
+  },
+  {
+    "id": "GX-openacp",
+    "tool": "OpenACP",
+    "url": "https://github.com/madezmedia/openacp",
+    "title": "OpenACP",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenACP presents a self-hosted ACP bridge/control surface for sessions and messaging endpoints."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No channel authentication or dispatch behavior was tested."
+  },
+  {
+    "id": "GX-iris-agent",
+    "tool": "Iris Agent",
+    "url": "https://github.com/4onstudios/iris-agent",
+    "title": "Iris Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Iris presents CLI, HTTP, ACP, LSP and MCP surfaces for a local coding agent."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Source claims only; no protocol session was run."
+  },
+  {
+    "id": "GX-zap-agent",
+    "tool": "ZAP Coding Agent",
+    "url": "https://github.com/zap-coding-agent/zap-coding-agent",
+    "title": "ZAP Coding Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ZAP presents a local Rust coding agent with AST indexing, skills and ACP v1 support."
+    ],
+    "verification": "primary-documentation",
+    "notes": "ACP compatibility was not independently tested."
+  },
+  {
+    "id": "GX-octomind",
+    "tool": "Octomind",
+    "url": "https://github.com/Muvon/octomind",
+    "title": "Octomind",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Octomind documents CLI, JSONL, daemon/WebSocket and ACP surfaces over one session engine and an optional working-directory sandbox."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Package/tap installation and sandbox enforcement were not tested."
+  },
+  {
+    "id": "GX-san",
+    "tool": "San",
+    "url": "https://github.com/genai-io/san",
+    "title": "San",
+    "accessed": "2026-10-25",
+    "claims": [
+      "San presents a Go terminal runtime with configurable prompts, tools, providers, extensions, MCP and replay inspection."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Performance and update claims were not tested."
+  },
+  {
+    "id": "GX-heddle",
+    "tool": "Heddle",
+    "url": "https://github.com/roackb2/heddle",
+    "title": "Heddle",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Heddle documents a TypeScript runtime/SDK with durable runs, approvals, artifacts and an optional separate execution host."
+    ],
+    "verification": "primary-documentation",
+    "notes": "The execution-host contract is documented as experimental."
+  },
+  {
+    "id": "GX-ax-code",
+    "tool": "AX Code",
+    "url": "https://github.com/defai-digital/ax-code",
+    "title": "AX Code",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AX Code documents structured event logs and file snapshots for review, run comparison and rollback."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Unreleased computer-use capability was not treated as available."
+  },
+  {
+    "id": "GX-terminuz",
+    "tool": "Terminuz",
+    "url": "https://github.com/N1ghthill/terminuz",
+    "title": "Terminuz",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Terminuz presents a local terminal coding agent with provider support, MCP and user-facing permission-aware tool execution."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Maintenance and permission enforcement were not independently tested."
+  },
+  {
+    "id": "GX-acp-bridge",
+    "tool": "ACP-Bridge",
+    "url": "https://github.com/BlakeHung/acp-bridge",
+    "title": "ACP-Bridge",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ACP-Bridge documents an OpenAI-compatible local-model to ACP bridge with working-directory-scoped tools and opt-in web allowlisting."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Its stated test/compatibility results were not rerun."
+  },
+  {
+    "id": "GX-acpr",
+    "tool": "acpr",
+    "url": "https://github.com/agentclientprotocol/acpr",
+    "title": "acpr",
+    "accessed": "2026-10-25",
+    "claims": [
+      "acpr fetches the ACP registry and launches a selected agent using its declared distribution method."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Launcher download and execution were not tested."
+  },
+  {
+    "id": "GX-acp-router",
+    "tool": "ACP Router",
+    "url": "https://github.com/puzige/acp-router",
+    "title": "ACP Router",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ACP Router documents ACP-registry discovery, worktree dispatch, job/session/event tracking and cancellation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Its documented default bypass-permission setting is a policy risk, not an endorsed default."
+  },
+  {
+    "id": "GX-auggie",
+    "tool": "Auggie CLI",
+    "url": "https://www.augmentcode.com/product/cli",
+    "title": "Auggie CLI",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Auggie documents interactive and print automation modes, ACP support and GitHub workflow integration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed product; retention and authorization policies were not retrieved."
+  },
+  {
+    "id": "GX-acp-registry",
+    "tool": "ACP Registry",
+    "url": "https://github.com/agentclientprotocol/registry",
+    "title": "ACP Registry",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The ACP Registry documents a curated agent index with CI validation, distribution metadata and hourly release update checks."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Registry inclusion is not an independent security or lifecycle endorsement."
+  },
+  {
+    "id": "GX-synapse",
+    "tool": "Synapse Agent",
+    "url": "https://github.com/alex8224/synapse-agent",
+    "title": "Synapse Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Synapse presents a terminal-first local coding agent with persistent goals, visible tool/context state and token-aware tool-output handling."
+    ],
+    "verification": "primary-documentation",
+    "notes": "A distinct product despite its Deep Agents foundation; no runtime was tested."
+  },
+  {
+    "id": "GX-deerflow",
+    "tool": "DeerFlow",
+    "url": "https://github.com/bytedance/deer-flow",
+    "title": "DeerFlow",
+    "accessed": "2026-10-25",
+    "claims": [
+      "DeerFlow presents a long-horizon agent harness with sandboxes, memory, skills, subagents and a message gateway.",
+      "Its documentation describes an allowlist for commands used by stdio MCP servers."
+    ],
+    "verification": "primary-documentation",
+    "notes": "The source calls its allowlist defense in depth, not a security boundary."
+  },
+  {
+    "id": "GX-reasonix",
+    "tool": "DeepSeek-Reasonix",
+    "url": "https://github.com/esengine/DeepSeek-Reasonix",
+    "title": "DeepSeek-Reasonix",
+    "accessed": "2026-10-25",
+    "claims": [
+      "DeepSeek-Reasonix is a public CLI and desktop coding-agent repository.",
+      "Its documentation describes a DSH subagent integration and configurable local state."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Reliability and enforcement claims were not tested."
+  },
+  {
+    "id": "GX-fx",
+    "tool": "fx",
+    "url": "https://github.com/vercel-labs/fx",
+    "title": "fx",
+    "accessed": "2026-10-25",
+    "claims": [
+      "fx documents a Zig native coding-agent CLI with ACP, skills, MCP and project instructions.",
+      "It exposes an embeddable libfx surface."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Repository labels fx experimental; no capability was tested."
+  },
+  {
+    "id": "GX-gajae-code",
+    "tool": "Gajae-Code",
+    "url": "https://github.com/Yeachan-Heo/gajae-code",
+    "title": "Gajae-Code",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Gajae-Code documents a Bun/TypeScript coding CLI with Rust-native components and agent, tools, TUI, session, SDK, workflow, LSP and daemon subsystems."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Architecture contract only; no release or runtime test was performed."
+  },
+  {
+    "id": "GX-jcode",
+    "tool": "jcode",
+    "url": "https://github.com/1jehuang/jcode",
+    "title": "jcode",
+    "accessed": "2026-10-25",
+    "claims": [
+      "jcode presents a Rust coding-agent harness for multi-agent workflows with swarms and self-development features."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Comparative performance statements were not independently evaluated."
+  },
+  {
+    "id": "GX-nanobot",
+    "tool": "nanobot",
+    "url": "https://github.com/HKUDS/nanobot",
+    "title": "nanobot",
+    "accessed": "2026-10-25",
+    "claims": [
+      "nanobot presents a self-hosted personal-agent framework with tools, memory, MCP and multi-agent workflows."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Adjacent general-agent runtime, not a coding-specific harness."
+  },
+  {
+    "id": "GX-gpt-researcher",
+    "tool": "GPT Researcher",
+    "url": "https://github.com/assafelovic/gpt-researcher",
+    "title": "GPT Researcher",
+    "accessed": "2026-10-25",
+    "claims": [
+      "GPT Researcher presents an autonomous deep-research agent and documents MCP configuration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Research/workflow peer; no repository-edit authority is inferred."
+  },
+  {
+    "id": "GX-local-deep-researcher",
+    "tool": "Local Deep Researcher",
+    "url": "https://github.com/langchain-ai/local-deep-researcher",
+    "title": "Local Deep Researcher",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Local Deep Researcher presents a fully local web research and report-writing assistant."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Research assistant, not a coding loop."
+  },
+  {
+    "id": "GX-mirothinker",
+    "tool": "MiroThinker",
+    "url": "https://github.com/MiroMindAI/MiroThinker",
+    "title": "MiroThinker",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MiroThinker presents an open deep-research agent for complex research and prediction tasks."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Reported benchmark numbers were not adopted as study results."
+  },
+  {
+    "id": "GX-weft",
+    "tool": "Weft",
+    "url": "https://github.com/michaelfromyeg/weft",
+    "title": "Weft",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Weft compiles one capability into multiple harness-native manifests and documents lockfiles, eval artifacts and publication gates."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Compiler output must remain subject to host capability policy."
+  },
+  {
+    "id": "GX-moatless",
+    "tool": "Moatless Tools",
+    "url": "https://github.com/aorwall/moatless-tools",
+    "title": "Moatless Tools",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Moatless Tools is the attributable upstream repository for the previously queued Moatless identity."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Mechanism and lifecycle were not deeply reviewed."
+  },
+  {
+    "id": "GX-mentat-archive",
+    "tool": "Mentat archive",
+    "url": "https://github.com/AbanteAI/archive-old-cli-mentat",
+    "title": "Mentat archive",
+    "accessed": "2026-10-25",
+    "claims": ["The former Mentat CLI repository is archived and read-only."],
+    "verification": "primary-documentation",
+    "notes": "Not an active integration target."
+  },
+  {
+    "id": "GX-sandbase-harness",
+    "tool": "SandBase Harness",
+    "url": "https://github.com/sandbaseai/sandbase-harness",
+    "title": "SandBase Harness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SandBase Harness documents local, Docker, Kubernetes and worker sandbox backends, resumable event streams, MCP toolsets, permission policy and a TypeScript SDK."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Provider and sandbox behavior were not tested; local process is not a strong isolation boundary."
+  },
+  {
+    "id": "GX-trueforge",
+    "tool": "TrueForge",
+    "url": "https://github.com/truefoundry/trueforge",
+    "title": "TrueForge",
+    "accessed": "2026-10-25",
+    "claims": [
+      "TrueForge presents itself as an open-source agent-harness runtime layer."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Detailed execution and policy semantics were not evaluated."
+  },
+  {
+    "id": "GX-agents-wire",
+    "tool": "agents-wire",
+    "url": "https://github.com/pivanov/agents-wire",
+    "title": "agents-wire",
+    "accessed": "2026-10-25",
+    "claims": [
+      "agents-wire presents an ACP-based TypeScript SDK for local coding-agent sessions, including budgets, permission middleware and orchestration."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Normalization does not prove or add backend enforcement; no adapter was run."
+  },
+  {
+    "id": "GX-andbo",
+    "tool": "Andbo",
+    "url": "https://github.com/qosikz/andbo",
+    "title": "Andbo",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Andbo documents a policy-controlled container sandbox with egress policy, secret redaction, audit sessions, MCP and skills integration.",
+      "Its local runtime does not enforce network policy."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No container, cluster or policy was run."
+  },
+  {
+    "id": "GX-a2acode",
+    "tool": "a2acode",
+    "url": "https://github.com/kanywst/a2acode",
+    "title": "a2acode",
+    "accessed": "2026-10-25",
+    "claims": [
+      "a2acode maps ACP coding-agent sessions to A2A while preserving progress, diffs, permission prompts and session context."
+    ],
+    "verification": "primary-documentation",
+    "notes": "The server inherits agent-authentication context; no deployment was tested."
+  },
+  {
+    "id": "GX-open-agent-bridge",
+    "tool": "Open Agent Bridge",
+    "url": "https://github.com/kevinArgueta96/open-agent-bridge",
+    "title": "Open Agent Bridge",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Open Agent Bridge documents a shared local registry, MCP adapter, A2A server and SQLite-backed channel-message acknowledgements for coding-agent sessions."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Session injection and identity boundaries were not tested."
+  },
+  {
+    "id": "GX-pipelock",
+    "tool": "Pipelock",
+    "url": "https://github.com/pipelab-org/pipelock",
+    "title": "Pipelock",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Pipelock documents mediated HTTP, WebSocket, MCP and A2A traffic inspection with signed action receipts.",
+      "Its documentation limits receipts to traffic that crosses the mediation boundary."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Core and multi-agent tiers have different licenses; no policy or receipt was executed."
+  },
+  {
+    "id": "GX-amaze-control-plane",
+    "tool": "aMaze Control Plane",
+    "url": "https://github.com/chernomaz/aMazeControlPlane",
+    "title": "aMaze Control Plane",
+    "accessed": "2026-10-25",
+    "claims": [
+      "aMaze documents proxy-side policy enforcement for LLM, MCP and A2A traffic, including tool visibility filtering and traces."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Operator hardening and proxy deployment were not evaluated."
+  },
+  {
+    "id": "GX-openhand",
+    "tool": "OpenHand",
+    "url": "https://github.com/ricardo-foundry/openhand",
+    "title": "OpenHand",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenHand documents an LLM-agnostic agent platform with plugin tools and sandbox policy.",
+      "Its documented same-UID sandbox and in-process plugins are not OS-level isolation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No runtime or plugin was executed."
+  },
+  {
+    "id": "GX-mcp-agent-security-gateway",
+    "tool": "MCP Agent Security Gateway",
+    "url": "https://github.com/poojakira/mcp-agent-security-gateway",
+    "title": "MCP Agent Security Gateway",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MCP Agent Security Gateway documents default-deny inspection of routed MCP/JSON-RPC tool calls with audit and policy checks.",
+      "It describes itself as an engineering research prototype and limits enforcement to supported routed paths."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Current license is all rights reserved; no gateway was run."
+  },
+  {
+    "id": "GX-agent-security-harness",
+    "tool": "Agent Security Harness",
+    "url": "https://github.com/marketplace/actions/agent-security-harness",
+    "title": "Agent Security Harness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent Security Harness is a published CI action/package for protocol-level MCP/A2A endpoint tests.",
+      "Its documentation distinguishes inconclusive unreachable or unserviced targets from passing controls."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No endpoint or benchmark was run."
+  },
+  {
+    "id": "GX-toolhive",
+    "tool": "ToolHive",
+    "url": "https://github.com/stacklok/toolhive",
+    "title": "ToolHive",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ToolHive documents a gateway, registry and runtime for managed MCP servers, with container deployment and per-request identity and access policy when configured."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Container and network enforcement were not tested."
+  },
+  {
+    "id": "GX-cuga",
+    "tool": "CUGA Agent",
+    "url": "https://docs.cuga.dev/",
+    "title": "CUGA Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "CUGA documents a configurable open-source generalist agent harness from IBM Research with a LangGraph-based orchestrator, policy, skills, tools and optional sandbox capabilities."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No CUGA runtime was installed or exercised."
+  },
+  {
+    "id": "GX-docker-mcp-gateway",
+    "tool": "Docker MCP Gateway",
+    "url": "https://github.com/docker/mcp-gateway",
+    "title": "Docker MCP Gateway",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Docker MCP Gateway documents an MCP CLI gateway with registry references, profiles, tool enablement and secrets or OAuth handling."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No gateway or server image was run."
+  },
+  {
+    "id": "GX-fleet",
+    "tool": "Fleet",
+    "url": "https://github.com/ElcanoTek/fleet",
+    "title": "Fleet",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Fleet documents a governed runtime where file and shell operations execute in a container data plane with policy, audit and cancellation/retirement behavior."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Containment and cancellation behavior were not independently tested."
+  },
+  {
+    "id": "GX-edgef-mcp-gateway",
+    "tool": "EdgeF MCP Gateway",
+    "url": "https://github.com/EdgeF-4/mcp-gateway",
+    "title": "EdgeF MCP Gateway",
+    "accessed": "2026-10-25",
+    "claims": [
+      "EdgeF MCP Gateway documents authenticated, namespaced MCP tool routing with per-client policy, quotas and redacted SQLite audit."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No upstream process or policy was run."
+  },
+  {
+    "id": "GX-agentic-community-mcp-gateway-registry",
+    "tool": "MCP Gateway & Registry",
+    "url": "https://github.com/agentic-community/mcp-gateway-registry",
+    "title": "MCP Gateway & Registry",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MCP Gateway & Registry documents asset discovery, registration admission control, authentication, authorization, skill allowlists and audit."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Deployment and operational claims were not independently tested."
+  },
+  {
+    "id": "GX-every-code",
+    "tool": "Every Code",
+    "url": "https://github.com/just-every/code",
+    "title": "Every Code",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Every Code is an Apache-2.0 community fork of Codex with browser and MCP integration, multi-agent commands, approval modes and workspace sandboxing."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Fork lifecycle and safeguards were not tested."
+  },
+  {
+    "id": "GX-youtu-agent",
+    "tool": "Youtu-Agent",
+    "url": "https://github.com/TencentCloudADP/youtu-agent",
+    "title": "Youtu-Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Youtu-Agent documents automatic generation of agent configuration and tool code from a described capability."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Generated code and configuration were not run or audited."
+  },
+  {
+    "id": "GX-codebuddy-code",
+    "tool": "CodeBuddy Code quickstart",
+    "url": "https://www.codebuddy.ai/docs/cli/quickstart",
+    "title": "CodeBuddy Code quickstart",
+    "accessed": "2026-10-25",
+    "claims": [
+      "CodeBuddy documents CLI project use and Chinese, international and enterprise login routes."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Closed product; deployment and privacy behavior were not tested."
+  },
+  {
+    "id": "GX-synapseorch",
+    "tool": "SynapseOrch documentation",
+    "url": "https://docs.synapseorch.com/",
+    "title": "SynapseOrch documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SynapseOrch documents agents, DAG workflows, MCP tools, skills, durable memory, approval policy, resumable runs and sandboxed Python.",
+      "Its docs distinguish self-hosted AGPL and cloud operation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Distinct identity from Synapse Agent; no self-hosted deployment was run."
+  },
+  {
+    "id": "GX-cplt",
+    "tool": "cplt",
+    "url": "https://github.com/navikt/cplt",
+    "title": "cplt",
+    "accessed": "2026-10-25",
+    "claims": [
+      "cplt documents kernel-level sandboxing for several coding agents, explicit environment pass-through and repository-held sandbox policy."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Platform and agent-specific limitations were not exercised."
+  },
+  {
+    "id": "GX-harnss",
+    "tool": "Harnss",
+    "url": "https://github.com/OpenSource03/harnss",
+    "title": "Harnss",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Harnss documents a desktop ACP client with built-in Claude Code and Codex engines, registry agents, MCP configuration and permission levels.",
+      "It documents that prebuilt binaries are unsigned."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No desktop client or agent was installed."
+  },
+  {
+    "id": "GX-sec-boss",
+    "tool": "BOSS",
+    "url": "https://github.com/nikhil-jangir-iitk/sec_boss",
+    "title": "BOSS",
+    "accessed": "2026-10-25",
+    "claims": [
+      "BOSS documents a loopback MCP tool surface for coding CLIs, signed plugins, RBAC and per-tool toggles.",
+      "Its documentation states plugins are in-process rather than OS-sandboxed."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No plugin, RBAC deployment or MCP tool was run."
+  },
+  {
+    "id": "GX-agentic-harness",
+    "tool": "Agentic Harness",
+    "url": "https://github.com/frangelbarrera/agentic-harness",
+    "title": "Agentic Harness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agentic Harness documents append-only replayable thread state, playbooks, budget controls, review loops and MCP support.",
+      "Its alpha documentation marks several planned capabilities as incomplete."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No LLM workflow or control was exercised."
+  },
+  {
+    "id": "GX-agentgui",
+    "tool": "AgentGUI",
+    "url": "https://github.com/AnEntrypoint/agentgui",
+    "title": "AgentGUI",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AgentGUI documents a Node ACP client with WebSocket synchronization, SQLite persistence and direct local-agent daemon management."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No daemon or persisted session was used."
+  },
+  {
+    "id": "GX-acp-agent-hub",
+    "tool": "ACP Agent Hub",
+    "url": "https://github.com/xfbaby/acp-agent-hub",
+    "title": "ACP Agent Hub",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ACP Agent Hub documents VS Code, CLI and mobile clients for ACP-compatible coding agents and a mobile WebSocket relay."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Relay authentication and deployment controls were not tested."
+  },
+  {
+    "id": "GX-codewhale",
+    "tool": "Codewhale",
+    "url": "https://codewhale.net/en",
+    "title": "Codewhale",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Codewhale documents a terminal coding agent with selectable action approvals, plugins/MCP, local or hosted model endpoints and Fleet multi-agent support.",
+      "Its product page identifies codewhale-hq/CodeWhale as the canonical source."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Provider credential handling and approval enforcement were not tested."
+  },
+  {
+    "id": "GX-docker-agent",
+    "tool": "Docker Agent",
+    "url": "https://docs.docker.com/ai/docker-agent/",
+    "title": "Docker Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Docker Agent documents YAML-configured root and sub-agents with separate contexts and built-in or MCP tools.",
+      "Docker documents that versions 4.49 through 4.62 called the feature cagent."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Image/runtime isolation semantics were not tested."
+  },
+  {
+    "id": "GX-vibe-kanban",
+    "tool": "Vibe Kanban",
+    "url": "https://github.com/BloopAI/vibe-kanban",
+    "title": "Vibe Kanban",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Vibe Kanban is a public repository for orchestrating coding agents in dedicated worktrees."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Worktree orchestration does not itself establish process, credential or network isolation."
+  },
+  {
+    "id": "GX-vibetree",
+    "tool": "VibeTree",
+    "url": "https://github.com/sahithvibudhi/vibe-tree",
+    "title": "VibeTree",
+    "accessed": "2026-10-25",
+    "claims": [
+      "VibeTree documents parallel terminal coding-agent tasks, one git worktree per task, persistent terminals and desktop, web and CLI surfaces."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Release/update and host authorization behavior were not tested."
+  },
+  {
+    "id": "GX-agetor",
+    "tool": "Agetor",
+    "url": "https://github.com/alamops/agetor",
+    "title": "Agetor",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agetor documents per-task git worktrees and tmux sessions for installed coding CLIs, with structured transcripts and surfaced approvals.",
+      "Its repository labels several harness integrations experimental."
+    ],
+    "verification": "primary-documentation",
+    "notes": "It drives underlying CLIs and was not evaluated as an isolation boundary."
+  },
+  {
+    "id": "GX-har",
+    "tool": "HAR",
+    "url": "https://github.com/os-factory/har",
+    "title": "HAR",
+    "accessed": "2026-10-25",
+    "claims": [
+      "HAR documents a CLI and MCP harness for agent worktrees with deterministic launch, verification and teardown stages.",
+      "It documents per-slot worktrees, ports and optional databases plus recorded verification evidence."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Coordination mechanisms were not tested as an OS-level isolation boundary."
+  },
+  {
+    "id": "GX-tclaude",
+    "tool": "tclaude",
+    "url": "https://github.com/tofutools/tclaude",
+    "title": "tclaude",
+    "accessed": "2026-10-25",
+    "claims": [
+      "tclaude documents a local daemon that wraps multiple coding CLIs with durable sessions, identity, permissions, audit and automation.",
+      "It documents sandbox/network-filter profiles using bubblewrap, Seatbelt or a harness sandbox."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Operating-system and platform enforcement were not tested."
+  },
+  {
+    "id": "GX-agentmux",
+    "tool": "agentmux",
+    "url": "https://github.com/adelost/agentmux",
+    "title": "agentmux",
+    "accessed": "2026-10-25",
+    "claims": [
+      "agentmux documents durable per-agent queues, tmux or native agent sessions, structured logs and a Discord ChatOps bridge."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Its autonomous launch configuration and external channel expand the authority boundary."
+  },
+  {
+    "id": "GX-conduct",
+    "tool": "conduct",
+    "url": "https://github.com/ldlac/conduct",
+    "title": "conduct",
+    "accessed": "2026-10-25",
+    "claims": [
+      "conduct documents a local TUI for parallel coding-agent worktrees, diff review and explicit approvals for shell or network actions.",
+      "It documents persisted workspace metadata while an agent process does not survive a restart."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No process lifecycle or approval behavior was tested."
+  },
+  {
+    "id": "GX-omux",
+    "tool": "omux",
+    "url": "https://github.com/Happenmass/omux",
+    "title": "omux",
+    "accessed": "2026-10-25",
+    "claims": [
+      "omux documents a generic spawn/send/confirm/await agent adapter, push-based waiting and per-agent MCP scoping.",
+      "Its documentation describes parallel isolation as panes and working directories rather than git worktrees."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No supervision, memory or permission behavior was tested."
+  },
+  {
+    "id": "GX-software-factory",
+    "tool": "Software Factory",
+    "url": "https://github.com/iradulovic/software-factory",
+    "title": "Software Factory",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Software Factory documents labeled GitHub-issue intake, leased worktree CLI-agent runs, independent validation and a separate publication decision.",
+      "It documents that lease expiry is not a process fence and retains selected worktrees for inspection."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Its documented test and live-run results were not repeated in this research."
+  },
+  {
+    "id": "GX-jackalope",
+    "tool": "Jackalope",
+    "url": "https://github.com/jackalope-dev/jackalope",
+    "title": "Jackalope",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Jackalope documents a prerelease desktop workspace for installed coding agents, parallel worktrees, task-owned browser sessions and review queues.",
+      "It explicitly states that worktrees isolate Git changes rather than operating-system privileges."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Native task execution requires an approved account; no build or task was run."
+  },
+  {
+    "id": "GX-kith",
+    "tool": "Kith",
+    "url": "https://github.com/connorhriley/kith",
+    "title": "Kith",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Kith documents scoped task claims, worktrees, port reservations, supervised command mutexes and explicit integration through MCP, CLI and editor surfaces.",
+      "Its documentation limits claims and hooks to coordination among cooperative clients, not filesystem sandboxing."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Recorded validation was not treated as this research's test result."
+  },
+  {
+    "id": "GX-gluon-agent",
+    "tool": "Gluon Agent",
+    "url": "https://github.com/carrotly-ai/gluon-agent",
+    "title": "Gluon Agent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Gluon Agent documents a self-hosted Claude Code orchestrator with persistent sessions, worktrees, Docker/bubblewrap execution and CLI, web, Telegram and Discord control.",
+      "It documents host-mounted credentials for the containerized environment."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Container and remote-control security behavior were not tested."
+  },
+  {
+    "id": "GX-adhdev",
+    "tool": "ADHDev",
+    "url": "https://github.com/vilmire/adhdev",
+    "title": "ADHDev",
+    "accessed": "2026-10-25",
+    "claims": [
+      "ADHDev documents worktree nodes, an append-only local SQLite ledger and a test-gated Refinery integration flow.",
+      "Its standalone service is localhost-only by default and warns on unauthenticated LAN binding."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Cross-machine/cloud behavior was not tested."
+  },
+  {
+    "id": "GX-artemis",
+    "tool": "Artemis",
+    "url": "https://github.com/AIAydin/Artemis",
+    "title": "Artemis",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Artemis documents worktrees, explicit launch and workflow approvals, and main-process command revalidation.",
+      "Its public repository has no published tags or releases."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documented build/smoke evidence was not repeated and does not establish a current release."
+  },
+  {
+    "id": "GX-agent-deck",
+    "tool": "Agent Deck",
+    "url": "https://github.com/the-niresh/agent-deck",
+    "title": "Agent Deck",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent Deck documents an independently maintained self-hosted fork of sunset Vibe Kanban with restored board behavior, agent workspaces and local SQLite execution state.",
+      "Its board layer depends on a separate Postgres and ElectricSQL remote stack."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No self-hosted instance or fork update path was tested."
+  },
+  {
+    "id": "GX-paseo",
+    "tool": "Paseo",
+    "url": "https://github.com/staoran/paseo-reforged",
+    "title": "Paseo",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Paseo documents a daemon/client system for coding-agent worktrees, plugins and optional device relay.",
+      "Its documentation warns that plugins run on the daemon machine and connected clients."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Relay, plugin and multi-device authority boundaries were not tested."
+  },
+  {
+    "id": "GX-pando",
+    "tool": "pando",
+    "url": "https://github.com/wannysim/pando",
+    "title": "pando",
+    "accessed": "2026-10-25",
+    "claims": [
+      "pando documents a local daemon that creates worktrees and runs staged coding-agent jobs with deterministic evidence.",
+      "It documents no public API authentication and instructs operators not to expose its daemon."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No daemon, credentials, job or PR path was exercised."
+  },
+  {
+    "id": "GX-agent-dashboard",
+    "tool": "Agent Dashboard",
+    "url": "https://github.com/dustinblack/agent-dashboard",
+    "title": "Agent Dashboard",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent Dashboard documents multi-host, containerized daemons, remote PTY access, YAML agent profiles and OpenTelemetry telemetry.",
+      "It documents optional worktree spawning for multiple agents on a repository."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Remote terminal and daemon security behavior were not tested."
+  },
+  {
+    "id": "GX-hyprdesk",
+    "tool": "HyprDesk",
+    "url": "https://github.com/HyprDesk/hyprdesk",
+    "title": "HyprDesk",
+    "accessed": "2026-10-25",
+    "claims": [
+      "HyprDesk documents a router/worker desktop system over a local MCP/A2A tunnel with worktree isolation and merge-back review."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Autonomous mode and embedded browser authority boundaries were not tested."
+  },
+  {
+    "id": "GX-agent-console",
+    "tool": "Agent Console",
+    "url": "https://github.com/ms2sato/agent-console",
+    "title": "Agent Console",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent Console documents worktree sessions and MCP delegation, messaging and timer tools.",
+      "Its security documentation limits use to trusted local networks because it provides host terminal access."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No MCP server or terminal session was used."
+  },
+  {
+    "id": "GX-stoneforge",
+    "tool": "Stoneforge",
+    "url": "https://github.com/stoneforge-ai/stoneforge",
+    "title": "Stoneforge",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Stoneforge documents a Smithy agent orchestration runtime and Quarry event-sourced task SDK.",
+      "It documents durable workflow and handoff state with workers in isolated worktrees."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Dispatch, merge and workflow behavior were not tested."
+  },
+  {
+    "id": "GX-detent",
+    "tool": "Detent",
+    "url": "https://github.com/digitaldrywood/detent",
+    "title": "Detent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Detent documents a GitHub Projects-driven coding-agent orchestrator with worktrees, validation gates and a serialized merge train."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No board, worker, validation gate or merge train was exercised."
+  },
+  {
+    "id": "GX-stefan-agent-orchestrator",
+    "tool": "stefan1294 Agent Orchestrator",
+    "url": "https://github.com/stefan1294/agent-orchestrator",
+    "title": "stefan1294 Agent Orchestrator",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent Orchestrator documents worktree-based feature tracks with implementation, verification and fix phases plus retry handling."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Prompt, retry and merge policy were not tested."
+  },
+  {
+    "id": "GX-buhuipao-agent-console",
+    "tool": "buhuipao Agent Console",
+    "url": "https://github.com/buhuipao/agent-console",
+    "title": "buhuipao Agent Console",
+    "accessed": "2026-10-25",
+    "claims": [
+      "buhuipao Agent Console documents a local terminal control plane for Codex, Claude Code and Pi with owned-process reconnection and Pi event forwarding.",
+      "It excludes fork-subagent and sidechain transcripts from its primary session discovery."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Distinct from ms2sato/agent-console; no session integration was tested."
+  },
+  {
+    "id": "GX-showagent",
+    "tool": "showagent",
+    "url": "https://github.com/aytzey/showagent",
+    "title": "showagent",
+    "accessed": "2026-10-25",
+    "claims": [
+      "showagent documents local discovery and conversion of supported coding-agent session stores into native sessions for another CLI.",
+      "Its MCP server can search, read and request a handoff while documented transcript output redacts common secrets by default."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Session conversion, redaction and MCP disclosure behavior were not tested."
+  },
+  {
+    "id": "GX-agent-tui",
+    "tool": "Agent TUI",
+    "url": "https://github.com/mk7luke/agent-tui",
+    "title": "Agent TUI",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent TUI documents an Apache-2.0 packaging fork of Grok Build with one TUI core and provider runtime add-ons.",
+      "It documents interactive, headless and ACP modes and its own fork/release materials."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Fork lifecycle, runtime behavior and supply-chain process were not tested."
+  },
+  {
+    "id": "GX-kandev",
+    "tool": "Kandev",
+    "url": "https://github.com/kdlbs/kandev",
+    "title": "Kandev",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Kandev documents terminal, ACP and provider-specific Codex app-server integration paths.",
+      "Its integration guidance distinguishes ACP, Codex app-server, REST/WebSocket and MCP as different boundaries."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No agent integration or permission behavior was tested."
+  },
+  {
+    "id": "GX-zut",
+    "tool": "Zut",
+    "url": "https://github.com/bnema/zut",
+    "title": "Zut",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Zut documents AGENTS.md layering, extensions, session persistence, bounded headless orchestration and interactive tool confirmation.",
+      "It documents that interactive confirmation is ignored in print, JSON and RPC modes."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Provider, tool and confirmation behavior were not tested."
+  },
+  {
+    "id": "GX-jayhf-agent-deck",
+    "tool": "jayhf Agent Deck",
+    "url": "https://github.com/jayhf/agent-deck",
+    "title": "jayhf Agent Deck",
+    "accessed": "2026-10-25",
+    "claims": [
+      "jayhf Agent Deck documents terminal session management, MCP and skills managers, worktree lifecycle and conductor automation.",
+      "Its documentation includes configurable automation paths that can use bypass-approval tool arguments."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Distinct from the-niresh/agent-deck; no session, automation or sandbox was run."
+  },
+  {
+    "id": "GX-llama-cpp-server",
+    "tool": "llama.cpp server",
+    "url": "https://github.com/ggml-org/llama-pages/blob/master/src/docs/serve.md",
+    "title": "llama.cpp server",
+    "accessed": "2026-10-25",
+    "claims": [
+      "llama.cpp documents generation, embeddings and reranking endpoints, speculative decoding and router-mode model loading."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Endpoint authorization, resource and model lifecycle behavior were not tested."
+  },
+  {
+    "id": "GX-mlxcel",
+    "tool": "mlxcel",
+    "url": "https://github.com/lablup/mlxcel",
+    "title": "mlxcel",
+    "accessed": "2026-10-25",
+    "claims": [
+      "mlxcel documents local generation, embeddings, reranking and entity redaction with multi-model routing and live LoRA support."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Deployment, remote Web UI and model download behavior were not tested."
+  },
+  {
+    "id": "GX-zenith",
+    "tool": "Zenith",
+    "url": "https://github.com/Intelligent-Internet/zenith",
+    "title": "Zenith",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Zenith documents one orchestrator that decides worker/tester spawning, skill registration, replanning and stopping across MCP/ACP adapters."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Its reported benchmark outcomes were not treated as study measurements."
+  },
+  {
+    "id": "GX-agentmemory",
+    "tool": "AgentMemory",
+    "url": "https://github.com/tonyzorin/agentmemory",
+    "title": "AgentMemory",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AgentMemory documents CPU embeddings, Redis hybrid BM25/vector RRF, optional cross-encoder reranking and graph boosts delivered through MCP, HTTP and CLI."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Rules, retention and remote endpoint authorization were not tested."
+  },
+  {
+    "id": "GX-agentlink",
+    "tool": "AgentLink",
+    "url": "https://git.mitgai.net/reefbarman/agentlink",
+    "title": "AgentLink",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AgentLink documents visible approvals, local lexical and structural retrieval, cross-provider review and MCP, skill and plugin surfaces in a VS Code harness."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Desktop/CLI previews and platform/release behavior were not tested."
+  },
+  {
+    "id": "GX-openharness",
+    "tool": "OpenHarness",
+    "url": "https://github.com/autonomous-ai/openharness",
+    "title": "OpenHarness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "OpenHarness documents multi-machine native agent CLIs in tmux panes, a worktree per harness and peer-to-peer terminal transport."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Remote device, relay and skill authority were not tested."
+  },
+  {
+    "id": "GX-harnext-context-engine",
+    "tool": "harnext and Context Engine",
+    "url": "https://www.harnext.dev/",
+    "title": "harnext and Context Engine",
+    "accessed": "2026-10-25",
+    "claims": [
+      "harnext documents a terminal coding harness and a separate Context Engine that indexes and ranks organization events for agent context."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Context ingestion, retention and access controls were not tested."
+  },
+  {
+    "id": "GX-xal",
+    "tool": "Xal",
+    "url": "https://xal.sh/about",
+    "title": "Xal",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Xal documents a beta MIT terminal harness with a headless core whose UI, providers, tools, LSP, MCP bridge, memory, skills and hooks are plugins."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Plugin trust, updates and capability behavior were not tested."
+  },
+  {
+    "id": "GX-agentmux-platform",
+    "tool": "AgentMux",
+    "url": "https://agentmux.ai/",
+    "title": "AgentMux",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AgentMux documents an open-source desktop and mobile environment for local coding agents, terminals, memory and connectors.",
+      "It labels the product alpha and presents local-network mobile access."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Distinct from adelost/agentmux; lifecycle and mobile-network behavior were not tested."
+  },
+  {
+    "id": "GX-cretli",
+    "tool": "Cretli",
+    "url": "https://cretli.com/",
+    "title": "Cretli",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Cretli documents a self-hosted mobile PWA that mediates multiple coding harnesses through one WebSocket protocol and supports plan-to-executor handoff.",
+      "Its documentation says plan mode is not a sandbox."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Shell, file and git operations run on the host and were not tested."
+  },
+  {
+    "id": "GX-libre-claw",
+    "tool": "Libre Claw",
+    "url": "https://libreclaw.sh/about/",
+    "title": "Libre Claw",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Libre Claw documents append-only JSONL runs, side-effect approvals, replay, a local daemon, web UI and Telegram bridge."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Remote approval channels and provider export paths were not tested."
+  }
+]

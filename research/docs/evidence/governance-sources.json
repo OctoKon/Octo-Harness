@@ -1,0 +1,130 @@
+[
+  {
+    "id": "GV-01",
+    "tool": "Microsoft Agent Governance Toolkit",
+    "url": "https://github.com/microsoft/agent-governance-toolkit/blob/main/CHARTER.md",
+    "title": "Governance Toolkit charter",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Runtime governance mission covering policy evaluation, identity verification and audit logging."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-02",
+    "tool": "Paperclip",
+    "url": "https://github.com/paperclipai/paperclip",
+    "title": "Paperclip upstream",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Company and task orchestration for existing agents, adapters, history and budget accounting."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-03",
+    "tool": "apraba05 MCP Gateway",
+    "url": "https://github.com/apraba05/mcp-gateway/blob/main/README.md",
+    "title": "MCP Gateway upstream README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "HTTP JSON-RPC mediation with per-tool policy, backpressure, retries and audit."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-04",
+    "tool": "Keel",
+    "url": "https://github.com/keel-harness/keel",
+    "title": "Keel upstream",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Out-of-process policy mediation with an intent journal and platform-specific execution boundary."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-05",
+    "tool": "Loaf",
+    "url": "https://github.com/levifig/loaf",
+    "title": "Loaf upstream",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Profiles, skills/hooks and agent-host adapters for specialized workflows."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-06",
+    "tool": "Warden Code",
+    "url": "https://github.com/warden-protocol/warden-code",
+    "title": "Warden Code upstream",
+    "accessed": "2026-10-25",
+    "claims": ["CLI scaffolding with A2A and LangGraph integration."],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-07",
+    "tool": "Warden container host",
+    "url": "https://github.com/thesimonho/warden",
+    "title": "Warden container-host upstream",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Container lifecycle and credential/network mediation with external orchestrators."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-08",
+    "tool": "Warden fleet",
+    "url": "https://github.com/srjn45/warden/blob/main/FEATURES.md",
+    "title": "Warden fleet features",
+    "accessed": "2026-10-25",
+    "claims": [
+      "CLI/MCP agent fleet lifecycle, worktrees, catch-up digests, plugins and budgets."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-09",
+    "tool": "Warden credential broker",
+    "url": "https://github.com/stephnangue/warden",
+    "title": "Warden credential-broker upstream",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Identity, request-time policy and credential brokering/proxying."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-10",
+    "tool": "Mozilla Warden",
+    "url": "https://github.com/mozilla-ai/warden",
+    "title": "Mozilla Warden upstream",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Otari plugin for deterministic and model-judged agent-turn checks."
+    ],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-11",
+    "tool": "Warden CLI analytics",
+    "url": "https://docs.rs/crate/warden-cli/latest",
+    "title": "Warden CLI crate documentation",
+    "accessed": "2026-10-25",
+    "claims": ["Local coding-agent log analytics and skill extraction."],
+    "verification": "primary-overview",
+    "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  }
+]

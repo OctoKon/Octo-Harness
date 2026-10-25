@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="300" viewBox="0 0 1080 300" role="img" aria-labelledby="title desc">
+<title id="title">Splyce</title><desc id="desc">Separate strands join into one coherent path. Research into a unified coding-agent harness.</desc>
+<rect x=".75" y=".75" width="1078.5" height="298.5" rx="18" fill="#0D141D" stroke="#263442" stroke-width="1.5"/>
+<g fill="none" stroke-width="5" stroke-linecap="round"><g transform="translate(58 94)"><path d="M6 13 H49 C79 13 83 91 113 91" stroke="#8AD4C2"/><path d="M6 91 H49 C79 91 83 13 113 13" stroke="#F18A71"/><path d="M6 39 H40 C70 39 83 65 113 65" stroke="#F3F3EF" opacity=".8"/><path d="M6 65 H40 C70 65 83 39 113 39" stroke="#F3F3EF" opacity=".8"/></g></g>
+<path d="M820 66 C820 134 944 134 944 234 M860 66 C860 134 984 134 984 234" fill="none" stroke="#263442" stroke-width="1.5"/><circle cx="820" cy="66" r="3" fill="#8AD4C2"/><circle cx="984" cy="234" r="3" fill="#F18A71"/>
+<g font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif"><text x="214" y="76" font-size="11" letter-spacing="3" fill="#A6B2BF">OCTOKON / RESEARCH</text><text x="208" y="172" font-size="94" font-weight="650" letter-spacing="-4" fill="#F3F3EF">Splyce</text><text x="214" y="219" font-size="19" fill="#A6B2BF">Toward one coherent agent harness.</text></g>
+</svg>

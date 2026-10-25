@@ -1,0 +1,159 @@
+[
+  {
+    "id": "CXI-serena",
+    "tool": "Serena",
+    "url": "https://github.com/oraios/serena",
+    "title": "Serena",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MCP toolkit provides language-server-backed semantic retrieval/editing/refactoring/debugging"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Use semantic operations with stale-document controls."
+  },
+  {
+    "id": "CXI-rtk",
+    "tool": "RTK",
+    "url": "https://github.com/rtk-ai/rtk",
+    "title": "RTK",
+    "accessed": "2026-10-25",
+    "claims": ["intercepts and compresses tool output before agent context"],
+    "verification": "primary-documentation",
+    "notes": "Compression requires artifact provenance."
+  },
+  {
+    "id": "CXI-openviking",
+    "tool": "OpenViking",
+    "url": "https://github.com/volcengine/OpenViking",
+    "title": "OpenViking",
+    "accessed": "2026-10-25",
+    "claims": [
+      "context database unifies resources memories and skills",
+      "repository is AGPL-3.0"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Automatic summaries are derived data."
+  },
+  {
+    "id": "CXI-opensandbox",
+    "tool": "OpenSandbox",
+    "url": "https://github.com/opensandbox-group/OpenSandbox",
+    "title": "OpenSandbox",
+    "accessed": "2026-10-25",
+    "claims": [
+      "sandbox runtime exposes command/file/code APIs and an MCP server"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Isolation does not replace authorization."
+  },
+  {
+    "id": "CXI-litellm",
+    "tool": "LiteLLM",
+    "url": "https://docs.litellm.ai/docs/",
+    "title": "LiteLLM getting started",
+    "accessed": "2026-10-25",
+    "claims": [
+      "normalizes provider interface and supports streaming/retries/fallback",
+      "proxy is OpenAI-compatible"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Preserve provider-native semantics internally."
+  },
+  {
+    "id": "CXI-ollama",
+    "tool": "Ollama",
+    "url": "https://github.com/ollama/ollama/blob/main/docs/api/introduction.mdx",
+    "title": "Ollama API introduction",
+    "accessed": "2026-10-25",
+    "claims": [
+      "offers native local/cloud API and OpenAI compatibility",
+      "API is not strictly versioned"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Compatibility needs capability negotiation."
+  },
+  {
+    "id": "CXI-temporal",
+    "tool": "Temporal",
+    "url": "https://docs.temporal.io/workflows",
+    "title": "Temporal Workflows",
+    "accessed": "2026-10-25",
+    "claims": [
+      "workflow state is recreated through event-history replay",
+      "external I/O belongs in recorded activities"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Workflow code must remain replay deterministic."
+  },
+  {
+    "id": "CXI-dbos",
+    "tool": "DBOS",
+    "url": "https://docs.dbos.dev/architecture",
+    "title": "DBOS architecture",
+    "accessed": "2026-10-25",
+    "claims": ["workflow and step checkpoints are persisted in Postgres"],
+    "verification": "primary-documentation",
+    "notes": "Retention and distributed recovery remain design inputs."
+  },
+  {
+    "id": "CXI-restate",
+    "tool": "Restate",
+    "url": "https://docs.restate.dev/concepts/services/",
+    "title": "Restate services",
+    "accessed": "2026-10-25",
+    "claims": [
+      "virtual objects are keyed stateful entities",
+      "workflows execute multi-step processes exactly once per ID"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Use durable IDs and isolation semantics deliberately."
+  },
+  {
+    "id": "CXI-gepa",
+    "tool": "GEPA",
+    "url": "https://github.com/CerebrasResearch/gepa",
+    "title": "GEPA",
+    "accessed": "2026-10-25",
+    "claims": [
+      "official implementation evolves textual system components against evaluation metrics"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Optimization requires held-out safety gates."
+  },
+  {
+    "id": "CXI-n8n",
+    "tool": "n8n",
+    "url": "https://docs.n8n.io/",
+    "title": "n8n Docs",
+    "accessed": "2026-10-25",
+    "claims": [
+      "workflow automation combines AI capabilities with process automation"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Adjacent general support candidate."
+  },
+  {
+    "id": "CXI-haystack",
+    "tool": "Haystack",
+    "url": "https://docs.haystack.deepset.ai/docs",
+    "title": "Haystack introduction",
+    "accessed": "2026-10-25",
+    "claims": [
+      "framework composes components pipelines document stores agents and tools"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Adjacent general support candidate."
+  },
+  {
+    "id": "CXI-metaharness",
+    "tool": "Meta-Harness",
+    "url": "https://arxiv.org/abs/2603.28052",
+    "title": "Meta-Harness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "research system searches over harness code for LLM applications"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Distinguish canonical research from similarly named implementations."
+  }
+]

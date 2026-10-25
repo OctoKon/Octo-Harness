@@ -1,0 +1,462 @@
+[
+  {
+    "id": "CXM-01",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/thedotmack/claude-mem/blob/main/docs/public/usage/search-tools.mdx",
+    "title": "claude-mem: Memory Search with MCP Tools",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents index-search, timeline context, and ID-based observation expansion.",
+      "Documents project and date filters and estimated token ranges."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Token savings are project documentation, not locally reproduced."
+  },
+  {
+    "id": "CXM-02",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/thedotmack/claude-mem/blob/main/docs/public/architecture/search-architecture.mdx",
+    "title": "claude-mem: Search Architecture",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents MCP to HTTP worker architecture.",
+      "Names SQLite/FTS5 and Chroma roles and the four MCP tools."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Architecture claims are upstream documentation."
+  },
+  {
+    "id": "CXM-03",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/thedotmack/claude-mem/blob/main/docs/public/usage/getting-started.mdx",
+    "title": "claude-mem: Getting Started",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents session-start index injection, on-demand details, and raw/code access.",
+      "Documents multi-prompt sessions and clear behavior."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Does not constitute a complete deletion or tenancy proof."
+  },
+  {
+    "id": "CXM-04",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/thedotmack/claude-mem/blob/main/docs/public/configuration.mdx",
+    "title": "claude-mem: Configuration",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents observation/summary opt-outs and search recency filtering.",
+      "Documents localhost worker defaults."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Configuration behavior can change by release."
+  },
+  {
+    "id": "CXM-05",
+    "tool": "web search + selected primary fetch",
+    "url": "https://docs.mem0.ai/open-source/overview",
+    "title": "Mem0 OSS overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Distinguishes OSS library/self-hosted server from managed platform.",
+      "Documents configurable local/server components."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Deployment defaults are not security guarantees."
+  },
+  {
+    "id": "CXM-06",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/mem0ai/mem0/blob/main/docs/open-source/features/rest-api.mdx",
+    "title": "Mem0 OSS REST API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents OSS memory create/search/update/delete/history endpoints.",
+      "States hosted v1 paths do not apply to OSS server."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Useful for lifecycle contract comparison."
+  },
+  {
+    "id": "CXM-07",
+    "tool": "web search + selected primary fetch",
+    "url": "https://docs.letta.com/v1-sdk/memory/memory-blocks",
+    "title": "Letta memory blocks",
+    "accessed": "2026-10-25",
+    "claims": ["Documents editable memory blocks within agent context."],
+    "verification": "primary-documentation",
+    "notes": "Cross-checked with upstream Letta skills for core versus archival distinction."
+  },
+  {
+    "id": "CXM-08",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/letta-ai/skills/blob/main/letta/agent-development/references/memory-architecture.md",
+    "title": "Letta memory architecture",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents core memory as always-in-context blocks.",
+      "Documents archival memory as separate out-of-context vector search."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Repository-maintained documentation."
+  },
+  {
+    "id": "CXM-09",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/getzep/graphiti/blob/main/mcp_server/src/graphiti_mcp_server.py",
+    "title": "Graphiti MCP server instructions",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents episode/entity/fact model partitioned by group_id.",
+      "Documents bi-temporal episode and fact validity fields."
+    ],
+    "verification": "primary-source-code",
+    "notes": "Code-level documentation; derived-data deletion remains an integration concern."
+  },
+  {
+    "id": "CXM-10",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/getzep/graphiti",
+    "title": "Graphiti upstream repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Advertises temporal fact management, prescribed/learned ontology, and episode management."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Product capability only; no local evaluation."
+  },
+  {
+    "id": "CXM-11",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2405.14831",
+    "title": "HippoRAG",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Describes LLM, knowledge graph, and Personalized PageRank retrieval."
+    ],
+    "verification": "primary-paper",
+    "notes": "Biological wording is treated as a metaphor, not a biological claim."
+  },
+  {
+    "id": "CXM-12",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2502.14802",
+    "title": "HippoRAG 2",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Describes deeper passage integration and online LLM use over PPR-based retrieval."
+    ],
+    "verification": "primary-paper",
+    "notes": "Not a session-memory product."
+  },
+  {
+    "id": "CXM-13",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2502.12110",
+    "title": "A-MEM: Agentic Memory for LLM Agents",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Proposes dynamic agentic organization using structured-memory principles."
+    ],
+    "verification": "primary-paper",
+    "notes": "No local benchmark claims adopted."
+  },
+  {
+    "id": "CXM-14",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2505.22101",
+    "title": "MemOS: An Operating System for Memory-Augmented Generation",
+    "accessed": "2026-10-25",
+    "claims": ["Proposes memory as a first-class managed resource."],
+    "verification": "primary-paper",
+    "notes": "Separate from other similarly named projects."
+  },
+  {
+    "id": "CXM-15",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/NevaMind-AI/memU",
+    "title": "memU upstream repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Describes a lightweight agent-driven cross-session wiki-memory approach.",
+      "Lists multiple host adapters."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Marketing/README claims not locally exercised."
+  },
+  {
+    "id": "CXM-16",
+    "tool": "web search + selected primary fetch",
+    "url": "https://www.cognee.ai/how-cognee-builds-ai-memory",
+    "title": "Cognee memory architecture",
+    "accessed": "2026-10-25",
+    "claims": ["Describes extract, cognify, load graph-vector pipeline."],
+    "verification": "primary-documentation",
+    "notes": "Vendor documentation."
+  },
+  {
+    "id": "CXM-17",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2601.02163",
+    "title": "EverMemOS",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Describes MemCells, MemScenes, semantic consolidation, and reconstructive recall.",
+      "Links canonical code repository."
+    ],
+    "verification": "primary-paper",
+    "notes": "Paper-reported results not transferred to target."
+  },
+  {
+    "id": "CXM-18",
+    "tool": "web search + selected primary fetch",
+    "url": "https://api.supermemory.ai/v4/reference",
+    "title": "Supermemory API reference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents memory/document lifecycle, search, profile, and container-tag operations."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Managed API; actual retention/access semantics require contract review."
+  },
+  {
+    "id": "CXM-19",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/hindsight-ai/hindsight-ai/blob/main/mcp-servers/hindsight-mcp/README.md",
+    "title": "Hindsight MCP server",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents an official MCP server for the Hindsight AI Memory Service."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Defaults to hosted API but mentions self-hosted/local configuration."
+  },
+  {
+    "id": "CXM-20",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2505.03335",
+    "title": "Absolute Zero: Reinforced Self-play Reasoning with Zero Data",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Describes self-generated task proposals and code-executor verification for reasoning training."
+    ],
+    "verification": "primary-paper",
+    "notes": "Not evidence for episodic or cross-session memory."
+  },
+  {
+    "id": "CXM-21",
+    "tool": "web search + selected primary fetch",
+    "url": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B",
+    "title": "Qwen Qwen3-Embedding-0.6B model card",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official Qwen model card identifies the embedding model and its local usage."
+    ],
+    "verification": "primary-model-card",
+    "notes": "Candidate family only; no target evaluation."
+  },
+  {
+    "id": "CXM-22",
+    "tool": "web search + selected primary fetch",
+    "url": "https://huggingface.co/BAAI/bge-m3",
+    "title": "BAAI BGE-M3 model card",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents BGE-M3 usage and recommends post-retrieval BGE reranking."
+    ],
+    "verification": "primary-model-card",
+    "notes": "Use with exact model/configuration provenance."
+  },
+  {
+    "id": "CXM-23",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/nomic-ai/nomic/blob/main/nomic/embed.py",
+    "title": "Nomic embed API source",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents task types, dimensionality, long-text handling, and inference modes."
+    ],
+    "verification": "primary-source-code",
+    "notes": "Adapter must persist selected values."
+  },
+  {
+    "id": "CXM-24",
+    "tool": "web search + selected primary fetch",
+    "url": "https://docs.jina.ai/",
+    "title": "Jina API reference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents separate embedding and reranking endpoints.",
+      "Documents task, dimensions, normalization, and reranking score behavior."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Hosted limits and model list are time-sensitive."
+  },
+  {
+    "id": "CXM-25",
+    "tool": "web search + selected primary fetch",
+    "url": "https://ai.google.dev/gemini-api/docs/embeddings",
+    "title": "Gemini embeddings documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents dimensions, task types, token limits, normalization, usage metadata, and model-space incompatibility."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Embedding-model migration requires re-embedding by provider documentation."
+  },
+  {
+    "id": "CXM-26",
+    "tool": "web search + selected primary fetch",
+    "url": "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B",
+    "title": "Qwen Qwen3-Reranker-0.6B model card",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Official Qwen model card documents a query-document reranking model and instruction formatting."
+    ],
+    "verification": "primary-model-card",
+    "notes": "Reranking is a scoring role, not a completion API."
+  },
+  {
+    "id": "CXM-27",
+    "tool": "web search + selected primary fetch",
+    "url": "https://docs.cohere.com/docs/rerank",
+    "title": "Cohere Rerank",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents reranking as a separate relevance-ordering endpoint.",
+      "Documents context and text-only limitations for current Rerank models."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No completion capability is inferred."
+  },
+  {
+    "id": "CXM-28",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/carloscdias/graphlang",
+    "title": "GraphLang upstream repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents a DOT-inspired DSL for defining LLM-agent graphs.",
+      "Documents compilation to a LangGraph structure."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Independent project; not LangGraph and not a memory system."
+  },
+  {
+    "id": "CXM-29",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/SathiaAI/graphsmith",
+    "title": "SathiaAI GraphSmith upstream repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents a workflow skill/scaffold with checkpoints and crash/replay verification."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Independent project; no cross-session-memory identity inferred."
+  },
+  {
+    "id": "CXM-30",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/jonaselgammal/Graphsmith",
+    "title": "jonaselgammal Graphsmith upstream repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents typed graph planning, deterministic compilation/repair, and skill registries."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Distinct same-name project; no cross-session-memory identity inferred."
+  },
+  {
+    "id": "CXM-31",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/omega-memory/omega",
+    "title": "OMEGA upstream repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents local-first coding-agent memory with SQLite, MCP tools, hooks, timeline, backup, and compaction.",
+      "Documents a hybrid vector/FTS retrieval pipeline as a project claim."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Performance, isolation, and deletion claims remain unverified in this research lane."
+  },
+  {
+    "id": "CXM-32",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2402.07630",
+    "title": "G-Retriever",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Proposes GNN and LLM retrieval-augmented generation for textual graphs."
+    ],
+    "verification": "primary-paper",
+    "notes": "Graph-model research, not a cross-session memory implementation."
+  },
+  {
+    "id": "CXM-33",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2405.16506",
+    "title": "GRAG: Graph Retrieval-Augmented Generation",
+    "accessed": "2026-10-25",
+    "claims": ["Presents graph retrieval-augmented generation."],
+    "verification": "primary-paper",
+    "notes": "Separate from workflow, code, and provenance graphs."
+  },
+  {
+    "id": "CXM-34",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2501.00663",
+    "title": "Titans: Learning to Memorize at Test Time",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Presents a neural long-term-memory module updated at test time."
+    ],
+    "verification": "primary-paper",
+    "notes": "Model architecture, not deletion-capable external storage."
+  },
+  {
+    "id": "CXM-35",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2504.13173",
+    "title": "MIRAS",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Presents a framework over associative-memory architecture, attentional bias, retention, and memory learning."
+    ],
+    "verification": "primary-paper",
+    "notes": "Model-architecture research, not a memory-service API."
+  },
+  {
+    "id": "CXM-36",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2410.10813",
+    "title": "LongMemEval",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Defines long-term chat-assistant memory abilities including temporal reasoning and knowledge updates."
+    ],
+    "verification": "primary-paper",
+    "notes": "Does not cover the full proposed coding-harness contract."
+  },
+  {
+    "id": "CXM-37",
+    "tool": "web search + selected primary fetch",
+    "url": "https://github.com/snap-research/LoCoMo",
+    "title": "LoCoMo upstream benchmark repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents a long-term conversational-memory evaluation benchmark."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No target benchmark run was performed."
+  },
+  {
+    "id": "CXM-38",
+    "tool": "web search + selected primary fetch",
+    "url": "https://arxiv.org/abs/2305.10250",
+    "title": "MemoryBank",
+    "accessed": "2026-10-25",
+    "claims": ["Presents long-term memory for an LLM companion application."],
+    "verification": "primary-paper",
+    "notes": "Included as source-relevant precedent only."
+  }
+]

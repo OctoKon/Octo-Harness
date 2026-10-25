@@ -1,0 +1,154 @@
+[
+  {
+    "id": "WF-01",
+    "tool": "GitHub Spec Kit",
+    "url": "https://github.com/github/spec-kit",
+    "title": "Spec Kit repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Specification-plan-task-convergence; distinct bug and idea assessment workflows; extensions and bundles."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-02",
+    "tool": "OpenSpec",
+    "url": "https://github.com/Fission-AI/OpenSpec",
+    "title": "OpenSpec repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Change-oriented spec workflows and client-specific command syntax."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-03",
+    "tool": "BMad Method",
+    "url": "https://github.com/bmad-code-org/BMAD-METHOD",
+    "title": "BMad repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Scope-sensitive software delivery; stable and preview branches require qualification."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-04",
+    "tool": "Superpowers",
+    "url": "https://github.com/obra/superpowers",
+    "title": "Superpowers repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Reusable development skills, design/plan/delegation/test/review flow."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-05",
+    "tool": "GSD legacy",
+    "url": "https://github.com/gsd-build/get-shit-done",
+    "title": "GSD moved notice",
+    "accessed": "2026-10-25",
+    "claims": ["README directs active development to open-gsd/gsd-core."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-06",
+    "tool": "GSD Core",
+    "url": "https://github.com/open-gsd/gsd-core",
+    "title": "GSD Core repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Canonical successor identified from predecessor README; detailed integration unqualified."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-07",
+    "tool": "Kiro",
+    "url": "https://kiro.dev/docs/",
+    "title": "Kiro documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Specs, steering, hooks, skills, permissions, checkpoints and CLI/editor surfaces."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-08",
+    "tool": "Tessl",
+    "url": "https://tessl.io/",
+    "title": "Tessl official site",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Skill, context and loop enablement platform; execution internals unqualified."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-09",
+    "tool": "Ralph",
+    "url": "https://github.com/snarktank/ralph",
+    "title": "Ralph repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Fresh coding-agent iterations with progress/PRD/Git persistence; credits original Ralph pattern."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-10",
+    "tool": "Beads",
+    "url": "https://github.com/gastownhall/beads",
+    "title": "Beads repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Dolt-backed dependency graph and task claims; JSONL export not source of truth."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-11",
+    "tool": "Gas Town",
+    "url": "https://github.com/gastownhall/gastown",
+    "title": "Gas Town repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Multi-agent workspace management; redirected from steveyegge/gastown."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-12",
+    "tool": "Agent Orchestrator",
+    "url": "https://github.com/OrchestratorInc/agent-orchestrator",
+    "title": "Agent Orchestrator repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Worker session attachments to branches/worktrees, PRs, CI and review; redirected from ComposioHQ."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "WF-13",
+    "tool": "Fabric",
+    "url": "https://github.com/danielmiessler/Fabric",
+    "title": "Fabric repository",
+    "accessed": "2026-10-25",
+    "claims": ["Modular prompt/pattern system for focused work."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  }
+]

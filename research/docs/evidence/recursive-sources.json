@@ -1,0 +1,110 @@
+[
+  {
+    "id": "RH-01",
+    "tool": "Harness2",
+    "url": "https://github.com/google-research/harness2",
+    "title": "Official repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Frozen-model task-level and harnessing-level recursion; OpenCode and Codex execution substrates; benchmark scope and Apache-2.0 repository license."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "RH-02",
+    "tool": "Harness2",
+    "url": "https://arxiv.org/html/2610.14224v1",
+    "title": "Harness2 paper v1",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Eight editable components and Propose-Probe-Compose; imperfect model judgment does not guarantee correctness or transfer."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Primary paper; author benchmark results not reproduced. Project site fetch failed."
+  },
+  {
+    "id": "RH-03",
+    "tool": "DeepSeek Harness",
+    "url": "https://github.com/deepseek-ai/deepseek-harness",
+    "title": "Official repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "dsh is a DeepSeek-developed open-source harness; developer preview with expected breaking changes."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "RH-04",
+    "tool": "DeepSeek Harness",
+    "url": "https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md",
+    "title": "Architecture",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Cordis reversible service/event/effect plugins; ordered profiles and bundle composition."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "RH-05",
+    "tool": "DeepSeek Harness",
+    "url": "https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/core.md",
+    "title": "Core subsystem",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agent interface separated from concrete loop; owned disposal handles and queued input lifecycle."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "RH-06",
+    "tool": "DeepSeek Harness",
+    "url": "https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session.md",
+    "title": "Session model",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Append-only typed event log; message history derived from events; persistence is separate concern."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "RH-07",
+    "tool": "DeepSeek Harness",
+    "url": "https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/tools.md",
+    "title": "Tools subsystem",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Tool execution contract separates canonical outputs, model schema, scheduling and presentation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "RH-08",
+    "tool": "DeepSeek Harness",
+    "url": "https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/README.md",
+    "title": "Package map",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Separate filesystem, LSP, sandbox, subprocess, skills, compaction and delegation capability families."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "RH-09",
+    "tool": "DeepSeek Harness",
+    "url": "https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md",
+    "title": "Safety notice",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Experimental, unaudited status; controls do not guarantee isolation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  }
+]

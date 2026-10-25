@@ -3,14 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The Complete Coding Agent Compendium</title>
+    <title>Splyce Research Compendium</title>
     <!-- Fonts & Icons -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Syntax Highlighting (Prism.js Dark Theme) -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
     <!-- MathJax for LaTeX equations -->
-    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 
     <style>
@@ -267,9 +266,10 @@
 </head>
 <body>
 
+
     <!-- Sidebar Navigation -->
     <nav class="sidebar">
-        <h2><i class="fa-solid fa-layer-group"></i> OmniHarness</h2>
+        <h2><i class="fa-solid fa-layer-group"></i> Splyce</h2>
         <ul class="nav-links">
             <li><a href="#overview" class="active">Overview & Executive Summary</a></li>
             <li><a href="#part1">Part 1: Directory & Index</a></li>
@@ -278,7 +278,7 @@
             <li><a href="#round2" class="sub-link">- Round 2: CLI Agents</a></li>
             <li><a href="#round3" class="sub-link">- Round 3: IDE Agents & Protocols</a></li>
             <li><a href="#round4" class="sub-link">- Round 4: SWE Research</a></li>
-            <li><a href="#part3">Part 3: OmniHarness Spec</a></li>
+            <li><a href="#part3">Part 3: Splyce Spec</a></li>
             <li><a href="#architecture" class="sub-link">- Architecture & Paradoxes</a></li>
             <li><a href="#workspace" class="sub-link">- Workspace & Commands</a></li>
             <li><a href="#blueprints" class="sub-link">- Implementation Blueprints</a></li>
@@ -287,22 +287,23 @@
 
     <!-- Main Content -->
     <main class="content">
+    <aside style="margin:0 0 24px;padding:16px 20px;border:1px solid #30363d;border-radius:8px;background:#161b22;color:#c9d1d9;font:14px/1.6 system-ui,sans-serif"><strong>Splyce research archive.</strong> This supplied compendium contains proposals and source-reported claims, not a working Splyce runtime or independently measured results. <a href="https://github.com/OctoKon/Splyce/blob/main/research/README.md" style="color:#79c0ff">Current research index</a> &middot; <a href="https://github.com/OctoKon/Splyce/blob/main/MASTER-PLAN.md" style="color:#79c0ff">Master plan</a></aside>
         
         <!-- Overview -->
         <section id="overview">
-            <h1>The Complete Coding Agent, Harness, and Scaffold Compendium</h1>
-            <p><strong>Multi-Round Architectural Analysis, Documentation Index, and the OmniHarness Unified Specification</strong></p>
+            <h1>Coding Agent, Harness, and Scaffold Research</h1>
+            <p><strong>Multi-Round Architectural Analysis, Documentation Index, and the Splyce Unified Specification</strong></p>
             <p>This report delivers a three-part engineering reference and system specification covering the 2026 AI software engineering landscape:</p>
             <ol style="margin-left: 2rem; margin-bottom: 1.5rem; color: var(--text-muted);">
                 <li>A modular <code class="inline">docs/</code> directory structure and a compact master <code class="inline">docs/INDEX.md</code> mapping 65 coding agents.</li>
                 <li>A four-round chained architectural analysis of every major meta-harness, CLI agent, IDE extension, interoperability protocol, and autonomous software engineering (SWE) research scaffold.</li>
-                <li>The complete architectural blueprint and reference implementation for <strong>OmniHarness (omni)</strong>, a unified CLI and agent harness.</li>
+                <li>The complete architectural blueprint and reference implementation for <strong>Splyce (omni)</strong>, a unified CLI and agent harness.</li>
             </ol>
 
             <div class="highlight-box">
                 <h4 style="margin-top: 0;"><i class="fa-solid fa-lightbulb"></i> Critical Empirical Finding</h4>
                 <p>Static scaffolding bloat acts as a heavy cost multiplier that increases inference spend by 3x to 5x without improving task resolution. Controlled 2026 evaluations ("HarnessTax") indicate that holding the base LLM fixed while swapping between heavyweight harnesses (Claude Code, sending 16,581 tokens on Turn 1) and minimalist harnesses (Pi at under 1,000 tokens) shifts pass rates by less than run-to-run variance.</p>
-                <p><strong>OmniHarness resolves this trade-off</strong> by combining a sub-900-token micro-kernel with Cordis spatiotemporal plugin composition, 3-layer progressive disclosure, OS-level kernel sandboxing, and offline recursive harness evolution.</p>
+                <p><strong>Splyce resolves this trade-off</strong> by combining a sub-900-token micro-kernel with Cordis spatiotemporal plugin composition, 3-layer progressive disclosure, OS-level kernel sandboxing, and offline recursive harness evolution.</p>
             </div>
         </section>
 
@@ -328,7 +329,7 @@
                         <tr><td><code class="inline">docs/03-ide-and-protocol-agents/</code></td><td>Cline, Roo/Zoo Code, Kilo Code, AWS Kiro, Cursor, Windsurf, Continue, ACP vs. MCP.</td></tr>
                         <tr><td><code class="inline">docs/04-swe-research-scaffolds/</code></td><td>SWE-agent, OpenHands, Agentless, AutoCodeRover, Moatless/SWE-Search, SWE-AF.</td></tr>
                         <tr><td><code class="inline">docs/05-core-subsystems/</code></td><td>Patch/diff engines, context compaction, RepoMap math, OS sandboxing, multi-model routing.</td></tr>
-                        <tr><td><code class="inline">docs/06-omniharness-spec/</code></td><td>5-plane OmniHarness architecture, Cordis core, patch applier, sandboxing, and evolution.</td></tr>
+                        <tr><td><code class="inline">docs/06-omniharness-spec/</code></td><td>5-plane Splyce architecture, Cordis core, patch applier, sandboxing, and evolution.</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -445,8 +446,8 @@
 
         <!-- Part 3 -->
         <section id="part3">
-            <h2>Part 3: OmniHarness (omni) Specification</h2>
-            <p>Synthesizing findings from Rounds 1–4, <strong>OmniHarness</strong> is designed around four engineering invariants: a sub-900-token micro-kernel, Cordis spatiotemporal plugin extensibility, deterministic AST/LSP verification, and contrastive Harness² self-evolution.</p>
+            <h2>Part 3: Splyce (omni) Specification</h2>
+            <p>Synthesizing findings from Rounds 1–4, <strong>Splyce</strong> is designed around four engineering invariants: a sub-900-token micro-kernel, Cordis spatiotemporal plugin extensibility, deterministic AST/LSP verification, and contrastive Harness² self-evolution.</p>
 
             <h3 id="architecture">3.1 Resolving the Five Core Architectural Paradoxes</h3>
             <div class="table-container">
@@ -454,7 +455,7 @@
                     <thead>
                         <tr>
                             <th>Architectural Paradox</th>
-                            <th>OmniHarness Unified Resolution & Pedigree</th>
+                            <th>Splyce Unified Resolution & Pedigree</th>
                         </tr>
                     </thead>
                     <tbody>

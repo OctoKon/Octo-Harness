@@ -1,0 +1,264 @@
+[
+  {
+    "id": "FW-01",
+    "tool": "LangChain",
+    "url": "https://docs.langchain.com/oss/python/langchain/overview",
+    "title": "LangChain overview",
+    "accessed": "2026-10-25",
+    "claims": ["create_agent model/tool loop and middleware."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-02",
+    "tool": "LangGraph",
+    "url": "https://docs.langchain.com/oss/python/langgraph/persistence",
+    "title": "Persistence",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Checkpointers retain thread state; stores retain cross-thread application memory."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-03",
+    "tool": "Deep Agents",
+    "url": "https://docs.langchain.com/oss/python/deepagents/overview",
+    "title": "Deep Agents overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Filesystem context, subagents and memory; optional capability composition."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-04",
+    "tool": "Pydantic AI",
+    "url": "https://pydantic.dev/docs/ai/overview/",
+    "title": "Pydantic AI overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Typed agents, toolsets, providers, output validation and production capability documentation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-05",
+    "tool": "Pydantic AI Harness",
+    "url": "https://pydantic.dev/docs/ai/harness/",
+    "title": "Pydantic AI Harness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Composable capability library, separate versioning and workspaces."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-06",
+    "tool": "Pydantic AI Coder",
+    "url": "https://pydantic.dev/docs/ai/harness/coder/",
+    "title": "Coder",
+    "accessed": "2026-10-25",
+    "claims": [
+      "LocalWorkspace is not sandbox; shell not constrained by file-tool path limits; intentional environment inheritance."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-07",
+    "tool": "Microsoft Agent Framework",
+    "url": "https://learn.microsoft.com/en-us/agent-framework/concepts/harness",
+    "title": "Agent Harness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Chat pipeline/context/middleware/session composition for harness functionality."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-08",
+    "tool": "AutoGen",
+    "url": "https://github.com/microsoft/autogen",
+    "title": "AutoGen repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Archive and maintenance guidance directs new feature work to Microsoft Agent Framework."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-09",
+    "tool": "Semantic Kernel",
+    "url": "https://github.com/microsoft/semantic-kernel",
+    "title": "Semantic Kernel repository",
+    "accessed": "2026-10-25",
+    "claims": ["Repository describes Microsoft Agent Framework as successor."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-10",
+    "tool": "Strands harness",
+    "url": "https://strandsagents.com/docs/user-guide/harness/",
+    "title": "Strands harness",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Preassembled harness with context, memory, tools and intervention capabilities."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-11",
+    "tool": "Strands Harness SDK",
+    "url": "https://strandsagents.com/docs/user-guide/sdk/",
+    "title": "Harness SDK",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SDK primitives underpin preassembled harness; composable loop, sessions, plugins and tools."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-12",
+    "tool": "Google ADK",
+    "url": "https://adk.dev/",
+    "title": "Agent Development Kit",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Agents, graph and template workflows, model integrations and runtime surfaces."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-13",
+    "tool": "CrewAI",
+    "url": "https://docs.crewai.com/en/concepts/flows",
+    "title": "Flows",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Structured/unstructured flow state; persist decorator and SQLite persistence described."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-14",
+    "tool": "smolagents",
+    "url": "https://github.com/huggingface/smolagents",
+    "title": "smolagents repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Python code-as-action versus tool calling; local Python executor is not security boundary."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-15",
+    "tool": "DSPy",
+    "url": "https://dspy.ai/current/",
+    "title": "DSPy documentation",
+    "accessed": "2026-10-25",
+    "claims": ["Signatures, modules, metrics and optimization workflow."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-16",
+    "tool": "Mastra",
+    "url": "https://github.com/mastra-ai/mastra",
+    "title": "Mastra repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "TypeScript agents, workflow control flow, persistent pause/resume and integration surfaces."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-17",
+    "tool": "Vercel AI SDK",
+    "url": "https://github.com/vercel/ai",
+    "title": "AI SDK repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Open-source TypeScript model/provider and streaming application toolkit."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-18",
+    "tool": "LlamaIndex",
+    "url": "https://github.com/run-llama/llama_index",
+    "title": "LlamaIndex repository",
+    "accessed": "2026-10-25",
+    "claims": ["Document processing, indexing and agent workflows."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-19",
+    "tool": "Agno",
+    "url": "https://github.com/agno-agi/agno",
+    "title": "Agno repository",
+    "accessed": "2026-10-25",
+    "claims": ["Agent platform services, APIs, context and traces."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-20",
+    "tool": "CAMEL",
+    "url": "https://github.com/camel-ai/camel",
+    "title": "CAMEL repository",
+    "accessed": "2026-10-25",
+    "claims": ["Multi-agent cooperation and workforce examples."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-21",
+    "tool": "MetaGPT",
+    "url": "https://github.com/FoundationAgents/MetaGPT",
+    "title": "MetaGPT repository",
+    "accessed": "2026-10-25",
+    "claims": ["Software company roles and standard operating procedures."],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-22",
+    "tool": "gptme",
+    "url": "https://github.com/gptme/gptme",
+    "title": "gptme repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Terminal code execution, incremental patching and browser tools."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  },
+  {
+    "id": "FW-23",
+    "tool": "Potpie",
+    "url": "https://github.com/potpie-ai/potpie",
+    "title": "Potpie repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "CLI-first context graph, sources, skills and readiness/search interfaces."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving documentation inspected; no installation, code audit or benchmark execution."
+  }
+]
