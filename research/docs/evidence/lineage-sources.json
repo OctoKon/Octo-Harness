@@ -1,0 +1,122 @@
+[
+  {
+    "id": "LN-01",
+    "tool": "OpenAI Agents SDK",
+    "url": "https://openai.github.io/openai-agents-python/",
+    "title": "OpenAI Agents SDK overview",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents agents, tools, handoffs, sessions, guardrails, and tracing."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No installation or runtime verification."
+  },
+  {
+    "id": "LN-02",
+    "tool": "OpenAI Agents SDK",
+    "url": "https://openai.github.io/openai-agents-python/human_in_the_loop/",
+    "title": "Human in the loop",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents approval and continuation of interrupted runs through RunState."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Application task state remains a separate design concern."
+  },
+  {
+    "id": "LN-03",
+    "tool": "OpenAI Agents SDK",
+    "url": "https://openai.github.io/openai-agents-python/tracing/",
+    "title": "Tracing",
+    "accessed": "2026-10-25",
+    "claims": ["Documents default tracing and trace-data controls."],
+    "verification": "primary-documentation",
+    "notes": "Export redaction is an integration requirement, not a verified deployment."
+  },
+  {
+    "id": "LN-04",
+    "tool": "Agent Zero",
+    "url": "https://github.com/agent0ai/agent-zero",
+    "title": "Agent Zero repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents project-oriented workspaces, memory, secrets, and A0CLI connectivity."
+    ],
+    "verification": "primary-documentation",
+    "notes": "A0CLI is treated as an existing-instance bridge, not a separate agent."
+  },
+  {
+    "id": "LN-05",
+    "tool": "AutoGPT",
+    "url": "https://github.com/Significant-Gravitas/AutoGPT",
+    "title": "AutoGPT repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents platform/workflow and historical classic/Forge lineage.",
+      "Documents component-specific licensing."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Exact component version and license require selection-time review."
+  },
+  {
+    "id": "LN-06",
+    "tool": "BabyAGI",
+    "url": "https://github.com/yoheinakajima/babyagi",
+    "title": "BabyAGI repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents a function/dependency graph registry with triggers and logs."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Current project distinguished from original task-loop demonstrations."
+  },
+  {
+    "id": "LN-07",
+    "tool": "GPT Pilot",
+    "url": "https://github.com/Pythagora-io/gpt-pilot",
+    "title": "GPT Pilot repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents role-oriented phases, incremental building, and human review."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No measured Pi comparison."
+  },
+  {
+    "id": "LN-08",
+    "tool": "AgentScope",
+    "url": "https://github.com/agentscope-ai/agentscope",
+    "title": "AgentScope repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents ReAct interaction, structured output, interruption/resume, toolkits, MCP, and skills."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Host enforcement remains unverified."
+  },
+  {
+    "id": "LN-09",
+    "tool": "OpenManus",
+    "url": "https://github.com/FoundationAgents/OpenManus",
+    "title": "OpenManus repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents browser use, MCP, and isolated-environment support.",
+      "Distinguishes its general-agent path from less-stable multi-agent work."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Isolation requires executor-level qualification."
+  },
+  {
+    "id": "LN-10",
+    "tool": "Suna",
+    "url": "https://github.com/kortix-ai/suna",
+    "title": "Suna repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documents agents, skills, company memory, connectors, sandboxing, branches, and human change requests."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Current repository identity is Kortix Suna."
+  }
+]

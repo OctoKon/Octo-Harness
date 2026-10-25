@@ -1,0 +1,178 @@
+[
+  {
+    "id": "portable-pty",
+    "tool": "candidate: portable-pty / WezTerm",
+    "url": "https://docs.rs/crate/portable-pty/latest/source/Cargo.toml",
+    "title": "portable-pty crate metadata",
+    "accessed": "2026-10-25",
+    "claims": ["portable-pty is published from the WezTerm repository"],
+    "verification": "primary-package-metadata",
+    "notes": "Candidate identity only; PTY behavior remains to be qualified on each target."
+  },
+  {
+    "id": "windows-job-objects",
+    "tool": "candidate: Windows Job Objects",
+    "url": "https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects",
+    "title": "Job Objects",
+    "accessed": "2026-10-25",
+    "claims": [
+      "a job object manages associated processes as a unit",
+      "job operations can enforce limits and terminate associated processes"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Windows-only operating-system facility."
+  },
+  {
+    "id": "tokio-abort-handle",
+    "tool": "candidate: Tokio",
+    "url": "https://docs.rs/tokio/latest/tokio/task/struct.AbortHandle.html",
+    "title": "Tokio AbortHandle",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AbortHandle terminates a spawned async task without awaiting it",
+      "spawn_blocking tasks cannot be aborted once running"
+    ],
+    "verification": "primary-api-documentation",
+    "notes": "Does not provide child-process ownership."
+  },
+  {
+    "id": "rust-filesystem-paths",
+    "tool": "candidate: Rust std::fs",
+    "url": "https://doc.rust-lang.org/std/fs/fn.canonicalize.html",
+    "title": "std::fs::canonicalize",
+    "accessed": "2026-10-25",
+    "claims": [
+      "canonicalize returns an absolute path with symbolic links resolved",
+      "behavior is platform-specific"
+    ],
+    "verification": "primary-api-documentation",
+    "notes": "Used with rename semantics and operation-boundary checks."
+  },
+  {
+    "id": "sqlite-wal",
+    "tool": "candidate: SQLite WAL",
+    "url": "https://www.sqlite.org/wal.html",
+    "title": "Write-Ahead Logging",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SQLite WAL is an alternative journal mode",
+      "WAL has documented checkpointing, concurrency, and compatibility considerations"
+    ],
+    "verification": "primary-documentation",
+    "notes": "WAL is not a backup or target-filesystem durability proof."
+  },
+  {
+    "id": "sqlite-backup",
+    "tool": "candidate: SQLite Backup API",
+    "url": "https://www.sqlite.org/backup.html",
+    "title": "SQLite Backup API",
+    "accessed": "2026-10-25",
+    "claims": [
+      "the online backup API supports copying a live database",
+      "external copying has documented consistency and failure limitations"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Restore verification remains an application responsibility."
+  },
+  {
+    "id": "rust-keyring",
+    "tool": "candidate: Rust keyring",
+    "url": "https://docs.rs/keyring/latest/keyring/",
+    "title": "keyring crate",
+    "accessed": "2026-10-25",
+    "claims": [
+      "keyring offers platform-independent password and secret access on macOS, Windows, and Unix-like platforms",
+      "keyring-core is intended for applications that need store-selection control"
+    ],
+    "verification": "primary-api-documentation",
+    "notes": "Credential-store availability and application policy require native qualification."
+  },
+  {
+    "id": "linux-landlock",
+    "tool": "candidate: Linux Landlock",
+    "url": "https://docs.kernel.org/userspace-api/landlock.html",
+    "title": "Landlock: unprivileged access control",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Landlock restricts ambient filesystem or network rights",
+      "rules can restrict a process and its future children"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Kernel support and selected ABI must be detected."
+  },
+  {
+    "id": "windows-appcontainer",
+    "tool": "candidate: Windows AppContainer",
+    "url": "https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-isolation",
+    "title": "AppContainer isolation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "AppContainer is intended to isolate applications from unneeded resources",
+      "access is granted according to least privilege"
+    ],
+    "verification": "primary-documentation",
+    "notes": "macOS App Sandbox is a separate product and entitlement model."
+  },
+  {
+    "id": "apple-app-sandbox",
+    "tool": "candidate: macOS App Sandbox",
+    "url": "https://developer.apple.com/documentation/security/app-sandbox",
+    "title": "App Sandbox",
+    "accessed": "2026-10-25",
+    "claims": ["Apple documents App Sandbox as a macOS security facility"],
+    "verification": "primary-documentation",
+    "notes": "Exact executor integration was not tested."
+  },
+  {
+    "id": "wasmtime-security",
+    "tool": "candidate: Wasmtime/WASI",
+    "url": "https://docs.wasmtime.dev/security.html",
+    "title": "Wasmtime Security",
+    "accessed": "2026-10-25",
+    "claims": [
+      "WebAssembly instances interact with the outside world through explicitly linked imports and exports",
+      "Wasmtime documents sandboxing and host API tradeoffs"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Host-import policy remains the embedding application's responsibility."
+  },
+  {
+    "id": "mcp-authorization",
+    "tool": "candidate: Model Context Protocol",
+    "url": "https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization",
+    "title": "MCP Authorization",
+    "accessed": "2026-10-25",
+    "claims": [
+      "MCP specifies OAuth-based authorization roles and flow",
+      "the specification documents token audience binding, privilege restriction, and redirect considerations"
+    ],
+    "verification": "primary-specification",
+    "notes": "Protocol authorization does not grant local executor authority."
+  },
+  {
+    "id": "github-artifact-attestations",
+    "tool": "candidate: GitHub artifact attestations",
+    "url": "https://docs.github.com/en/enterprise-cloud%40latest/actions/concepts/security/artifact-attestations",
+    "title": "Artifact attestations",
+    "accessed": "2026-10-25",
+    "claims": [
+      "artifact attestations are cryptographically signed provenance claims",
+      "attestations can include an SBOM"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Verification must be part of the updater and release gate."
+  },
+  {
+    "id": "rust-platform-support",
+    "tool": "candidate: Rust targets",
+    "url": "https://doc.rust-lang.org/rustc/platform-support.html",
+    "title": "Rust Platform Support",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Rust target support has tiers with different build and test guarantees",
+      "tier 1 targets are built and tested by the Rust project"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Compiler target support is not Splyce product conformance."
+  }
+]

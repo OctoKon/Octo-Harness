@@ -1,0 +1,198 @@
+[
+  {
+    "id": "CC-01",
+    "tool": "Claude Platform",
+    "url": "https://docs.anthropic.com/en/docs/welcome",
+    "title": "Intro to Claude",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The Anthropic platform presents API and SDK development separately from the Claude chat product.",
+      "The documented model interface accepts text, code, and image inputs; an application must supply its own agent loop, persistence, policy, and executor unless it uses a separate Anthropic product service."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Product-family distinction only; this record makes no model-quality, pricing, or market-use claim."
+  },
+  {
+    "id": "CC-02",
+    "tool": "Anthropic MCP documentation",
+    "url": "https://docs.anthropic.com/en/docs/mcp",
+    "title": "Model Context Protocol",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Anthropic documents MCP as an open protocol for supplying context and tools to LLM applications.",
+      "The documentation identifies distinct MCP surfaces in the Messages API, Claude Code, Claude.ai, and Claude Desktop."
+    ],
+    "verification": "primary-documentation",
+    "notes": "MCP availability does not prove equivalent authentication, approval, locality, or execution behavior across product surfaces."
+  },
+  {
+    "id": "CC-03",
+    "tool": "Claude Code",
+    "url": "https://docs.anthropic.com/en/docs/claude-code/cli-usage",
+    "title": "CLI reference",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Claude Code supports interactive CLI sessions plus print/programmatic modes, JSON or stream-JSON output, continuation/resume, MCP configuration, and selected permission/tool flags.",
+      "The CLI documents both bounded agentic turns and an explicit permission-bypass option."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Terminal-agent details are covered in terminal-agents.md; this ledger retains only the product-surface boundary needed by this chapter."
+  },
+  {
+    "id": "CC-04",
+    "tool": "Claude Code",
+    "url": "https://code.claude.com/docs/en/desktop",
+    "title": "Desktop application",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Claude Desktop has Chat, Cowork, and Code tabs; its Code surface supports local, remote-cloud, and SSH environments, panels, an integrated terminal, file/diff/preview views, and parallel sessions with Git isolation.",
+      "Remote Claude Code sessions can continue after the desktop app is closed; local sessions directly access the machine and SSH sessions run on the selected remote host.",
+      "Computer use is separately gated, disabled by default, and is broader than Bash or connector access; the desktop documentation also describes application-level approval and control categories."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Feature and plan/platform availability are explicitly conditional; Desktop is documented for macOS and Windows, with CLI used on Linux."
+  },
+  {
+    "id": "CC-05",
+    "tool": "Claude Code",
+    "url": "https://code.claude.com/docs/en/commands",
+    "title": "Commands",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The command reference documents background sessions, subagent management, task listing, batch work in isolated worktrees, remote control, resume/branch, review, and PR-autofix commands.",
+      "Command availability can depend on platform, plan, and environment."
+    ],
+    "verification": "primary-documentation",
+    "notes": "This is a documented capability inventory, not evidence that every command is available to every account or that orchestration is reliable."
+  },
+  {
+    "id": "CC-06",
+    "tool": "Claude Code",
+    "url": "https://code.claude.com/docs/en/routines",
+    "title": "Automate work with scheduled tasks",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Claude Code documents scheduled routines that can run as cloud sessions or local desktop tasks.",
+      "Cloud routine runs have no permission-mode selector or in-run approval prompt; execution placement and permissions therefore need explicit operational review."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Scheduling is an automation surface, not proof of durable workflow receipts, idempotency, or a general-purpose scheduler API."
+  },
+  {
+    "id": "CC-07",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/13345190-get-started-with-claude-cowork",
+    "title": "Get started with Claude Cowork",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Cowork is an agentic-work surface distinct from Claude Code, with task/session work, global and folder instructions, plugins, connectors, browser actions, and recurring scheduled tasks.",
+      "Cowork documents Manual, Auto, and Skip approval behavior; Skip has no automatic action checks, while availability of automatic approval can be organization-controlled."
+    ],
+    "verification": "primary-documentation",
+    "notes": "The modes describe product behavior, not a claim that they provide an independently auditable per-effect policy ledger."
+  },
+  {
+    "id": "CC-08",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile",
+    "title": "Use Claude Cowork on web, desktop, and mobile",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Cowork supports starting, steering, reviewing, and resuming tasks on desktop, web, and mobile; connectors, skills/plugins, projects, scheduled tasks, and current artifacts have documented surface-specific availability.",
+      "Web/mobile cloud sessions reach local files, local connectors, browser use, and computer use only through an open Claude Desktop app under stated session and folder conditions; a cloud task can continue without local-file reachability."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Cowork in the cloud is documented as beta for some plans, and local-folder projects/local MCP features remain desktop-bound."
+  },
+  {
+    "id": "CC-09",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities",
+    "title": "Use connectors to extend Claude's capabilities",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Connectors can retrieve data and take actions in connected services, with access bounded by the connected person's service permissions or by a custom connector's shared credential.",
+      "Anthropic documents connectors across Claude, Cowork, Claude Desktop, Claude mobile, Claude Code, and the API through the MCP Connector."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Connector presence does not establish least privilege, action receipt retention, or an equivalent authorization model for custom credentials."
+  },
+  {
+    "id": "CC-10",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/11725091-when-to-use-desktop-and-web-connectors",
+    "title": "When to use desktop and web connectors",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Remote connectors are the cross-surface path for cloud/SaaS services, while desktop extensions serve local files, localhost, desktop applications, clipboard, and local processes.",
+      "Desktop extensions are limited to Claude Desktop and Claude Code; plugins can package remote and/or local MCP servers."
+    ],
+    "verification": "primary-documentation",
+    "notes": "This locality split is product documentation, not a claim that any arbitrary local service is safely exposed."
+  },
+  {
+    "id": "CC-11",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/12512180-use-skills-in-claude",
+    "title": "Use skills in Claude",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Skills are specialized knowledge/workflow packages; documented built-ins cover Excel, Word, PowerPoint, and PDF work, and custom skills can be uploaded as ZIP packages.",
+      "Skill availability is conditional on code execution/file creation and, for organizations, administrator policy."
+    ],
+    "verification": "primary-documentation",
+    "notes": "A skill is not an execution sandbox or a guarantee of document fidelity."
+  },
+  {
+    "id": "CC-12",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/13837440-use-plugins-in-claude",
+    "title": "Use plugins in Claude",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Plugins bundle skills, connectors, and sub-agents; hooks and sub-agents are documented as Cowork-only while bundled skills can work in chat, Desktop Chat, and Cowork.",
+      "A plugin can include local MCP servers that execute on the computer with normal local-program permissions; enterprise controls and scanning can restrict installation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Plugins are proprietary-product behavior references only; do not reuse their implementation or treat scanning as a complete trust boundary."
+  },
+  {
+    "id": "CC-13",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/9517075-what-are-projects",
+    "title": "What are projects?",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Projects provide workspaces with chat history, uploaded knowledge, and project instructions; paid plans may use RAG for larger project knowledge.",
+      "A new Projects version is documented as a staged beta beginning with some Claude Code users: it can run parallel cloud threads whose starting context includes the project's files, repositories, instructions, and memory."
+    ],
+    "verification": "primary-documentation",
+    "notes": "The staged rollout means Projects behavior must be capability-detected; no claim is made about universal rollout or persistent-memory correctness."
+  },
+  {
+    "id": "CC-14",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/17153992-what-are-artifacts-and-how-do-i-use-them",
+    "title": "What are artifacts and how do I use them?",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Artifacts are editable/shareable outputs such as documents, decks, dashboards, designs, code, and small interactive tools; Claude Code can publish session output as a live artifact at a private URL.",
+      "Artifacts can use connected apps after first-use approval and can persist personal or shared text storage, subject to stated surface, plan, and storage limits."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Artifact connector support excludes tools requiring approval for every action; sharing/storage choices create a separate data-handling boundary."
+  },
+  {
+    "id": "CC-15",
+    "tool": "Claude Help Center",
+    "url": "https://support.claude.com/en/articles/13455879-use-claude-cowork-on-team-and-enterprise-plans",
+    "title": "Use Claude Cowork on Team and Enterprise plans",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Cowork browser work can use the Claude Desktop built-in browser or the Claude in Chrome extension; each has organization controls, requirements, and documented safety checks.",
+      "Organization settings control automatic approval, write-capable connector always-allow behavior, plugins, and some browser access; the most restrictive relevant control wins for described Enterprise role grants."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Organization controls are vendor-service configuration, not evidence of Splyce parity or a comprehensive external-service authorization proof."
+  }
+]

@@ -458,5 +458,17 @@
     "claims": ["Presents long-term memory for an LLM companion application."],
     "verification": "primary-paper",
     "notes": "Included as source-relevant precedent only."
+  },
+  {
+    "id": "MEM-memoryos-paper-code",
+    "tool": "MemoryOS",
+    "url": "https://github.com/BAI-LAB/MemoryOS",
+    "title": "MemoryOS canonical implementation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Hierarchical personalized memory with storage, updating, retrieval and generation modules; separate identity from MemOS."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; runtime, conformance and product quality remain unqualified."
   }
 ]

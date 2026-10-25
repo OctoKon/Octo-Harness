@@ -240,5 +240,53 @@
     ],
     "verification": "primary-documentation",
     "notes": "No benchmark command was executed."
+  },
+  {
+    "id": "PX-auth-2026",
+    "tool": "MCP authorization",
+    "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
+    "title": "MCP authorization 2026-07-28",
+    "accessed": "2026-10-25",
+    "claims": [
+      "HTTP authorization defines issuer-bound discovery/response validation and resource targeting; stdio uses a separate credential model."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; runtime, conformance and product quality remain unqualified."
+  },
+  {
+    "id": "PX-sdk-2026",
+    "tool": "MCP TypeScript SDK",
+    "url": "https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28",
+    "title": "Supporting protocol revision 2026-07-28",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Documented 2026 authorization requirements need explicit SDK opt-ins; wire negotiation alone is not proof."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; runtime, conformance and product quality remain unqualified."
+  },
+  {
+    "id": "PX-agent-skills-format",
+    "tool": "Agent Skills",
+    "url": "https://agentskills.io/specification",
+    "title": "Agent Skills specification",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Directory and SKILL.md metadata constraints define a portable instruction package, not a permission grant."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; runtime, conformance and product quality remain unqualified."
+  },
+  {
+    "id": "PX-agents-format",
+    "tool": "AGENTS.md",
+    "url": "https://agents.md/",
+    "title": "AGENTS.md project guidance",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Repository instructions provide project context; host enforcement and discovery still depend on the consumer."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected primary source inspected; runtime, conformance and product quality remain unqualified."
   }
 ]

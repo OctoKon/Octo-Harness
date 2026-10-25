@@ -1,0 +1,167 @@
+[
+  {
+    "id": "TX-01",
+    "tool": "Node.js fs",
+    "url": "https://nodejs.org/api/fs.html",
+    "title": "File system | Node.js v26.12.1 Documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "fs.realpath resolves dot segments and symbolic links",
+      "lstat observes a link itself rather than its referent",
+      "a canonical pathname is not unique because hard links and bind mounts can expose the same entity"
+    ],
+    "verification": "primary-api-documentation",
+    "notes": "Candidate local filesystem primitive; path text alone is not a containment proof."
+  },
+  {
+    "id": "TX-02",
+    "tool": "Node.js child_process",
+    "url": "https://nodejs.org/api/child_process.html",
+    "title": "Child process | Node.js v26.12.1 Documentation",
+    "accessed": "2026-10-25",
+    "claims": [
+      "spawn creates an asynchronous subprocess and stdio pipes have finite, platform-specific capacity",
+      "exec starts a shell while execFile starts its target directly by default",
+      "killing a parent on Linux does not terminate its descendants"
+    ],
+    "verification": "primary-api-documentation",
+    "notes": "Candidate local command primitive; process-tree containment needs OS-level qualification."
+  },
+  {
+    "id": "TX-03",
+    "tool": "node-pty",
+    "url": "https://github.com/microsoft/node-pty/blob/main/README.md",
+    "title": "node-pty README",
+    "accessed": "2026-10-25",
+    "claims": [
+      "node-pty exposes pseudoterminal reads and writes",
+      "it supports Linux, macOS, and Windows through ConPTY on supported Windows versions",
+      "launched processes run at the parent permission level"
+    ],
+    "verification": "primary-repository-documentation",
+    "notes": "Candidate interactive terminal dependency; pin a release and qualify native builds before adoption."
+  },
+  {
+    "id": "TX-04",
+    "tool": "Windows reparse points",
+    "url": "https://learn.microsoft.com/en-us/windows/win32/fileio/reparse-points",
+    "title": "Reparse Points",
+    "accessed": "2026-10-25",
+    "claims": [
+      "reparse points can alter file-open behavior",
+      "NTFS links and mounted folders use reparse points"
+    ],
+    "verification": "primary-platform-documentation",
+    "notes": "Windows path-boundary candidate; native handle semantics require target-platform tests."
+  },
+  {
+    "id": "TX-05",
+    "tool": "Windows Job Objects",
+    "url": "https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects",
+    "title": "Job Objects",
+    "accessed": "2026-10-25",
+    "claims": [
+      "a job object manages associated processes as a unit",
+      "job operations can enforce limits and terminate associated processes"
+    ],
+    "verification": "primary-platform-documentation",
+    "notes": "Candidate Windows process-tree owner; nesting and assignment behaviour require qualification."
+  },
+  {
+    "id": "TX-06",
+    "tool": "Docker Engine",
+    "url": "https://docs.docker.com/engine/security/",
+    "title": "Docker Engine security",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Docker creates namespaces and cgroups for containers",
+      "namespaces isolate process and network views",
+      "hardening and daemon/configuration surfaces remain part of the security boundary"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Candidate Linux executor; a container is not equivalent to a complete credential or egress policy."
+  },
+  {
+    "id": "TX-07",
+    "tool": "gVisor runsc",
+    "url": "https://gvisor.dev/docs/architecture_guide/intro/",
+    "title": "Introduction to gVisor security",
+    "accessed": "2026-10-25",
+    "claims": [
+      "gVisor is an application-kernel isolation layer",
+      "its Sentry uses restricted host primitives and can run with mount and user namespaces",
+      "compatibility and configuration remain workload concerns"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Candidate OCI runtime; measure compatibility and mount/egress policy for selected images."
+  },
+  {
+    "id": "TX-08",
+    "tool": "Firecracker",
+    "url": "https://firecracker-microvm.github.io/",
+    "title": "Firecracker microVMs",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Firecracker uses KVM to create microVMs",
+      "the VMM exposes a control API and resource rate limiters",
+      "the jailer is an additional user-space security boundary"
+    ],
+    "verification": "primary-project-documentation",
+    "notes": "Candidate Linux microVM substrate; host hardware virtualization and image lifecycle are qualification gates."
+  },
+  {
+    "id": "TX-09",
+    "tool": "E2B",
+    "url": "https://github.com/e2b-dev/E2B",
+    "title": "E2B repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "the JavaScript SDK creates sandboxes and runs commands",
+      "the project documents self-hosted infrastructure and cloud-provider deployment"
+    ],
+    "verification": "primary-repository-documentation",
+    "notes": "Candidate managed or self-hosted remote executor; exact isolation, retention, and egress terms must be pinned per deployment."
+  },
+  {
+    "id": "TX-10",
+    "tool": "Daytona",
+    "url": "https://www.daytona.io/docs/en/sandboxes/",
+    "title": "Daytona Sandboxes",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Daytona exposes container, VM, Windows, macOS, and GPU sandbox classes",
+      "the documentation makes region and snapshot part of sandbox selection",
+      "nested virtualization is separately enabled for Linux VM sandboxes"
+    ],
+    "verification": "primary-documentation",
+    "notes": "Candidate managed executor; provider identity, region, persistence, and cleanup need observed receipts."
+  },
+  {
+    "id": "TX-11",
+    "tool": "SSH",
+    "url": "https://www.rfc-editor.org/rfc/rfc4251",
+    "title": "RFC 4251: The Secure Shell Protocol Architecture",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SSH provides secure remote login and network services",
+      "the architecture separates transport, user authentication, and multiplexed connection channels",
+      "host-key verification is an explicit trust decision"
+    ],
+    "verification": "primary-standard",
+    "notes": "Remote transport is not executor authorization or an effect receipt."
+  },
+  {
+    "id": "TX-12",
+    "tool": "Pi coding-agent",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/extensions.md",
+    "title": "Pi extension documentation at pinned commit",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Pi extensions run in process",
+      "Pi provides tool and lifecycle extension seams",
+      "extension code has the host process authority"
+    ],
+    "verification": "pinned-primary-source",
+    "notes": "Pinned source contract, not installed-runtime evidence."
+  }
+]

@@ -1,5 +1,7 @@
 # Inference: local, cloud, and mixed deployment
 
+**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+
 **Research date:** 2026-10-25. **Evidence state:** documentation and source review only. No model was downloaded, server installed, credential used, or benchmark run. All performance decisions remain planned measurements (**n=0**).
 
 ## Decision boundary

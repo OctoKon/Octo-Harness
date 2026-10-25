@@ -1,0 +1,106 @@
+[
+  {
+    "id": "IC-01",
+    "tool": "Prometheus",
+    "url": "https://arxiv.org/abs/2507.19942",
+    "title": "Prometheus: Towards Long-Horizon Codebase Navigation for Repository-Level Problem Solving",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The paper describes a memory-centric multi-agent coding framework using a unified knowledge graph and working memory.",
+      "The paper reports a GPT-5 SWE-bench Verified result; it does not establish the imported nested-LangGraph claim."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Primary paper v2; results were not reproduced and no code was installed."
+  },
+  {
+    "id": "IC-02",
+    "tool": "DARS-Agent",
+    "url": "https://github.com/darsagent/DARS-Agent",
+    "title": "DARS-Agent repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The repository identifies a DARS-Agent pipeline, reviewer-data code, and a trajectory tree visualizer.",
+      "The repository page states it is forked from vaibhavagg303/DARS-Agent."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public repository; upstream ownership and a pin remain qualification requirements."
+  },
+  {
+    "id": "IC-03",
+    "tool": "SWE-AF",
+    "url": "https://github.com/Agent-Field/SWE-AF",
+    "title": "SWE-AF repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SWE-AF describes a software-engineering fleet on AgentField spanning plan, code, test, and ship phases.",
+      "The repository declares an Apache-2.0 license."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving repository inspected; no AgentField deployment, credential flow, or runtime was exercised."
+  },
+  {
+    "id": "IC-04",
+    "tool": "SWE-ReX",
+    "url": "https://github.com/swe-agent/SWE-ReX",
+    "title": "SWE-agent Remote Execution Framework",
+    "accessed": "2026-10-25",
+    "claims": [
+      "SWE-ReX presents a runtime interface for shell sessions across local and remote sandbox environments.",
+      "Its README describes command completion detection, output and exit-status extraction, interactive sessions, and parallel environments."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving repository inspected; no backend, cancellation, or isolation behavior was tested."
+  },
+  {
+    "id": "IC-05",
+    "tool": "SpecRover",
+    "url": "https://arxiv.org/abs/2408.02232",
+    "title": "SpecRover: Code Intent Extraction via LLMs",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The paper presents SpecRover as AutoCodeRover-v2 with iterative code search and specification inference.",
+      "A reviewer agent vets patches and supports a confidence-oriented explanation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Primary paper v4; author-reported evaluation and cost were not reproduced."
+  },
+  {
+    "id": "IC-06",
+    "tool": "rulesync",
+    "url": "https://github.com/dyoshikawa/rulesync",
+    "title": "rulesync repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "rulesync identifies itself as a utility CLI for AI coding agents and includes rules, skills, MCP, and tool-configuration material.",
+      "The repository declares an MIT license."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving repository inspected; generated output and target-specific behavior were not tested."
+  },
+  {
+    "id": "IC-07",
+    "tool": "freeCodeCamp agent-scaffold",
+    "url": "https://github.com/freeCodeCamp/agent-scaffold",
+    "title": "freeCodeCamp Scaffold Tool",
+    "accessed": "2026-10-25",
+    "claims": [
+      "agent-scaffold identifies itself as a tool to create a new project ready for a coding agent.",
+      "The repository declares a BSD-3-Clause license and lists Node.js and git as requirements."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving repository inspected; generation and Docker behavior were not tested."
+  },
+  {
+    "id": "IC-08",
+    "tool": "vibe-coding-toolkit",
+    "url": "https://github.com/soumatheusgomes/vibe-coding-toolkit",
+    "title": "Vibe Coding Toolkit repository",
+    "accessed": "2026-10-25",
+    "claims": [
+      "The toolkit documents prompts, templates, plugins, subagent orchestration, and quality-gate guidance for machine and project setup.",
+      "The repository declares an MIT license."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving repository inspected; its recipes and prompts were not executed."
+  }
+]

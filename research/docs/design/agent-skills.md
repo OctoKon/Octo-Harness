@@ -1,4 +1,4 @@
-# Three conditional agent skills
+# Focused agent skills
 
 Research note, 2026-10-25. This document distinguishes documented formats and tool behavior from proposed repository practice. It does not claim that the skills below improve reliability or performance until they are exercised on representative work.
 
@@ -22,8 +22,10 @@ Three skills cover distinct failure modes without turning routine work into a ce
 
 `session-handoff` triggers at an actual continuity boundary: compaction, session end, ownership transfer, or missing current state. It records the objective, decision, changed paths, observed checks, uncertainty and next action, then directs recovery to verify volatile facts. This is deliberately a handoff format, not a new memory store, transcript dump, or instruction to search private histories.
 
-Together with mandatory Ponytail ultra and the existing evidence-research skill, these three conditional additions are sufficient for the current needs because each skill fills a gap that short global rules cannot efficiently teach at the moment it matters: a difficult diagnosis, behavior-level Rust verification, and lossless-enough resumption. Planning, generic review, permissions and normal implementation remain governed by repository instructions; the existing evidence-research skill already covers source-backed web research and should not be duplicated. Adding skills for those concerns would enlarge discovery metadata and loaded context without a demonstrated repository-specific failure mode.
+The Pi-first build decision adds two focused workflows: [Pi implementation](../../../.skills/pi-extension-implementation/SKILL.md) checks lifecycle, nested tools, branch ancestry and real entrypoint wiring; [evaluation gates](../../../.skills/evaluation-gates/SKILL.md) turns an adoption or improvement claim into a controlled comparison with explicit quality and stopping criteria. Their foundation is the [pinned Pi source audit](../foundations/pi-source-contracts.md) and [evaluation research](../capabilities/evaluation-and-agent-workflows.md).
+
+The library now has seven skills: mandatory Ponytail ultra and six conditional workflows, including evidence research. Rust verification remains conditional on an actual Rust support component. Only the workflow needed for the active failure or decision is loaded. Generic planning, permissions and routine review stay in repository rules; duplicate skill ceremony is unnecessary.
 
 ## Evidence and validation status
 
-The directory layout and frontmatter are documented-format compliant. The trigger conditions, wording, and the choice to stop at three skills are proposed practice. No runtime behavior, source code, dependency, CI job, or production system has changed. Future qualification should sample real hard failures, Rust behavior changes, and resumed tasks, then retain or remove a skill based on observed usefulness rather than its existence here.
+The directory layout and frontmatter follow the documented format. Trigger conditions and wording are proposed practice, not measured agent improvement. Future qualification should sample actual Pi changes, adoption decisions, hard failures, Rust behavior changes and resumed tasks, then retain or remove a skill based on observed usefulness.

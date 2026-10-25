@@ -1,6 +1,6 @@
 # Splyce research
 
-The evidence base for a unified coding-agent harness. Snapshot: **2026-10-25**. Sources describe mechanisms; they do not establish that Splyce implements them or improves performance.
+The evidence base for a unified coding-agent harness built on Pi. Snapshot: **2026-10-25**. Sources describe mechanisms; they do not establish that Splyce implements them or improves performance. The [readiness audit](docs/design/readiness-audit.md) connects capability coverage to contracts, fixtures and unresolved gates.
 
 | Start here                                   | Contents                                                                          |
 | -------------------------------------------- | --------------------------------------------------------------------------------- |

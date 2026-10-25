@@ -16,14 +16,15 @@ A research-led foundation for one coding-agent harness: capable models, useful m
 
 ## The direction
 
-The strongest ideas from coding agents, retrieval systems, and inference engines should work together through one consistent tool.
+Open source and fully local. Built on Pi, Splyce aims to bring the strongest ideas from coding agents, retrieval systems, and inference engines into one consistent tool.
 
-| Area       | Planned behavior                                                                           |
-| ---------- | ------------------------------------------------------------------------------------------ |
-| Models     | Local, cloud, or mixed generation, extraction, embeddings, and reranking.                  |
-| Memory     | Native cross-session summaries with citations and selective recovery of original evidence. |
-| Code       | Language-aware navigation, scoped edits, and actual verification receipts.                 |
-| Extensions | MCP, skills, plugins, and delegated agents under shared permissions and state.             |
+| Area       | Planned behavior                                                                             |
+| ---------- | -------------------------------------------------------------------------------------------- |
+| Models     | Fully local generation, extraction, embeddings, and reranking; no cloud fallback.            |
+| Memory     | Native cross-session summaries with citations and selective recovery of original evidence.   |
+| Code       | Language-aware navigation, scoped edits, and actual verification receipts.                   |
+| Tools      | Files, terminals, local browsers/desktops, and authorized external tools with scoped access. |
+| Extensions | MCP, skills, plugins, and delegated agents under shared permissions and state.               |
 
 ## Where it stands
 
@@ -31,4 +32,4 @@ This repository contains public-source research, an implementation plan, and doc
 
 Start with the [research index](research/README.md) for comparisons and sources, or the [master plan](MASTER-PLAN.md) for the build sequence and acceptance gates. Contributions should connect a mechanism to a source and a testable outcome.
 
-[Contribution guide](CONTRIBUTING.md) · [Security reporting](SECURITY.md) · [Discussions](https://github.com/OctoKon/Splyce/discussions)
+[Contribution guide](CONTRIBUTING.md) · [Security reporting](SECURITY.md) · [AGPL-3.0-only](LICENSE) · [Discussions](https://github.com/OctoKon/Splyce/discussions)

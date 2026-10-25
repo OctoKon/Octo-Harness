@@ -1,5 +1,7 @@
 # Extended internals: capability gap closure (2026-10-25)
 
+**Active product scope:** Splyce is OSS and entirely local: agent execution, every model role, memory and state stay on the local host. Cloud/managed services below are comparative research only, not supported product profiles or fallbacks. Authorized external web/connector actions are separate scoped tools. [Current master plan](../../../MASTER-PLAN.md).
+
 Documentation-verified only; local quality, latency, cost, and agent gains are **n=0**.
 
 **Serena** is an MIT MCP toolkit for language-server-backed semantic retrieval, editing, refactoring and debugging. Reuse symbol-addressed operations, while retaining URI/document-version/workspace guards: LSP answers are not durable evidence. **RTK** is a Rust pipeline that intercepts shell/tool output before model context. Reuse bounded presentation only when every compressed view links to a source artifact, command, exit code, omitted ranges and lossless retrieval route. **OpenViking** is Volcengine's AGPL-3.0 context database exposing resources, memories and skills through stable `viking://` paths; its filesystem-like addressing is useful, but automatic L0/L1 summaries and extracted memories remain derived data subject to provenance/deletion checks. **OpenSandbox** exposes sandbox command/file/code APIs and MCP: use it only behind a harness-owned authorization policy, since sandbox isolation is not authorization.

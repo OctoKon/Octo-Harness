@@ -1,0 +1,74 @@
+[
+  {
+    "id": "WE-01",
+    "tool": "Agent evaluations",
+    "url": "https://www.anthropic.com/research/demystifying-evals-for-ai-agents",
+    "title": "Agent evaluations",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Evaluation outcomes, graders and isolated trials differ from transcript success claims."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public primary source fetched; Splyce workflow recommendations remain unmeasured proposals."
+  },
+  {
+    "id": "WE-02",
+    "tool": "Long-running harness design",
+    "url": "https://www.anthropic.com/research/harness-design-long-running-apps",
+    "title": "Long-running harness design",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Generation/evaluation responsibilities and observable task criteria inform long-running harness design."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public primary source fetched; Splyce workflow recommendations remain unmeasured proposals."
+  },
+  {
+    "id": "WE-03",
+    "tool": "Harness engineering",
+    "url": "https://openai.com/index/harness-engineering/",
+    "title": "Harness engineering",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Repository knowledge and executable constraints are agent engineering mechanisms."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public primary source fetched; Splyce workflow recommendations remain unmeasured proposals."
+  },
+  {
+    "id": "WE-04",
+    "tool": "Agent Skills",
+    "url": "https://agentskills.io/specification",
+    "title": "Agent Skills",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Portable skill directory/frontmatter format, name and description constraints."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public primary source fetched; Splyce workflow recommendations remain unmeasured proposals."
+  },
+  {
+    "id": "WE-05",
+    "tool": "AGENTS.md",
+    "url": "https://agents.md/",
+    "title": "AGENTS.md",
+    "accessed": "2026-10-25",
+    "claims": [
+      "Repository instructions complement human-facing README documentation."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public primary source fetched; Splyce workflow recommendations remain unmeasured proposals."
+  },
+  {
+    "id": "WE-06",
+    "tool": "MCP authorization",
+    "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
+    "title": "MCP authorization",
+    "accessed": "2026-10-25",
+    "claims": [
+      "HTTP authorization and stdio credential handling have distinct transport contracts."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected public primary source fetched; Splyce workflow recommendations remain unmeasured proposals."
+  }
+]

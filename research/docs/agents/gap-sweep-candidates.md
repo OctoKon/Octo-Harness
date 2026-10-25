@@ -267,3 +267,11 @@ The prior saturation statement is superseded by the reopened sweep below.
 | R23 — second broad non-exclusion cross-lane discovery | `AI coding agent terminal IDE harness open source 2026`; `agent memory system local embedding reranking graph open source 2026`; `LLM inference serving local runtime embeddings reranking open source 2026`; `MCP ACP agent skills plugin ecosystem open source 2026` | 6 | Added OpenHarness, harnext + Context Engine, Xal, AgentMux, Cretli and Libre Claw after primary-source fetches. Darkcode’s selected product page yielded no inspectable source text, so it remains an unresolved discovered-only lead rather than a corpus claim. |
 
 The two broad non-exclusion rounds R22–R23 were both nonzero. They improve coverage across coding harnesses, memory/retrieval, inference and protocol/plugin surfaces, but do not establish global exhaustion or a two-zero closure.
+
+### R24 — evidence quality and token-cost frontier
+
+Queries on 2026-10-25: `site.github.com/toon-format token efficiency benchmark spec JSON TOON`; `site.scip-code.org SCIP protocol source range code intelligence index incremental`; `site.sqlite.org atomic commit WAL FTS5 integrity check`. Selected-source follow-up inspected the TOON specification and benchmark method, SCIP reference, SQLite WAL/backup documentation and the primary Notation Matters v2 paper.
+
+This pass adds TOON and the end-to-end notation comparison as decision inputs, and deepens existing SCIP/storage coverage. [Evidence freshness and token efficiency](../capabilities/evidence-freshness-and-token-efficiency.md) records the resulting contracts and contradictory evidence. No format, indexer or database was installed or qualified. This nonzero, scoped pass cannot close global discovery.
+
+The [readiness audit](../design/readiness-audit.md) separately tracks capability classes, public evidence, contracts, fixtures and hard implementation blockers. A broad candidate catalog and a complete product qualification are different deliverables; neither is inferred from a source count.

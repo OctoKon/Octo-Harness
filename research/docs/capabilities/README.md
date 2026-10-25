@@ -9,4 +9,14 @@
 | [Protocols and evaluation](protocols-plugins-and-evaluation.md) | MCP, ACP, A2A, skills/plugins, execution, traces and benchmarks                         |
 | [Extended internals](extended-internals.md)                     | Context services, durable work, provider gateways and offline optimization              |
 
+| Additional chapter / ledger                                                 | Coverage                                                                                |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [Platform security and release](platform-security-and-release.md)           | Confinement, identity, delivery, packaging and supported-platform evidence              |
+| [Evaluation and workflows](evaluation-and-agent-workflows.md)               | Controlled agent evaluation and candidate promotion                                     |
+| [Evidence and token efficiency](evidence-freshness-and-token-efficiency.md) | Source freshness, incremental equivalence, context sufficiency and notation comparisons |
+| [Filesystem and execution](tool-access-and-execution.md)                    | Files, terminal/PTY, jobs, remote execution and isolation                               |
+| [Browser, computer and devices](browser-computer-and-device-access.md)      | Browser automation, desktop accessibility/vision, mobile and connectors                 |
+| [Memory mechanism review](memory-mechanism-review.md)                       | Pinned source follow-up, counterevidence, deletion limits and local qualification       |
+| [Documents and multimodal tools](document-and-multimodal-tools.md)          | Docling/Rust, MarkItDown, OCR, visual retrieval, audio and rendered artifact gates      |
+
 [Research index](../../README.md) · [Complete document map](../README.md) · [Evidence](../evidence/README.md)

@@ -2,6 +2,8 @@
 
 Keep changes focused and include the validation you ran. Start with the [research index](research/docs/README.md) and [master plan](MASTER-PLAN.md).
 
+Splyce-authored contributions use [AGPL-3.0-only](LICENSE). Preserve the separately licensed material listed in [NOTICE.md](NOTICE.md); do not relabel third-party code or imported research as newly licensed work.
+
 Install documentation tools with `npm ci --ignore-scripts`. Before a pull request, run:
 
 ```sh
