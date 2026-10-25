@@ -19,7 +19,7 @@ Each JSON file is an array of source records. Required fields: `id`, `tool`, `ur
 | [memory-sources.json](memory-sources.json)             | Cross-session memory, model roles and graph-name resolution             |
 | [inference-sources.json](inference-sources.json)       | Local/cloud inference runtimes and deployment layers                    |
 | [readme-sources.json](readme-sources.json)             | Public README visual/editorial references                               |
-| [governance-sources.json](governance-sources.json)     | Governance, fleet controls, gateways and Warden identities              |
+| [governance-sources.json](governance-sources.json)     | Governance/fleet candidates, repository roles and fork contribution     |
 
 The validator checks record shape, URL form, dates, claims, and local documentation links. It cannot establish that a paper's conclusion is true, that a vendor implemented its documentation, or that a configuration is safe. Qualification requires a pinned artifact and actual tests.
 
