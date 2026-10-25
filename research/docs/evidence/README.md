@@ -56,3 +56,5 @@ The validator checks record shape, URL form, dates, claims, and local documentat
 [frontend-sources.json](frontend-sources.json) records FUI-01–38 for the dedicated interaction/component/Windows/rendering dossier. [codex-foundation-sources.json](codex-foundation-sources.json) records CFND-01–09 for the source-pinned Codex engine assessment. Counts are provenance records, not supported features or runtime results.
 
 [Main research index](../../README.md) · [Complete document map](../README.md)
+
+[lineage-sources.json](lineage-sources.json) now includes LN-11–17 for separately pinned current Open Interpreter and Interpreter Workstation, their licenses/manifests and provider-wire boundaries. Legacy Python identity, vendor claims, source observations and unrun installed/quality results remain distinct.

@@ -8,13 +8,13 @@
 | [Frameworks](frameworks-and-orchestration.md)      | Runtime ownership, typed tools, state and orchestration               |
 | [Workflow scaffolds](workflows-and-scaffolds.md)   | Specifications, skills, task records, recovery and team coordination  |
 
-| Additional chapter / ledger                                           | Coverage                                                                                                |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| [Pi foundation](pi-foundation.md)                                     | Active Pi-first decision, OMP comparator and runtime/dependency boundaries                              |
-| [Pinned Pi source contracts](pi-source-contracts.md)                  | Actual hook, session, nested-call, shell and persistence paths; F0 blockers                             |
-| [Additional runtimes and lineage](additional-runtimes-and-lineage.md) | Agents SDK, Agent Zero, Open Interpreter, AutoGPT, BabyAGI, GPT Pilot, AgentScope, OpenManus and Kortix |
-| [Lightweight local runtimes](lightweight-runtimes.md)                 | Seven source-pinned runtime comparators, Pi-first reuse gates, and n=0 measurement boundary             |
-| [SWE research and imports](swe-research-and-imports.md)               | Prometheus, DARS, SWE-agent forks, SWE-ReX, SpecRover and unresolved imported claims                    |
+| Additional chapter / ledger                                           | Coverage                                                                                                                    |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| [Pi foundation](pi-foundation.md)                                     | Active Pi-first decision, OMP comparator and runtime/dependency boundaries                                                  |
+| [Pinned Pi source contracts](pi-source-contracts.md)                  | Actual hook, session, nested-call, shell and persistence paths; F0 blockers                                                 |
+| [Additional runtimes and lineage](additional-runtimes-and-lineage.md) | Agents SDK, Agent Zero, current Open Interpreter/Workstation, AutoGPT, BabyAGI, GPT Pilot, AgentScope, OpenManus and Kortix |
+| [Lightweight local runtimes](lightweight-runtimes.md)                 | Seven source-pinned runtime comparators, Pi-first reuse gates, and n=0 measurement boundary                                 |
+| [SWE research and imports](swe-research-and-imports.md)               | Prometheus, DARS, SWE-agent forks, SWE-ReX, SpecRover and unresolved imported claims                                        |
 
 [Pi package installation](pi-package-installation.md) audits pinned Git/npm/local provisioning, resource discovery, ownership and missing lifecycle guarantees; [PKG-01–PKG-10](../evidence/pi-package-sources.json) bind the public sources. Runtime results remain n=0.
 

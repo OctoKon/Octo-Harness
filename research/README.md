@@ -17,4 +17,6 @@ The evidence base for a Windows desktop Pi-derived coding-agent application: OSS
 
 [Methodology](docs/methodology.md) explains evidence depth and coverage limits. [Candidate catalog](docs/catalog.md) maps names to layers. The root [master plan](../MASTER-PLAN.md) translates the findings into contracts, implementation phases and acceptance gates.
 
+The [runtime lineage review](docs/foundations/additional-runtimes-and-lineage.md#open-interpreter-current-rust-fork-and-legacy-identity) now separates current Rust Open Interpreter from its legacy Python lineage and evaluates its Workstation client as a source-level comparator; neither changes the selected engine or frontend stack.
+
 Discovery remains open when a sweep finds another eligible candidate. See the dated [gap journal](docs/agents/gap-sweep-candidates.md); no global-exhaustiveness claim is made. Runtime, retrieval and inference qualification still require actual tests.
