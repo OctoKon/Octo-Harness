@@ -17,7 +17,9 @@ concurrency:
 jobs:
   promote:
     name: Promote to main
+    # Skips cleanly until a lead configures the release GitHub App (repository-baseline activation steps 1-2).
     if: >-
+      vars.RELEASE_APP_CLIENT_ID != '' &&
       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository
