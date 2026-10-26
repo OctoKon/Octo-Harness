@@ -9,6 +9,9 @@ import {
   type ContractContext,
   type RecordKind,
   type RecordByKind,
+  type SplyceEvent,
+  type SplyceEventDraft,
+  validateEvent,
   validateRecord,
 } from "./contracts.js";
 import { DatabaseSync } from "node:sqlite";
@@ -101,6 +104,36 @@ export interface ListResult {
 export interface AppendBatchResult {
   /** Acknowledged seqs, one per input, in input order. */
   seqs: number[];
+}
+
+export interface EventPreconditions {
+  expectedDeletionEpoch?: number;
+  expectedAbsentActionKey?: {
+    scopeId: string;
+    idempotencyKey: string;
+    actionId: string;
+  };
+  expectedOwnershipEpoch?: { workspaceId: string; epoch: number };
+  expectedConfigRevision?: { scopeId: string; revision: string };
+}
+interface EventWatermark {
+  scopeId: string;
+  sessionId: string;
+  seq: number;
+}
+const EVENT_SEQUENCE_PREFIX = "event_seq:";
+
+function eventSequenceKey(scopeId: string, sessionId: string): string {
+  if (
+    [scopeId, sessionId].some(
+      (id) => typeof id !== "string" || id.length === 0 || /\s|[\\/]/u.test(id),
+    )
+  )
+    throw new StoreError(
+      "EVENT_SCOPE",
+      "event scope and session must be opaque ids",
+    );
+  return EVENT_SEQUENCE_PREFIX + JSON.stringify([scopeId, sessionId]);
 }
 
 /** Durable canonical-workspace ownership: single writer per workspace. */
@@ -214,6 +247,7 @@ export class Store {
           `store claims layout ${stampedVersion} but table ${table} lacks columns: ${missing.join(", ")}`,
         );
     }
+    Store.eventWatermarks(db);
   }
 
   /**
@@ -434,6 +468,75 @@ export class Store {
     };
   }
 
+  private eventContext(
+    scopeId: string,
+    caller: CallerContext,
+    staged: readonly AppendInput[] = [],
+  ): ContractContext {
+    const context = this.context(scopeId, caller);
+    context.resolveReference = (id, referencedScopeId) => {
+      if (
+        this.db
+          .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+          .get(id) !== undefined
+      )
+        return false;
+      if (caller.resolveReference !== undefined)
+        return caller.resolveReference(id, referencedScopeId) === true;
+      return (
+        this.db
+          .prepare("SELECT 1 FROM records WHERE record_id = ? AND scope_id = ?")
+          .get(id, referencedScopeId) !== undefined ||
+        staged.some(
+          (input) =>
+            isRecordObject(input.record) &&
+            input.record.recordId === id &&
+            input.record.scopeId === referencedScopeId,
+        )
+      );
+    };
+    return context;
+  }
+
+  private assertEventSource(
+    event: SplyceEvent,
+    context: ContractContext,
+  ): void {
+    if (
+      this.db
+        .prepare("SELECT 1 FROM deletions WHERE record_id IN (?, ?)")
+        .get(event.recordId, `event:${event.eventId}`) !== undefined
+    )
+      throw new StoreError("EVENT_DELETED", "event or source has been deleted");
+    if (
+      !context.resolveReference(event.recordId, event.scopeId) ||
+      this.db
+        .prepare("SELECT 1 FROM records WHERE record_id = ? AND scope_id = ?")
+        .get(event.recordId, event.scopeId) === undefined
+    )
+      throw new StoreError(
+        "EVENT_SOURCE",
+        "event source record is unresolved or denied",
+      );
+  }
+
+  private eventReadContext(
+    scopeId: string,
+    sessionId: string,
+  ): ContractContext {
+    const context = this.context(scopeId, {
+      sessionId,
+      configRevision: INITIAL_CONFIG_REVISION,
+      profileRevision: "replay",
+      policyRevision: "replay",
+    });
+    context.lastDurableSeq = Store.eventHighwater(this.db, scopeId, sessionId);
+    context.resolveReference = (id) =>
+      this.db.prepare("SELECT 1 FROM deletions WHERE record_id = ?").get(id) ===
+      undefined;
+    return context;
+  }
+
   /**
    * Highest committed seq attributed to one session in a scope: the exclusive
    * cursor for that session's replay/resync. Other sessions' records never
@@ -517,6 +620,11 @@ export class Store {
    */
   append(input: AppendInput, caller: CallerContext): Appended {
     this.assertWritable();
+    if (input.kind === "event")
+      throw new StoreError(
+        "EVENT_COMMIT_REQUIRED",
+        "event records require commitEvents",
+      );
     const recordObject = input.record as Record<string, unknown> | undefined;
     const scopeId =
       isRecordObject(recordObject) && typeof recordObject.scopeId === "string"
@@ -570,9 +678,62 @@ export class Store {
     expectedOwnershipEpoch?: { workspaceId: string; epoch: number },
     expectedConfigRevision?: { scopeId: string; revision: string },
   ): AppendBatchResult {
+    if (inputs.some((input) => input.kind === "event"))
+      throw new StoreError(
+        "EVENT_COMMIT_REQUIRED",
+        "event records require commitEvents",
+      );
+    return this.commitBatch(inputs, [], caller, {
+      ...(expectedAbsentActionKey === undefined
+        ? {}
+        : { expectedAbsentActionKey }),
+      ...(expectedOwnershipEpoch === undefined
+        ? {}
+        : { expectedOwnershipEpoch }),
+      ...(expectedConfigRevision === undefined
+        ? {}
+        : { expectedConfigRevision }),
+    });
+  }
+
+  /** Rejects every reused durable eventId, including identical retries. */
+  commitEvents(
+    receiptInputs: readonly AppendInput[],
+    eventDrafts: readonly SplyceEventDraft[],
+    caller: CallerContext,
+    preconditions: EventPreconditions = {},
+  ): AppendBatchResult & { events: SplyceEvent[] } {
+    if (receiptInputs.some((input) => input.kind === "event"))
+      throw new StoreError(
+        "EVENT_COMMIT_REQUIRED",
+        "receipts cannot contain event records",
+      );
+    return this.commitBatch(receiptInputs, eventDrafts, caller, preconditions);
+  }
+
+  private commitBatch(
+    inputs: readonly AppendInput[],
+    eventDrafts: readonly SplyceEventDraft[],
+    caller: CallerContext,
+    {
+      expectedAbsentActionKey,
+      expectedOwnershipEpoch,
+      expectedConfigRevision,
+      expectedDeletionEpoch,
+    }: EventPreconditions,
+    importedWatermarks: readonly EventWatermark[] = [],
+  ): AppendBatchResult & { events: SplyceEvent[] } {
     this.assertWritable();
-    if (inputs.length === 0 && expectedAbsentActionKey === undefined)
-      return { seqs: [] };
+    if (
+      inputs.length === 0 &&
+      eventDrafts.length === 0 &&
+      importedWatermarks.length === 0 &&
+      expectedAbsentActionKey === undefined &&
+      expectedOwnershipEpoch === undefined &&
+      expectedConfigRevision === undefined &&
+      expectedDeletionEpoch === undefined
+    )
+      return { seqs: [], events: [] };
     const prepared: Array<[RecordKind, RecordByKind[RecordKind]]> = [];
     try {
       for (const input of inputs) {
@@ -582,13 +743,31 @@ export class Store {
           typeof recordObject.scopeId === "string"
             ? recordObject.scopeId
             : "";
+        let context = this.context(scopeId, caller);
+        if (
+          input.kind === "event" &&
+          isRecordObject(recordObject.envelope) &&
+          typeof recordObject.envelope.sessionId === "string"
+        ) {
+          const sessionId = recordObject.envelope.sessionId;
+          const watermark = importedWatermarks.find(
+            (item) => item.scopeId === scopeId && item.sessionId === sessionId,
+          );
+          if (watermark === undefined)
+            throw new StoreError(
+              "IMPORT_FORMAT",
+              "event record has no selected session watermark",
+            );
+          context = this.eventContext(
+            scopeId,
+            { ...caller, sessionId },
+            inputs,
+          );
+          context.lastDurableSeq = watermark.seq;
+        }
         prepared.push([
           input.kind,
-          validateRecord(
-            input.kind,
-            input.record,
-            this.context(scopeId, caller),
-          ),
+          validateRecord(input.kind, input.record, context),
         ]);
       }
     } catch (error) {
@@ -596,6 +775,16 @@ export class Store {
     }
     try {
       this.db.exec("BEGIN IMMEDIATE;");
+      if (
+        expectedDeletionEpoch !== undefined &&
+        (!Number.isSafeInteger(expectedDeletionEpoch) ||
+          expectedDeletionEpoch < 0 ||
+          this.deletionEpoch() !== expectedDeletionEpoch)
+      )
+        throw new StoreError(
+          "STALE_DELETION_EPOCH",
+          "deletion epoch changed before event publication",
+        );
       if (expectedOwnershipEpoch !== undefined) {
         const { workspaceId, epoch } = expectedOwnershipEpoch;
         const row = this.db
@@ -669,12 +858,83 @@ export class Store {
           );
         }
       }
+      for (const watermark of importedWatermarks) {
+        const current = Store.eventHighwater(
+          this.db,
+          watermark.scopeId,
+          watermark.sessionId,
+        );
+        if (watermark.seq < current)
+          throw new StoreError(
+            "STALE_EVENT_SEQUENCE",
+            "import would roll back an event counter",
+          );
+        this.writeEventHighwater(
+          watermark.scopeId,
+          watermark.sessionId,
+          watermark.seq,
+        );
+      }
       const seqs: number[] = [];
       for (const [kind, record] of prepared) {
-        seqs.push(this.insertValidated(kind, record, caller.sessionId));
+        if (kind === "event") {
+          const context = this.eventContext(record.scopeId, {
+            ...caller,
+            sessionId:
+              isRecordObject(record.envelope) &&
+              typeof record.envelope.sessionId === "string"
+                ? record.envelope.sessionId
+                : "",
+          });
+          context.lastDurableSeq = Store.eventHighwater(
+            this.db,
+            record.scopeId,
+            context.sessionId,
+          );
+          const event = validateEvent(record.envelope, context);
+          this.assertEventSource(event, context);
+          this.assertNewEventId(event.eventId);
+          seqs.push(this.insertValidated(kind, record, event.sessionId));
+        } else seqs.push(this.insertValidated(kind, record, caller.sessionId));
       }
+      const events: SplyceEvent[] = [];
+      for (const draft of eventDrafts) {
+        const current = Store.eventHighwater(
+          this.db,
+          draft.scopeId,
+          draft.sessionId,
+        );
+        if (current === Number.MAX_SAFE_INTEGER)
+          throw new StoreError(
+            "EVENT_SEQUENCE_OVERFLOW",
+            "event counter exhausted",
+          );
+        const context = this.eventContext(draft.scopeId, caller);
+        context.lastDurableSeq = current;
+        const event = validateEvent({ ...draft, seq: current + 1 }, context);
+        this.assertEventSource(event, context);
+        this.assertNewEventId(event.eventId);
+        if (event.durable) {
+          const record = validateRecord(
+            "event",
+            {
+              schemaVersion: CONTRACT_VERSION,
+              recordId: `event:${event.eventId}`,
+              createdAt: event.createdAt,
+              scopeId: event.scopeId,
+              sourceIds: event.sourceIds,
+              envelope: event,
+            },
+            context,
+          );
+          this.insertValidated("event", record, event.sessionId);
+        }
+        this.writeEventHighwater(event.scopeId, event.sessionId, event.seq);
+        events.push(event);
+      }
+      if (importedWatermarks.length > 0) Store.eventWatermarks(this.db);
       this.db.exec("COMMIT;");
-      return { seqs };
+      return { seqs, events };
     } catch (error) {
       let rollbackError: unknown;
       try {
@@ -707,11 +967,188 @@ export class Store {
         `record ${r.kind} carries schemaVersion ${String(r.schema_version)}; this store reads ${String(CONTRACT_VERSION)}`,
       );
     }
+    const record: unknown = JSON.parse(r.payload);
+    if (r.kind === "event") {
+      const attribution = this.db
+        .prepare("SELECT scope_id, session_id FROM records WHERE seq = ?")
+        .get(r.seq) as { scope_id: string; session_id: string };
+      const context = this.eventReadContext(
+        attribution.scope_id,
+        attribution.session_id,
+      );
+      const validated = validateRecord("event", record, context);
+      this.assertEventSource(validated.envelope, context);
+      return { seq: Number(r.seq), kind: "event", record: validated };
+    }
     return {
       seq: Number(r.seq),
       kind: r.kind as RecordKind,
-      record: JSON.parse(r.payload) as RecordByKind[RecordKind],
+      record: record as RecordByKind[RecordKind],
     };
+  }
+
+  private assertNewEventId(eventId: string): void {
+    if (
+      this.db
+        .prepare("SELECT 1 FROM records WHERE kind = 'event' AND record_id = ?")
+        .get(`event:${eventId}`) !== undefined
+    )
+      throw new StoreError(
+        "EVENT_ALREADY_EXISTS",
+        "durable eventId already exists; retry rejected without changes",
+      );
+  }
+
+  private writeEventHighwater(
+    scopeId: string,
+    sessionId: string,
+    seq: number,
+  ): void {
+    this.db
+      .prepare(
+        "INSERT INTO store_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      )
+      .run(eventSequenceKey(scopeId, sessionId), String(seq));
+  }
+
+  private static eventHighwater(
+    db: DatabaseSync,
+    scopeId: string,
+    sessionId: string,
+    validateHistory = false,
+  ): number {
+    const key = eventSequenceKey(scopeId, sessionId);
+    const row = db
+      .prepare("SELECT value FROM store_meta WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+    if (row !== undefined && !/^(?:0|[1-9]\d*)$/u.test(row.value))
+      throw new StoreError("STORE_LAYOUT", "invalid event counter metadata");
+    const seq = row === undefined ? 0 : Store.parseEpoch(row.value, key)!;
+    // Full audits run on open/replay/recovery; streaming checks only the newest envelope.
+    // shortcut: scope index scans intervening sessions; qualify a session index for heavy interleaving.
+    const durable = db
+      .prepare(
+        "SELECT record_id, json_extract(payload, '$.envelope.eventId') AS event_id, json_extract(payload, '$.envelope.seq') AS event_seq FROM records WHERE kind = 'event' AND scope_id = ? AND session_id = ? ORDER BY records.seq DESC" +
+          (validateHistory ? "" : " LIMIT 1"),
+      )
+      .all(scopeId, sessionId) as Array<{
+      record_id: string;
+      event_id: unknown;
+      event_seq: unknown;
+    }>;
+    const seen = new Set<number>();
+    for (const event of durable) {
+      if (
+        typeof event.event_id !== "string" ||
+        event.record_id !== `event:${event.event_id}` ||
+        typeof event.event_seq !== "number" ||
+        !Number.isSafeInteger(event.event_seq) ||
+        event.event_seq <= 0 ||
+        event.event_seq > seq ||
+        seen.has(event.event_seq)
+      )
+        throw new StoreError(
+          "STORE_LAYOUT",
+          "durable events disagree with their event counter",
+        );
+      seen.add(event.event_seq);
+    }
+    return seq;
+  }
+
+  private static eventWatermarks(db: DatabaseSync): EventWatermark[] {
+    const rows = db
+      .prepare("SELECT key, value FROM store_meta WHERE substr(key, 1, ?) = ?")
+      .all(EVENT_SEQUENCE_PREFIX.length, EVENT_SEQUENCE_PREFIX) as Array<{
+      key: string;
+      value: string;
+    }>;
+    const watermarks: EventWatermark[] = [];
+    for (const row of rows) {
+      let pair: unknown;
+      try {
+        pair = JSON.parse(row.key.slice(EVENT_SEQUENCE_PREFIX.length));
+      } catch {
+        throw new StoreError("STORE_LAYOUT", "invalid event counter key");
+      }
+      if (
+        !Array.isArray(pair) ||
+        pair.length !== 2 ||
+        typeof pair[0] !== "string" ||
+        typeof pair[1] !== "string" ||
+        eventSequenceKey(pair[0], pair[1]) !== row.key
+      )
+        throw new StoreError("STORE_LAYOUT", "invalid event counter key");
+      watermarks.push({
+        scopeId: pair[0],
+        sessionId: pair[1],
+        seq: Store.eventHighwater(db, pair[0], pair[1], true),
+      });
+    }
+    const sessions = db
+      .prepare(
+        "SELECT DISTINCT scope_id, session_id FROM records WHERE kind = 'event'",
+      )
+      .all() as Array<{ scope_id: string; session_id: string }>;
+    for (const session of sessions)
+      Store.eventHighwater(db, session.scope_id, session.session_id, true);
+    return watermarks;
+  }
+
+  /** Highest ALLOCATED envelope sequence, including transient reservations; survives reopen. */
+  eventHighwater(scopeId: string, sessionId: string): number {
+    this.assertOpen();
+    return Store.eventHighwater(this.db, scopeId, sessionId);
+  }
+
+  /** Highest retained durable envelope sequence; transient allocation is separate. */
+  eventCursor(scopeId: string, sessionId: string): number {
+    this.assertOpen();
+    Store.eventHighwater(this.db, scopeId, sessionId);
+    const row = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(json_extract(payload, '$.envelope.seq')), 0) AS seq FROM records WHERE kind = 'event' AND scope_id = ? AND session_id = ?",
+      )
+      .get(scopeId, sessionId) as { seq: number };
+    return row.seq;
+  }
+
+  /** Retained envelopes only; deleted evidence fails closed. Transient gaps need a real snapshot. */
+  replayEvents(
+    scopeId: string,
+    sessionId: string,
+    afterSeq = 0,
+  ): SplyceEvent[] {
+    this.assertOpen();
+    const highwater = Store.eventHighwater(this.db, scopeId, sessionId, true);
+    if (!Number.isSafeInteger(afterSeq) || afterSeq < 0 || afterSeq > highwater)
+      throw new StoreError(
+        "INVALID_CURSOR",
+        "event cursor is outside this session's history",
+      );
+    const context = this.context(scopeId, {
+      sessionId,
+      configRevision: INITIAL_CONFIG_REVISION,
+      profileRevision: "replay",
+      policyRevision: "replay",
+    });
+    context.lastDurableSeq = highwater;
+    context.resolveReference = (id) =>
+      this.db.prepare("SELECT 1 FROM deletions WHERE record_id = ?").get(id) ===
+      undefined;
+    const rows = this.db
+      .prepare(
+        "SELECT seq, kind, schema_version, payload FROM records WHERE kind = 'event' AND scope_id = ? AND session_id = ? ORDER BY seq ASC",
+      )
+      .all(scopeId, sessionId);
+    return rows
+      .map((row) => {
+        const entry = this.readRow(row);
+        const record = validateRecord("event", entry.record, context);
+        this.assertEventSource(record.envelope, context);
+        return record.envelope;
+      })
+      .filter((event) => event.seq > afterSeq);
   }
 
   /** Reads one record by id; unknown contract versions are rejected (S5). */
@@ -850,6 +1287,7 @@ export class Store {
   private static validateBackup(dbPath: string): {
     deletionEpoch: number;
     ownershipEpoch: number;
+    eventWatermarks: EventWatermark[];
   } {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
@@ -863,6 +1301,7 @@ export class Store {
         );
       Store.validateStamped(db, stamped.value);
       return {
+        eventWatermarks: Store.eventWatermarks(db),
         deletionEpoch: Store.epochOf(db, "deletion_epoch", "deletions"),
         ownershipEpoch: Store.epochOf(
           db,
@@ -912,7 +1351,11 @@ export class Store {
    */
   restore(backupPath: string): void {
     this.assertWritable();
-    let backup: { deletionEpoch: number; ownershipEpoch: number };
+    let backup: {
+      deletionEpoch: number;
+      ownershipEpoch: number;
+      eventWatermarks: EventWatermark[];
+    };
     try {
       backup = Store.validateBackup(backupPath);
     } catch (error) {
@@ -931,6 +1374,22 @@ export class Store {
         `backup ownership epoch ${String(backup.ownershipEpoch)} is older than current ${String(liveOwnershipEpoch)}; restoring would roll back the workspace writer state`,
       );
 
+    const liveWatermarks = Store.eventWatermarks(this.db);
+    const assertEventRecovery = (watermarks: readonly EventWatermark[]) => {
+      for (const live of liveWatermarks) {
+        const restored = watermarks.find(
+          (item) =>
+            item.scopeId === live.scopeId && item.sessionId === live.sessionId,
+        );
+        if ((restored?.seq ?? 0) < live.seq)
+          throw new StoreError(
+            "STALE_EVENT_SEQUENCE",
+            "restore would roll back an acknowledged event sequence",
+          );
+      }
+    };
+    assertEventRecovery(backup.eventWatermarks);
+
     // Stage the replacement next to the live file and revalidate the staged
     // bytes: the live file is untouched until a validated, reopenable
     // replacement exists.
@@ -938,7 +1397,7 @@ export class Store {
     const original = `${this.path}.restore-original`;
     try {
       copyFileSync(backupPath, staging);
-      Store.validateBackup(staging);
+      assertEventRecovery(Store.validateBackup(staging).eventWatermarks);
     } catch (error) {
       try {
         // The staging path is store-reserved; clear any blocking artifact so
@@ -1222,7 +1681,7 @@ export class Store {
     };
   }
 
-  /** S8 export: one JSON line per record, `{seq, kind, record}`. */
+  /** S8 export: legacy record lines, plus one versioned header when event counters exist. */
   exportJSONL(targetPath: string, scopeId?: string): number {
     this.assertOpen();
     const rows =
@@ -1238,6 +1697,17 @@ export class Store {
             )
             .all(scopeId) as unknown[]);
     const lines: string[] = [];
+    const watermarks = Store.eventWatermarks(this.db).filter(
+      (item) => scopeId === undefined || item.scopeId === scopeId,
+    );
+    if (watermarks.length > 0)
+      lines.push(
+        JSON.stringify({
+          format: "splyce-event-ledger",
+          version: 1,
+          watermarks,
+        }),
+      );
     for (const row of rows) {
       const stored = this.readRow(row);
       lines.push(
@@ -1253,7 +1723,7 @@ export class Store {
       lines.join("\n") + (lines.length ? "\n" : ""),
       "utf8",
     );
-    return lines.length;
+    return rows.length;
   }
 
   /** S8 import: replays a JSONL export into this store in file order. */
@@ -1261,12 +1731,58 @@ export class Store {
     this.assertWritable();
     const text = readFileSync(sourcePath, "utf8");
     const inputs: AppendInput[] = [];
+    const watermarks: EventWatermark[] = [];
+    let first = true;
     for (const line of text.split("\n")) {
       if (line.trim() === "") continue;
-      const entry = JSON.parse(line) as { kind: string; record: unknown };
-      inputs.push({ kind: entry.kind as RecordKind, record: entry.record });
+      const entry: unknown = JSON.parse(line);
+      if (!isRecordObject(entry))
+        throw new StoreError("IMPORT_FORMAT", "invalid JSONL entry");
+      if (Object.hasOwn(entry, "format")) {
+        if (
+          !first ||
+          entry.format !== "splyce-event-ledger" ||
+          entry.version !== 1 ||
+          Object.keys(entry).length !== 3 ||
+          !Array.isArray(entry.watermarks) ||
+          entry.watermarks.length === 0
+        )
+          throw new StoreError("IMPORT_FORMAT", "invalid event ledger header");
+        const seen = new Set<string>();
+        for (const item of entry.watermarks) {
+          if (
+            !isRecordObject(item) ||
+            Object.keys(item).length !== 3 ||
+            typeof item.scopeId !== "string" ||
+            typeof item.sessionId !== "string" ||
+            typeof item.seq !== "number" ||
+            !Number.isSafeInteger(item.seq) ||
+            item.seq < 0
+          )
+            throw new StoreError("IMPORT_FORMAT", "invalid event watermark");
+          const key = eventSequenceKey(item.scopeId, item.sessionId);
+          if (seen.has(key))
+            throw new StoreError("IMPORT_FORMAT", "duplicate event watermark");
+          seen.add(key);
+          watermarks.push({
+            scopeId: item.scopeId,
+            sessionId: item.sessionId,
+            seq: item.seq,
+          });
+        }
+      } else {
+        if (typeof entry.kind !== "string")
+          throw new StoreError("IMPORT_FORMAT", "invalid record kind");
+        if (entry.kind === "event" && watermarks.length === 0)
+          throw new StoreError(
+            "IMPORT_FORMAT",
+            "event records require a watermark header",
+          );
+        inputs.push({ kind: entry.kind as RecordKind, record: entry.record });
+      }
+      first = false;
     }
-    this.appendBatch(inputs, caller);
+    this.commitBatch(inputs, [], caller, {}, watermarks);
     return inputs.length;
   }
 

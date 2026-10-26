@@ -84,8 +84,10 @@ Removing each transport, per-send lease, observer and terminal redaction guard
 fails its matching test. Removing the shared sanitizer, its lease guard or any
 of the three callback bindings also fails the actual observer data assertions.
 The native resolver's 27 cases and the integrated store/bridge/config/snapshot
-suite pass together, 94 cases. The request-port contract and its type fixture
-also pass, alongside 54 shared contract cases. These are local deterministic
+suite pass together, 110 cases after synchronizing the bootstrap dependency.
+The request-port contract and its type fixture also pass, alongside 58 shared
+contract cases. The 15 SessionMap cases pass in source mode with the real Pi
+SessionManager; the built/installed path remains unqualified. These are local deterministic
 checks, not native egress or installed-provider qualification.
 
 The shared credential registry now lives in the already-reachable

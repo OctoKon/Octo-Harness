@@ -25,6 +25,7 @@
     "src/receipts.ts",
     "src/config.ts",
     "src/desktop-bridge.ts",
+    "src/session-map.ts",
     "src/node-sqlite.d.ts",
     "src/policy-node.d.ts",
     "src/node-child-process.d.ts"
