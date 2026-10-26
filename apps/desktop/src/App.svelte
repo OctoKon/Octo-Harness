@@ -1,19 +1,43 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { connectionState, handshake } from "./stores/engine";
+  import TurnStream from "./components/TurnStream.svelte";
+  import { connectionState, handshake, onEvent } from "./stores/engine";
+  import {
+    createTurnStreamTransport,
+    createTurnsState,
+    type TurnsState,
+  } from "./stores/turns";
 
   let status = $state("disconnected");
+  let turns = $state.raw<TurnsState>(createTurnsState());
+  let currentRun = $derived(
+    turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
+  );
+
+  function onApproval() {
+    // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
+  }
 
   onMount(() => {
-    const unsub = connectionState.subscribe((val) => {
+    const transport = createTurnStreamTransport({
+      onState: (next) => {
+        turns = next;
+      },
+    });
+    const unsubState = connectionState.subscribe((val) => {
       status = val;
     });
+    const unsubEvents = onEvent((event) => transport.enqueue(event));
 
     handshake().catch(() => {
       // Handshake rejection leaves status in 'unavailable' or 'error'
     });
 
-    return unsub;
+    return () => {
+      unsubState();
+      unsubEvents();
+      transport.dispose();
+    };
   });
 </script>
 
@@ -27,8 +51,17 @@
     </div>
   </header>
 
-  <div class="app-content">
-    {#if status === "ready"}
+  <div class="app-content" class:conversation={currentRun !== undefined}>
+    {#if currentRun}
+      <section class="turn-pane" aria-label="Transcript">
+        <TurnStream
+          run={currentRun}
+          stale={turns.stale}
+          canRespond={() => false}
+          {onApproval}
+        />
+      </section>
+    {:else if status === "ready"}
       <div class="workspace-view">
         <p>Ready for workspace execution.</p>
       </div>
@@ -93,6 +126,16 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
+  }
+  .app-content.conversation {
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow-y: auto;
+  }
+  .turn-pane {
+    width: 100%;
+    max-width: 880px;
+    margin: 0 auto;
   }
   .unavailable-view {
     max-width: 480px;

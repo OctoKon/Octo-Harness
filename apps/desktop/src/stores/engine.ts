@@ -73,6 +73,7 @@ function notifyState(next: EngineConnectionState) {
 async function getTauriInvoke(): Promise<
   ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null
 > {
+  if (typeof window === "undefined") return null;
   try {
     // Dynamic import to satisfy @tauri-apps/api/core module resolution in packaged Tauri WebView
     const core = (await import("@tauri-apps/api/core" as string)) as {

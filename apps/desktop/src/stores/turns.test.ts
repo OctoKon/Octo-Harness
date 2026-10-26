@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
   EventKind,
@@ -8,11 +9,13 @@ import type {
 import {
   approvalRequestIdFor,
   canRespondToApproval,
+  createTurnStreamTransport,
   createTurnsState,
   reduceTurns,
   resyncRequest,
+  TRANSPORT_LIMITS,
   type TurnsState,
-} from "./turns.ts";
+} from "./turns";
 
 function event<K extends EventKind>(
   seq: number,
@@ -40,7 +43,10 @@ function applyAll(
   state: TurnsState,
   envelopes: SplyceEventEnvelope[],
 ): TurnsState {
-  return envelopes.reduce(reduceTurns, state);
+  return envelopes.reduce(
+    (current, envelope) => reduceTurns(current, envelope),
+    state,
+  );
 }
 
 const started = (runId = "run_a", turnId = "turn_a"): SplyceEventEnvelope =>
@@ -99,7 +105,7 @@ type GuiFixture = {
 function guiFixture(file: string): GuiFixture {
   return JSON.parse(
     readFileSync(
-      new URL(`../../../../tests/fixtures/gui/${file}`, import.meta.url),
+      resolve(process.cwd(), "../../tests/fixtures/gui", file),
       "utf8",
     ),
   ) as GuiFixture;
@@ -409,5 +415,126 @@ describe("ordering, replay and attribution", () => {
 
     expect(state.stale).toBe(true);
     expect(state.runs.run_a.status).toBe("streaming");
+  });
+});
+
+describe("TD-18 renderer transport", () => {
+  const manual = () => {};
+
+  it("coalesces a 10x render-rate burst without dropping text or requesting resync", () => {
+    const transport = createTurnStreamTransport({ schedule: manual });
+    transport.enqueue(started());
+    transport.flush();
+
+    for (let i = 0; i < 10_000; i += 1) {
+      transport.enqueue(delta(i + 2, "x"));
+    }
+    const state = transport.flush();
+
+    expect(state.runs.run_a.text).toHaveLength(10_000);
+    expect(state.lastSeq).toBe(10_001);
+    expect(state.needsResync).toBe(false);
+    expect(state.lastDurableSeq).toBe(1);
+  });
+
+  it("requests one resync when the transient renderer queue overflows", () => {
+    const resyncs: number[] = [];
+    const errors: string[] = [];
+    const transport = createTurnStreamTransport({
+      schedule: manual,
+      onResync: (fromSeq) => resyncs.push(fromSeq),
+      onError: (code) => errors.push(code),
+    });
+    transport.enqueue(started());
+    transport.flush();
+
+    for (let i = 0; i < 600; i += 1) {
+      transport.enqueue(
+        i % 2 === 0
+          ? event(
+              i + 2,
+              "turn.thought_delta",
+              {
+                runId: "run_a",
+                delta: "t",
+                turnId: "turn_a",
+              } as EventPayloads["turn.thought_delta"],
+              false,
+            )
+          : delta(i + 2, "s"),
+      );
+    }
+
+    expect(errors).toEqual(["ERR_STREAM_RENDER_OVERFLOW"]);
+    expect(resyncs).toEqual([1]);
+    expect(transport.current().needsResync).toBe(true);
+
+    transport.enqueue(snapshot(700));
+    const state = transport.flush();
+    expect(state.needsResync).toBe(false);
+    expect(state.resyncCount).toBe(1);
+  });
+
+  it("pauses durable delivery at the frozen queue bound with one resync", () => {
+    const resyncs: number[] = [];
+    const transport = createTurnStreamTransport({
+      schedule: manual,
+      onResync: (fromSeq) => resyncs.push(fromSeq),
+    });
+    transport.enqueue(started());
+    transport.flush();
+
+    for (let i = 0; i < TRANSPORT_LIMITS.pendingQueueFrames + 1; i += 1) {
+      transport.enqueue(toolIntent(i + 2, `act_${i}`));
+    }
+
+    expect(resyncs).toEqual([1]);
+    expect(transport.current().needsResync).toBe(true);
+  });
+
+  it("rejects an encoded frame over the byte cap before it reaches the reducer", () => {
+    const errors: string[] = [];
+    const transport = createTurnStreamTransport({
+      schedule: manual,
+      onError: (code) => errors.push(code),
+    });
+    transport.enqueue(started());
+    transport.flush();
+    transport.enqueue(
+      event(2, "turn.tool_intent", {
+        runId: "run_a",
+        actionId: "act_big",
+        capabilityId: "cap_fs_read_tree",
+        target: "target_desktop_src",
+        argsSummary: "x".repeat(TRANSPORT_LIMITS.maxEncodedFrameBytes),
+      }),
+    );
+
+    expect(errors).toEqual(["ERR_FRAME_TOO_LARGE"]);
+    expect(transport.current().needsResync).toBe(true);
+  });
+
+  it("preserves FUI-W4 ordering and attribution through the coalescing transport", () => {
+    const fixture = guiFixture("fui-w4-stream-backpressure.json");
+    const events = fixture.eventSequence.map((step) => step.event);
+    const transport = createTurnStreamTransport({ schedule: manual });
+    for (const envelope of events) transport.enqueue(envelope);
+    const state = transport.flush();
+    const expected = applyAll(createTurnsState(), events);
+    const run = state.runs.run_w4_01;
+
+    expect(run.text).toBe(expected.runs.run_w4_01.text);
+    expect(run.thought).toBe(expected.runs.run_w4_01.thought);
+    expect(run.blocks.map((block) => block.type)).toEqual(
+      expected.runs.run_w4_01.blocks.map((block) => block.type),
+    );
+    expect(
+      run.actions.map((action) => [action.actionId, action.status]),
+    ).toEqual(
+      expected.runs.run_w4_01.actions.map((action) => [
+        action.actionId,
+        action.status,
+      ]),
+    );
   });
 });

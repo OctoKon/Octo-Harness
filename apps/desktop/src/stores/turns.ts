@@ -9,6 +9,7 @@ export type ApprovalState = "requested" | "allowed" | "denied" | "canceled";
 
 export interface ApprovalView {
   approvalRequestId: string;
+  runId: string;
   actionId: string;
   capabilityId: string;
   targetScope: string;
@@ -256,6 +257,7 @@ function missingPayload(state: TurnsState): TurnsState {
 export function reduceTurns(
   state: TurnsState,
   envelope: SplyceEventEnvelope,
+  options?: { coalesced?: boolean },
 ): TurnsState {
   if (
     !envelope ||
@@ -278,6 +280,7 @@ export function reduceTurns(
   if (state.needsResync && !isSnapshot) return state;
   if (
     !isSnapshot &&
+    !options?.coalesced &&
     envelope.seq > state.lastSeq &&
     envelope.seq !== state.lastSeq + 1
   ) {
@@ -436,6 +439,7 @@ export function reduceTurns(
           index === -1 ? undefined : turn.actions[index];
         const approval: ApprovalView = {
           approvalRequestId: event.approvalRequestId,
+          runId: event.runId,
           actionId: event.actionId,
           capabilityId: event.capabilityId,
           targetScope: event.targetScope,
@@ -535,4 +539,234 @@ export function canRespondToApproval(
 ): boolean {
   if (state.needsResync) return false;
   return findAction(state, actionId)?.approval?.state === "requested";
+}
+
+// TD-15 frozen limits (UNMEASURED proposal): renderer leg is 256 frames / 4 MiB;
+// durable delivery pauses on 1024 frames / 8 MiB. fromSeq is cursor-exclusive.
+export const TRANSPORT_LIMITS = {
+  maxInlineBytes: 65536,
+  maxEncodedFrameBytes: 262144,
+  maxPayloadBytes: 262140,
+  pendingQueueFrames: 1024,
+  pendingQueueBytes: 8388608,
+  rendererQueueFrames: 256,
+  rendererQueueBytes: 4194304,
+  transientCoalesceWindowMs: 16,
+} as const;
+
+export type TurnStreamErrorCode =
+  "ERR_STREAM_RENDER_OVERFLOW" | "ERR_FRAME_TOO_LARGE";
+
+interface PendingFrame {
+  event: SplyceEventEnvelope;
+  coalesced: boolean;
+}
+
+export interface TurnStreamTransportOptions {
+  state?: TurnsState;
+  schedule?: (task: () => void) => void;
+  onState?: (state: TurnsState) => void;
+  onResync?: (fromSeq: number) => void;
+  onError?: (code: TurnStreamErrorCode) => void;
+}
+
+export interface TurnStreamTransport {
+  enqueue(event: SplyceEventEnvelope): void;
+  flush(): TurnsState;
+  current(): TurnsState;
+  dispose(): void;
+}
+
+const frameEncoder = new TextEncoder();
+
+function isTransientKind(kind: EventKind): boolean {
+  return kind === "turn.stream_delta" || kind === "turn.thought_delta";
+}
+
+function frameBytes(event: SplyceEventEnvelope): number {
+  return 4 + frameEncoder.encode(JSON.stringify(event)).length;
+}
+
+/**
+ * Bounded renderer intake. Transient deltas are coalesced in place before the
+ * queue is measured, so rapid text/thought streams cost one frame per kind per
+ * batch. Any overflow requests exactly one resync from the durable cursor.
+ */
+export function createTurnStreamTransport(
+  options: TurnStreamTransportOptions = {},
+): TurnStreamTransport {
+  let state = options.state ?? createTurnsState();
+  let pending: PendingFrame[] = [];
+  let durableFrames = 0;
+  let durableBytes = 0;
+  let transientFrames = 0;
+  let transientBytes = 0;
+  let scheduled = false;
+  let disposed = false;
+  let resyncNotified = false;
+
+  const schedule =
+    options.schedule ??
+    ((task: () => void) => {
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(task);
+      } else {
+        queueMicrotask(task);
+      }
+    });
+
+  function emit() {
+    options.onState?.(state);
+  }
+
+  function notifyResync() {
+    if (!state.needsResync || resyncNotified) return;
+    resyncNotified = true;
+    options.onResync?.(state.lastDurableSeq);
+  }
+
+  function resetQueue() {
+    pending = [];
+    durableFrames = 0;
+    durableBytes = 0;
+    transientFrames = 0;
+    transientBytes = 0;
+  }
+
+  function overflow(code: TurnStreamErrorCode) {
+    options.onError?.(code);
+    if (state.needsResync) return;
+    resetQueue();
+    state = {
+      ...state,
+      needsResync: true,
+      resyncFromSeq: state.lastDurableSeq,
+      resyncAfterSeq: state.lastDurableSeq,
+    };
+    notifyResync();
+    emit();
+  }
+
+  function scheduleFlush() {
+    if (scheduled) return;
+    scheduled = true;
+    schedule(() => {
+      if (!disposed) flush();
+    });
+  }
+
+  function canMerge(
+    previous: SplyceEventEnvelope,
+    event: SplyceEventEnvelope,
+  ): boolean {
+    if (!isTransientKind(event.kind) || previous.kind !== event.kind) {
+      return false;
+    }
+    if (!("payload" in previous) || !("payload" in event)) return false;
+    const previousPayload = previous.payload as { runId?: string };
+    const eventPayload = event.payload as { runId?: string };
+    return previousPayload.runId === eventPayload.runId;
+  }
+
+  function mergedEvent(
+    previous: SplyceEventEnvelope,
+    event: SplyceEventEnvelope,
+  ): SplyceEventEnvelope {
+    if (
+      !("payload" in previous) ||
+      !("payload" in event) ||
+      previous.kind !== event.kind
+    ) {
+      return event;
+    }
+    if (
+      event.kind !== "turn.stream_delta" &&
+      event.kind !== "turn.thought_delta"
+    ) {
+      return event;
+    }
+    const { payload: _payload, payloadArtifactId: _artifact, ...base } = event;
+    const eventPayload = event.payload as { delta: string };
+    return {
+      ...base,
+      payload: {
+        ...eventPayload,
+        delta:
+          (previous.payload as { delta: string }).delta + eventPayload.delta,
+      },
+    } as SplyceEventEnvelope;
+  }
+
+  function enqueue(event: SplyceEventEnvelope) {
+    if (disposed) return;
+    if (state.needsResync && event.kind !== "run.reconnect_snapshot") return;
+
+    const bytes = frameBytes(event);
+    if (bytes > TRANSPORT_LIMITS.maxEncodedFrameBytes) {
+      overflow("ERR_FRAME_TOO_LARGE");
+      return;
+    }
+
+    const transient = isTransientKind(event.kind);
+    const previous = pending[pending.length - 1];
+    if (transient && previous && canMerge(previous.event, event)) {
+      const merged = mergedEvent(previous.event, event);
+      const mergedBytes = frameBytes(merged);
+      transientBytes += mergedBytes - frameBytes(previous.event);
+      previous.event = merged;
+      previous.coalesced = true;
+    } else {
+      pending.push({ event, coalesced: false });
+      if (transient) {
+        transientFrames += 1;
+        transientBytes += bytes;
+      } else {
+        durableFrames += 1;
+        durableBytes += bytes;
+      }
+    }
+
+    if (
+      transientFrames > TRANSPORT_LIMITS.rendererQueueFrames ||
+      transientBytes > TRANSPORT_LIMITS.rendererQueueBytes ||
+      durableFrames > TRANSPORT_LIMITS.pendingQueueFrames ||
+      durableBytes > TRANSPORT_LIMITS.pendingQueueBytes
+    ) {
+      overflow("ERR_STREAM_RENDER_OVERFLOW");
+      return;
+    }
+
+    scheduleFlush();
+  }
+
+  function flush(): TurnsState {
+    scheduled = false;
+    if (!pending.length) return state;
+
+    const batch = pending;
+    resetQueue();
+    const hadResync = state.needsResync;
+    for (const frame of batch) {
+      state = reduceTurns(
+        state,
+        frame.event,
+        frame.coalesced ? { coalesced: true } : undefined,
+      );
+    }
+    if (state.needsResync && !hadResync) notifyResync();
+    if (!state.needsResync) resyncNotified = false;
+    emit();
+    return state;
+  }
+
+  return {
+    enqueue,
+    flush,
+    current: () => state,
+    dispose() {
+      disposed = true;
+      resetQueue();
+      scheduled = false;
+    },
+  };
 }
