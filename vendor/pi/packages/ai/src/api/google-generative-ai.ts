@@ -42,6 +42,7 @@ import {
 	toGoogleThinkingLevel,
 	usesGoogleThinkingLevel,
 } from "./google-shared.ts";
+import { resolveSplyceCredential } from "../splyce-credentials.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 export interface GoogleOptions extends StreamOptions {
@@ -83,11 +84,14 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			timestamp: Date.now(),
 		};
 
+		let redact = (text: string) => text;
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
 			}
-			const apiKey = options?.apiKey;
+			const credential = await resolveSplyceCredential(options ?? {});
+			redact = credential.redact;
+			const apiKey = credential.apiKey;
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
@@ -289,7 +293,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			// Splyce TD-20: an errored or aborted response never carries tool calls into dispatch or persistence.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			output.errorMessage = redact(formatProviderError(normalizeProviderError(error)));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

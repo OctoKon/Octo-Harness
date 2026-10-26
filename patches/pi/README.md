@@ -76,3 +76,24 @@ gates before publishing a new candidate.
 Pi's exact `undici` pin to 8.12.3, which includes the fix for
 [GHSA-xjj6-f33q-929c](https://github.com/nodejs/undici/security/advisories/GHSA-xjj6-f33q-929c).
 Regenerate and verify both npm lockfiles after applying it.
+
+## 0004: provider credential option and errored tool calls (TD-20, TD-21)
+
+`0004-provider-credentials-and-error-tool-calls.patch` applies from the Splyce root to `vendor/pi/`. It is an upstream-divergent
+core patch to `packages/ai`, recorded here per [core fusion](../../research/docs/design/core-fusion.md).
+
+- **Shared `credentials` option.** `src/splyce-credentials.ts` adds `SplyceCredentials { lease }`, a structural mirror of the
+  native `SecretLease` (TD-16), and `StreamOptions.credentials`. The Anthropic, Google and Vertex adapters obtain their key only
+  from the lease: it is mutually exclusive with `apiKey`, a failing or revoked lease throws before any SDK client exists, no
+  environment or fallback credential is read, and the secret is redacted from `errorMessage`. TD-19, TD-22 and TD-23 reuse the
+  same option and helper. Limit: the SDK client necessarily holds the key for the request's lifetime; revocation mid-stream relies
+  on the native layer aborting the request. Vertex application-default credentials are not covered by this option.
+- **No tool calls from errored responses.** Anthropic returns a tool call only after its `content_block_stop`; a stream that ends
+  with an unfinished tool call is an error, and the error path drops unfinished calls. The Google and Vertex error paths drop all
+  tool calls, so a malformed-function-call finish or a stream without a finish reason cannot reach dispatch.
+- **Regression entrypoints.** `packages/ai/test/splyce-credentials.test.ts`, `splyce-anthropic-stream-safety.test.ts` and
+  `splyce-google-stream-safety.test.ts` run the real adapters with only the vendor SDK boundary replaced. Removing the mutual
+  exclusion, the redaction, or the error-path filtering fails the corresponding case.
+- **Not yet qualified.** These tests ran against stand-in model-catalog data (the generated catalog needs the network; see
+  issue 76), so existing adapter suites cannot all run locally. Provider-specific admission, per-send endpoint rechecks and
+  cancellation belong to TD-13/TD-16 and the native transport.

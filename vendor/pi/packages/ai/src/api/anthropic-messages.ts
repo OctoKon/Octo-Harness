@@ -18,6 +18,7 @@ import {
 	ANTHROPIC_WORKSPACE_ID_ENV,
 } from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
+import { resolveSplyceCredential } from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -602,6 +603,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 
 		// Splyce TD-21: only tool calls closed by content_block_stop may be returned; a partial one never reaches dispatch.
 		const finishedToolCalls = new WeakSet<object>();
+		let redact = (text: string) => text;
 
 		try {
 			let client: Anthropic;
@@ -613,7 +615,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				client = options.client;
 				isOAuth = false;
 			} else {
-				const apiKey = options?.apiKey;
+				const credential = await resolveSplyceCredential(options ?? {});
+				redact = credential.redact;
+				const apiKey = credential.apiKey;
 				const federation = getAnthropicFederation(model, apiKey, options?.headers, options?.env);
 				if (!federation) assertRequestAuth(model.provider, apiKey, options?.headers);
 
@@ -927,7 +931,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		} catch (error) {
 			output.content = output.content.filter((block) => block.type !== "toolCall" || finishedToolCalls.has(block));
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = redact(error instanceof Error ? error.message : JSON.stringify(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
