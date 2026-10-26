@@ -1037,5 +1037,51 @@
     "claims": ["Apache-2.0, 24B parameters, 256K context."],
     "verification": "primary source located by Codex deep research; not re-fetched by the parent",
     "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-mcp-2026-07-changelog",
+    "tool": "MCP",
+    "url": "https://modelcontextprotocol.io/specification/2026-07-28/changelog",
+    "title": "MCP 2026-07-28 changelog",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The revision removes the initialize handshake, carries version and capabilities in _meta on every request, and replaces server-initiated requests with input_required results answered by client retries."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "No Splyce MCP or skills implementation exists yet."
+  },
+  {
+    "id": "R32-mcp-tools-annotations",
+    "tool": "MCP",
+    "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+    "title": "MCP tools",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Clients MUST consider tool annotations untrusted unless they come from trusted servers."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "No Splyce MCP or skills implementation exists yet."
+  },
+  {
+    "id": "R32-pi-mcp-config",
+    "tool": "Pi MCP",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/mcp.md",
+    "title": "Pi MCP documentation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "env and headers values can use environment variables or run a !command; OAuth tokens are stored in ~/.pi/agent/mcp-auth.json; the legacy SSE transport is not supported."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "No Splyce MCP or skills implementation exists yet."
+  },
+  {
+    "id": "R32-agent-skills-spec",
+    "tool": "Agent Skills",
+    "url": "https://agentskills.io/specification",
+    "title": "Agent Skills specification",
+    "accessed": "2026-10-26",
+    "claims": ["SKILL.md frontmatter includes an allowed-tools field."],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "No Splyce MCP or skills implementation exists yet."
   }
 ]

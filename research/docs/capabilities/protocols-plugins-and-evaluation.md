@@ -24,6 +24,35 @@ The current MCP documentation exposes distinct primitives: user-selected **promp
 
 For transport, retain the difference between local stdio child-process servers and remote Streamable HTTP servers: local launch is a process-trust and environment problem; remote connection is endpoint discovery, authorization, redirect and data-egress problem. MCP authorization and consent remain host policy, not an implication of a server advertising a tool. Cancellation is cooperative: send cancellation/request-specific intent, stop awaiting results, then separately terminate owned child processes or revoke remote work according to provider capability. The MCP Tasks extension has its own `tasks/cancel` semantics and must not be mistaken for general subprocess termination.
 
+### MCP 2026-07-28 and Pi's MCP behavior (2026-10 refresh)
+
+The [2026-07-28 revision](https://modelcontextprotocol.io/specification/2026-07-28/changelog) is the latest. It removes the `initialize` handshake (each request carries version and capabilities in `_meta`, and servers implement `server/discover`); replaces server-initiated elicitation, sampling and roots requests with `input_required` results that the client answers by retrying with `inputResponses`; drops SSE stream redelivery; and deprecates Sampling, Roots and Logging. Its [tools page](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) requires that clients treat tool annotations as untrusted unless they come from trusted servers, and its [authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization) and [security best practices](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices) require RFC 8707 resource indicators, issuer validation and issuer-keyed credentials, SSRF controls on OAuth discovery, and `http`/`https`-only authorization URLs never opened through a shell.
+
+Pi's own [MCP documentation](https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/mcp.md) at the pin shows four behaviors Splyce must govern: `env` and `headers` values may read environment variables and run `!command`; OAuth tokens are stored in `~/.pi/agent/mcp-auth.json` with Pi registering itself with the authorization server; server annotations reach permission extensions through `pi.getAllTools()`; and resources become model-callable `list_mcp_resources`/`read_mcp_resource` tools whose binary results land in temporary files. It drops MCP Apps (`ui://`) resources and rejects the legacy SSE transport. Its protocol version, elicitation, sampling, `outputSchema` validation and `x-mcp-header` handling are not stated and stay unverified until TD-38 reads the source.
+
+Splyce consequences:
+
+- **Policy:** annotations can only make a decision stricter, never relax a grant.
+- **Resource reads:** each resource read is a separately granted, receipted effect.
+- **Lost streams:** a tool call lost on a broken stream is an uncertain outcome, never a blind re-send.
+- **Elicitation:** an answer sends user data to the server, so it goes through admission, egress and receipts, and its retry is rechecked against current grants.
+- **OAuth:** discovery and token fetches are their own egress routes, and argument-derived `Mcp-Param-*` headers are covered by redaction.
+- **Tokens:** `mcp-auth.json` comes under the credential facility or is inventoried as a retained secret location (TD-79).
+- **Config commands:** an untrusted project's `!command` values never run.
+- **Sampling and UI:** sampling stays denied, and server-supplied UI is not rendered in V1.
+- **Skills:** a skill's experimental `allowed-tools` field never pre-approves anything.
+
+| Case                          | Required observation                                                                                                                                                                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `P1_mcp_annotation_untrusted` | A write-capable MCP tool advertising `readOnlyHint: true` still needs its write grant; an annotation never relaxes a decision.                                                                                                                   |
+| `P1_mcp_config_command`       | An untrusted project MCP config whose `env` or `headers` contain `!command` runs nothing; a trusted one spawns only after its own admission and intent receipt, and the resolved secret never enters receipts or logs.                           |
+| `P1_mcp_elicitation`          | An `input_required` elicitation shows the requesting server, sends the answer only after admission and an egress receipt, rechecks current grants on the retried call, and opens a URL-mode elicitation only for `http`/`https` without a shell. |
+| `P1_mcp_lost_stream`          | A tool call whose stream breaks before its result is recorded as uncertain and is not re-sent without reconciliation.                                                                                                                            |
+| `P1_mcp_oauth_egress`         | OAuth discovery refuses private, link-local and non-HTTPS targets and re-validates each redirect; tokens are keyed by issuer and never reused across issuers; no token reaches receipts or exports.                                              |
+| `P1_skill_allowed_tools`      | A skill declaring `allowed-tools: Bash(*)` still requires every grant; the field is displayed as information only.                                                                                                                               |
+
+ACP schema v1.26.0 (2026-10-16) is the stable line and v2.0.0-alpha.9 a prerelease; A2A is at v1.0.1 (2026-05-28). TD-70 pins those exact versions if it selects them.
+
 ### ACP v1 and v2: editor-agent session semantics
 
 ACP is the clean seam for interchangeable coding agents in an editor. Its official v2 announcement says v2 is **draft**, so production adapters must continue v1 and negotiate/version-gate v2. The central v2 shift is from a turn-bounded model to session state updates that may occur while an agent is otherwise ready for input; it adds stable-ID patch/upsert behavior for messages/tool calls/output, structured filesystem changes, and more general permission subjects. That model directly supports queued steering, reconnect/replay and multiple observing clients.
