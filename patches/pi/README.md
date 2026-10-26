@@ -1,4 +1,4 @@
-# Pi native bootstrap patch
+# Pi native bootstrap patches
 
 Donor: [earendil-works/pi](https://github.com/earendil-works/pi/tree/d5b3de22d0e24a3e9c38a9410d3329b099717283),
 commit `d5b3de22d0e24a3e9c38a9410d3329b099717283`.
@@ -41,3 +41,31 @@ loaded-runtime regressions belong to the integrated TD-07/11 candidate; their
 final fork revision and results must be recorded before publication. Replay this
 patch against the exact donor on upgrade, rerun those cases and retain the prior
 source/artifact for rollback.
+
+## Native tool admission
+
+Apply `0002-native-tool-admission.patch` after the bootstrap patch. It changes
+the shared `prepareToolCall`/`executePreparedToolCall` path and exports a host-only
+tool-object binding. Unbound tools retain the unavailable guard; model arguments,
+tool annotations and renderer readiness cannot create a binding. The production
+SDK, provider, resource and user-shell entrypoints remain unavailable.
+
+`packages/splyce-pi/src/policy.ts` uses the actual operational store for current
+grant/revision checks, latest run/parent state, workspace epochs, exact argument
+digests, decision/intent ordering and outcome persistence before completion. An
+unresolved or previously used action is refused pending reconciliation. These
+records share the existing ledger; there is no second conversation loop or store.
+
+`tests/native-admission.test.mjs` exercises compiled Pi dispatch and physical
+fixture bytes with actual SQLite failures, revocation during preparation, stale
+ownership, terminal run/parent state, nested denial and process death after
+durable intent. Isolated removal of native authority or intent persistence must
+fail its corresponding physical assertion. The existing native entrypoint suite
+continues to qualify default unavailability independently.
+
+This is a native admission slice, not full TD-13 or production activation.
+Atomic cross-process key reservation, qualified filesystem identity/race checks,
+actual session/GUI/provider integration, redaction and owned process execution
+remain required. Trusted in-process code retains direct OS authority. Reapply both
+patches on donor upgrades and rerun the physical and installed-app gates before
+publishing a new candidate.

@@ -79,7 +79,7 @@ async function denied(operation, verify) {
   }
   await verify();
   assert.ok(error, "entrypoint must reject");
-  assert.equal(error.code, unavailable.code);
+  assert.equal(error.code, unavailable.code, error.stack);
   assert.equal(error.message, unavailable.message);
 }
 
@@ -418,7 +418,13 @@ registerHooks({ load(url, context, next) {
   if (targets.some(target => url.endsWith(target))) {
     const source = String(result.source);
     if (!source.includes('assertSplyceReady();')) throw new Error('mutation target not found');
-    return { ...result, source: source.replaceAll('assertSplyceReady();', '') };
+    let mutated = source.replaceAll('assertSplyceReady();', 'void 0;');
+    if (url.endsWith('/agent/dist/splyce-admission.js')) {
+      const binding = 'const admission = tool && admissions.get(tool);';
+      if (!mutated.includes(binding)) throw new Error('binding mutation target not found');
+      mutated = mutated.replace(binding, 'const admission = {check() {}, execute(_id, _name, args, invoke) {return invoke(args);}};');
+    }
+    return { ...result, source: mutated };
   }
   return result;
 } });\n`,
@@ -456,12 +462,12 @@ registerHooks({ load(url, context, next) {
       ],
       [
         "standalone tool",
-        ["/agent/dist/agent-loop.js"],
+        ["/agent/dist/splyce-admission.js"],
         /denied tool must not change physical bytes/,
       ],
       [
         "nested tool",
-        ["/agent/dist/agent-loop.js"],
+        ["/agent/dist/splyce-admission.js"],
         /denied tool must not change physical bytes/,
       ],
       [

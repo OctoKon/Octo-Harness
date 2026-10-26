@@ -19,6 +19,7 @@ import {
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
 import { assertSplyceReady } from "./splyce-readiness.ts";
+import { requireSplyceToolAdmission } from "./splyce-admission.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AgentContext,
@@ -728,8 +729,8 @@ async function prepareToolCall(
 	signal: AbortSignal | undefined,
 	tools: readonly AgentTool<any>[] = currentContext.tools ?? [],
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
-	assertSplyceReady();
 	const tool = tools.find((t) => t.name === toolCall.name);
+	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal);
 	if (!tool) {
 		return {
 			kind: "immediate",
@@ -821,8 +822,7 @@ export interface RunToolCallOptions extends ToolCallHooks {
  * messages. Tools that call other tools use this so the hooks (for example permission checks)
  * apply to those calls too.
  *
- * Never rejects for tool failures: unknown tools, validation errors, blocked calls, and thrown
- * errors come back as `isError: true`.
+ * Tool failures become `isError: true`; native admission or durability failures reject.
  */
 export async function runToolCall(toolCall: AgentToolCall, options: RunToolCallOptions): Promise<AgentToolCallOutcome> {
 	const { assistantMessage, context, signal } = options;
@@ -839,6 +839,11 @@ async function executePreparedToolCall(
 	signal: AbortSignal | undefined,
 	onUpdate: ToolUpdateSink,
 ): Promise<ExecutedToolCallOutcome> {
+	return requireSplyceToolAdmission(prepared.tool).execute(
+		prepared.toolCall.id,
+		prepared.toolCall.name,
+		prepared.args,
+		async (admittedArgs) => {
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
 	const startedAt = performance.now();
@@ -847,7 +852,7 @@ async function executePreparedToolCall(
 	try {
 		const result = await prepared.tool.execute(
 			prepared.toolCall.id,
-			prepared.args as never,
+			admittedArgs as never,
 			signal,
 			(partialResult) => {
 				if (!acceptingUpdates) return;
@@ -870,6 +875,9 @@ async function executePreparedToolCall(
 	} finally {
 		acceptingUpdates = false;
 	}
+		},
+		signal,
+	);
 }
 
 async function finalizeExecutedToolCall(
@@ -909,7 +917,7 @@ async function finalizeExecutedToolCall(
 				};
 				if (structuredContent === undefined) delete result.structuredContent;
 				else result.structuredContent = structuredContent;
-				isError = afterResult.isError ?? isError;
+				isError = executed.isError || (afterResult.isError ?? isError);
 			}
 		} catch (error) {
 			result = createErrorToolResult(error instanceof Error ? error.message : String(error));
