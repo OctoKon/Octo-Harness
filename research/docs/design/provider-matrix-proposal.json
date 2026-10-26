@@ -617,5 +617,64 @@
     "method": "Exact enum-to-inventory equality, unique API IDs, explicit base denial for every classifier/image API, anchored per-adapter request/result/usage/cancel observations and Git blob SHA verification.",
     "evidence": "research/docs/evidence/td04-provider-source-verification.json",
     "runtimeSamples": 0
+  },
+  "customOpenAICompatibleProfile": {
+    "status": "proposal only; no gateway installation, runtime configuration or compatibility claim",
+    "notRuntimeRecord": true,
+    "apiId": "openai-completions",
+    "operation": "chat_generation",
+    "sourceEvidence": "TD04-01",
+    "purpose": "Explicit owner-selected compatible gateways, including user-managed Portkey/OpenRouter/Ollama-style services, can be qualified without bundling another process or treating a provider name as support.",
+    "inputSpecimen": {
+      "connectionId": "custom-gateway",
+      "baseUrl": "https://gateway.invalid/v1",
+      "modelId": "explicit-owner-selected-model-id",
+      "nonSecretHeaders": {
+        "X-Client-Application": "splyce"
+      },
+      "credentialHeaderBindings": [
+        {
+          "header": "Authorization",
+          "scheme": "Bearer",
+          "credentialRef": "credential:custom-gateway"
+        }
+      ],
+      "selectedTransport": "http-sse",
+      "declaredRoute": "Explicit endpoint origin plus separately admitted proxy/gateway upstream destinations; actual route locality must be verified.",
+      "implicitFallback": false,
+      "implicitProviderRouting": false
+    },
+    "frozenContractMapping": {
+      "providerConnection": "apiFamily, apiVersion, endpointRef, credentialRef, adapterRevision, accountScopeRef and locality identify the connection; do not insert raw header secrets into this record.",
+      "providerRole": "Bind the selected operation/model, current connection/binding revisions, qualified usage/cancel semantics and permitted role/data classes.",
+      "unresolvedTD01Gap": "The current frozen record references endpointRef and credentialRef but does not define versioned endpoint/base-URL or custom-header configuration records. TD-01 must freeze their owned storage, validation, update/revocation and redaction shape before TD-19/TD-16 implement them; this specimen does not create a second runtime schema."
+    },
+    "admissionRequirements": [
+      "No automatic login, probe, server launch, adapter/model install or third-party gateway dependency. Base setup can complete without this connection.",
+      "Validate exact base URL, effective origin, transport, header names and credential bindings before construction/send; preserve host/TLS/credential authority and redact secret headers on every artifact/egress route.",
+      "A loopback gateway with a hosted upstream is cloud egress. Local-only policy denies hosted upstream inference/auth/discovery even when the first hop is localhost.",
+      "Gateway routes, redirects, retry destinations, model identity and selected upstream provider stay visible and bound to current admission. Unknown or changed routing is unavailable until requalified.",
+      "Disable gateway/provider/model/transport fallback and implicit load-balanced routing. No alternate provider or route is admitted solely because the configured gateway supports it.",
+      "Explicit custom model IDs need operation/tool/schema/stream/usage/cancel/locality qualification; neither a curated release model list nor working credentials alone determines compatibility."
+    ],
+    "proposedCases": [
+      {
+        "case": "custom_gateway_explicit_selection",
+        "expect": "Admitted selected model/base URL and non-secret headers use the chosen Chat Completions route; credentials resolve by reference only; denied or uncommitted requests make zero sends."
+      },
+      {
+        "case": "custom_gateway_localhost_cloud_hop",
+        "expect": "A loopback first hop with hosted upstream is denied by local-only policy; no cloud or alternate-route fallback."
+      },
+      {
+        "case": "custom_gateway_route_or_headers_change",
+        "expect": "Changing base URL, effective upstream, credential header binding or redirect target invalidates current admission; no stale send/publication or credential forwarding."
+      },
+      {
+        "case": "custom_gateway_fallback_disabled",
+        "expect": "Transport/provider/model failure remains visible and attributed to the original attempt; no hidden gateway retry or alternate upstream is accepted without its own explicit selected policy."
+      }
+    ],
+    "verification": "Request configurability observed in the pinned Chat Completions adapter and ProviderRequestOptions. Gateway behavior, reserved-header policy, live routing, telemetry, compatibility, billing and cancellation are unrun; all examples are proposed fixtures, not passing tests."
   }
 }
