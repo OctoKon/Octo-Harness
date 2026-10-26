@@ -17,13 +17,15 @@ const dir = () => { n += 1; const d = join(tmpRoot, `t${n}`); mkdirSync(d); retu
 const wait = (f: string, ms = 15000) => { const s = Date.now(); while (!existsSync(f)) { if (Date.now() - s > ms) throw new Error(`timeout ${f}`); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25); } };
 const kill = (pid: number) => { const r = spawnSync("taskkill", ["/PID", String(pid), "/F", "/T"], { stdio: "ignore" }); if (r.status !== 0) throw new Error(`taskkill failed ${pid}`); };
 const spawnChild = (mode: string, d: string) => spawn(process.execPath, [CHILD, mode, d], { stdio: "ignore" });
+const waitForExit = (child: any) => new Promise<void>((resolve) => { if (child.exitCode !== null) return resolve(); child.on("exit", () => resolve()); child.on("close", () => resolve()); });
 
-test("CM1 kill-during-append: acknowledged commit survives kill", () => {
+test("CM1 kill-during-append: acknowledged commit survives kill", async () => {
   const d = dir();
   const child = spawnChild("commit-then-signal", d);
   wait(join(d, "ack.json"));
   const ack = JSON.parse(readFileSync(join(d, "ack.json"), "utf8")) as { seq: number };
   kill(child.pid!);
+  await waitForExit(child);
   const store = Store.open(join(d, "store.db"));
   const got = store.get("rec-child-ack");
   assert.equal(got.seq, ack.seq);
@@ -31,13 +33,14 @@ test("CM1 kill-during-append: acknowledged commit survives kill", () => {
   rmSync(d, { recursive: true, force: true });
 });
 
-test("CM2 kill-mid-transaction: uncommitted row absent after reopen", () => {
+test("CM2 kill-mid-transaction: uncommitted row absent after reopen", async () => {
   const d = dir();
   const child = spawnChild("mid-transaction", d);
   wait(join(d, "mid.json"));
   kill(child.pid!);
+  await waitForExit(child);
   const store = Store.open(join(d, "store.db"));
-  assert.throws(() => store.get("rec-uncommitted"), (e: unknown) => e instanceof StoreError);
+  assert.throws(() => store.get("rec-uncommitted"), (e: unknown) => e instanceof StoreError && (e as any).code === "STORE_NOT_FOUND");
   store.close();
   rmSync(d, { recursive: true, force: true });
 });
