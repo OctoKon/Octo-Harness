@@ -78,7 +78,7 @@ vi.mock("@google/genai", () => {
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
 import { stream as streamVertex } from "../src/api/google-vertex.ts";
-import { createLeasedFetch } from "../src/splyce-credentials.ts";
+import { assertCredentialOptions, createLeasedFetch, type SplyceCredentials } from "../src/splyce-credentials.ts";
 import type { Api, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -203,6 +203,23 @@ beforeEach(() => {
 });
 
 describe.each(families)("credentials option: $name", (family) => {
+	// #70/#73: malformed leases must fail before SDK construction or payload callbacks.
+	it.each([undefined, null, {}, { use: null }, { use: "not-a-function" }])(
+		"refuses malformed lease %j before SDK initialization",
+		async (invalidLease) => {
+			let payloads = 0;
+			const result = await family.run({
+				credentials: { lease: invalidLease, redact: nativeRedact },
+				onPayload: () => {
+					payloads++;
+				},
+			});
+			expect(result.stopReason).toBe("error");
+			expect(family.sdkCalls()).toHaveLength(0);
+			expect(wire.sent).toHaveLength(0);
+			expect(payloads).toBe(0);
+		},
+	);
 	it("delivers the leased secret and the admitted base URL", async () => {
 		const result = await family.run({ credentials: creds(lease()) });
 		expect(result.stopReason).not.toBe("error");
@@ -326,6 +343,15 @@ describe("Anthropic per-send enforcement", () => {
 });
 
 describe("shared credential helpers", () => {
+	it.each([undefined, null, {}, { use: null }, { use: "not-a-function" }])(
+		"requires a callable native lease before accepting credential options (%j)",
+		(invalidLease) => {
+			const credentials = { lease: invalidLease, redact: nativeRedact } as unknown as SplyceCredentials;
+			expect(() => assertCredentialOptions({ credentials })).toThrow(
+				"credentials require a native lease.use function",
+			);
+		},
+	);
 	const record = () => {
 		const calls: Array<{ input: unknown; headers: Headers; redirect: string | undefined }> = [];
 		const base = (async (input: unknown, init?: RequestInit) => {

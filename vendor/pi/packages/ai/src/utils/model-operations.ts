@@ -22,6 +22,7 @@ export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
 	"google-vertex",
 	"openai-completions",
 	"openai-responses",
+	"openai-codex-responses",
 ]);
 
 export function assertCredentialsSupported(

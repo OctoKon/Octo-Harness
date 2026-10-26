@@ -13,9 +13,11 @@ import type {
 } from "openai/resources/chat/completions.js";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
 	createLeasedFetch,
 	redactEventWithLease,
+	redactResponseWithLease,
 	redactWithLease,
 	type SplyceCredentials,
 } from "../splyce-credentials.ts";
@@ -353,6 +355,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 		try {
 			assertCredentialOptions(options ?? {}, model.headers);
+			assertCredentialApiIdentity(model.api, "openai-completions", options);
 			credentials = options?.credentials;
 			const apiKey = credentials
 				? "splyce-leased"
@@ -402,7 +405,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					signal: options?.signal,
 				},
 			);
-			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			await options?.onResponse?.(
+				await redactResponseWithLease(credentials, {
+					status: response.status,
+					headers: headersToRecord(response.headers),
+				}),
+				model,
+			);
 			stream.push({ type: "start", partial: output });
 
 			// Stream state of a tool call, kept off the content block so it never reaches partials: JSON arguments, or

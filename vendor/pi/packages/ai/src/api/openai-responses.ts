@@ -2,9 +2,11 @@ import OpenAI from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
 	createLeasedFetch,
 	redactEventWithLease,
+	redactResponseWithLease,
 	redactWithLease,
 	type SplyceCredentials,
 	withLeasedSecret,
@@ -193,6 +195,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 		try {
 			// Create OpenAI client
 			assertCredentialOptions(options ?? {}, model.headers);
+			assertCredentialApiIdentity(model.api, "openai-responses", options);
 			credentials = options?.credentials;
 			const chatGPTSignIn = credentials
 				? await withLeasedSecret(credentials, (secret) => isChatGPTSignIn(model, secret))
@@ -246,7 +249,13 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					signal: options?.signal,
 				},
 			);
-			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			await options?.onResponse?.(
+				await redactResponseWithLease(credentials, {
+					status: response.status,
+					headers: headersToRecord(response.headers),
+				}),
+				model,
+			);
 			stream.push({ type: "start", partial: output });
 
 			const observe = options?.onProviderStreamEvent;

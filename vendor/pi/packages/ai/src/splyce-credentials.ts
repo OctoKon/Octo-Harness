@@ -1,3 +1,5 @@
+import type { ProviderResponse } from "./types.ts";
+
 // Splyce C4: the one credential option shared by every provider adapter (TD-19..23).
 // Structural mirror of the native SecretLease and Redactor (packages/splyce-pi/src/provider-auth.ts, TD-16): this
 // package must not import @splyce/pi. The native layer builds the lease from ProviderAdmissionPort.admit() and
@@ -60,6 +62,20 @@ export async function redactEventWithLease(
 	});
 }
 
+/** Response metadata is copied and sanitized before a callback can retain it. */
+export async function redactResponseWithLease(
+	credentials: SplyceCredentials | undefined,
+	response: ProviderResponse,
+): Promise<ProviderResponse> {
+	if (!credentials) return response;
+	return credentials.lease.use(() => ({
+		status: response.status,
+		headers: Object.fromEntries(
+			Object.entries(response.headers).map(([key, value]) => [credentials.redact(key), credentials.redact(value)]),
+		),
+	}));
+}
+
 /** Headers that carry or select a credential. With a lease the caller may not supply any of them. */
 const CALLER_AUTH_HEADERS: ReadonlySet<string> = new Set([
 	"authorization",
@@ -99,7 +115,19 @@ export function assertCredentialOptions(
 	if (!credentials) return;
 	if (options.apiKey !== undefined) throw new Error("apiKey and credentials are mutually exclusive");
 	if (typeof credentials.redact !== "function") throw new Error("credentials require a native redact function");
+	if (typeof credentials.lease?.use !== "function") throw new Error("credentials require a native lease.use function");
 	assertNoCallerAuthHeaders(modelHeaders, options.headers);
+}
+
+/** A single-API provider must not reinterpret the API admitted with native credentials. */
+export function assertCredentialApiIdentity(
+	actualApi: string,
+	expectedApi: string,
+	options: { credentials?: SplyceCredentials | undefined } | undefined,
+): void {
+	if (options?.credentials && actualApi !== expectedApi) {
+		throw new Error("Native credential API identity does not match this adapter");
+	}
 }
 
 /**

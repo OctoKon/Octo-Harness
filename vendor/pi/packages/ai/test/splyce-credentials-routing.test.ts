@@ -65,14 +65,22 @@ const wireFetch = (async (_input: unknown, init?: RequestInit) => {
 }) as unknown as typeof fetch;
 const model = () => getModel("anthropic", "claude-haiku-4-5");
 const ctor = () => sdk.opts[0] ?? {};
+const unexpectedFetch = vi.fn(async () => {
+	throw new Error("routing fixture must never contact a provider");
+});
 
 beforeEach(() => {
 	sdk.opts.length = 0;
 	wire.length = 0;
+	unexpectedFetch.mockClear();
+	vi.stubGlobal("fetch", unexpectedFetch);
 	vi.stubEnv("ANTHROPIC_API_KEY", "ambient-env-key");
 	vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "ambient-env-token");
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+	vi.unstubAllEnvs();
+	vi.unstubAllGlobals();
+});
 
 describe("credentials through the public entrypoints", () => {
 	it("compat.streamSimple delivers the lease and no ambient env key", async () => {
@@ -129,22 +137,37 @@ describe("credentials through the public entrypoints", () => {
 });
 
 describe("APIs without lease support refuse credentials", () => {
-	const unsupported = () => ({ ...getModel("openai", "gpt-4o"), api: "openai-codex-responses" as const });
+	// #70: use a fixture API that stays unbound as real adapter families gain support.
+	const unsupported = () => ({
+		...getModel("openai", "gpt-4o"),
+		api: "splyce-unbound-test-api" as const,
+		compat: undefined,
+		baseUrl: "https://provider.invalid/v1",
+	});
 
 	it("compat.stream throws before any adapter or SDK runs", () => {
-		expect(() => stream(unsupported(), context, { credentials })).toThrow(/not supported/);
+		expect(() => stream(unsupported(), context, { credentials, fetch: unexpectedFetch })).toThrow(/not supported/);
 		expect(sdk.opts).toHaveLength(0);
+		expect(unexpectedFetch).not.toHaveBeenCalled();
 	});
 
 	it("compat.streamSimple throws too", () => {
-		expect(() => streamSimple(unsupported(), context, { credentials })).toThrow(/not supported/);
+		expect(() => streamSimple(unsupported(), context, { credentials, fetch: unexpectedFetch })).toThrow(
+			/not supported/,
+		);
+		expect(unexpectedFetch).not.toHaveBeenCalled();
 	});
 
 	it("the Models layer rejects instead of resolving ambient auth", async () => {
-		const models = createModels({ authContext: { env: async () => "ambient", fileExists: async () => false } });
+		const ambientAuth = vi.fn(async () => "ambient");
+		const models = createModels({ authContext: { env: ambientAuth, fileExists: async () => false } });
 		models.setProvider(openaiProvider());
-		const result = await models.streamSimple(unsupported(), context, { credentials }).result();
+		const result = await models
+			.streamSimple(unsupported(), context, { credentials, fetch: unexpectedFetch })
+			.result();
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage ?? "").toMatch(/not supported|not configured|not found|No provider/i);
+		expect(ambientAuth).not.toHaveBeenCalled();
+		expect(unexpectedFetch).not.toHaveBeenCalled();
 	});
 });

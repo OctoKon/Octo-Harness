@@ -166,6 +166,30 @@ export interface ModuleSnapshot {
   readonly ambientConfigRefs: readonly string[];
 }
 
+/**
+ * Honest placeholder for a shell with no setup/module service connected.
+ *
+ * It claims no catalog, plan, installation or operation, and it keeps
+ * generation unconfigured: an absent service is an unavailable state, not a
+ * successful empty result and not an implicit install.
+ */
+export function unavailableModuleSnapshot(reason: string): ModuleSnapshot {
+  return {
+    engine: "unavailable",
+    engineReason: reason,
+    catalog: { state: "unavailable", reason },
+    entries: [],
+    installed: [],
+    plan: null,
+    generation: {
+      state: "unconfigured",
+      reason: "No generation model is selected.",
+    },
+    operation: null,
+    ambientConfigRefs: [],
+  };
+}
+
 export interface ActionState {
   readonly enabled: boolean;
   readonly reason: string | null;

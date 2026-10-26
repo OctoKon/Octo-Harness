@@ -8,9 +8,11 @@ import type {
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
 	createLeasedFetch,
 	redactEventWithLease,
+	redactResponseWithLease,
 	redactWithLease,
 	type SplyceCredentials,
 	withLeasedSecret,
@@ -277,6 +279,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 
 		try {
 			assertCredentialOptions(options ?? {}, model.headers);
+			assertCredentialApiIdentity(model.api, "openai-codex-responses", options);
 			credentials = options?.credentials;
 			if (credentials && options?.transport !== "sse") {
 				throw new Error("Native Codex credentials require explicit SSE transport");
@@ -325,7 +328,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const bodyJson = JSON.stringify(body);
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
 			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
-			const transport = options?.transport || "auto";
+			// Native SSE was admitted before the payload hook; mutable options cannot open another transport.
+			const transport = credentials ? "sse" : options?.transport || "auto";
 			let startEmitted = false;
 			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);
 			if (websocketDisabledForSession) {
@@ -446,7 +450,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						combinedSignal.cleanup();
 					}
 					await options?.onResponse?.(
-						{ status: response.status, headers: headersToRecord(response.headers) },
+						await redactResponseWithLease(credentials, {
+							status: response.status,
+							headers: headersToRecord(response.headers),
+						}),
 						model,
 					);
 

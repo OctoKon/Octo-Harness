@@ -115,6 +115,12 @@ export interface EventPreconditions {
   };
   expectedOwnershipEpoch?: { workspaceId: string; epoch: number };
   expectedConfigRevision?: { scopeId: string; revision: string };
+  expectedActionReservation?: {
+    scopeId: string;
+    actionId: string;
+    idempotencyKey: string;
+    recordId: string;
+  };
 }
 interface EventWatermark {
   scopeId: string;
@@ -677,6 +683,12 @@ export class Store {
     },
     expectedOwnershipEpoch?: { workspaceId: string; epoch: number },
     expectedConfigRevision?: { scopeId: string; revision: string },
+    expectedActionReservation?: {
+      scopeId: string;
+      actionId: string;
+      idempotencyKey: string;
+      recordId: string;
+    },
   ): AppendBatchResult {
     if (inputs.some((input) => input.kind === "event"))
       throw new StoreError(
@@ -693,6 +705,9 @@ export class Store {
       ...(expectedConfigRevision === undefined
         ? {}
         : { expectedConfigRevision }),
+      ...(expectedActionReservation === undefined
+        ? {}
+        : { expectedActionReservation }),
     });
   }
 
@@ -719,6 +734,7 @@ export class Store {
       expectedAbsentActionKey,
       expectedOwnershipEpoch,
       expectedConfigRevision,
+      expectedActionReservation,
       expectedDeletionEpoch,
     }: EventPreconditions,
     importedWatermarks: readonly EventWatermark[] = [],
@@ -731,6 +747,7 @@ export class Store {
       expectedAbsentActionKey === undefined &&
       expectedOwnershipEpoch === undefined &&
       expectedConfigRevision === undefined &&
+      expectedActionReservation === undefined &&
       expectedDeletionEpoch === undefined
     )
       return { seqs: [], events: [] };
@@ -874,6 +891,34 @@ export class Store {
           watermark.sessionId,
           watermark.seq,
         );
+      }
+      if (expectedActionReservation !== undefined) {
+        const { scopeId, actionId, idempotencyKey, recordId } =
+          expectedActionReservation;
+        const rows = this.db
+          .prepare(
+            "SELECT record_id, json_extract(payload, '$.actionId') AS action_id, " +
+              "json_extract(payload, '$.idempotencyKey') AS idempotency_key, json_extract(payload, '$.state') AS state " +
+              "FROM records WHERE scope_id = ? AND kind = 'action' AND " +
+              "(json_extract(payload, '$.actionId') = ? OR json_extract(payload, '$.idempotencyKey') = ?)",
+          )
+          .all(scopeId, actionId, idempotencyKey) as Array<{
+          record_id: string;
+          action_id: string;
+          idempotency_key: string;
+          state: string;
+        }>;
+        if (
+          rows.length !== 1 ||
+          rows[0]?.record_id !== recordId ||
+          rows[0]?.action_id !== actionId ||
+          rows[0]?.idempotency_key !== idempotencyKey ||
+          rows[0]?.state !== "proposed"
+        )
+          throw new StoreError(
+            "ACTION_RESERVATION_CHANGED",
+            "action reservation changed; nothing appended",
+          );
       }
       const seqs: number[] = [];
       for (const [kind, record] of prepared) {

@@ -1,17 +1,21 @@
 // Splyce #70: actual Codex SSE parser and native resolver; only the remote service is replaced.
-// Direct adapter evidence only: native final-send authority and public registry activation are separate gates.
+// Adapter/public caller evidence only: native final-send authority remains a separate gate.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CredentialBinding,
 	NativeCredentialResolver,
 } from "../../../../../packages/splyce-pi/src/credential-resolver.ts";
 import { type OpenAICodexResponsesOptions, stream, streamSimple } from "../src/api/openai-codex-responses.ts";
+import { streamSimple as compatSimple, stream as compatStream } from "../src/compat.ts";
+import { createModels } from "../src/models.ts";
+import { openaiCodexProvider } from "../src/providers/openai-codex.ts";
 import type { SplyceCredentials } from "../src/splyce-credentials.ts";
-import type { Model } from "../src/types.ts";
+import type { Model, SimpleStreamOptions } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const TOKEN = `fixture.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } })).toString("base64")}.fixture`;
-const context = normalizeContext({ messages: [{ role: "user", content: "fixture", timestamp: 0 }] });
+const rawContext = { messages: [{ role: "user" as const, content: "fixture", timestamp: 0 }] };
+const context = normalizeContext(rawContext);
 const model: Model<"openai-codex-responses"> = {
 	api: "openai-codex-responses",
 	id: "fixture-model",
@@ -55,9 +59,186 @@ const completed = () =>
 			usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
 		},
 	});
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+	vi.unstubAllGlobals();
+	vi.unstubAllEnvs();
+});
+
+const publicEntrypoints = ["compat stream", "compat simple", "Models stream", "Models simple"] as const;
+function publicStream(entrypoint: (typeof publicEntrypoints)[number], options: SimpleStreamOptions) {
+	if (entrypoint === "compat stream") return compatStream(model, rawContext, { ...options });
+	if (entrypoint === "compat simple") return compatSimple(model, rawContext, options);
+	const models = createModels({
+		authContext: {
+			env: async () => {
+				throw new Error("ambient auth must not be resolved");
+			},
+			fileExists: async () => false,
+		},
+	});
+	models.setProvider(openaiCodexProvider());
+	return entrypoint === "Models stream"
+		? models.stream(model, rawContext, options)
+		: models.streamSimple(model, rawContext, options);
+}
+
+// #70: exercise the real exported call paths, provider factory, parser and native lease together.
+describe("public native Codex SSE", () => {
+	for (const entrypoint of publicEntrypoints) {
+		it(`${entrypoint} uses explicit SSE with the leased bearer and admitted endpoint`, async () => {
+			vi.stubEnv("OPENAI_API_KEY", "fixture-ambient-key-must-not-be-used");
+			const { credentials } = await native();
+			let sends = 0;
+			const result = await publicStream(entrypoint, {
+				credentials,
+				transport: "sse",
+				maxRetries: 0,
+				fetch: async (input, init) => {
+					sends++;
+					expect(String(input)).toBe("https://provider.invalid/backend-api/codex/responses");
+					expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${TOKEN}`);
+					expect(init?.redirect).toBe("error");
+					return completed();
+				},
+			}).result();
+			expect(result.stopReason, result.errorMessage).toBe("stop");
+			expect(sends).toBe(1);
+		});
+		it.each([undefined, "auto", "websocket", "websocket-cached"] as const)(
+			`${entrypoint} refuses native transport %s without HTTP or socket effects`,
+			async (transport) => {
+				const { credentials } = await native();
+				let effects = 0;
+				vi.stubGlobal(
+					"WebSocket",
+					class {
+						constructor() {
+							effects++;
+							throw new Error("must not connect");
+						}
+					},
+				);
+				const result = await publicStream(entrypoint, {
+					credentials,
+					transport,
+					fetch: async () => {
+						effects++;
+						return completed();
+					},
+				}).result();
+				expect(result.stopReason).toBe("error");
+				expect(result.errorMessage).toMatch(/explicit SSE/i);
+				expect(effects).toBe(0);
+			},
+		);
+		it(`${entrypoint} rechecks connection revision after its payload hook`, async () => {
+			const { resolver, credentials } = await native();
+			let payloads = 0;
+			let sends = 0;
+			const result = await publicStream(entrypoint, {
+				credentials,
+				transport: "sse",
+				maxRetries: 0,
+				onPayload: () => {
+					payloads++;
+					resolver.register({ ...binding, connectionRevision: "v2" });
+				},
+				fetch: async () => {
+					sends++;
+					return completed();
+				},
+			}).result();
+			expect(payloads).toBe(1);
+			expect(sends).toBe(0);
+			expect(result.stopReason).toBe("error");
+		});
+		it(`${entrypoint} sanitizes structured observer data through the native lease`, async () => {
+			const { credentials } = await native();
+			const observed: unknown[] = [];
+			const result = await publicStream(entrypoint, {
+				credentials,
+				transport: "sse",
+				maxRetries: 0,
+				onProviderStreamEvent: (event) => {
+					observed.push(event);
+				},
+				fetch: async () =>
+					sse({ type: "error", message: `fixture error ${TOKEN}`, diagnostic: { [TOKEN]: [TOKEN] } }),
+			}).result();
+			expect(result.stopReason).toBe("error");
+			expect(observed).toHaveLength(1);
+			expect(observed[0]).toEqual({
+				type: "error",
+				message: "fixture error [REDACTED]",
+				diagnostic: { "[REDACTED]": ["[REDACTED]"] },
+			});
+			expect(JSON.stringify(result)).not.toContain(TOKEN);
+		});
+	}
+});
 
 describe("direct native Codex SSE", () => {
+	it.each([false, true])("protects response observer headers (revoked=%s)", async (revoked) => {
+		const { lease, credentials } = await native();
+		const observed: unknown[] = [];
+		const result = await stream(model, context, {
+			credentials,
+			transport: "sse",
+			maxRetries: 0,
+			onResponse: (response) => {
+				observed.push(response);
+			},
+			fetch: async () => {
+				const response = completed();
+				response.headers.set("x-fixture-secret", TOKEN);
+				if (revoked) lease.revoke();
+				return response;
+			},
+		}).result();
+		expect(JSON.stringify(observed)).not.toContain(TOKEN);
+		if (revoked) {
+			expect(observed).toHaveLength(0);
+			expect(result.stopReason).toBe("error");
+		} else {
+			expect(observed).toHaveLength(1);
+			expect(observed[0]).toMatchObject({ status: 200, headers: { "x-fixture-secret": "[REDACTED]" } });
+			expect(result.stopReason).toBe("stop");
+		}
+	});
+	// #70: a payload callback cannot replace the native transport after its preflight check.
+	it.each([undefined, "auto", "websocket", "websocket-cached"] as const)(
+		"keeps native SSE when the payload hook mutates transport to %s",
+		async (transport) => {
+			const { credentials } = await native();
+			let sockets = 0;
+			let sends = 0;
+			vi.stubGlobal(
+				"WebSocket",
+				class {
+					constructor() {
+						sockets++;
+						throw new Error("fixture socket must not be constructed");
+					}
+				},
+			);
+			const options: OpenAICodexResponsesOptions = {
+				credentials,
+				transport: "sse",
+				maxRetries: 0,
+				onPayload: () => {
+					options.transport = transport;
+				},
+				fetch: async () => {
+					sends++;
+					return completed();
+				},
+			};
+			const result = await stream(model, context, options).result();
+			expect(sockets).toBe(0);
+			expect(sends).toBe(1);
+			expect(result.stopReason, result.errorMessage).toBe("stop");
+		},
+	);
 	for (const [name, start] of [
 		["stream", stream],
 		["streamSimple", streamSimple],

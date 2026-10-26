@@ -68,6 +68,33 @@ for (const [api, start] of [
 	["openai-responses", (options: StreamOptions) => responses(model("openai-responses"), context, options)],
 ] as const) {
 	describe(`${api} with the real native resolver`, () => {
+		// #70: response metadata is an observer boundary just like parsed stream events.
+		it.each([false, true])("protects response observer headers (revoked=%s)", async (revoked) => {
+			const { lease, credentials } = await nativeCredentials();
+			const observed: unknown[] = [];
+			const result = await start({
+				credentials,
+				maxRetries: 0,
+				onResponse: (response) => {
+					observed.push(response);
+				},
+				fetch: async () => {
+					const response = successfulResponse(api);
+					response.headers.set("x-fixture-secret", SECRET);
+					if (revoked) lease.revoke();
+					return response;
+				},
+			}).result();
+			expect(JSON.stringify(observed)).not.toContain(SECRET);
+			if (revoked) {
+				expect(observed).toHaveLength(0);
+				expect(result.stopReason).toBe("error");
+			} else {
+				expect(observed).toHaveLength(1);
+				expect(observed[0]).toMatchObject({ status: 200, headers: { "x-fixture-secret": "[REDACTED]" } });
+				expect(result.stopReason).toBe("stop");
+			}
+		});
 		it("sends nothing when the connection revision changes after the lease was issued", async () => {
 			const { resolver, credentials } = await nativeCredentials();
 			resolver.register({ ...binding, connectionRevision: "v2" });

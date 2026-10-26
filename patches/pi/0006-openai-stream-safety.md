@@ -57,10 +57,11 @@ text; an unavailable lease produces a fixed safe message. Request
 classification for ChatGPT sign-in returns only a boolean from the lease scope;
 the token is not returned or cached in adapter options.
 
-Malformed native redactors terminate before any lease/send; formatting that
-validation error also remains safe. The shared unsupported-API assertions stay
-in place. Codex credentials remain rejected through compatibility and Models
-entrypoints until its shared registry handoff is complete.
+Malformed native redactors and non-callable native leases terminate before SDK
+construction, payload hooks or sends. Formatting that validation error also
+remains safe. The shared unsupported-API assertion stays in place for unbound
+families. The serial registry handoff now includes Codex through compatibility
+and Models entrypoints; every native Codex call still requires explicit SSE.
 
 The direct Codex `stream` and `streamSimple` paths now accept native credentials
 only with explicit SSE. Automatic and WebSocket transports fail before any
@@ -71,15 +72,35 @@ inside a live lease, before JSON encoding; revoked observers receive no event.
 Terminal errors use the same live-lease redaction boundary as Chat and Responses.
 The direct native/explicit-key conflict remains rejected before any lease/send.
 
-Ten cases use the actual native resolver and OpenAI SDK with only the
+Fourteen cases use the actual native resolver and OpenAI SDK with only the
 remote service replaced. They reject a connection revision changed after lease
 issuance and protect terminal errors and event observers before and after
 revocation for both APIs. The callbacks share `redactEventWithLease`, which
 sanitizes nested string keys, values and arrays without changing the parser
 input. A revoked lease suppresses the observer; an in-flight result is rejected
-if revocation wins before handoff. Twelve additional Codex SSE
-cases cover direct/simple calls, transport denial, revision changes, retries and
+if revocation wins before handoff. Forty-six Codex SSE cases cover direct/simple
+and four public stream/simple entrypoints, transport denial, revision changes, retries and
 terminal/observer redaction, including escaped diagnostic strings and keys.
+All 28 added public-caller cases failed while the shared registry remained
+closed; the additive Codex entry makes them pass without changing the adapter's
+explicit-SSE guard. Twenty malformed-lease cases failed before adding the shared
+callable `lease.use` preflight assertion. Four payload-hook transport mutations
+each constructed a socket before the native SSE choice was kept fixed after
+admission; all now use SSE without a socket attempt. Response-header callbacks
+also use a copied, native-lease redaction boundary: three reflected-key cases
+failed before the wrappers and pass after, alongside three revoked-lease cases.
+All 115 focused credential/native OpenAI/Codex cases pass with these guards.
+These checks replace only the remote service or SDK constructor;
+they do not establish native egress authority or actual provider support.
+
+Twelve further cases use the real Models collection and single-API provider
+factories with mismatched declared APIs. They reached the wrong implementation
+before native API identity checks were added at the three concrete OpenAI
+adapters. They now fail before lease use, payload callbacks or fetch. The checks
+apply only when native credentials are supplied; legacy custom provider routing
+keeps its existing behavior. The unsupported-family fixture uses a permanently
+unbound test API, an invalid remote hostname and explicit zero-fetch/ambient-auth
+assertions as real families gain support.
 Removing each transport, per-send lease, observer and terminal redaction guard
 fails its matching test. Removing the shared sanitizer, its lease guard or any
 of the three callback bindings also fails the actual observer data assertions.
@@ -107,11 +128,16 @@ The leased fetch strips the existing six known credential headers from both
 Request and init headers before writing its selected auth header. Two local
 socket cases failed first because a placeholder reached the server through an
 alternate header; both now pass while a non-auth trace header is preserved.
-Reverting that strip loop fails both wire cases. All six new shared/callback
-guard-removal probes fail as expected; exact source restoration passes 227
-provider/legacy cases across twelve files. One inherited Google
+Reverting that strip loop fails both wire cases. All six shared/callback
+guard-removal probes fail as expected. The final selected provider/legacy run
+passes 297 cases across thirteen files. One inherited Google
 cross-origin redirect case remains TODO pending native egress mediation; it is
 not a passing qualification result.
+
+After consuming the declared bootstrap at `a5a3b1e`, 58 shared-contract cases,
+111 store/credential/bridge cases, 55 built Pi native admission/entrypoint cases
+and 15 built SessionMap cases pass locally. These establish their named module
+and fixture paths, not an installed desktop or real provider result.
 
 ## Integration still required
 
