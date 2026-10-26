@@ -24,7 +24,9 @@
     "svelte": "5.57.2",
     "vite": "8.3.5",
     "vitePluginSvelte": "7.3.1",
-    "typescript": "7.0.2"
+    "typescript": "6.0.3",
+    "svelteCheck": "4.7.7",
+    "tsconfigSvelte": "5.0.5"
   },
   "buildToolsInventory": "scripts/build-tool-inventory.json",
   "webview2": {
