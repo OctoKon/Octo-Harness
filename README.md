@@ -1,9 +1,12 @@
-<picture>
-  <source media="(prefers-color-scheme: dark) and (max-width: 640px)" srcset="assets/brand/hero-mobile-dark.svg">
-  <source media="(max-width: 640px)" srcset="assets/brand/hero-mobile-light.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/hero-dark.svg">
-  <img src="assets/brand/hero-light.svg" alt="Splyce — separate strands, one coherent agent harness" width="100%">
-</picture>
+<div align="center">
+
+  <!-- White Logo for Dark Mode (Tells GitHub to hide this in light mode) -->
+  <img src="./assets/brand/spylce-white.svg" width="300" #gh-dark-mode-only alt="Spylce White Logo">
+
+  <!-- Black Logo for Light Mode (Tells GitHub to hide this in dark mode) -->
+  <img src="./assets/brand/slyce-black.svg" width="300" #gh-light-mode-only alt="Spylce Black Logo">
+
+</div>
 
 # Splyce
 
