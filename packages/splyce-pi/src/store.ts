@@ -504,13 +504,23 @@ export class Store {
    * mid-batch constraint violation — rolls the whole batch back: the cursor
    * observable from a fresh connection is unchanged and the next write
    * succeeds on a clean handle.
+   *
+   * `expectedAbsentActionKey` makes the batch an atomic test-and-set: under
+   * the SAME BEGIN IMMEDIATE as the inserts, an action record carrying that
+   * idempotency key in the scope is looked up; if it exists the batch throws
+   * ACTION_ALREADY_EXISTS and acknowledges nothing. Two processes that both
+   * observed the key absent can never both commit — one wins the write lock,
+   * the other sees the row.
    */
   appendBatch(
     inputs: readonly AppendInput[],
     caller: CallerContext,
+    expectedAbsentActionKey?: { scopeId: string; idempotencyKey: string },
+    expectedOwnershipEpoch?: { workspaceId: string; epoch: number },
   ): AppendBatchResult {
     this.assertWritable();
-    if (inputs.length === 0) return { seqs: [] };
+    if (inputs.length === 0 && expectedAbsentActionKey === undefined)
+      return { seqs: [] };
     const prepared: Array<[RecordKind, RecordByKind[RecordKind]]> = [];
     try {
       for (const input of inputs) {
@@ -534,6 +544,38 @@ export class Store {
     }
     try {
       this.db.exec("BEGIN IMMEDIATE;");
+      if (expectedOwnershipEpoch !== undefined) {
+        const { workspaceId, epoch } = expectedOwnershipEpoch;
+        const row = this.db
+          .prepare(
+            "SELECT epoch FROM workspace_ownership WHERE workspace_id = ?",
+          )
+          .get(workspaceId) as { epoch: number | bigint } | undefined;
+        const current = row === undefined ? 0 : Number(row.epoch);
+        if (current !== epoch) {
+          this.db.exec("ROLLBACK;");
+          throw new StoreError(
+            "OWNERSHIP_STALE_EPOCH",
+            `workspace ${JSON.stringify(workspaceId)} ownership epoch is ${String(current)}, not the expected ${String(epoch)}; nothing appended`,
+          );
+        }
+      }
+      if (expectedAbsentActionKey !== undefined) {
+        const { scopeId, idempotencyKey } = expectedAbsentActionKey;
+        const existing = this.db
+          .prepare(
+            "SELECT 1 FROM records WHERE scope_id = ? AND kind = 'action' " +
+              "AND json_extract(payload, '$.idempotencyKey') = ? LIMIT 1",
+          )
+          .get(scopeId, idempotencyKey);
+        if (existing !== undefined) {
+          this.db.exec("ROLLBACK;");
+          throw new StoreError(
+            "ACTION_ALREADY_EXISTS",
+            `an action record with idempotencyKey ${JSON.stringify(idempotencyKey)} already exists in scope ${JSON.stringify(scopeId)}; nothing appended`,
+          );
+        }
+      }
       const seqs: number[] = [];
       for (const [kind, record] of prepared) {
         seqs.push(this.insertValidated(kind, record, caller.sessionId));
