@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Pinned Node build tools; not included in the shipped engine or desktop runtime.",
+  "toolchain": {
+    "node": "24.22.1",
+    "npm": "11.19.1"
+  },
+  "packages": [
+    {
+      "name": "@biomejs/biome",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome",
+      "transitivePackages": [
+        "@biomejs/cli-darwin-arm64",
+        "@biomejs/cli-darwin-x64",
+        "@biomejs/cli-linux-arm64",
+        "@biomejs/cli-linux-arm64-musl",
+        "@biomejs/cli-linux-x64",
+        "@biomejs/cli-linux-x64-musl",
+        "@biomejs/cli-win32-arm64",
+        "@biomejs/cli-win32-x64"
+      ]
+    },
+    {
+      "name": "@biomejs/wasm-nodejs",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome",
+      "transitivePackages": []
+    }
+  ],
+  "transitivePackages": [
+    {
+      "name": "@biomejs/cli-darwin-arm64",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome"
+    },
+    {
+      "name": "@biomejs/cli-darwin-x64",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome"
+    },
+    {
+      "name": "@biomejs/cli-linux-arm64",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome"
+    },
+    {
+      "name": "@biomejs/cli-linux-arm64-musl",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome"
+    },
+    {
+      "name": "@biomejs/cli-linux-x64",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome"
+    },
+    {
+      "name": "@biomejs/cli-linux-x64-musl",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome"
+    },
+    {
+      "name": "@biomejs/cli-win32-arm64",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome"
+    },
+    {
+      "name": "@biomejs/cli-win32-x64",
+      "version": "2.3.5",
+      "license": "MIT OR Apache-2.0",
+      "repository": "https://github.com/biomejs/biome"
+    }
+  ],
+  "lockfile": "../package-lock.json"
+}

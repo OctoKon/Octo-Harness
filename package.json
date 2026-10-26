@@ -41,6 +41,8 @@
     "test:docs": "python -m unittest discover -s tests -p test_check_docs.py"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.3.5",
+    "@biomejs/wasm-nodejs": "2.3.5",
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@tauri-apps/api": "2.12.4",
     "@tauri-apps/cli": "2.12.4",
