@@ -1,5 +1,5 @@
-- **Task/change:** <!-- Task IDs; concrete behavior and why. Link the contract/research. -->
+- **Task/change:** <!-- Base branch: `staging` once the repository baseline's branch-flow status reads applied, otherwise `main`. Task IDs; concrete behavior and why. Link the contract/research. -->
 - **Integration:** <!-- Affected paths/callers; compatibility/migration if relevant. -->
-- **Validation:** <!-- Exact commands + observed results; all applicable local gates/E2E must pass before commit, push and PR publication; exact-head required CI before merge/release. Link evidence; N/A needs a scope-based reason. -->
-- **Review/evidence:** <!-- UI/UX: @MdSiddiqx + rendered/keyboard/error-state evidence. Backend: @Itachi-1824. Mixed: both; no self-approval. -->
+- **Validation:** <!-- Exact commands + observed results; all applicable local gates/E2E must pass before PR publication (local/username-branch WIP commits are not publication); exact-head required CI before merge/release. Link evidence; N/A needs a scope-based reason. -->
+- **Evidence:** <!-- After activation no approval is required and Itachi-1824 or MdSiddiqx merges once checks are green (before it, the live main rules apply). Optional input: @MdSiddiqx (UI), @Itachi-1824 (backend). Checkable evidence (guard-removal tests/CI/UIA): ___; `M` protocol run by: ___ (not the author). -->
 - **Limits:** <!-- Material risk or remaining limitation; no failed/unrun applicable E2E. -->

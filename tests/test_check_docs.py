@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
 
-from scripts.check_docs import REPO_ROOT, check_evidence, check_markdown, main
+from scripts.check_docs import REPO_ROOT, check_evidence, check_markdown, check_task_plan, main
 
 
 class CheckDocsTests(unittest.TestCase):
@@ -103,6 +103,49 @@ class CheckDocsTests(unittest.TestCase):
             entry = {"id": " SRC-01 ", "tool": "tool", "url": "https://example.com", "title": "title", "accessed": "2026-10-25", "claims": ["claim"], "verification": "primary", "notes": "notes"}
             path.write_text(json.dumps([entry]), encoding="utf-8")
             self.assertEqual(check_evidence(path, root), ["sources.json[0]: id must not contain surrounding whitespace"])
+
+    def write_plan(self, root: Path, rows: str, owners: str) -> None:
+        design = root / "research" / "docs" / "design"
+        design.mkdir(parents=True)
+        (design / "team-delivery-plan.md").write_text(f"# Plan\n\n{rows}\n### Named case ownership\n\n{owners}\n## Next\n", encoding="utf-8")
+        (design / "cases.md").write_text("Defines `C1_resume` and `D1_setup`.\n", encoding="utf-8")
+
+    def test_accepts_acyclic_plan_with_one_owner_per_case(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            root = Path(directory)
+            self.write_plan(root, "| TD-01 / a | x | None |\n| TD-02 / b | x | TD-01 |\n", "| TD-01 | `C1_resume` |\n| TD-02 | `D1_setup` |\n")
+            self.assertEqual(check_task_plan(root, {path.resolve() for path in root.glob("**/*.md")}), [])
+
+    def test_rejects_dependency_cycle_and_unknown_dependency(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            root = Path(directory)
+            self.write_plan(root, "| TD-01 / a | x | TD-02 |\n| TD-02 / b | x | TD-01, TD-09 |\n", "| TD-01 | `C1_resume`, `D1_setup` |\n")
+            errors = "\n".join(check_task_plan(root, {path.resolve() for path in root.glob("**/*.md")}))
+            self.assertIn("dependency cycle", errors)
+            self.assertIn("TD-02 depends on unknown TD-09", errors)
+
+    def test_main_rejects_unowned_and_doubly_owned_cases(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            root = Path(directory)
+            self.write_plan(root, "| TD-01 / a | x | None |\n", "| TD-01 | `C1_resume`, `C1_resume` |\n")
+            with redirect_stderr(io.StringIO()) as diagnostics:
+                self.assertEqual(main(root), 1)
+            self.assertIn("named case C1_resume has 2 owner rows", diagnostics.getvalue())
+            self.assertIn("named case D1_setup has 0 owner rows", diagnostics.getvalue())
+
+    def test_rejects_owned_case_without_definition(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            root = Path(directory)
+            self.write_plan(root, "| TD-01 / a | x | None |\n", "| TD-01 | `C1_resume`, `D1_setup`, `X9_orphan` |\n")
+            errors = "\n".join(check_task_plan(root, {path.resolve() for path in root.glob("**/*.md")}))
+            self.assertIn("owned case X9_orphan has no definition outside the ownership table", errors)
+
+    def test_rejects_ownership_row_for_unknown_task(self) -> None:
+        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as directory:
+            root = Path(directory)
+            self.write_plan(root, "| TD-01 / a | x | None |\n", "| TD-99 | `C1_resume`, `D1_setup` |\n")
+            errors = "\n".join(check_task_plan(root, {path.resolve() for path in root.glob("**/*.md")}))
+            self.assertIn("ownership row names unknown task TD-99", errors)
 
 
 if __name__ == "__main__":

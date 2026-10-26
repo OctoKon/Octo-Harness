@@ -1,0 +1,24 @@
+{
+  "name": "Staging merge permissions",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [
+    {
+      "actor_id": 158852059,
+      "actor_type": "User",
+      "bypass_mode": "pull_request"
+    },
+    {
+      "actor_id": 275431034,
+      "actor_type": "User",
+      "bypass_mode": "pull_request"
+    }
+  ],
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/staging"],
+      "exclude": []
+    }
+  },
+  "rules": [{ "type": "update" }]
+}

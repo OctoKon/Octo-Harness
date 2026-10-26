@@ -35,7 +35,7 @@ Pi extensions run as trusted in-process code with the host's OS authority. Tool 
 
 ## Desktop compatibility
 
-V1 is the Windows desktop GUI. Pi terminal widgets/themes are not automatically desktop components. Backend tool/provider resources and GUI resources qualify separately; an incompatible terminal-only presentation reports unsupported instead of embedding a TUI. Desktop panels use the reviewed typed command/event/view contract or an explicit trusted local frontend build, with CSP/capability and lifecycle tests. Installing backend code cannot silently import arbitrary renderer scripts. The [desktop contract](desktop-application.md) owns actual GUI rendering and packaged-app evidence.
+V1 is the Windows desktop GUI. Pi terminal widgets/themes are not automatically desktop components. Backend tool/provider resources and GUI resources qualify separately; an incompatible terminal-only presentation reports unsupported instead of embedding a TUI. Desktop panels use the reviewed typed command/event/view contract or verified module assets served through the [`splyce-module://` scheme](desktop-application.md), with CSP/capability and lifecycle tests. Installing backend code cannot silently import arbitrary renderer scripts. The [desktop contract](desktop-application.md) owns actual GUI rendering and packaged-app evidence.
 
 ## Development and release path
 

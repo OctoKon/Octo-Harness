@@ -37,6 +37,7 @@ The validator checks record shape, URL form, dates, claims, and local documentat
 | [computer-access-sources.json](computer-access-sources.json)           | Browser, desktop, device and connector implementations                               |
 | [competitive-sources.json](competitive-sources.json)                   | Direct competitor mechanism and limitation chains                                    |
 | [claude-product-sources.json](claude-product-sources.json)             | Official Claude and Cowork capabilities and boundaries                               |
+| [r32-sweep-sources.json](r32-sweep-sources.json)                       | R32 harness lifecycle, agent-technique and combined Codex/Claude UX sources          |
 | [memory-review-sources.json](memory-review-sources.json)               | Pinned current memory implementations and counterevidence                            |
 | [document-multimodal-sources.json](document-multimodal-sources.json)   | Document, OCR, visual retrieval, audio and rendering tools                           |
 | [codex-product-sources.json](codex-product-sources.json)               | Official Codex/OpenAI capability, client and local-provider documentation            |
