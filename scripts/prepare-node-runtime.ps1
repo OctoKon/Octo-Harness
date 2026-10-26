@@ -1,5 +1,17 @@
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex([string]$path) {
+  $stream = [IO.File]::OpenRead($path)
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try {
+    [BitConverter]::ToString($hasher.ComputeHash($stream)).Replace("-", "").ToLowerInvariant()
+  }
+  finally {
+    $hasher.Dispose()
+    $stream.Dispose()
+  }
+}
+
 if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [System.Runtime.InteropServices.Architecture]::X64) {
   throw "The pinned Node runtime is for Windows x64."
 }
@@ -45,7 +57,9 @@ try {
   }
 
   New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
-  Copy-Item -LiteralPath $source -Destination $target -Force
+  if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or (Get-Sha256Hex $source) -ne (Get-Sha256Hex $target)) {
+    Copy-Item -LiteralPath $source -Destination $target -Force
+  }
   $npmSource = Join-Path $extract "node-v$nodeVersion-win-x64/node_modules/npm"
   $npmVersion = (Get-Content (Join-Path $npmSource "package.json") -Raw | ConvertFrom-Json).version
   if ($npmVersion -ne $pins.node.npm) {
