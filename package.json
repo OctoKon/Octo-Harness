@@ -31,7 +31,7 @@
     "test:engine-store": "node --test tests/engine-store.test.mjs",
     "test:native-admission": "node --test tests/native-admission.test.mjs",
     "test:desktop-embedded": "wdio run apps/desktop/wdio.bootstrap.mjs",
-    "test:desktop-release-smoke": "apps/desktop/src-tauri/resources/engine/node.exe tests/bootstrap/release-smoke.mjs",
+    "test:desktop-release-smoke": ".\\apps\\desktop\\src-tauri\\resources\\engine\\node.exe tests/bootstrap/release-smoke.mjs",
     "test:bootstrap-build-mode": "node --test tests/bootstrap-build-mode.test.mjs",
     "test:store-contract": "node scripts/run-store.mjs --case J0_store_contract",
     "test:store": "node scripts/run-store.mjs",
