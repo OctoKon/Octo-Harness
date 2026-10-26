@@ -88,7 +88,7 @@ export const CATALOG: readonly CommandDef[] = Object.freeze([
   ),
   def(
     "shell.toggle-sidebar",
-    "Toggle sidebar",
+    "Toggle projects and tasks rail",
     "Layout",
     "shell",
     ["Ctrl+B"],
@@ -96,7 +96,7 @@ export const CATALOG: readonly CommandDef[] = Object.freeze([
   ),
   def(
     "shell.toggle-side-panel",
-    "Toggle side panel",
+    "Toggle changes and evidence pane",
     "Layout",
     "shell",
     ["Ctrl+Shift+E"],

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { shortcutPanel } from "./shell";
 import {
   CATALOG,
   createCommandRegistry,
@@ -13,13 +14,15 @@ const key = (init: KeyboardEventInit) =>
 
 describe("filter and ranking", () => {
   const items = [
-    { label: "Toggle sidebar", category: "Layout" },
+    { label: "Toggle projects and tasks rail", category: "Layout" },
     { label: "Focus session transcript", category: "Landmarks" },
     { label: "Focus settings and profile selector", category: "Landmarks" },
   ];
   it("prefix match outranks scattered subsequence", () => {
     expect(filterCommands(items, "set")[0]?.label).toMatch(/settings/);
-    expect(filterCommands(items, "tog")[0]?.label).toBe("Toggle sidebar");
+    expect(filterCommands(items, "tog")[0]?.label).toBe(
+      "Toggle projects and tasks rail",
+    );
   });
   it("drops non-matches and keeps order for an empty query", () => {
     expect(filterCommands(items, "zzz")).toEqual([]);
@@ -91,6 +94,25 @@ describe("shortcut conflicts", () => {
     expect(CATALOG.some((c) => c.shortcuts.includes("Ctrl+Shift+E"))).toBe(
       true,
     );
+  });
+  it("the shell's real shortcutPanel claims exactly the catalog's shell bindings", () => {
+    const ev = (s: string) => {
+      const parts = s.split("+");
+      return {
+        key: parts[parts.length - 1]!,
+        ctrlKey: parts.includes("Ctrl"),
+        shiftKey: parts.includes("Shift"),
+        altKey: parts.includes("Alt"),
+        isComposing: false,
+      };
+    };
+    for (const c of CATALOG) {
+      for (const s of c.shortcuts) {
+        expect(shortcutPanel(ev(s)) !== null, `${c.id} ${s}`).toBe(
+          c.scope === "shell",
+        );
+      }
+    }
   });
   it("detects same-scope and global-versus-scoped clashes but not disjoint scopes", () => {
     const d = (
