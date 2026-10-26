@@ -15,13 +15,18 @@
     {
       "delayMs": 0,
       "event": {
-        "seq": 1,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w3_01",
         "eventId": "evt_01W3_01",
-        "ts": 1729930050000,
+        "createdAt": "2026-10-26T12:00:00.000Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_a11y",
-        "durability": "durable",
-        "event": {
-          "kind": "turn.started",
+        "seq": 1,
+        "durable": true,
+        "kind": "turn.started",
+        "payload": {
           "runId": "run_w3_a11y",
           "turnId": "turn_01"
         }
@@ -30,18 +35,24 @@
     {
       "delayMs": 10,
       "event": {
-        "seq": 2,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w3_02",
         "eventId": "evt_01W3_02",
-        "ts": 1729930050010,
+        "createdAt": "2026-10-26T12:00:00.010Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_a11y",
-        "durability": "durable",
-        "event": {
-          "kind": "approval.requested",
+        "seq": 2,
+        "durable": true,
+        "kind": "approval.requested",
+        "payload": {
+          "approvalRequestId": "app_req_w3_01",
           "runId": "run_w3_a11y",
           "actionId": "act_w3_del",
-          "capabilityId": "fs.delete_file",
-          "targetScope": "temp/cache.tmp",
-          "normalizedTarget": "F:/test/Splyce/temp/cache.tmp",
+          "capabilityId": "cap_fs_delete_file",
+          "targetScope": "w-demo",
+          "normalizedTarget": "target_cache_tmp",
           "riskRationale": "Deleting cached test artifacts.",
           "timeoutMs": 30000
         }
@@ -71,8 +82,10 @@
       {
         "op": "approval.respond",
         "payloadMatch": {
+          "approvalRequestId": "app_req_w3_01",
+          "runId": "run_w3_a11y",
           "actionId": "act_w3_del",
-          "decision": "allow"
+          "decision": "approve"
         }
       }
     ],

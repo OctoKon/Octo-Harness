@@ -8,7 +8,8 @@
   "scripts": {
     "build:contracts": "tsc -p packages/splyce-pi/tsconfig.json",
     "test:contracts": "node scripts/run-contracts.mjs",
-    "test:release-gate": "npm run test:contracts",
+    "test:gui-fixtures": "node --test tests/gui-fixtures.test.mjs",
+    "test:release-gate": "npm run test:contracts && npm run test:gui-fixtures",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "lint:markdown": "markdownlint-cli2 \"**/*.md\" \".skills/**/*.md\" \".github/**/*.md\" \"#node_modules\"",

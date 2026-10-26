@@ -15,13 +15,18 @@
     {
       "delayMs": 0,
       "event": {
-        "seq": 1,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w4_01",
         "eventId": "evt_01J0001",
-        "ts": 1729930000000,
+        "createdAt": "2026-10-26T12:00:00.000Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_01",
-        "durability": "durable",
-        "event": {
-          "kind": "turn.started",
+        "seq": 1,
+        "durable": true,
+        "kind": "turn.started",
+        "payload": {
           "runId": "run_w4_01",
           "turnId": "turn_01"
         }
@@ -30,15 +35,19 @@
     {
       "delayMs": 5,
       "event": {
-        "seq": 2,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w4_02",
         "eventId": "evt_01J0002",
-        "ts": 1729930000005,
+        "createdAt": "2026-10-26T12:00:00.005Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_01",
-        "durability": "transient",
-        "event": {
-          "kind": "turn.thought_delta",
+        "seq": 2,
+        "durable": false,
+        "kind": "turn.thought_delta",
+        "payload": {
           "runId": "run_w4_01",
-          "turnId": "turn_01",
           "delta": "Analyzing directory layout and package dependencies."
         }
       }
@@ -46,15 +55,19 @@
     {
       "delayMs": 10,
       "event": {
-        "seq": 3,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w4_03",
         "eventId": "evt_01J0003",
-        "ts": 1729930000010,
+        "createdAt": "2026-10-26T12:00:00.010Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_01",
-        "durability": "transient",
-        "event": {
-          "kind": "turn.stream_delta",
+        "seq": 3,
+        "durable": false,
+        "kind": "turn.stream_delta",
+        "payload": {
           "runId": "run_w4_01",
-          "turnId": "turn_01",
           "delta": "I will inspect the local repository structure.\n\n"
         }
       }
@@ -62,17 +75,22 @@
     {
       "delayMs": 15,
       "event": {
-        "seq": 4,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w4_04",
         "eventId": "evt_01J0004",
-        "ts": 1729930000015,
+        "createdAt": "2026-10-26T12:00:00.015Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_01",
-        "durability": "durable",
-        "event": {
-          "kind": "turn.tool_intent",
+        "seq": 4,
+        "durable": true,
+        "kind": "turn.tool_intent",
+        "payload": {
           "runId": "run_w4_01",
           "actionId": "act_w4_scan",
-          "capabilityId": "fs.read_tree",
-          "target": "apps/desktop/src",
+          "capabilityId": "cap_fs_read_tree",
+          "target": "target_desktop_src",
           "argsSummary": "depth: 2, filter: '*.svelte'"
         }
       }
@@ -80,13 +98,18 @@
     {
       "delayMs": 20,
       "event": {
-        "seq": 5,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w4_05",
         "eventId": "evt_01J0005",
-        "ts": 1729930000020,
+        "createdAt": "2026-10-26T12:00:00.020Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_01",
-        "durability": "durable",
-        "event": {
-          "kind": "turn.tool_outcome",
+        "seq": 5,
+        "durable": true,
+        "kind": "turn.tool_outcome",
+        "payload": {
           "runId": "run_w4_01",
           "actionId": "act_w4_scan",
           "status": "success",
@@ -97,15 +120,19 @@
     {
       "delayMs": 25,
       "event": {
-        "seq": 6,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w4_06",
         "eventId": "evt_01J0006",
-        "ts": 1729930000025,
+        "createdAt": "2026-10-26T12:00:00.025Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_01",
-        "durability": "transient",
-        "event": {
-          "kind": "turn.stream_delta",
+        "seq": 6,
+        "durable": false,
+        "kind": "turn.stream_delta",
+        "payload": {
           "runId": "run_w4_01",
-          "turnId": "turn_01",
           "delta": "Scan completed successfully. Found 14 Svelte components."
         }
       }
@@ -113,13 +140,18 @@
     {
       "delayMs": 30,
       "event": {
-        "seq": 7,
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w4_07",
         "eventId": "evt_01J0007",
-        "ts": 1729930000030,
+        "createdAt": "2026-10-26T12:00:00.030Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
         "sessionId": "ses_test_01",
-        "durability": "durable",
-        "event": {
-          "kind": "turn.completed",
+        "seq": 7,
+        "durable": true,
+        "kind": "turn.completed",
+        "payload": {
           "runId": "run_w4_01",
           "candidateSnapshotId": "snap_w4_clean",
           "finalRevision": "rev_w4_01"
