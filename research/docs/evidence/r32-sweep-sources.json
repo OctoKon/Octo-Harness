@@ -705,5 +705,65 @@
     ],
     "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
     "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-tauri-channel-acl",
+    "tool": "Tauri",
+    "url": "https://github.com/tauri-apps/tauri/security/advisories/GHSA-w28w-mhc8-qvjv",
+    "title": "Improper Tauri IPC Access Control for Fetch Command",
+    "accessed": "2026-10-26",
+    "claims": [
+      "High-severity advisory published 2026-09-26 affecting Tauri 2.0.0 through 2.11.5, patched in 2.11.6."
+    ],
+    "verification": "primary advisory or documentation; parent re-fetched",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-tauri-origin",
+    "tool": "Tauri",
+    "url": "https://github.com/tauri-apps/tauri/security/advisories/GHSA-7gmj-67g7-phm9",
+    "title": "Origin Confusion Allows Remote Pages to Invoke Local-Only IPC Commands",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Medium-severity advisory published 2026-05-06 affecting Tauri up to 2.11.0, patched in 2.11.1."
+    ],
+    "verification": "primary advisory or documentation; parent re-fetched",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-svelte-clobber",
+    "tool": "Svelte",
+    "url": "https://github.com/sveltejs/svelte/security/advisories/GHSA-rcqx-6q8c-2c42",
+    "title": "XSS via DOM Clobbering of Internal Framework State",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Medium-severity advisory published 2026-05-14 affecting Svelte 5.55.6 and earlier, patched in 5.55.7."
+    ],
+    "verification": "primary advisory or documentation; parent re-fetched",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-node-oct-2026",
+    "tool": "Node.js",
+    "url": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+    "title": "October 2026 security releases",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Security releases v22.23.4, v24.22.1 and v26.12.1 on or shortly after 2026-10-21; highest severity High."
+    ],
+    "verification": "primary advisory or documentation; parent re-fetched",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-wdio-tauri",
+    "tool": "WebdriverIO Tauri service",
+    "url": "https://webdriver.io/docs/desktop-testing/tauri/platform-support",
+    "title": "Tauri platform support",
+    "accessed": "2026-10-26",
+    "claims": [
+      "On Windows the default official provider uses tauri-driver with an msedgedriver matched to WebView2; the embedded provider requires the compiled-in tauri-plugin-wdio-webdriver crate."
+    ],
+    "verification": "primary documentation located by an independent researcher",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
   }
 ]
