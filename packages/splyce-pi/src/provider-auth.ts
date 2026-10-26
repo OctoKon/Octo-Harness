@@ -50,12 +50,8 @@ export type CredentialErrorCode = (typeof CREDENTIAL_ERROR_CODES)[number];
 
 export class CredentialError extends Error {
   readonly code: CredentialErrorCode;
-  constructor(
-    code: CredentialErrorCode,
-    message: string,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
+  constructor(code: CredentialErrorCode, message: string) {
+    super(message);
     this.name = "CredentialError";
     this.code = code;
   }

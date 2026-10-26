@@ -10,10 +10,13 @@ import { setTimeout as delay } from "node:timers/promises";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const target = resolve(root, "apps/desktop/src-tauri/target");
 const tools = resolve(target, "smoke-tools");
-const pins = {
-  tauriDriver: "2.1.0",
-  edgeDriver: "155.0.4283.62",
-};
+const pins = { node: "24.22.1" };
+const edgeWebDriverPage =
+  "https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver";
+const tauriDriverInventory = resolve(
+  root,
+  "tests/bootstrap/tauri-driver-inventory.json",
+);
 
 export function assertUnavailable(state) {
   assert.equal(state.connection, "unavailable");
@@ -45,11 +48,72 @@ function processes() {
   return JSON.parse(result || "[]");
 }
 
+function installedWebViewVersion() {
+  return powershell(`
+$guid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+$keys = @(
+  "HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\$guid",
+  "HKLM:\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\$guid",
+  "HKCU:\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\$guid"
+)
+foreach ($key in $keys) {
+  if (Test-Path -LiteralPath $key) {
+    $registration = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
+    $version = $registration.pv
+    if ($version -match '^\\d+(?:\\.\\d+){3}$' -and $version -ne '0.0.0.0') {
+      $version
+      exit 0
+    }
+  }
+}
+throw 'The Evergreen WebView2 Runtime registry version is unavailable.'
+`);
+}
+
+function webViewVersionFromProcess(process) {
+  return process.ExecutablePath?.match(
+    /\\EdgeWebView\\Application\\(\d+(?:\.\d+){3})\\msedgewebview2\.exe$/i,
+  )?.[1];
+}
+
 export function sameProcess(left, right) {
   return (
     left.ProcessId === right.ProcessId &&
     left.CreationDate === right.CreationDate
   );
+}
+
+export function assertDriverProvenance(manifest, pin, actual) {
+  const version = /^\d+(?:\.\d+){3}$/;
+  const sha256 = /^[0-9a-f]{64}$/;
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.tauriDriver.version, pin.version);
+  assert.equal(
+    manifest.tauriDriver.crateUrl,
+    `https://crates.io/api/v1/crates/tauri-driver/${pin.version}/download`,
+  );
+  assert.equal(manifest.tauriDriver.crateSha256, pin.crateSha256);
+  assert.match(manifest.tauriDriver.binarySha256, sha256);
+  assert.equal(manifest.tauriDriver.binarySha256, actual.tauriDriverSha256);
+  assert.equal(manifest.webview2.distribution, "Evergreen");
+  assert.match(manifest.webview2.runtimeVersion, version);
+  assert.equal(manifest.webview2.runtimeVersion, actual.runtimeVersion);
+  assert.match(manifest.edgeDriver.version, version);
+  assert.equal(manifest.edgeDriver.version, actual.edgeDriverVersion);
+  assert.equal(manifest.edgeDriver.sourcePage, edgeWebDriverPage);
+  assert.equal(
+    manifest.edgeDriver.downloadUrl,
+    `https://msedgedriver.microsoft.com/${manifest.edgeDriver.version}/edgedriver_win64.zip`,
+  );
+  assert.equal(
+    manifest.edgeDriver.version.split(".").slice(0, 3).join("."),
+    manifest.webview2.runtimeVersion.split(".").slice(0, 3).join("."),
+    "Microsoft Edge WebDriver must match the installed WebView2 build",
+  );
+  assert.match(manifest.edgeDriver.archiveSha256, sha256);
+  assert.equal(manifest.edgeDriver.archiveSha256, actual.edgeArchiveSha256);
+  assert.match(manifest.edgeDriver.binarySha256, sha256);
+  assert.equal(manifest.edgeDriver.binarySha256, actual.edgeDriverSha256);
 }
 
 export function ownedBy(process, owner, list) {
@@ -94,20 +158,26 @@ export async function runSmoke() {
   );
   assert.equal(
     process.version,
-    "v24.22.1",
+    `v${pins.node}`,
     "Use the qualified packaged Node 24.22.1",
   );
   const app = resolve(
     process.env.SPLYCE_SMOKE_APP ||
       resolve(target, "release/splyce-desktop.exe"),
   );
-  const driver = resolve(
-    process.env.SPLYCE_TAURI_DRIVER || resolve(tools, "bin/tauri-driver.exe"),
+  const manifest = JSON.parse(
+    await readFile(resolve(tools, "driver-manifest.json"), "utf8"),
   );
-  const edge = resolve(
-    process.env.SPLYCE_EDGE_DRIVER ||
-      resolve(tools, `edge-${pins.edgeDriver}/msedgedriver.exe`),
+  assert.match(manifest.edgeDriver?.version || "", /^\d+(?:\.\d+){3}$/);
+  const driver = resolve(tools, "bin/tauri-driver.exe");
+  const edgeDirectory = resolve(tools, `edge-${manifest.edgeDriver.version}`);
+  const edgeArchive = resolve(edgeDirectory, "edgedriver_win64.zip");
+  const edge = resolve(edgeDirectory, "msedgedriver.exe");
+  const inventory = JSON.parse(await readFile(tauriDriverInventory, "utf8"));
+  const tauriDriverPin = inventory.find(
+    (entry) => entry.name === "tauri-driver",
   );
+  assert(tauriDriverPin, "tauri-driver source pin is required");
   const artifacts = resolve(
     target,
     "bootstrap-smoke",
@@ -118,7 +188,12 @@ export async function runSmoke() {
     case: "bootstrap-unavailable-release",
     passed: false,
     app,
-    pins,
+    pins: {
+      node: pins.node,
+      tauriDriver: tauriDriverPin.version,
+      webview2: manifest.webview2.runtimeVersion,
+      edgeDriver: manifest.edgeDriver.version,
+    },
     checks: [],
   };
   const logs = createWriteStream(resolve(artifacts, "driver.log"));
@@ -162,33 +237,26 @@ export async function runSmoke() {
     report.appSha256 = await hash(app);
     report.driverSha256 = await hash(driver);
     report.edgeSha256 = await hash(edge);
-    // This driver has no --version flag; qualify the exact locally built bytes.
-    assert.equal(
-      report.driverSha256,
-      "f054d6ed466a84a143ca367531964c1806f821c8e0d0f02564460d3b1c939a05",
-    );
-    assert.equal(
-      report.edgeSha256,
-      "01ce0daa683e5ea874e2e2439e4a162db11b0d40228d37cce1efc990294464f6",
-    );
-    report.driverVersion = pins.tauriDriver;
+    report.edgeArchiveSha256 = await hash(edgeArchive);
+    report.driverVersion = tauriDriverPin.version;
     report.edgeVersion = execFileSync(edge, ["--version"], {
       encoding: "utf8",
       windowsHide: true,
     }).trim();
-    assert.match(
-      report.edgeVersion,
-      /^Microsoft Edge WebDriver 155\.0\.4283\.62\b/,
-    );
-    const runtime = powershell(
-      "(Get-Item 'C:/Program Files (x86)/Microsoft/EdgeWebView/Application/155.0.4283.62/msedgewebview2.exe').VersionInfo.ProductVersion",
-    );
-    assert.equal(
-      runtime,
-      pins.edgeDriver,
-      "WebView2 must match the qualified driver",
-    );
+    const edgeVersion = report.edgeVersion.match(
+      /^Microsoft Edge WebDriver (\d+(?:\.\d+){3})\b/,
+    )?.[1];
+    assert(edgeVersion, "msedgedriver must report its four-part version");
+    const runtime = installedWebViewVersion();
+    assertDriverProvenance(manifest, tauriDriverPin, {
+      tauriDriverSha256: report.driverSha256,
+      edgeDriverSha256: report.edgeSha256,
+      edgeArchiveSha256: report.edgeArchiveSha256,
+      edgeDriverVersion: edgeVersion,
+      runtimeVersion: runtime,
+    });
     report.webviewVersion = runtime;
+    report.edgeDriverVersion = edgeVersion;
     const before = processes();
     assert(
       !before.some(
@@ -239,6 +307,15 @@ export async function runSmoke() {
       "Packaged application must belong to the spawned driver tree",
     );
     report.application = application;
+    const webview = await until(() => {
+      const current = processes();
+      return current.find(
+        (candidate) =>
+          ownedBy(candidate, child.pid, current) &&
+          webViewVersionFromProcess(candidate) === runtime,
+      );
+    }, "packaged app uses the registered Evergreen WebView2 runtime");
+    report.webviewProcess = webview;
     report.ownedProcesses = list.filter((candidate) =>
       ownedBy(candidate, child.pid, list),
     );

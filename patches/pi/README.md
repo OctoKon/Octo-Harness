@@ -101,3 +101,13 @@ core patch to `packages/ai`, recorded here per [core fusion](../../research/docs
 - **Not yet qualified.** These tests ran against stand-in model-catalog data (the generated catalog needs the network; see
   issue 76), so existing adapter suites cannot all run locally. Provider-specific admission, per-send endpoint rechecks and
   cancellation belong to TD-13/TD-16 and the native transport.
+
+## Pinned model data hydration
+
+`0005-hydrate-pinned-model-catalog.patch` applies after patch 0003. It adds a
+build-only `--hydrate-pinned` mode that fetches the existing
+`nix/model-catalog.json` revision, verifies its content hash, and runs Pi's
+existing hydrator without changing the pin. The Windows staging gate uses this
+mode before its offline build; `tests/bootstrap/hydrate-pinned-model-data.test.mjs`
+checks successful hydration, unavailable revisions, hash mismatches and pin
+preservation (#77).

@@ -1,9 +1,13 @@
 #![cfg(windows)]
 
+#[path = "../src/ipc.rs"]
+#[allow(dead_code)]
+mod ipc;
 #[path = "../src/process.rs"]
 mod process;
 
-use process::EngineChild;
+use ipc::BridgeState;
+use process::{EngineChild, EngineEvents};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -11,8 +15,12 @@ use std::io::Read;
 use std::os::windows::fs::MetadataExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tauri::ipc::Channel;
 use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows_sys::Win32::System::Threading::{
     OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject,
@@ -24,6 +32,12 @@ import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 writeFileSync('../started.txt', String(process.pid));
 let pending = Buffer.alloc(0);
+function send(value) {
+  const payload = Buffer.from(JSON.stringify(value));
+  const header = Buffer.alloc(4);
+  header.writeUInt32BE(payload.length);
+  process.stdout.write(Buffer.concat([header, payload]));
+}
 process.stdin.on('data', chunk => {
   pending = Buffer.concat([pending, chunk]);
   while (pending.length >= 4) {
@@ -39,23 +53,58 @@ process.stdin.on('data', chunk => {
       process.stdout.write(header);
       continue;
     }
+    if (request.method === 'push-before') send({ event: { kind: 'before', seq: 1 } });
+    if (request.method === 'push-idle') {
+      setTimeout(() => send({ event: { kind: 'idle', seq: 2 } }), 20);
+    }
+    if (request.method === 'bad-event') {
+      send({ event: 'malformed' });
+      continue;
+    }
+    if (request.method === 'bad-idle') {
+      setTimeout(() => send({ event: 'malformed' }), 20);
+    }
+    if (request.method === 'subscribe') {
+      const { sessionId, afterSeq } = request.params;
+      send({ id: request.id, ok: true, value: { sessionId, scopeId: 'w1', afterSeq } });
+      for (let seq = 1; seq <= 300; seq++) {
+        send({ event: {
+          schemaVersion: 1, protocolVersion: 1, recordId: `record${seq}`,
+          eventId: `event${seq}`, createdAt: '2026-10-26T00:00:00.000Z',
+          sourceIds: [], sessionId, scopeId: 'w1', seq,
+          durable: false, kind: 'turn.stream_delta',
+          payload: { runId: 'r1', delta: String(seq) }
+        } });
+      }
+      process.stdout.write('', () => process.exit());
+      continue;
+    }
     let descendant;
     if (request.method === 'descendant') {
       descendant = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
         stdio: 'ignore'
       }).pid;
     }
-    const payload = Buffer.from(JSON.stringify({
+    send({
       id: request.id, ok: true, value: {
         pid: process.pid, descendant,
         ambient: !!process.env.SPLYCE_PROCESS_TEST_CANARY,
         nodeOptions: !!process.env.NODE_OPTIONS,
         keys: Object.keys(process.env)
       }
-    }));
-    const header = Buffer.alloc(4);
-    header.writeUInt32BE(payload.length);
-    process.stdout.write(Buffer.concat([header, payload]));
+    });
+    if (request.method === 'push-after') send({ event: { kind: 'after', seq: 3 } });
+    if (request.method === 'subscribe-test') send({ event: { kind: 'subscribed', seq: 1100 } });
+    if (request.method === 'flood') {
+      setImmediate(() => {
+        for (let seq = 0; seq < 1100; seq++) send({ event: { kind: 'flood', seq } });
+      });
+    }
+    if (request.method === 'flood-bytes') {
+      setImmediate(() => {
+        for (let seq = 0; seq < 70; seq++) send({ event: { kind: 'large', seq, data: 'x'.repeat(150000) } });
+      });
+    }
   }
 });
 process.stdin.on('end', () => process.exit());
@@ -246,6 +295,272 @@ fn stale_reply_is_rejected_and_reaped() {
         .request(&json!({"id": "current", "method": "stale", "params": {}}))
         .unwrap_err();
     assert_eq!(error.code, "ENGINE_FRAME");
+    assert!(!child.is_running());
+}
+
+#[test]
+fn pushed_events_before_after_and_idle_preserve_reply_correlation() {
+    let fixture = Fixture::new();
+    let mut child = fixture.spawn();
+    let events: EngineEvents = child.events();
+    for method in ["push-before", "push-after", "push-idle"] {
+        let reply = child
+            .request(&json!({"id": method, "method": method, "params": {}}))
+            .unwrap();
+        assert_eq!(reply["id"], method);
+    }
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut observed = Vec::new();
+    while observed.len() < 3 && Instant::now() < deadline {
+        observed.extend(events.drain().unwrap());
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        observed,
+        vec![
+            json!({"kind":"before","seq":1}),
+            json!({"kind":"after","seq":3}),
+            json!({"kind":"idle","seq":2}),
+        ]
+    );
+    assert_eq!(
+        child
+            .request(&json!({"id":"ping","method":"ping","params":{}}))
+            .unwrap()["id"],
+        "ping"
+    );
+    child.stop().unwrap();
+}
+
+#[test]
+fn event_queue_is_bounded_and_drains_in_renderer_batches_without_loss() {
+    let fixture = Fixture::new();
+    let mut child = fixture.spawn();
+    let events = child.events();
+    child
+        .request(&json!({"id":"flood","method":"flood","params":{}}))
+        .unwrap();
+    let saturation = Instant::now() + Duration::from_secs(3);
+    while events.pending_for_test().0 < 1024 && Instant::now() < saturation {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(events.pending_for_test().0, 1024);
+    let mut observed = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while observed.len() < 1100 && Instant::now() < deadline {
+        let batch = events.drain().unwrap();
+        assert!(batch.len() <= 256);
+        observed.extend(batch);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(observed.len(), 1100);
+    for (seq, event) in observed.iter().enumerate() {
+        assert_eq!(event["seq"], seq);
+    }
+    child.stop().unwrap();
+}
+
+#[test]
+fn stop_wakes_reader_when_event_queue_is_saturated() {
+    let fixture = Fixture::new();
+    let mut child = fixture.spawn();
+    let events = child.events();
+    child
+        .request(&json!({"id":"flood","method":"flood","params":{}}))
+        .unwrap();
+    let saturation = Instant::now() + Duration::from_secs(3);
+    while events.pending_for_test().0 < 1024 && Instant::now() < saturation {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(events.pending_for_test().0, 1024);
+    let started = Instant::now();
+    child.stop().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(6));
+    assert!(!child.is_running());
+}
+
+#[test]
+fn event_byte_limits_bound_renderer_batches_and_keep_order() {
+    let fixture = Fixture::new();
+    let mut child = fixture.spawn();
+    let events = child.events();
+    child
+        .request(&json!({"id":"large","method":"flood-bytes","params":{}}))
+        .unwrap();
+    let saturation = Instant::now() + Duration::from_secs(3);
+    while events.pending_for_test().1 < 8_000_000 && Instant::now() < saturation {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (_, pending_bytes) = events.pending_for_test();
+    assert!((8_000_000..=8_388_608).contains(&pending_bytes));
+    let mut count = 0;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while count < 70 && Instant::now() < deadline {
+        let batch = events.drain().unwrap();
+        assert!(batch.len() <= 27); // 28 framed events exceed the 4 MiB renderer batch limit.
+        for event in batch {
+            assert_eq!(event["seq"], count);
+            count += 1;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(count, 70);
+    child.stop().unwrap();
+}
+
+#[test]
+fn response_callback_precedes_post_reply_event_after_prior_queue_saturation() {
+    let fixture = Fixture::new();
+    let mut child = fixture.spawn();
+    let events = child.events();
+    child
+        .request(&json!({"id":"flood","method":"flood","params":{}}))
+        .unwrap();
+    let saturation = Instant::now() + Duration::from_secs(3);
+    while events.pending_for_test().0 < 1024 && Instant::now() < saturation {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(events.pending_for_test().0, 1024);
+
+    let installed = Arc::new(AtomicBool::new(false));
+    let observer_installed = installed.clone();
+    let observer = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            for event in events.drain().unwrap() {
+                if event["kind"] == "subscribed" {
+                    return observer_installed.load(Ordering::Acquire);
+                }
+            }
+            assert!(Instant::now() < deadline, "post-reply event never arrived");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    let reply = child
+        .request_with_response(
+            &json!({"id":"subscribe","method":"subscribe-test","params":{}}),
+            |response| {
+                assert_eq!(response["id"], "subscribe");
+                std::thread::sleep(Duration::from_millis(50));
+                installed.store(true, Ordering::Release);
+                true
+            },
+        )
+        .unwrap();
+    assert_eq!(reply["id"], "subscribe");
+    assert!(observer.join().unwrap(), "event preceded response callback");
+    child.stop().unwrap();
+}
+
+#[test]
+fn rejected_response_callback_fails_closed_and_wakes_reader() {
+    let fixture = Fixture::new();
+    let mut child = fixture.spawn();
+    let error = child
+        .request_with_response(
+            &json!({"id":"subscribe","method":"subscribe-test","params":{}}),
+            |_| false,
+        )
+        .unwrap_err();
+    assert_eq!(error.code, "ENGINE_FRAME");
+    assert!(!child.is_running());
+}
+
+#[test]
+fn native_channel_delivers_all_buffered_events_before_child_exit_lifecycle() {
+    let fixture = Fixture::new();
+    let state = BridgeState::start(&fixture.engine(), &fixture.expected_digest).unwrap();
+    let timeline = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let event_sink = timeline.clone();
+    let on_event = Channel::new(move |body| {
+        let tauri::ipc::InvokeResponseBody::Json(body) = body else {
+            panic!("Expected JSON native event channel delivery");
+        };
+        event_sink
+            .lock()
+            .unwrap()
+            .push(serde_json::from_str(&body).unwrap());
+        Ok(())
+    });
+    let lifecycle_sink = timeline.clone();
+    let on_lifecycle = Channel::new(move |body| {
+        let tauri::ipc::InvokeResponseBody::Json(body) = body else {
+            panic!("Expected JSON native lifecycle channel delivery");
+        };
+        lifecycle_sink
+            .lock()
+            .unwrap()
+            .push(serde_json::from_str(&body).unwrap());
+        Ok(())
+    });
+    let ack = state
+        .subscribe_channel("s1".into(), 0, on_event, on_lifecycle)
+        .ok()
+        .expect("Real packaged Node subscription ACK");
+    assert_eq!(ack, json!({"sessionId":"s1","scopeId":"w1","afterSeq":0}));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if timeline
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["kind"] == "engine_exited")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "engine exit lifecycle did not arrive"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let observed = timeline.lock().unwrap();
+    assert_eq!(observed.len(), 301);
+    for (index, event) in observed[..300].iter().enumerate() {
+        assert_eq!(event["seq"], index + 1);
+        assert_eq!(event["sessionId"], "s1");
+        assert_eq!(event["scopeId"], "w1");
+    }
+    assert_eq!(observed[300]["kind"], "engine_exited");
+    assert_eq!(observed[300]["expected"], false);
+    assert_eq!(observed[300]["cleanupComplete"], true);
+    drop(observed);
+    assert!(state.stop().is_ok());
+    assert!(state.stop().is_ok());
+    assert_eq!(timeline.lock().unwrap().len(), 301);
+}
+
+#[test]
+fn malformed_event_fails_closed_and_reaps_child() {
+    let fixture = Fixture::new();
+    let mut child = fixture.spawn();
+    let events = child.events();
+    let error = child
+        .request(&json!({"id":"bad","method":"bad-event","params":{}}))
+        .unwrap_err();
+    assert_eq!(error.code, "ENGINE_FRAME");
+    assert_eq!(events.drain().unwrap_err().code, "ENGINE_FRAME");
+    assert!(!child.is_running());
+}
+
+#[test]
+fn malformed_idle_event_reports_failure_without_an_outstanding_request() {
+    let fixture = Fixture::new();
+    let mut child = fixture.spawn();
+    let events = child.events();
+    child
+        .request(&json!({"id":"idle","method":"bad-idle","params":{}}))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let code = loop {
+        match events.drain() {
+            Err(error) => break error.code,
+            Ok(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            Ok(_) => panic!("malformed idle event was not reported"),
+        }
+    };
+    assert_eq!(code, "ENGINE_FRAME");
+    child.stop().unwrap();
     assert!(!child.is_running());
 }
 

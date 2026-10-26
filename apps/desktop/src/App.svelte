@@ -1,29 +1,75 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { Handshake } from "@splyce/pi/contracts";
-  import { connectionState, handshake } from "./stores/engine";
+  import TurnStream from "./components/TurnStream.svelte";
+  import {
+    connectionState,
+    handshake,
+    onEvent,
+    subscribe,
+  } from "./stores/engine";
+  import { bindSelection, type BindingStatus } from "./stores/session-selection";
+  import {
+    createTurnStreamTransport,
+    createTurnsState,
+    type TurnsState,
+  } from "./stores/turns";
 
   let status = $state("disconnected");
   let readiness = $state<Handshake["readiness"] | null>(null);
   let engineConnected = $state(false);
   let stopped = $derived(engineConnected && status === "disconnected");
+  let turns = $state.raw<TurnsState>(createTurnsState());
+  let subscription = $state<BindingStatus>({ state: "idle" });
+  let retry = $state<() => void>(() => {});
+  let currentRun = $derived(
+    turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
+  );
+
+  function onApproval() {
+    // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
+  }
 
   onMount(() => {
-    const unsub = connectionState.subscribe((val) => {
+    let mounted = true;
+    // The workbench selects the session (session-selection store); none is derived from events.
+    const transport = createTurnStreamTransport({
+      onState: (next) => {
+        turns = next;
+      },
+      onResync: (fromSeq, sessionId) => {
+        void binding.resubscribe(sessionId, fromSeq);
+      },
+    });
+    const binding = bindSelection(transport, subscribe);
+    const unsubState = connectionState.subscribe((val) => {
       status = val;
       if (val === "disconnected") readiness = null;
     });
+    const unsubBinding = binding.status.subscribe((next) => {
+      subscription = next;
+    });
+    retry = () => void binding.retry();
+    const unsubEvents = onEvent((event) => transport.enqueue(event));
 
     handshake()
       .then((verified) => {
-        readiness = verified.readiness;
+        if (!mounted) return;
+        readiness = status === "disconnected" ? null : verified.readiness;
         engineConnected = true;
       })
       .catch(() => {
-        // Handshake rejection leaves status in 'unavailable' or 'error'
+        // The engine store publishes the unavailable/error state.
       });
 
-    return unsub;
+    return () => {
+      mounted = false;
+      unsubState();
+      unsubEvents();
+      unsubBinding();
+      binding.dispose();
+      transport.dispose();
+    };
   });
 </script>
 
@@ -44,13 +90,16 @@
     </div>
   </header>
 
-  <div class="app-content">
-    {#if status === "ready"}
-      <div class="workspace-view">
-        <p>Ready for workspace execution.</p>
-      </div>
-    {:else}
-      <div class="unavailable-view" data-testid="unavailable-banner">
+  {#if subscription.state === "failed"}
+    <div class="subscribe-error" role="alert" data-testid="subscribe-error">
+      <span>Could not subscribe to the session: {subscription.error}</span>
+      <button type="button" onclick={retry}>Retry</button>
+    </div>
+  {/if}
+
+  <div class="app-content" class:conversation={currentRun !== undefined}>
+    {#if status !== "ready"}
+      <div class="unavailable-view" data-testid="unavailable-banner" role="status" aria-live="polite">
         <h2>{stopped ? "Engine stopped" : "Engine Unavailable"}</h2>
         <p>
           {stopped
@@ -59,10 +108,29 @@
         </p>
       </div>
     {/if}
+    {#if currentRun}
+      <section class="turn-pane" aria-label="Transcript">
+        <TurnStream
+          run={currentRun}
+          stale={turns.stale || turns.needsResync || status !== "ready"}
+          showApprovalControls={false}
+          canRespond={() => false}
+          {onApproval}
+        />
+      </section>
+    {:else if status === "ready"}
+      <div class="workspace-view">
+        <p>Ready for workspace execution.</p>
+      </div>
+    {/if}
   </div>
 </main>
 
 <style>
+  :global(html),
+  :global(body) {
+    margin: 0;
+  }
   .app-shell {
     display: flex;
     flex-direction: column;
@@ -105,12 +173,33 @@
     background: #fee2e2;
     color: #991b1b;
   }
+  .subscribe-error {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 20px;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.875rem;
+  }
   .app-content {
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 24px;
+  }
+  .app-content.conversation {
+    flex-direction: column;
+    gap: 16px;
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow-y: auto;
+  }
+  .turn-pane {
+    width: 100%;
+    max-width: 880px;
+    margin: 0 auto;
   }
   .unavailable-view {
     max-width: 480px;

@@ -523,16 +523,6 @@ const COMMAND_OPTIONAL: Partial<Record<CommandOp, Shape>> = {
 export const COMMAND_OPS = Object.freeze(
   Object.keys(COMMAND_SCHEMAS) as CommandOp[],
 );
-export const BRIDGE_PROTOCOL_JSON = JSON.stringify({
-  schemaVersion: CONTRACT_VERSION,
-  protocolVersion: PROTOCOL_VERSION,
-  piRevision: PI_REVISION,
-  foundation: FOUNDATION,
-  transportLimits: TRANSPORT_LIMITS,
-  commands: COMMAND_SCHEMAS,
-  optional: COMMAND_OPTIONAL,
-});
-
 export const ERROR_CODES = [
   "POLICY_DENIED",
   "UNSUPPORTED_PROVIDER",
@@ -682,6 +672,16 @@ const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
 export const EVENT_KINDS = Object.freeze(
   Object.keys(EVENT_SCHEMAS) as EventKind[],
 );
+export const BRIDGE_PROTOCOL_JSON = JSON.stringify({
+  schemaVersion: CONTRACT_VERSION,
+  protocolVersion: PROTOCOL_VERSION,
+  piRevision: PI_REVISION,
+  foundation: FOUNDATION,
+  transportLimits: TRANSPORT_LIMITS,
+  commands: COMMAND_SCHEMAS,
+  optional: COMMAND_OPTIONAL,
+  eventKinds: EVENT_KINDS,
+});
 
 export interface Handshake {
   protocolVersion: typeof PROTOCOL_VERSION;
