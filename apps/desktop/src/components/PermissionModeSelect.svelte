@@ -1,0 +1,277 @@
+<script lang="ts">
+  /**
+   * TD-30 permission-mode selector (U1_permission_mode).
+   *
+   * The selector never changes the mode by itself: it asks the store for a
+   * request, reports the requested mode to the caller (which submits the
+   * command) and keeps the effective mode visible until the engine
+   * acknowledges it. A bypass-class mode opens a separate native-dialog
+   * confirmation whose default and Escape path keep the current mode, and the
+   * engine-unavailable state is shown as a blocking reason rather than silently
+   * doing nothing.
+   */
+  import { tick } from "svelte";
+  import {
+    PERMISSION_MODE_LABELS,
+    permissionModeView,
+    requestPermissionMode,
+    type PermissionMode,
+    type PermissionModeContext,
+    type PermissionModeState,
+  } from "../stores/permission-mode";
+
+  interface Props {
+    modeState: PermissionModeState;
+    context: PermissionModeContext;
+    /** Called only with a mode the store agrees may be requested. */
+    onChange?: (mode: PermissionMode) => void;
+    /** Optional announcement of a dismissed bypass confirmation. */
+    onDismissConfirm?: () => void;
+  }
+
+  let {
+    modeState,
+    context,
+    onChange = () => {},
+    onDismissConfirm = () => {},
+  }: Props = $props();
+
+  const view = $derived(permissionModeView(modeState));
+  const ready = $derived(context.engine === "ready");
+  const blockedReason = $derived(
+    ready
+      ? null
+      : (context.engineReason ?? "Engine unavailable; the mode cannot be changed."),
+  );
+  const selected = $derived(
+    modeState.status === "pending" && modeState.requested
+      ? modeState.requested
+      : modeState.effective,
+  );
+
+  let confirmMode = $state<PermissionMode | null>(null);
+  let notice = $state<string | null>(null);
+  let dialog = $state<HTMLDialogElement>();
+  let keepButton = $state<HTMLButtonElement>();
+  let selectEl = $state<HTMLSelectElement>();
+
+  // Opening is done after the dialog's content exists, and the safe control
+  // takes focus so Enter cannot enable bypass by accident.
+  $effect(() => {
+    if (!confirmMode) return;
+    dialog?.showModal();
+    void tick().then(() => keepButton?.focus());
+  });
+
+  function choose(mode: PermissionMode) {
+    notice = null;
+    if (!ready) {
+      notice = blockedReason;
+      resetSelect();
+      return;
+    }
+    if (mode === modeState.effective) return;
+    const request = requestPermissionMode(modeState, mode, context);
+    if (request.kind === "blocked") {
+      notice = request.reason;
+      resetSelect();
+      return;
+    }
+    if (request.kind === "confirm") {
+      confirmMode = request.mode;
+      return;
+    }
+    // The requested mode is not effective yet: show the engine-acknowledged
+    // value until the caller reports the pending state.
+    resetSelect();
+    onChange(mode);
+  }
+
+  /** Puts the native control back on the mode the engine still reports. */
+  function resetSelect() {
+    if (selectEl) selectEl.value = selected;
+  }
+
+  function onSelect(event: Event) {
+    choose((event.currentTarget as HTMLSelectElement).value as PermissionMode);
+  }
+
+  function cancelConfirm() {
+    confirmMode = null;
+    if (dialog?.open) dialog.close();
+    resetSelect();
+    onDismissConfirm();
+    void tick().then(() => selectEl?.focus());
+  }
+
+  function acceptConfirm() {
+    const mode = confirmMode;
+    confirmMode = null;
+    if (dialog?.open) dialog.close();
+    if (mode) onChange(mode);
+  }
+
+  function oncancel(event: Event) {
+    // Escape keeps the current mode; it never enables the dangerous one.
+    event.preventDefault();
+    cancelConfirm();
+  }
+</script>
+
+<div class="mode-select" data-testid="permission-mode">
+  <label for="permission-mode-select">Permission mode</label>
+  <select
+    id="permission-mode-select"
+    bind:this={selectEl}
+    value={selected}
+    disabled={!ready}
+    onchange={onSelect}
+    data-testid="permission-mode-select"
+  >
+    {#each view.options as option (option.mode)}
+      <option value={option.mode}>
+        {option.label}{option.dangerous ? " — needs confirmation" : ""}
+      </option>
+    {/each}
+  </select>
+
+  <p data-testid="permission-effective">
+    Effective: <strong>{view.effectiveLabel}</strong>
+  </p>
+  {#if view.pendingLabel}
+    <p data-testid="permission-pending" class="pending">
+      {view.pendingLabel} — not effective until the engine acknowledges it.
+    </p>
+  {/if}
+  {#if view.rejectedReason}
+    <p role="alert" class="reason" data-testid="permission-rejected">
+      {view.rejectedReason} The previous mode is still effective.
+    </p>
+  {/if}
+  {#if blockedReason}
+    <p role="alert" class="reason" data-testid="permission-blocked">
+      {blockedReason}
+    </p>
+  {/if}
+  {#if notice}
+    <p role="status" class="reason" data-testid="permission-notice">{notice}</p>
+  {/if}
+
+  <p
+    class="announcement"
+    aria-live="polite"
+    data-testid="permission-announcement"
+  >
+    {view.announcement ?? ""}
+  </p>
+</div>
+
+<dialog
+  bind:this={dialog}
+  {oncancel}
+  aria-labelledby="permission-confirm-title"
+  aria-describedby="permission-confirm-body"
+  data-testid="permission-confirm"
+>
+  {#if confirmMode}
+    <h2 id="permission-confirm-title">
+      Enable {PERMISSION_MODE_LABELS[confirmMode]}?
+    </h2>
+    <p id="permission-confirm-body">
+      {PERMISSION_MODE_LABELS[confirmMode]} removes approval prompts for this
+      session. This is a separate, explicit choice and it applies to this session
+      only. The safe choice keeps {view.effectiveLabel}.
+    </p>
+    <div class="actions">
+      <button
+        bind:this={keepButton}
+        type="button"
+        onclick={cancelConfirm}
+        data-testid="permission-keep"
+      >
+        Keep {view.effectiveLabel}
+      </button>
+      <button
+        type="button"
+        class="danger"
+        onclick={acceptConfirm}
+        data-testid="permission-confirm-bypass"
+      >
+        Enable {PERMISSION_MODE_LABELS[confirmMode]}
+      </button>
+    </div>
+  {/if}
+</dialog>
+
+<style>
+  .mode-select {
+    display: grid;
+    gap: 4px;
+    max-width: 420px;
+    color: #111827;
+  }
+  label {
+    font-weight: 600;
+    font-size: 0.875rem;
+  }
+  select {
+    font: inherit;
+    padding: 4px 8px;
+    border: 1px solid #9ca3af;
+    border-radius: 6px;
+    background: #ffffff;
+    color: inherit;
+  }
+  select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  p {
+    margin: 0;
+    font-size: 0.875rem;
+  }
+  .pending {
+    color: #92400e;
+  }
+  .reason {
+    color: #991b1b;
+  }
+  .announcement {
+    min-height: 1em;
+  }
+  dialog {
+    max-width: 460px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 20px;
+    background: #ffffff;
+    color: #111827;
+  }
+  dialog::backdrop {
+    background: rgb(17 24 39 / 45%);
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  button {
+    font: inherit;
+    padding: 6px 12px;
+    border: 1px solid #9ca3af;
+    border-radius: 6px;
+    background: #ffffff;
+    color: inherit;
+    cursor: pointer;
+  }
+  .danger {
+    border-color: #b91c1c;
+    color: #b91c1c;
+    font-weight: 600;
+  }
+  button:focus-visible,
+  select:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+</style>
