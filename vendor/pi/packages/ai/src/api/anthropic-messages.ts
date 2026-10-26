@@ -600,6 +600,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			timestamp: Date.now(),
 		};
 
+		// Splyce TD-21: only tool calls closed by content_block_stop may be returned; a partial one never reaches dispatch.
+		const finishedToolCalls = new WeakSet<object>();
+
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
@@ -829,6 +832,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							});
 						} else if (block.type === "toolCall" && open.arguments !== undefined) {
 							Object.assign(block, open.arguments.finish());
+							finishedToolCalls.add(block);
 							stream.push({
 								type: "toolcall_end",
 								contentIndex: index,
@@ -901,6 +905,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
+			if (output.content.some((block) => block.type === "toolCall" && !finishedToolCalls.has(block))) {
+				throw new Error("Anthropic stream ended with an unfinished tool call");
+			}
 			if (inputTransformations && inputTransformations.length > 0) {
 				appendAssistantMessageDiagnostic(output, {
 					type: "anthropic_input_transformations",
@@ -918,6 +925,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			output.content = output.content.filter((block) => block.type !== "toolCall" || finishedToolCalls.has(block));
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
