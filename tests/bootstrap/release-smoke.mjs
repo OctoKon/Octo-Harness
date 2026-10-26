@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { createWriteStream } from "node:fs";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { constants, createWriteStream } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -50,6 +50,10 @@ export function sanitizeSmokeDiagnostics(report, driverLog) {
     "webviewScope",
     "edgeDriverVersion",
     "failedRequest",
+    "sessionRequestElapsedMs",
+    "webviewDebugging",
+    "runnerProfile",
+    "nativeSessionObservation",
     "failureProcesses",
     "failureProcessInspection",
     "nativeDriverStdout",
@@ -102,6 +106,85 @@ function processes() {
     "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath,CreationDate | ConvertTo-Json -Compress",
   );
   return JSON.parse(result || "[]");
+}
+
+export function webviewDebuggingFlags(commandLine) {
+  const match = commandLine.match(
+    /(?:^|\s|")--remote-debugging-port(?:=|\s+)"?(\d+)"?(?=$|\s|")/,
+  );
+  const port = match ? Number(match[1]) : null;
+  return {
+    port: Number.isInteger(port) && port >= 0 && port <= 65535 ? port : null,
+    pipe: /(?:^|\s|")--remote-debugging-pipe(?:$|\s|")/.test(commandLine),
+  };
+}
+
+async function webviewDebuggingState(owned) {
+  const ids = owned
+    .filter((candidate) => webViewVersionFromProcess(candidate))
+    .map((candidate) => candidate.ProcessId)
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+  if (!ids.length) return { declaredPorts: [], pipe: false, endpoints: [] };
+  const filter = ids.map((id) => "ProcessId=" + id).join(" OR ");
+  const commands = JSON.parse(
+    powershell(
+      "ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process -Filter '" +
+        filter +
+        "' | Select-Object ProcessId,CreationDate,CommandLine)",
+    ),
+  ).filter((candidate) =>
+    owned.some((original) => sameProcess(candidate, original)),
+  );
+  const liveIds = commands.map((candidate) => candidate.ProcessId);
+  if (!liveIds.length) return { declaredPorts: [], pipe: false, endpoints: [] };
+  const flags = commands.map((candidate) =>
+    webviewDebuggingFlags(candidate.CommandLine || ""),
+  );
+  const sockets = JSON.parse(
+    powershell(
+      "ConvertTo-Json -Compress -InputObject @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -in @(" +
+        liveIds.join(",") +
+        ") -and $_.LocalAddress -in @('127.0.0.1', '::1', '0.0.0.0', '::') } | Select-Object LocalAddress,LocalPort)",
+    ),
+  );
+  const endpoints = await Promise.all(
+    sockets
+      .filter(
+        (socket) =>
+          Number.isInteger(socket.LocalPort) &&
+          socket.LocalPort > 0 &&
+          socket.LocalPort <= 65535,
+      )
+      .slice(0, 8)
+      .map(async (socket) => {
+        const host = socket.LocalAddress.includes(":") ? "[::1]" : "127.0.0.1";
+        const endpoint = { host, port: socket.LocalPort };
+        try {
+          const response = await fetch(
+            "http://" + host + ":" + socket.LocalPort + "/json/version",
+            { signal: AbortSignal.timeout(1000) },
+          );
+          const details = await response.json().catch(() => null);
+          return {
+            ...endpoint,
+            status: response.status,
+            devtools:
+              response.ok && typeof details?.webSocketDebuggerUrl === "string",
+          };
+        } catch (error) {
+          return { ...endpoint, error: error.name };
+        }
+      }),
+  );
+  return {
+    declaredPorts: [
+      ...new Set(
+        flags.map((flag) => flag.port).filter((port) => port !== null),
+      ),
+    ],
+    pipe: flags.some((flag) => flag.pipe),
+    endpoints,
+  };
 }
 
 function installedWebViewRuntime() {
@@ -251,6 +334,7 @@ export async function runSmoke() {
   let session;
   let application;
   let engine;
+  let sessionRequestStartedAt;
   const port = 4444;
   const base = `http://127.0.0.1:${port}`;
   async function request(method, path, body) {
@@ -340,9 +424,11 @@ export async function runSmoke() {
       assert.equal(child.exitCode, null, "tauri-driver exited before startup");
       return (await request("GET", "/status")).ready;
     }, "owned tauri-driver startup");
+    sessionRequestStartedAt = Date.now();
     const created = await request("POST", "/session", {
       capabilities: { alwaysMatch: { "tauri:options": { application: app } } },
     });
+    report.sessionRequestElapsedMs = Date.now() - sessionRequestStartedAt;
     session = created.sessionId;
     assert(session, "WebDriver session ID is required");
     assert.equal(
@@ -442,6 +528,8 @@ export async function runSmoke() {
   } catch (error) {
     report.error = error.stack;
     report.failedRequest = report.lastRequest;
+    if (sessionRequestStartedAt && !session)
+      report.sessionRequestElapsedMs = Date.now() - sessionRequestStartedAt;
     console.error("Failed at WebDriver request:", report.failedRequest);
     try {
       const snapshot = processes();
@@ -479,6 +567,44 @@ export async function runSmoke() {
       console.error("Owned process state:", report.failureProcesses);
       // Pinned tauri-driver discards native stdout; native stderr inherits our log pipe.
       report.nativeDriverStdout = "suppressed by tauri-driver 2.1.0";
+      report.webviewDebugging = await webviewDebuggingState(owned);
+      console.error("Owned WebView debugging state:", report.webviewDebugging);
+      const profile = process.env.USERPROFILE;
+      report.runnerProfile = {
+        configured: Boolean(profile),
+        exists:
+          Boolean(profile) &&
+          (await access(profile, constants.F_OK).then(
+            () => true,
+            () => false,
+          )),
+        writeAccessCheck:
+          Boolean(profile) &&
+          (await access(profile, constants.W_OK).then(
+            () => true,
+            () => false,
+          )),
+        webviewFolderOverride: Boolean(process.env.WEBVIEW2_USER_DATA_FOLDER),
+      };
+      if (
+        !session &&
+        report.failedRequest?.path === "/session" &&
+        child?.exitCode === null
+      ) {
+        // A later session is diagnostic only; the original smoke error is always rethrown.
+        try {
+          const sessions = await request("GET", "/sessions");
+          report.nativeSessionObservation = {
+            elapsedSinceSessionStartMs: Date.now() - sessionRequestStartedAt,
+            sessionCount: Array.isArray(sessions) ? sessions.length : null,
+          };
+        } catch (observationError) {
+          report.nativeSessionObservation = {
+            elapsedSinceSessionStartMs: Date.now() - sessionRequestStartedAt,
+            error: observationError.name,
+          };
+        }
+      }
     } catch (inspectionError) {
       report.failureProcessInspection = String(inspectionError);
     }

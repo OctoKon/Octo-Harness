@@ -6,13 +6,47 @@ import {
   ownedBy,
   sameProcess,
   sanitizeSmokeDiagnostics,
+  webviewDebuggingFlags,
 } from "./release-smoke.mjs";
+
+test("WebView debugging diagnostics expose only valid ports and pipe flags", () => {
+  assert.deepEqual(
+    webviewDebuggingFlags(
+      '"C:\\Users\\private-user\\browser.exe" --remote-debugging-port=9222 --remote-debugging-pipe private-credential',
+    ),
+    { port: 9222, pipe: true },
+  );
+  assert.deepEqual(webviewDebuggingFlags('--remote-debugging-port "0"'), {
+    port: 0,
+    pipe: false,
+  });
+  for (const command of [
+    "--remote-debugging-port=65536",
+    "--remote-debugging-port=-1",
+    "--remote-debugging-port=12invalid",
+    "--unrelated-remote-debugging-port=9222",
+    "",
+  ]) {
+    assert.deepEqual(webviewDebuggingFlags(command), {
+      port: null,
+      pipe: false,
+    });
+  }
+});
 
 test("public smoke diagnostics retain the failed request and omit private data", () => {
   const diagnostic = sanitizeSmokeDiagnostics(
     {
       case: "bootstrap-unavailable-release",
       passed: false,
+      sessionRequestElapsedMs: 20001,
+      webviewDebugging: {
+        declaredPorts: [9222],
+        pipe: false,
+        endpoints: [
+          { host: "127.0.0.1", port: 9222, status: 200, devtools: true },
+        ],
+      },
       failureProcesses: {
         nativeDriverStarted: true,
         applicationStarted: false,
@@ -33,6 +67,8 @@ test("public smoke diagnostics retain the failed request and omit private data",
   );
   const result = JSON.parse(diagnostic.result);
   assert.equal(result.passed, false);
+  assert.equal(result.sessionRequestElapsedMs, 20001);
+  assert.equal(result.webviewDebugging.endpoints[0].devtools, true);
   assert.deepEqual(result.failureProcesses, {
     nativeDriverStarted: true,
     applicationStarted: false,
