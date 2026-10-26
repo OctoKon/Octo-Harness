@@ -33,6 +33,7 @@ The validator checks record shape, URL form, dates, claims, and local documentat
 | [platform-sources.json](platform-sources.json)                         | Host security and release mechanisms                                                 |
 | [workflow-engineering-sources.json](workflow-engineering-sources.json) | Agent evaluation, workflow engineering and constrained interaction/sequence coverage |
 | [evidence-efficiency-sources.json](evidence-efficiency-sources.json)   | SCIP, TOON, contradictory notation research and SQLite durability                    |
+| [store-qualification-sources.json](store-qualification-sources.json)   | J0 store candidates, Node/better-sqlite3 surface and SQLite durability semantics     |
 | [tool-execution-sources.json](tool-execution-sources.json)             | Filesystem, shell, process and remote execution                                      |
 | [computer-access-sources.json](computer-access-sources.json)           | Browser, desktop, device and connector implementations                               |
 | [competitive-sources.json](competitive-sources.json)                   | Direct competitor mechanism and limitation chains                                    |
