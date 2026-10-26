@@ -4,7 +4,10 @@ pub mod process;
 use tauri::Manager;
 
 pub fn run() {
-    let application = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    let application = builder
         .register_uri_scheme_protocol("splyce-module", |_context, _request| {
             tauri::http::Response::builder()
                 .status(404)

@@ -37,6 +37,8 @@ jobs:
     needs: contracts
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.1
     defaults:
       run:
         shell: bash
@@ -50,13 +52,31 @@ jobs:
           cache: npm
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install 1.99.1 --profile minimal --target x86_64-pc-windows-msvc
-      - name: Run the release gate
+      - name: Prepare checksum-verified Node and npm
+        run: |
+          npm run prepare:runtime
+          echo "$GITHUB_WORKSPACE/apps/desktop/src-tauri/resources/engine" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/apps/desktop/src-tauri/target/build-tools" >> "$GITHUB_PATH"
+      - name: Install locked Node dependencies
+        run: npm ci --ignore-scripts
+      - name: Build the uninstrumented release app
+        run: npm run build:desktop
+      - name: Run Rust tests
+        run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Install pinned external release-smoke drivers
+        run: |
+          cargo install tauri-driver --version 2.1.0 --locked --root apps/desktop/src-tauri/target/smoke-tools --target-dir apps/desktop/src-tauri/target/smoke-driver-build
+          mkdir -p apps/desktop/src-tauri/target/smoke-tools/edge-155.0.4283.62
+          curl --fail --location --silent --show-error https://msedgedriver.microsoft.com/155.0.4283.62/edgedriver_win64.zip --output "$RUNNER_TEMP/edgedriver.zip"
+          echo "00dd7fbc6fc4bd68e6e86badbe76e6570513414085f476e73d3787ba3410d562  $RUNNER_TEMP/edgedriver.zip" | sha256sum --check
+          unzip -q -o "$RUNNER_TEMP/edgedriver.zip" -d apps/desktop/src-tauri/target/smoke-tools/edge-155.0.4283.62
+      - name: Run release and embedded desktop gates
+        env:
+          SPLYCE_TAURI_DRIVER: ${{ github.workspace }}/apps/desktop/src-tauri/target/smoke-tools/bin/tauri-driver.exe
+          SPLYCE_EDGE_DRIVER: ${{ github.workspace }}/apps/desktop/src-tauri/target/smoke-tools/edge-155.0.4283.62/msedgedriver.exe
         run: |
           # Once defined, the release gate always runs; path detection only decides whether a missing script is an error.
           if node -e "process.exit(require('./package.json').scripts?.['test:release-gate'] ? 0 : 1)"; then
-            npm ci --ignore-scripts
-            npm run build:desktop
-            cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
             npm run test:release-gate
             exit 0
           fi

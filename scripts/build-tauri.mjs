@@ -60,15 +60,19 @@ for (const file of manifest.files) {
 
 const require = createRequire(import.meta.url);
 const cli = require.resolve("@tauri-apps/cli/tauri.js");
-const result = spawnSync(process.execPath, [cli, "build"], {
-  cwd: join(root, "apps", "desktop"),
-  env: {
-    ...process.env,
-    SPLYCE_ENGINE_MANIFEST_SHA256: createHash("sha256")
-      .update(manifestBytes)
-      .digest("hex"),
+const result = spawnSync(
+  process.execPath,
+  [cli, "build", ...process.argv.slice(2)],
+  {
+    cwd: join(root, "apps", "desktop"),
+    env: {
+      ...process.env,
+      SPLYCE_ENGINE_MANIFEST_SHA256: createHash("sha256")
+        .update(manifestBytes)
+        .digest("hex"),
+    },
+    stdio: "inherit",
   },
-  stdio: "inherit",
-});
+);
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;
