@@ -14,18 +14,21 @@ if (args.length === 0) {
     "tests/integration/store.ts",
     "tests/integration/receipts.ts",
     "tests/integration/bridge.ts",
+    "tests/integration/credentials.ts",
   ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
   else if (args[1] === "C1_reconnect_cursor")
     files = ["tests/integration/receipts.ts"];
+  else if (args[1] === "C4_credential_resolution")
+    files = ["tests/integration/credentials.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C4_credential_resolution]",
   );
   process.exit(2);
 }
