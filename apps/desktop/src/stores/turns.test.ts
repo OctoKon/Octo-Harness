@@ -423,7 +423,10 @@ describe("TD-18 renderer transport", () => {
   const manual = () => {};
 
   it("coalesces a 10x render-rate burst without dropping text or requesting resync", () => {
-    const transport = createTurnStreamTransport({ schedule: manual });
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      schedule: manual,
+    });
     transport.enqueue(started());
     transport.flush();
 
@@ -442,6 +445,7 @@ describe("TD-18 renderer transport", () => {
     const resyncs: number[] = [];
     const errors: string[] = [];
     const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
       schedule: manual,
       onResync: (fromSeq) => resyncs.push(fromSeq),
       onError: (code) => errors.push(code),
@@ -479,6 +483,7 @@ describe("TD-18 renderer transport", () => {
   it("pauses durable delivery at the frozen queue bound with one resync", () => {
     const resyncs: number[] = [];
     const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
       schedule: manual,
       onResync: (fromSeq) => resyncs.push(fromSeq),
     });
@@ -496,6 +501,7 @@ describe("TD-18 renderer transport", () => {
   it("rejects an encoded frame over the byte cap before it reaches the reducer", () => {
     const errors: string[] = [];
     const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
       schedule: manual,
       onError: (code) => errors.push(code),
     });
@@ -518,7 +524,10 @@ describe("TD-18 renderer transport", () => {
   it("preserves FUI-W4 ordering and attribution through the coalescing transport", () => {
     const fixture = guiFixture("fui-w4-stream-backpressure.json");
     const events = fixture.eventSequence.map((step) => step.event);
-    const transport = createTurnStreamTransport({ schedule: manual });
+    const transport = createTurnStreamTransport({
+      sessionId: events[0].sessionId,
+      schedule: manual,
+    });
     for (const envelope of events) transport.enqueue(envelope);
     const state = transport.flush();
     const expected = applyAll(createTurnsState(), events);
@@ -540,7 +549,10 @@ describe("TD-18 renderer transport", () => {
   });
 
   it("validates and dedupes before coalescing, never duplicating text", () => {
-    const transport = createTurnStreamTransport({ schedule: manual });
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      schedule: manual,
+    });
     transport.enqueue(started());
     transport.flush();
 
@@ -557,6 +569,7 @@ describe("TD-18 renderer transport", () => {
   it("does not merge across a gap and ignores late out-of-order deltas", () => {
     const resyncs: number[] = [];
     const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
       schedule: manual,
       onResync: (fromSeq) => resyncs.push(fromSeq),
     });
@@ -583,7 +596,10 @@ describe("TD-18 renderer transport", () => {
   });
 
   it("drops a replayed delta after a flush instead of appending it twice", () => {
-    const transport = createTurnStreamTransport({ schedule: manual });
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      schedule: manual,
+    });
     transport.enqueue(started());
     transport.flush();
     transport.enqueue(delta(2, "x"));
@@ -622,6 +638,7 @@ describe("TD-18 renderer transport", () => {
       "ses_b",
     );
 
+    transport.follow("ses_b");
     transport.enqueue(sessionA);
     transport.enqueue(sessionB);
     transport.flush();
@@ -633,7 +650,10 @@ describe("TD-18 renderer transport", () => {
   });
 
   it("rejects an invalid payload before it can mutate the stream", () => {
-    const transport = createTurnStreamTransport({ schedule: manual });
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      schedule: manual,
+    });
     transport.enqueue(started());
     transport.flush();
 
@@ -655,6 +675,7 @@ describe("TD-18 renderer transport", () => {
   it("offers the session id with the recovery request", () => {
     const requests: [number, string][] = [];
     const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
       schedule: manual,
       onResync: (fromSeq, sessionId) => requests.push([fromSeq, sessionId]),
     });
@@ -666,7 +687,10 @@ describe("TD-18 renderer transport", () => {
   });
 
   it("rejects a malformed frame while paused before inspecting its kind", () => {
-    const transport = createTurnStreamTransport({ schedule: manual });
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      schedule: manual,
+    });
     transport.enqueue(started());
     transport.flush();
     transport.enqueue(delta(4, "gap"));
@@ -684,7 +708,10 @@ describe("TD-18 renderer transport", () => {
   });
 
   it("replays durable events after a reconnect snapshot without skipping them", () => {
-    const transport = createTurnStreamTransport({ schedule: manual });
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      schedule: manual,
+    });
     transport.enqueue(started());
     transport.flush();
     transport.enqueue(delta(4, "gap"));
@@ -716,5 +743,96 @@ describe("TD-18 renderer transport", () => {
       actionId: "act_replay",
       status: "success",
     });
+  });
+
+  it("rejects events for sessions it was not told to follow", () => {
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_a",
+      schedule: manual,
+    });
+    transport.enqueue(
+      event(
+        1,
+        "turn.started",
+        { runId: "run_b", turnId: "turn_b" },
+        true,
+        "ses_b",
+      ),
+    );
+    const state = transport.flush();
+
+    expect(state.runs.run_b).toBeUndefined();
+    expect(transport.current("ses_b").runs.run_b).toBeUndefined();
+    expect(transport.rejectedCount()).toBe(1);
+
+    transport.follow("ses_b");
+    transport.enqueue(
+      event(
+        1,
+        "turn.started",
+        { runId: "run_b", turnId: "turn_b" },
+        true,
+        "ses_b",
+      ),
+    );
+    transport.flush();
+    expect(transport.current("ses_b").runs.run_b).toBeDefined();
+    expect(transport.current().runs.run_b).toBeUndefined();
+    expect(transport.rejectedCount()).toBe(1);
+  });
+
+  it("stays inert until a session is followed", () => {
+    const transport = createTurnStreamTransport({ schedule: manual });
+    transport.enqueue(started());
+    const state = transport.flush();
+
+    expect(state.runs.run_a).toBeUndefined();
+    expect(state.sessionId).toBeUndefined();
+    expect(transport.rejectedCount()).toBe(1);
+  });
+
+  it("applies every durable replay frame after a durable-queue overflow and snapshot", () => {
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      schedule: manual,
+    });
+    transport.enqueue(started());
+    transport.flush();
+
+    const count = TRANSPORT_LIMITS.pendingQueueFrames + 1;
+    for (let i = 0; i < count; i += 1) {
+      transport.enqueue(toolIntent(i + 2, `act_${i}`));
+    }
+    expect(transport.current().needsResync).toBe(true);
+    const from = transport.current().resyncFromSeq ?? 0;
+    expect(from).toBe(1);
+
+    transport.enqueue(snapshot(count + 3));
+    for (let i = 0; i < count; i += 1) {
+      transport.enqueue(toolIntent(i + 2, `act_${i}`));
+      if (i % 256 === 255) transport.flush();
+    }
+    const state = transport.flush();
+
+    expect(state.runs.run_a.actions).toHaveLength(count);
+    expect(state.needsResync).toBe(false);
+    expect(state.lastDurableSeq).toBe(count + 1);
+    expect(state.duplicateCount).toBe(0);
+  });
+
+  it("drops a retransmitted eventId instead of merging its text twice", () => {
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      schedule: manual,
+    });
+    transport.enqueue(started());
+    transport.flush();
+
+    transport.enqueue(delta(2, "x"));
+    transport.enqueue({ ...delta(3, "x"), eventId: "evt_2" });
+    const state = transport.flush();
+
+    expect(state.runs.run_a.text).toBe("x");
+    expect(state.duplicateCount).toBe(1);
   });
 });

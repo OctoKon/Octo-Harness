@@ -478,7 +478,9 @@ export function reduceTurns(
       next.needsResync = false;
       delete next.resyncFromSeq;
       delete next.resyncAfterSeq;
-      next.lastDurableSeq = Math.max(state.lastDurableSeq, lastDurableSeq);
+      // Assumption: the snapshot is a hint, not applied history. The durable cursor
+      // only advances when a durable event is reduced, so authoritative replay
+      // from resyncFromSeq is applied exactly once and never skipped.
       next.lastSeq = Math.max(next.lastSeq, lastDurableSeq);
       const status: TurnStatus =
         snapshotState === "waiting_approval"
@@ -573,7 +575,12 @@ interface SessionChannel {
   transientFrames: number;
   transientBytes: number;
   resyncNotified: boolean;
+  durableSeq: number;
+  replayUntil: number;
+  seenEventIds: Set<string>;
 }
+
+const EVENT_ID_WINDOW = 4096;
 
 export interface TurnStreamTransportOptions {
   state?: TurnsState;
@@ -588,6 +595,8 @@ export interface TurnStreamTransport {
   enqueue(event: SplyceEventEnvelope): void;
   flush(): TurnsState;
   current(sessionId?: string): TurnsState;
+  follow(sessionId: string): void;
+  rejectedCount(): number;
   dispose(): void;
 }
 
@@ -653,6 +662,10 @@ export function createTurnStreamTransport(
   const channels = new Map<string, SessionChannel>();
   let selectedSessionId: string | undefined =
     options.sessionId ?? options.state?.sessionId;
+  const followed = new Set<string>(
+    selectedSessionId ? [selectedSessionId] : [],
+  );
+  let rejected = 0;
   let scheduled = false;
   let disposed = false;
 
@@ -683,9 +696,11 @@ export function createTurnStreamTransport(
       transientFrames: 0,
       transientBytes: 0,
       resyncNotified: false,
+      durableSeq: initial.lastDurableSeq,
+      replayUntil: 0,
+      seenEventIds: new Set(),
     };
     channels.set(sessionId, channel);
-    if (selectedSessionId === undefined) selectedSessionId = sessionId;
     return channel;
   }
 
@@ -718,12 +733,15 @@ export function createTurnStreamTransport(
 
   function overflow(channel: SessionChannel, code: TurnStreamErrorCode) {
     options.onError?.(code);
-    if (channel.state.needsResync) {
-      clearQueue(channel);
-      return;
+    // Discarded frames were never reduced: forget their ids so the authoritative
+    // replay (from the applied durable cursor) is not dropped as a duplicate.
+    for (const frame of channel.pending) {
+      channel.seenEventIds.delete(frame.event.eventId);
     }
     clearQueue(channel);
+    if (channel.state.needsResync) return;
     channel.acceptedSeq = channel.state.lastSeq;
+    channel.durableSeq = channel.state.lastDurableSeq;
     channel.state = {
       ...channel.state,
       needsResync: true,
@@ -753,6 +771,7 @@ export function createTurnStreamTransport(
   function pauseForResync(channel: SessionChannel) {
     applyPending(channel);
     channel.acceptedSeq = channel.state.lastSeq;
+    channel.durableSeq = channel.state.lastDurableSeq;
     channel.state = {
       ...channel.state,
       needsResync: true,
@@ -815,6 +834,11 @@ export function createTurnStreamTransport(
 
   function enqueue(event: SplyceEventEnvelope) {
     if (disposed) return;
+    const claimed = (event as { sessionId?: unknown } | null)?.sessionId;
+    if (typeof claimed === "string" && !followed.has(claimed)) {
+      rejected += 1;
+      return;
+    }
     let bytes: number;
     try {
       bytes = frameBytes(event);
@@ -856,7 +880,23 @@ export function createTurnStreamTransport(
       return;
     }
 
-    if (validated.seq <= channel.acceptedSeq) {
+    if (channel.seenEventIds.has(validated.eventId)) {
+      channel.state = {
+        ...channel.state,
+        duplicateCount: channel.state.duplicateCount + 1,
+      };
+      emit(channel);
+      return;
+    }
+
+    // After a snapshot, durable frames in (applied cursor, snapshot cursor] are
+    // authoritative replay the reducer has not seen: accept them, in any gap shape.
+    const replay =
+      validated.durable &&
+      validated.seq <= channel.replayUntil &&
+      validated.seq > channel.durableSeq;
+
+    if (!replay && validated.seq <= channel.acceptedSeq) {
       channel.state = {
         ...channel.state,
         duplicateCount: channel.state.duplicateCount + 1,
@@ -866,7 +906,7 @@ export function createTurnStreamTransport(
     }
 
     const isSnapshot = validated.kind === "run.reconnect_snapshot";
-    if (!isSnapshot && validated.seq !== channel.acceptedSeq + 1) {
+    if (!isSnapshot && !replay && validated.seq !== channel.acceptedSeq + 1) {
       pauseForResync(channel);
       return;
     }
@@ -898,11 +938,23 @@ export function createTurnStreamTransport(
       }
     }
 
-    channel.acceptedSeq =
-      isSnapshot && "payload" in accepted
-        ? ((accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ??
-          0)
-        : Math.max(channel.acceptedSeq, accepted.seq);
+    channel.seenEventIds.add(validated.eventId);
+    if (channel.seenEventIds.size > EVENT_ID_WINDOW) {
+      channel.seenEventIds.delete(channel.seenEventIds.values().next().value!);
+    }
+    if (validated.durable && !isSnapshot) {
+      channel.durableSeq = Math.max(channel.durableSeq, validated.seq);
+    }
+    if (isSnapshot && "payload" in accepted) {
+      const cursor =
+        (accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ?? 0;
+      channel.replayUntil = cursor;
+      channel.acceptedSeq = cursor;
+      // Reduce at once so the resync gate lifts before the replay frames arrive.
+      applyPending(channel);
+    } else {
+      channel.acceptedSeq = Math.max(channel.acceptedSeq, accepted.seq);
+    }
 
     if (
       channel.transientFrames > TRANSPORT_LIMITS.rendererQueueFrames ||
@@ -928,6 +980,11 @@ export function createTurnStreamTransport(
   return {
     enqueue,
     flush,
+    follow(sessionId: string) {
+      followed.add(sessionId);
+      selectedSessionId ??= sessionId;
+    },
+    rejectedCount: () => rejected,
     current: (sessionId?: string) =>
       (sessionId ? channels.get(sessionId) : selectedChannel())?.state ??
       options.state ??
