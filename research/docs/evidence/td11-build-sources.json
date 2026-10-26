@@ -1,0 +1,66 @@
+[
+  {
+    "id": "BUILD-01",
+    "tool": "Node.js 24 and 26 release schedule",
+    "url": "https://raw.githubusercontent.com/nodejs/Release/main/schedule.json",
+    "title": "Node.js release schedule",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Node 24 maintenance starts 2026-10-20 and ends 2028-04-30.",
+      "Node 26 LTS starts 2026-10-28 and ends 2029-04-30."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving schedule, dates subject to change. Phase is interpreted as of the access date; no runtime compatibility test."
+  },
+  {
+    "id": "BUILD-02",
+    "tool": "Node.js October 2026 security release",
+    "url": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+    "title": "Wednesday, October 21, 2026 Security Releases",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The release details link fixed versions 24.22.1 and 26.12.1.",
+      "The highest severity fixed is high."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Dated security floors, not latest-patch or installed-runtime assertions. Recheck advisories at freeze."
+  },
+  {
+    "id": "BUILD-03",
+    "tool": "Tauri Windows WebView2 provisioning",
+    "url": "https://v2.tauri.app/distribute/windows-installer/",
+    "title": "Windows Installer",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Tauri documents bootstrapper, offline-installer and fixed-runtime delivery modes.",
+      "minimumWebview2Version configures a minimum WebView2 version."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No installer run and no minimum selected. Offline completeness depends on the selected mode and complete payload."
+  },
+  {
+    "id": "BUILD-04",
+    "tool": "Tauri embedded versus native WebDriver",
+    "url": "https://v2.tauri.app/develop/tests/webdriver/",
+    "title": "WebDriver",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The guide distinguishes an embedded WebDriver server from the tauri-driver native-driver route."
+    ],
+    "verification": "primary-documentation",
+    "notes": "No GUI test. WebdriverIO service documentation fetch was unavailable, so exact service option spelling/pins are not newly verified here. Existing Splyce release-smoke constraints remain in force."
+  },
+  {
+    "id": "BUILD-05",
+    "tool": "MXC ProcessContainer Windows OS support",
+    "url": "https://raw.githubusercontent.com/microsoft/mxc/main/docs/backends/process-container/os-version-support.md",
+    "title": "Windows OS-version support",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The table lists Process Isolation minima 26100.9278 for Windows 11 24H2 and 26200.9278 for 25H2.",
+      "Native capture compatibility depends on runtime capability probing separately from the release table."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Moving source, no selected SDK pin or local containment test. A guessed Node SDK README path returned 404; existing Node compatibility minima remain inherited planning inputs."
+  }
+]

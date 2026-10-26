@@ -59,3 +59,4 @@ The validator checks record shape, URL form, dates, claims, and local documentat
 [Main research index](../../README.md) · [Complete document map](../README.md)
 
 [lineage-sources.json](lineage-sources.json) now includes LN-11–17 for separately pinned current Open Interpreter and Interpreter Workstation, their licenses/manifests and provider-wire boundaries. Legacy Python identity, vendor claims, source observations and unrun installed/quality results remain distinct.
+[td11-build-sources.json](td11-build-sources.json) records BUILD-01–05 for [TD-11 preparation](../foundations/td11-build-preparation.md): Node schedule/security, Tauri installer/WebDriver and MXC Windows support sources. These are documentation observations, not packaged-runtime results.

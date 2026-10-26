@@ -1,5 +1,7 @@
 # Splyce research
 
+[TD-11 build preparation](docs/foundations/td11-build-preparation.md) collects dated runtime, Windows/WebView, build and license inputs; it is a proposal, not a qualified build.
+
 The evidence base for a Windows desktop Pi-derived coding-agent application: OSS, barebones modular installation, local application/state and user-selected local/cloud inference. Snapshot: **2026-10-26**. Sources describe mechanisms, not implemented Splyce behavior. [Desktop stack](docs/foundations/desktop-stack-decision.md), [module installation](docs/design/modular-installation.md), [profiles](docs/design/providers-profiles-and-sessions.md), [core fusion](docs/design/core-fusion.md), [desktop application](docs/design/desktop-application.md) and the [delivery plan](docs/design/team-delivery-plan.md) connect the catalog to ownership, tests and unresolved gates.
 
 | Start here                                   | Contents                                                                                                        |
