@@ -92,6 +92,36 @@ describe("TD-23 Pi-native: credentials", () => {
 		expect(result.stopReason).toBe("error");
 		expect(JSON.stringify(result)).not.toContain(SECRET);
 	});
+
+	it("redacts a secret that JSON escaping would change (quote, backslash) from the diagnostic", async () => {
+		const tricky = 's"ec\\ret-0123456789';
+		const result = await streamPi(model, context() as never, {
+			fetch: serve(() => new Response(`denied for ${tricky}`, { status: 401 })),
+			credentials: {
+				lease: { use: async (consume) => consume(tricky) },
+				redact: (t) => t.split(tricky).join("[REDACTED]"),
+			},
+		}).result();
+		expect(result.stopReason).toBe("error");
+		const text = JSON.stringify(result);
+		expect(text).not.toContain(tricky);
+		expect(text).not.toContain(JSON.stringify(tricky).slice(1, -1));
+		expect(text).toContain("[REDACTED]");
+	});
+
+	it("a throwing redactor still delivers the terminal error event without raw bytes", async () => {
+		const result = await streamPi(model, context() as never, {
+			fetch: serve(() => new Response(`denied for ${SECRET}`, { status: 401 })),
+			credentials: {
+				lease: lease(),
+				redact: () => {
+					throw new Error("redactor down");
+				},
+			},
+		}).result();
+		expect(result.stopReason).toBe("error");
+		expect(JSON.stringify(result)).not.toContain(SECRET);
+	});
 });
 
 describe("TD-23 Pi-native: wire contract", () => {

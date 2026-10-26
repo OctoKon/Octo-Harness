@@ -347,6 +347,26 @@ function parsePiMessagesEvent(raw: string): PiMessagesEvent | undefined {
 	return data && data !== "[DONE]" ? (JSON.parse(data) as PiMessagesEvent) : undefined;
 }
 
+const REDACTION_FAILED = "[redaction failed]";
+
+function safeRedact(redact: (text: string) => string, text: string): string {
+	try {
+		return redact(text);
+	} catch {
+		return REDACTION_FAILED;
+	}
+}
+
+/** Redacts every string key and value before anything is serialized, so a secret with quotes or control characters cannot hide behind JSON escaping. */
+function redactLeaves(value: unknown, redact: (text: string) => string, depth = 0): unknown {
+	if (typeof value === "string") return redact(value);
+	if (depth > 16 || value === null || typeof value !== "object") return value;
+	if (Array.isArray(value)) return value.map((item) => redactLeaves(item, redact, depth + 1));
+	const out: Record<string, unknown> = {};
+	for (const [key, item] of Object.entries(value)) out[redact(key)] = redactLeaves(item, redact, depth + 1);
+	return out;
+}
+
 function createErrorEvent(
 	model: Model<"pi-messages">,
 	error: unknown,
@@ -362,7 +382,7 @@ function createErrorEvent(
 		model: model.id,
 		usage: createEmptyUsage(),
 		stopReason: reason,
-		errorMessage: redact(error instanceof Error ? error.message : String(error)),
+		errorMessage: safeRedact(redact, error instanceof Error ? error.message : String(error)),
 		timestamp: Date.now(),
 	};
 
@@ -372,8 +392,13 @@ function createErrorEvent(
 			error,
 			error.diagnosticDetails,
 		);
-		// The diagnostic embeds the error and the response body, so the native redactor runs over all of it.
-		appendAssistantMessageDiagnostic(assistantMessage, JSON.parse(redact(JSON.stringify(diagnostic))));
+		// The diagnostic embeds the error and the response body: redact each string leaf before serialization. A
+		// redactor failure degrades to no diagnostic, never to a lost terminal event or an unredacted one.
+		try {
+			appendAssistantMessageDiagnostic(assistantMessage, redactLeaves(diagnostic, redact) as typeof diagnostic);
+		} catch {
+			// the redacted errorMessage above still reaches the consumer
+		}
 	}
 
 	return { type: "error", reason, error: assistantMessage };
