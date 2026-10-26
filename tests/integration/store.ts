@@ -558,3 +558,110 @@ test("failed writes acknowledge no durability", () => {
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("restore preserves live records when the backup is invalid or future-layout", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const live = record("run");
+  store.append({ kind: "run", record: live }, caller);
+
+  // Garbage file: not a database at all.
+  const garbage = join(dir, "garbage.db");
+  writeFileSync(garbage, "this is not sqlite", "utf8");
+  assert.throws(() => store.restore(garbage));
+
+  // Valid SQLite but a future layout stamp.
+  const future = join(dir, "future.db");
+  const fdb = new DatabaseSync(future);
+  fdb.exec(
+    "CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+  );
+  fdb.prepare("INSERT INTO store_meta VALUES ('layout_version', '2')").run();
+  fdb.close();
+  assert.throws(() => store.restore(future));
+
+  // Live acknowledged records are untouched after every failed restore.
+  assert.equal(store.get(live.recordId as string).seq, 1);
+  assert.equal(store.cursor(), 1);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("backup without epoch metadata but with history is refused, never zero", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const a = record("run");
+  store.append({ kind: "run", record: a }, caller);
+  store.noteDeletion(a.recordId as string);
+  const backupPath = join(dir, "backup.db");
+  store.backup(backupPath);
+
+  // Strip the epoch metadata from the backup copy: history remains.
+  const stripped = join(dir, "stripped.db");
+  copyFileSync(backupPath, stripped);
+  const raw = new DatabaseSync(stripped);
+  raw.prepare("DELETE FROM store_meta WHERE key = 'deletion_epoch'").run();
+  raw.close();
+
+  assert.throws(
+    () => store.restore(stripped),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "STORE_LAYOUT",
+  );
+  // The live store still serves its acknowledged state.
+  assert.equal(store.cursor(), 1);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("restore never rolls back workspace ownership to permit a second writer", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const backupPath = join(dir, "backup.db");
+  store.backup(backupPath); // taken before any ownership existed
+
+  // Live: a session acquires ownership (global epoch 1).
+  store.acquireWorkspace("C:\\ws\\demo", "session-a");
+
+  // Restoring the pre-ownership snapshot would resurrect an unowned (or
+  // stale-owner) state and permit a second writer � it is refused.
+  assert.throws(
+    () => store.restore(backupPath),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "STALE_OWNERSHIP",
+  );
+  // Ownership survived the failed restore.
+  const owner = store.workspaceOwner("C:\\ws\\demo");
+  assert.equal(owner?.ownerSessionId, "session-a");
+  assert.equal(owner?.epoch, 1);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("read-only open validates, reads, and rejects writes explicitly", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const a = record("run");
+  store.append({ kind: "run", record: a }, caller);
+  store.close();
+
+  const ro = Store.open(path, { readOnly: true });
+  assert.equal(ro.cursor(), 1);
+  assert.equal(ro.get(a.recordId as string).record.recordId, a.recordId);
+  assert.throws(
+    () => ro.append({ kind: "run", record: record("run") }, caller),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "STORE_READ_ONLY",
+  );
+  assert.throws(
+    () => ro.noteDeletion(a.recordId as string),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "STORE_READ_ONLY",
+  );
+  ro.close();
+  rmSync(dir, { recursive: true, force: true });
+});
