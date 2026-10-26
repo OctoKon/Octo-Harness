@@ -690,6 +690,14 @@ export interface Handshake {
   };
 }
 
+export interface NativeLifecycleEvent {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  kind: "engine_exited";
+  expected: boolean;
+  exitCode: number | null;
+  cleanupComplete: boolean;
+}
+
 function requireThat(
   condition: unknown,
   code: string,
