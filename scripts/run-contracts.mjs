@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const args = process.argv.slice(2);
@@ -13,12 +14,9 @@ if (
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
+const tsc = join(dirname(dirname(require.resolve("typescript"))), "bin", "tsc");
 for (const command of [
-  [
-    require.resolve("typescript/bin/tsc"),
-    "-p",
-    "packages/splyce-pi/tsconfig.json",
-  ],
+  [tsc, "-p", "packages/splyce-pi/tsconfig.json"],
   ["--test", "tests/contracts.test.mjs"],
 ]) {
   const result = spawnSync(process.execPath, command, {

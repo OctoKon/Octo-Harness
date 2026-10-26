@@ -1,4 +1,5 @@
 node_modules/
 packages/*/dist/
+apps/desktop/src-tauri/resources/engine/
 __pycache__/
 *.py[cod]

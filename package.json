@@ -2,11 +2,26 @@
   "name": "splyce-workspace",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "npm@11.19.1",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "workspaces": [
-    "packages/splyce-pi"
+    "packages/splyce-pi",
+    "vendor/pi/packages/agent",
+    "vendor/pi/packages/ai",
+    "vendor/pi/packages/codemode",
+    "vendor/pi/packages/coding-agent",
+    "vendor/pi/packages/mcp",
+    "vendor/pi/packages/telemetry",
+    "vendor/pi/packages/tui"
   ],
   "scripts": {
+    "prepare:runtime": "powershell -NoProfile -NonInteractive -File scripts/prepare-node-runtime.ps1",
     "build:contracts": "tsc -p packages/splyce-pi/tsconfig.json",
+    "build:pi": "npm run build --workspace=@earendil-works/pi-telemetry && npm run build --workspace=@earendil-works/pi-tui && npm run build --workspace=@earendil-works/pi-codemode && npm run build --workspace=@earendil-works/pi-mcp && npm run build --workspace=@earendil-works/pi-ai && npm run build --workspace=@earendil-works/pi-agent-core && npm run build --workspace=@earendil-works/pi-coding-agent",
+    "build:engine": "npm run prepare:runtime && npm run build:contracts && npm run build:pi && node scripts/build-engine.mjs",
+    "build:desktop": "npm run build:engine && node scripts/build-tauri.mjs",
     "test:contracts": "node scripts/run-contracts.mjs",
     "test:gui-fixtures": "node --test tests/gui-fixtures.test.mjs",
     "test:release-gate": "npm run test:contracts && npm run test:gui-fixtures",
@@ -14,12 +29,18 @@
     "format": "prettier --write .",
     "lint:markdown": "markdownlint-cli2 \"**/*.md\" \".skills/**/*.md\" \".github/**/*.md\" \"#node_modules\"",
     "check:docs": "python scripts/check_docs.py",
-    "test:docs": "python -m unittest tests/test_check_docs.py"
+    "test:docs": "python -m unittest discover -s tests -p test_check_docs.py"
   },
   "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/cli": "2.12.4",
+    "esbuild": "0.28.2",
     "markdownlint-cli2": "0.24.0",
     "prettier": "3.9.10",
-    "typescript": "5.9.3"
+    "svelte": "5.57.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
   },
   "overrides": {
     "katex": "0.18.11"
