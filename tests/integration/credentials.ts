@@ -599,6 +599,29 @@ const useErrors: Record<string, (s: string) => unknown> = {
       headers: { authorization: `Bearer ${s}` },
     }),
   "a 13-deep cause chain": deepChain,
+  "a throwing toString": (s) => ({
+    toString() {
+      throw new Error(s);
+    },
+  }),
+  "a throwing message getter": (s) =>
+    Object.defineProperty(new Error("safe"), "message", {
+      get() {
+        throw new Error(s);
+      },
+    }),
+  "a Proxy that throws on every access": (s) =>
+    new Proxy(
+      {},
+      new Proxy(
+        {},
+        {
+          get: () => () => {
+            throw new Error(s);
+          },
+        },
+      ),
+    ),
 };
 for (const [name, make] of Object.entries(useErrors))
   test(`R3: a use error with ${name} becomes a fresh CredentialError that never carries the secret`, async () => {
