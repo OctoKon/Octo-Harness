@@ -1,3 +1,4 @@
+import type { SplyceCredentials } from "./splyce-credentials.ts";
 import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
@@ -218,6 +219,11 @@ export interface ProviderRequestOptions<TModel = Model<Api>> {
 }
 
 export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
+	/**
+	 * Splyce: leased credential from the native admission layer. Mutually exclusive with `apiKey`; when set, no
+	 * environment or fallback credential is used. Supported by the Anthropic, Google and Vertex adapters first.
+	 */
+	credentials?: SplyceCredentials;
 	/**
 	 * Optional callback invoked after an HTTP response is received and before
 	 * its body stream is consumed.

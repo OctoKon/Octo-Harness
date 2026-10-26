@@ -76,3 +76,28 @@ gates before publishing a new candidate.
 Pi's exact `undici` pin to 8.12.3, which includes the fix for
 [GHSA-xjj6-f33q-929c](https://github.com/nodejs/undici/security/advisories/GHSA-xjj6-f33q-929c).
 Regenerate and verify both npm lockfiles after applying it.
+
+## 0004: provider credential option and errored tool calls (TD-20, TD-21)
+
+`0004-provider-credentials-and-error-tool-calls.patch` applies from the Splyce root to `vendor/pi/`. It is an upstream-divergent
+core patch to `packages/ai`, recorded here per [core fusion](../../research/docs/design/core-fusion.md).
+
+- **Shared `credentials` option.** `src/splyce-credentials.ts` adds `SplyceCredentials { lease }`, a structural mirror of the
+  native `SecretLease` (TD-16), and `StreamOptions.credentials`. The secret is taken from the lease for each use, never once:
+  the Anthropic adapter builds its SDK client with a placeholder key and a fetch that leases the real key into `x-api-key` on
+  every HTTP send (so SDK retries re-check the lease) and refuses redirects; the Google and Vertex adapters create their client
+  inside `lease.use` for each request attempt. `apiKey` and `credentials` are mutually exclusive, a failing or revoked lease
+  stops the next send or attempt, no environment or fallback credential is read, and credentials are refused before anything is leased unless
+  the native `redact` function (TD-16 `Redactor`) is supplied, and it is the only thing applied to `errorMessage`: the adapters keep no
+  copy of any secret. TD-19, TD-22 and TD-23 reuse the same helpers. Limits: an SDK client built for one Google/Vertex attempt
+  holds the key until that attempt ends, and Google/Vertex redirects are inside the SDK; the native transport (TD-13) must
+  still do the final per-send check there. Vertex application-default credentials are not covered by this option.
+- **No tool calls from errored responses.** Anthropic returns a tool call only after its `content_block_stop`; a stream that ends
+  with an unfinished tool call is an error, and the error path drops unfinished calls. The Google and Vertex error paths drop all
+  tool calls, so a malformed-function-call finish or a stream without a finish reason cannot reach dispatch.
+- **Regression entrypoints.** `packages/ai/test/splyce-credentials.test.ts`, `splyce-anthropic-stream-safety.test.ts` and
+  `splyce-google-stream-safety.test.ts` run the real adapters with only the vendor SDK boundary replaced. Removing the mutual
+  exclusion, the redaction, or the error-path filtering fails the corresponding case.
+- **Not yet qualified.** These tests ran against stand-in model-catalog data (the generated catalog needs the network; see
+  issue 76), so existing adapter suites cannot all run locally. Provider-specific admission, per-send endpoint rechecks and
+  cancellation belong to TD-13/TD-16 and the native transport.

@@ -46,6 +46,7 @@ import {
 	toGoogleThinkingLevel,
 	usesGoogleThinkingLevel,
 } from "./google-shared.ts";
+import { assertCredentialOptions, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 export interface GoogleVertexOptions extends StreamOptions {
@@ -92,13 +93,19 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			timestamp: Date.now(),
 		};
 
+		const redact = redactorOf(options ?? {});
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
 			}
+			assertCredentialOptions(options ?? {});
+			const credentials = options?.credentials;
 			const apiKey = resolveApiKey(options);
-			// Create the client using either a Vertex API key, if provided, or ADC with project and location
-			const client = apiKey
+			// Create the client using either a Vertex API key, if provided, or ADC with project and location.
+			// Splyce: with a lease the key is taken per request attempt and no long-lived client holds it.
+			const client = credentials
+				? undefined
+				: apiKey
 				? createClientWithApiKey(model, apiKey, options?.headers, options?.identity)
 				: createClient(
 						model,
@@ -113,7 +120,17 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
+			const googleStream = await retryGoogleRequest(
+				() =>
+					credentials
+						? withLeasedSecret(credentials, (secret) =>
+								createClientWithApiKey(model, secret, options?.headers, options?.identity).models.generateContentStream(
+									params,
+								),
+							)
+						: client!.models.generateContentStream(params),
+				options,
+			);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
@@ -301,8 +318,10 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			// Splyce TD-20: an errored or aborted response never carries tool calls into dispatch or persistence.
+			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			output.errorMessage = redact(formatProviderError(normalizeProviderError(error)));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

@@ -18,6 +18,7 @@ import {
 	ANTHROPIC_WORKSPACE_ID_ENV,
 } from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
+import { assertCredentialOptions, createLeasedFetch, redactorOf } from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -600,6 +601,11 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			timestamp: Date.now(),
 		};
 
+		// Splyce TD-21: only tool calls closed by content_block_stop may be returned; a partial one never reaches dispatch.
+		const finishedToolCalls = new WeakSet<object>();
+		const LEASED_API_KEY_PLACEHOLDER = "splyce-leased-placeholder";
+		const redact = redactorOf(options ?? {});
+
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
@@ -610,7 +616,16 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				client = options.client;
 				isOAuth = false;
 			} else {
-				const apiKey = options?.apiKey;
+				assertCredentialOptions(options ?? {});
+				// Splyce: with a lease the SDK client holds only a placeholder; the real key is leased and written into the
+				// auth header on every HTTP send (including SDK retries), and redirects are refused.
+				if (options?.credentials && model.provider === "github-copilot") {
+					throw new Error("credentials are not supported for this provider");
+				}
+				const apiKey = options?.credentials ? LEASED_API_KEY_PLACEHOLDER : options?.apiKey;
+				const requestFetch = options?.credentials
+					? createLeasedFetch(options.credentials, "x-api-key", options.fetch)
+					: options?.fetch;
 				const federation = getAnthropicFederation(model, apiKey, options?.headers, options?.env);
 				if (!federation) assertRequestAuth(model.provider, apiKey, options?.headers);
 
@@ -630,7 +645,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					model,
 					apiKey,
 					options?.headers,
-					options?.fetch,
+					requestFetch,
 					copilotDynamicHeaders,
 					cacheSessionId,
 					federation,
@@ -829,6 +844,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							});
 						} else if (block.type === "toolCall" && open.arguments !== undefined) {
 							Object.assign(block, open.arguments.finish());
+							finishedToolCalls.add(block);
 							stream.push({
 								type: "toolcall_end",
 								contentIndex: index,
@@ -901,6 +917,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
+			if (output.content.some((block) => block.type === "toolCall" && !finishedToolCalls.has(block))) {
+				throw new Error("Anthropic stream ended with an unfinished tool call");
+			}
 			if (inputTransformations && inputTransformations.length > 0) {
 				appendAssistantMessageDiagnostic(output, {
 					type: "anthropic_input_transformations",
@@ -918,8 +937,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			output.content = output.content.filter((block) => block.type !== "toolCall" || finishedToolCalls.has(block));
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = redact(error instanceof Error ? error.message : JSON.stringify(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
