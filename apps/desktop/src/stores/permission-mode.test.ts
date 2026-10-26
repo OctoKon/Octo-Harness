@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acknowledgeMode,
   bindPermissionSession,
+  confirmedPermissionModeRequest,
   initialPermissionMode,
   permissionModeView,
   rejectMode,
@@ -74,6 +75,42 @@ describe("U1_permission_mode", () => {
     ).toMatchObject({ dangerous: true, selected: false, pending: false });
   });
 
+  it("submits a confirmed bypass request but still honours the engine guards", () => {
+    const confirmed = confirmedPermissionModeRequest(
+      bound(),
+      "bypass",
+      context(),
+    );
+    expect(confirmed.kind).toBe("requested");
+    if (confirmed.kind !== "requested") throw new Error("expected request");
+    // Still not effective: the engine has not acknowledged it.
+    const pending = permissionModeView(confirmed.state);
+    expect(pending.effectiveLabel).toBe("Manual");
+    expect(pending.pendingLabel).toBe("Bypass (unsafe) (pending engine)");
+
+    // The confirmation gate is skipped, the engine/revision gates are not.
+    expect(
+      confirmedPermissionModeRequest(
+        bound(),
+        "bypass",
+        context({
+          engine: "unavailable",
+          engineReason: "Engine process exited.",
+        }),
+      ).kind,
+    ).toBe("blocked");
+    expect(
+      confirmedPermissionModeRequest(
+        bound(),
+        "bypass",
+        context({ configRevision: null }),
+      ).kind,
+    ).toBe("blocked");
+    expect(
+      confirmedPermissionModeRequest(bound(), "manual", context()).kind,
+    ).toBe("blocked");
+  });
+
   it("blocks requests while the engine is unavailable or revisions are missing", () => {
     const offline = requestPermissionMode(
       bound(),
@@ -102,6 +139,18 @@ describe("U1_permission_mode", () => {
     expect(duplicate.kind === "blocked" && duplicate.reason).toContain(
       "already awaiting",
     );
+  });
+
+  it("ignores an acknowledgement for a mode that was never requested", () => {
+    const request = requestPermissionMode(bound(), "auto", context());
+    if (request.kind !== "requested") throw new Error("expected request");
+
+    // A stale or mismatched engine answer must not change the effective mode.
+    const stale = acknowledgeMode(request.state, "bypass");
+    expect(stale).toBe(request.state);
+    expect(stale.effective).toBe("manual");
+    expect(stale.requested).toBe("auto");
+    expect(permissionModeView(stale).announcement).toBeNull();
   });
 
   it("discards pending state and resets to manual in another session", () => {

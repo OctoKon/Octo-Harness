@@ -90,49 +90,33 @@ export type ModeRequest =
     }
   | { readonly kind: "requested"; readonly state: PermissionModeState };
 
-/**
- * Asks for a mode change. Nothing becomes effective here: the caller submits the
- * command, and only `acknowledgeMode` may change the effective mode.
- */
-export function requestPermissionMode(
+/** Why a mode change may not be admitted at all, regardless of confirmation. */
+function blockedModeReason(
   state: PermissionModeState,
   mode: PermissionMode,
   context: PermissionModeContext,
-): ModeRequest {
+): string | null {
   if (context.engine !== "ready") {
-    return {
-      kind: "blocked",
-      reason:
-        context.engineReason ??
-        "Engine unavailable; the mode cannot be changed.",
-    };
+    return (
+      context.engineReason ?? "Engine unavailable; the mode cannot be changed."
+    );
   }
   if (state.status === "pending" && state.requested === mode) {
-    return {
-      kind: "blocked",
-      reason: "That mode change is already awaiting the engine.",
-    };
+    return "That mode change is already awaiting the engine.";
   }
   if (!context.configRevision || !context.policyRevision) {
-    return {
-      kind: "blocked",
-      reason: "Current configuration and policy revisions are not known.",
-    };
+    return "Current configuration and policy revisions are not known.";
   }
   if (mode === state.effective) {
-    return {
-      kind: "blocked",
-      reason: `${PERMISSION_MODE_LABELS[mode]} is already the effective mode.`,
-    };
+    return `${PERMISSION_MODE_LABELS[mode]} is already the effective mode.`;
   }
-  if (requiresModeConfirmation(mode)) {
-    return {
-      kind: "confirm",
-      mode,
-      reason:
-        "Bypass mode removes approval prompts. Confirm separately; the safe choice keeps the current mode.",
-    };
-  }
+  return null;
+}
+
+function requestedMode(
+  state: PermissionModeState,
+  mode: PermissionMode,
+): ModeRequest {
   return {
     kind: "requested",
     state: {
@@ -142,6 +126,47 @@ export function requestPermissionMode(
       reason: null,
     },
   };
+}
+
+/**
+ * Asks for a mode change. Nothing becomes effective here: the caller submits the
+ * command, and only `acknowledgeMode` may change the effective mode.
+ */
+export function requestPermissionMode(
+  state: PermissionModeState,
+  mode: PermissionMode,
+  context: PermissionModeContext,
+): ModeRequest {
+  const blocked = blockedModeReason(state, mode, context);
+  if (blocked) {
+    return { kind: "blocked", reason: blocked };
+  }
+  if (requiresModeConfirmation(mode)) {
+    return {
+      kind: "confirm",
+      mode,
+      reason:
+        "Bypass mode removes approval prompts. Confirm separately; the safe choice keeps the current mode.",
+    };
+  }
+  return requestedMode(state, mode);
+}
+
+/**
+ * The caller obtained the separate confirmation for a mode that requires one.
+ * The engine and revision guards still apply - only the confirmation gate is
+ * skipped, so a confirmed request can never become effective locally either.
+ */
+export function confirmedPermissionModeRequest(
+  state: PermissionModeState,
+  mode: PermissionMode,
+  context: PermissionModeContext,
+): ModeRequest {
+  const blocked = blockedModeReason(state, mode, context);
+  if (blocked) {
+    return { kind: "blocked", reason: blocked };
+  }
+  return requestedMode(state, mode);
 }
 
 /** Engine acknowledgement: the requested mode becomes effective exactly once. */

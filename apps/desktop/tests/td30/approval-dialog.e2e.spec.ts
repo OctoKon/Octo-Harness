@@ -42,7 +42,9 @@ test.describe("TD-30 D3_approval_revision and FUI-W5", () => {
 
     await expect(dialog(page)).toHaveCount(1);
     await expect(dialog(page)).toHaveAttribute("data-inert", "false");
-    await expect(page.getByTestId("approval-capability")).toHaveText("fs.write");
+    await expect(page.getByTestId("approval-capability")).toHaveText(
+      "fs.write",
+    );
     await expect(page.getByTestId("approval-normalized-target")).toHaveText(
       "src/index.ts",
     );
@@ -92,9 +94,7 @@ test.describe("TD-30 D3_approval_revision and FUI-W5", () => {
     // Escape is a dismissal, never a decision.
     await page.keyboard.press("Escape");
     await expect(dialog(page)).toHaveCount(0);
-    expect(await calls(page)).toEqual([
-      { name: "onDismiss", args: ["apr-1"] },
-    ]);
+    expect(await calls(page)).toEqual([{ name: "onDismiss", args: ["apr-1"] }]);
 
     // Enter on the focused non-destructive control denies, not approves.
     await page.goto(url);
@@ -207,9 +207,7 @@ test.describe("TD-30 D3_approval_revision and FUI-W5", () => {
     // Closing an inert prompt never turns it into an approval.
     await page.getByTestId("approval-dismiss").click();
     await expect(dialog(page)).toHaveCount(0);
-    expect(await calls(page)).toEqual([
-      { name: "onDismiss", args: ["apr-1"] },
-    ]);
+    expect(await calls(page)).toEqual([{ name: "onDismiss", args: ["apr-1"] }]);
   });
 
   test("a replacement request remounts the dialog and the older one never resurfaces", async ({
@@ -237,9 +235,7 @@ test.describe("TD-30 D3_approval_revision and FUI-W5", () => {
     // Dismissing the newest request must not fall back to the older one.
     await page.getByTestId("approval-dismiss").click();
     await expect(dialog(page)).toHaveCount(0);
-    await expect(
-      page.getByTestId("approval-normalized-target"),
-    ).toHaveCount(0);
+    await expect(page.getByTestId("approval-normalized-target")).toHaveCount(0);
 
     const recorded = await calls(page);
     expect(recorded.at(-1)).toEqual({
