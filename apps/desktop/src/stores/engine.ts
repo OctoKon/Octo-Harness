@@ -193,10 +193,9 @@ export async function subscribe(
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    // The native subscription ends with its channel (#61). Unsubscribing never
+    // reaches the engine as a cancel: cancel always means cancel the run.
     activeSubscriptions.delete(sessionId);
-    invokeTauri("cancel", { sessionId, reason: "CLIENT_UNSUBSCRIBED" }).catch(
-      () => {},
-    );
   };
 
   activeSubscriptions.set(sessionId, dispose);

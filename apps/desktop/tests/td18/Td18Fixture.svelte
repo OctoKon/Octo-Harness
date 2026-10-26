@@ -52,7 +52,6 @@
       sourceIds: [],
       scopeId: "w-demo",
       sessionId: "ses_test_01",
-    scopeId: "w-demo",
       seq,
       durable,
       kind,
