@@ -60,3 +60,5 @@ The validator checks record shape, URL form, dates, claims, and local documentat
 
 [lineage-sources.json](lineage-sources.json) now includes LN-11–17 for separately pinned current Open Interpreter and Interpreter Workstation, their licenses/manifests and provider-wire boundaries. Legacy Python identity, vendor claims, source observations and unrun installed/quality results remain distinct.
 [td11-build-sources.json](td11-build-sources.json) records BUILD-01–05 for [TD-11 preparation](../foundations/td11-build-preparation.md): Node schedule/security, Tauri installer/WebDriver and MXC Windows support sources. These are documentation observations, not packaged-runtime results.
+
+[td04-provider-source-verification.json](td04-provider-source-verification.json) records TD04-01–21: immutable Pi adapter and shared-type observations behind the [TD-04 provider proposal](../design/provider-matrix-proposal.json). All 15 API IDs are inventoried; source verification does not establish installed provider support.
