@@ -29,10 +29,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Unable to initialize desktop engine");
     application.run(|app, event| {
-        if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            if app.state::<ipc::BridgeState>().stop().is_err() {
-                api.prevent_exit();
-            }
+        if let tauri::RunEvent::ExitRequested { api, .. } = event
+            && app.state::<ipc::BridgeState>().stop().is_err()
+        {
+            api.prevent_exit();
         }
     });
 }

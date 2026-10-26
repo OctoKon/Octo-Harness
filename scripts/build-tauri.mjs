@@ -59,7 +59,7 @@ for (const file of manifest.files) {
 }
 
 const require = createRequire(import.meta.url);
-const cli = require.resolve("@tauri-apps/cli");
+const cli = require.resolve("@tauri-apps/cli/tauri.js");
 const result = spawnSync(process.execPath, [cli, "build"], {
   cwd: join(root, "apps", "desktop"),
   env: {

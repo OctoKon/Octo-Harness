@@ -77,7 +77,9 @@ fn hash_matches(hash: &[u8], expected: &str) -> bool {
     expected.len() == hash.len() * 2
         && expected
             .as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .zip(hash)
             .all(|(hex, byte)| {
                 char::from(hex[0])

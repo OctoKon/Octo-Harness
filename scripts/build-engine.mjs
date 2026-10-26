@@ -44,7 +44,7 @@ await build({
   format: "esm",
   target: "node24",
   banner: {
-    js: 'import { createRequire } from "node:module";const require = createRequire(import.meta.url);',
+    js: 'import { createRequire as __splyceCreateRequire } from "node:module";const require = __splyceCreateRequire(import.meta.url);',
   },
   outfile: join(engineDir, "host.mjs"),
 });

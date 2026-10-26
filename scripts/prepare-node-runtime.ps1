@@ -25,7 +25,15 @@ New-Item -ItemType Directory -Path $temp | Out-Null
 
 try {
   Invoke-WebRequest -Uri $pins.node.url -OutFile $archive -TimeoutSec 120 -UseBasicParsing
-  $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+  $archiveStream = [IO.File]::OpenRead($archive)
+  $archiveHasher = [Security.Cryptography.SHA256]::Create()
+  try {
+    $actualHash = [BitConverter]::ToString($archiveHasher.ComputeHash($archiveStream)).Replace("-", "").ToLowerInvariant()
+  }
+  finally {
+    $archiveHasher.Dispose()
+    $archiveStream.Dispose()
+  }
   if ($actualHash -ne $pins.node.sha256) {
     throw "Node archive SHA-256 mismatch: $actualHash"
   }
@@ -38,6 +46,15 @@ try {
 
   New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
   Copy-Item -LiteralPath $source -Destination $target -Force
+  $npmSource = Join-Path $extract "node-v$nodeVersion-win-x64/node_modules/npm"
+  $npmVersion = (Get-Content (Join-Path $npmSource "package.json") -Raw | ConvertFrom-Json).version
+  if ($npmVersion -ne $pins.node.npm) {
+    throw "The verified archive's npm version does not match the selected build tool."
+  }
+  $buildTools = Join-Path $root "apps/desktop/src-tauri/target/build-tools"
+  New-Item -ItemType Directory -Path (Join-Path $buildTools "node_modules") -Force | Out-Null
+  Copy-Item -LiteralPath $npmSource -Destination (Join-Path $buildTools "node_modules") -Recurse -Force
+  Copy-Item -LiteralPath (Join-Path $extract "node-v$nodeVersion-win-x64/npm.cmd") -Destination $buildTools -Force
   Write-Output "Prepared the checksum-verified Node $nodeVersion runtime."
 }
 finally {
