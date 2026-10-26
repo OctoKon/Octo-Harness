@@ -318,13 +318,14 @@ test("published events carry the native scope/session; engine identity is reject
   const { store, pi, map } = setup();
   map.bind(k1, pi);
   const id = pi.getSessionId();
+  map.anchorRun(id, run("run-1"));
   const { channel } = map.follow(k1, 0);
   for (const event of fixture.engineEvents) map.publish(id, event);
   assert.throws(
     () => map.publish(id, fixture.foreignEvent),
     code("SESSION_FOREIGN"),
   );
-  const { sessionId, scopeId, ...unscoped } = fixture.foreignEvent;
+  const { sessionId, scopeId, seq, ...unscoped } = fixture.foreignEvent;
   assert.throws(
     () => map.publish(id, { ...unscoped, sessionId }),
     code("SESSION_FOREIGN"),
@@ -333,82 +334,184 @@ test("published events carry the native scope/session; engine identity is reject
     () => map.publish(id, { ...unscoped, scopeId: "w-demo" }),
     code("SESSION_FOREIGN"),
   );
+  // seq is the ledger's, never the engine's.
+  assert.throws(
+    () => map.publish(id, { ...unscoped, seq }),
+    code("SESSION_FOREIGN"),
+  );
   const frames = channel.bridge.drain().frames;
   assert.deepEqual(
     frames.map((f: { event: Record<string, unknown> }) => [
       f.event.eventId,
       f.event.scopeId,
       f.event.sessionId,
+      f.event.seq,
     ]),
     [
-      ["evt-1", "w-demo", "s1"],
-      ["evt-2", "w-demo", "s1"],
+      ["evt-1", "w-demo", "s1", 1],
+      ["evt-2", "w-demo", "s1", 2],
     ],
   );
   store.close();
 });
 
-test("without a follower publish never throws for valid events and durable commits replay later", () => {
-  const { store, pi, map } = setup();
-  map.bind(k1, pi);
-  const id = pi.getSessionId();
-  // Durable commit happens with nobody following.
-  const committed = map.anchorRun(id, run("r-offline"));
-  for (const event of fixture.engineEvents)
-    assert.equal(map.publish(id, event), undefined);
-  // Validation still runs first: an invalid event fails even unfollowed.
-  const [durable] = fixture.engineEvents;
-  assert.throws(
-    () => map.publish(id, { ...durable, kind: "unknown.kind" }),
-    (e: unknown) =>
-      String((e as { code?: string }).code).startsWith("CONTRACT_"),
-  );
-  assert.throws(
-    () => map.publish(id, { ...durable, durable: false }),
-    (e: unknown) =>
-      String((e as { code?: string }).code).startsWith("CONTRACT_"),
-  );
-  // A later follower gets the durable record by replay; the discarded
-  // transient delta is not queued on its fresh bridge.
-  const { channel, replay } = map.follow(k1, 0);
-  assert.ok(
-    (replay.records as Stored[]).some(
-      (r) => r.seq === committed.seq && r.record.runId === "r-offline",
-    ),
-  );
-  assert.equal(channel.bridge.status().pendingFrames, 0);
-  store.close();
+const contractError = (e: unknown) => /contract/i.test((e as Error).message);
+const durableEvent = (eventId: string, turnId = eventId) => ({
+  ...fixture.engineEvents[0],
+  eventId,
+  payload: { runId: "run-1", turnId },
 });
 
-test("resubscribe continues the session cursor without gaps or foreign records", () => {
+test("without a follower publish commits durable events through the ledger and a later follow replays them", () => {
+  const { dir, store, pi, map } = setup();
+  map.bind(k1, pi);
+  const id = pi.getSessionId();
+  map.anchorRun(id, run("run-1"));
+  const published = map.publish(id, fixture.engineEvents[0]);
+  assert.equal(published.frame, undefined);
+  assert.equal(published.event.seq, 1);
+  assert.equal(store.eventCursor("w-demo", "s1"), 1);
+  // Validation still runs first: an invalid event commits nothing.
+  const [durable] = fixture.engineEvents;
+  assert.throws(
+    () => map.publish(id, { ...durable, eventId: "x", kind: "unknown.kind" }),
+    contractError,
+  );
+  assert.throws(
+    () => map.publish(id, { ...durable, eventId: "y", durable: false }),
+    contractError,
+  );
+  assert.equal(store.eventCursor("w-demo", "s1"), 1);
+  // A later follower — even in a new process — replays the committed envelope.
+  const { channel, replay } = map.follow(k1, 0);
+  assert.deepEqual(replay, [published.event]);
+  assert.equal(channel.bridge.status().pendingFrames, 0);
+  const file = pi.getSessionFile()!;
+  store.close();
+  const reopened = Store.open(join(dir, "store.db"));
+  const resumed = new SessionMap(reopened, context);
+  resumed.bind(k1, SessionManager.open(file, join(dir, "pi")));
+  assert.deepEqual(resumed.follow(k1, 0).replay, [published.event]);
+  reopened.close();
+});
+
+test("follow replays real SplyceEvents for this session only, never stored records", () => {
   const { dir, store, pi, map } = setup();
   const pi2 = SessionManager.create(dir, join(dir, "pi"));
   map.bind(k1, pi);
   map.bind(k2, pi2);
-  const a = map.anchorRun(pi.getSessionId(), run("r-a"));
-  map.anchorRun(pi2.getSessionId(), run("r-other"));
-  const b = map.anchorRun(pi.getSessionId(), run("r-b"));
-  const own = (afterSeq: number) =>
-    (store.list("w-demo", afterSeq, "s1").records as Stored[]).map(
-      (r) => r.seq,
+  map.anchorRun(pi.getSessionId(), run("run-1"));
+  map.anchorRun(pi2.getSessionId(), run("run-2"));
+  const a = map.publish(pi.getSessionId(), durableEvent("e-a")).event;
+  map.publish(pi2.getSessionId(), {
+    ...durableEvent("e-other"),
+    recordId: "rec-run-2",
+    payload: { runId: "run-2", turnId: "t-o" },
+  });
+  const b = map.publish(pi.getSessionId(), durableEvent("e-b")).event;
+  const { replay } = map.follow(k1, 0);
+  assert.deepEqual(replay, [a, b]);
+  for (const event of replay) {
+    assert.equal(Object.hasOwn(event, "record"), false);
+    assert.deepEqual(
+      [event.scopeId, event.sessionId, event.kind, event.durable],
+      ["w-demo", "s1", "turn.started", true],
     );
-  const seqs = (r: { replay: { records: { seq: number }[] } }) =>
-    r.replay.records.map((x) => x.seq);
+  }
+  assert.deepEqual(
+    replay.map((e) => e.seq),
+    [1, 2],
+  );
+  store.close();
+});
 
-  assert.ok(own(0).includes(a.seq) && own(0).includes(b.seq));
-  assert.deepEqual(seqs(map.follow(k1, 0)), own(0));
-  assert.deepEqual(seqs(map.follow(k1, a.seq)), own(a.seq));
-  assert.ok(own(a.seq).includes(b.seq));
+test("a durable event commits atomically with its receipt", () => {
+  const { store, pi, map } = setup();
+  map.bind(k1, pi);
+  const id = pi.getSessionId();
+  const receipt = { kind: "run" as const, record: { ...run("run-1") } };
+  receipt.record = {
+    ...receipt.record,
+    piSessionId: id,
+    branchAnchorId: map.ancestry(id).chain[0]!.anchor.branchAnchorId,
+  } as never;
+  const first = map.publish(id, fixture.engineEvents[0], [receipt]).event;
+  assert.equal(records(store, "s1", "run").length, 1);
+  // A rejected event (reused eventId) leaves its receipt uncommitted too.
+  assert.throws(() =>
+    map.publish(id, fixture.engineEvents[0], [
+      {
+        kind: "run",
+        record: { ...receipt.record, recordId: "rec-run-x", runId: "run-x" },
+      },
+    ]),
+  );
+  assert.equal(records(store, "s1", "run").length, 1);
+  assert.deepEqual(map.follow(k1, 0).replay, [first]);
+  store.close();
+});
+
+test("a replay range crossing a lost transient seq leads with a committed run.reconnect_snapshot", () => {
+  const { store, pi, map } = setup();
+  map.bind(k1, pi);
+  const id = pi.getSessionId();
+  map.anchorRun(id, run("run-1"));
+  const [d1, delta] = fixture.engineEvents;
+  const one = map.publish(id, d1).event;
+  assert.equal(map.publish(id, delta).event.seq, 2);
+  const three = map.publish(id, durableEvent("evt-3")).event;
+  // The transient payload is not retained anywhere in the store.
+  assert.equal(
+    JSON.stringify(store.list("w-demo").records).includes('"hi"'),
+    false,
+  );
+
+  const crossed = map.follow(k1, 0).replay;
+  const [snapshot, ...rest] = crossed;
+  assert.deepEqual(rest, [one, three]);
+  assert.equal(snapshot!.kind, "run.reconnect_snapshot");
+  assert.equal(snapshot!.seq, 4);
+  assert.equal(snapshot!.durable, true);
+  assert.deepEqual([snapshot!.scopeId, snapshot!.sessionId], ["w-demo", "s1"]);
+  assert.deepEqual(snapshot!.payload, {
+    runId: "run-1",
+    lastDurableSeq: 3,
+    activeActionIds: [],
+    state: "ready",
+  });
+  // The snapshot is a real ledger event: it replays like any other.
+  assert.deepEqual(store.replayEvents("w-demo", "s1", 3), [snapshot]);
+  // A cursor past the gap is gapless: no new snapshot.
+  assert.deepEqual(map.follow(k1, 2).replay, [three, snapshot]);
+  // A trailing lost transient is a gap too.
+  map.publish(id, { ...delta, eventId: "evt-5" });
+  const trailing = map.follow(k1, 4).replay;
+  assert.equal(trailing.length, 1);
+  assert.equal(trailing[0]!.kind, "run.reconnect_snapshot");
+  assert.equal(trailing[0]!.seq, 6);
+  store.close();
+});
+
+test("resubscribe continues the session event cursor without gaps or foreign events", () => {
+  const { dir, store, pi, map } = setup();
+  const pi2 = SessionManager.create(dir, join(dir, "pi"));
+  map.bind(k1, pi);
+  map.bind(k2, pi2);
+  map.anchorRun(pi.getSessionId(), run("run-1"));
+  const a = map.publish(pi.getSessionId(), durableEvent("e-a")).event;
+  const b = map.publish(pi.getSessionId(), durableEvent("e-b")).event;
+  const seqs = (afterSeq: number) =>
+    map.follow(k1, afterSeq).replay.map((e) => e.eventId);
+
+  assert.deepEqual(seqs(0), ["e-a", "e-b"]);
+  assert.deepEqual(seqs(a.seq), ["e-b"]);
   map.unfollow(k1);
-  assert.deepEqual(seqs(map.follow(k1, a.seq)), own(a.seq));
+  assert.deepEqual(seqs(a.seq), ["e-b"]);
   map.dispose(k1);
   map.bind(k1, pi);
-  assert.deepEqual(seqs(map.follow(k1, a.seq)), own(a.seq));
-  const last = own(0).at(-1)!;
-  assert.deepEqual(seqs(map.follow(k1, last)), []);
-  assert.throws(
-    () => map.follow(k1, last + 100),
-    code("CONTRACT_INVALID_CURSOR"),
-  );
+  assert.deepEqual(seqs(a.seq), ["e-b"]);
+  assert.deepEqual(seqs(b.seq), []);
+  assert.deepEqual(map.follow(k2, 0).replay, []);
+  assert.throws(() => map.follow(k1, b.seq + 100), code("INVALID_CURSOR"));
   store.close();
 });

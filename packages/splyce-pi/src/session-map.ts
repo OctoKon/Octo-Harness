@@ -17,33 +17,39 @@
 // 3. Anchors are durable `branchAnchor` records under the owning session; a
 //    changed anchor (e.g. first child resolved) is appended next to its
 //    predecessor, never rewritten, and an unchanged one is never duplicated.
-// 4. scopeId/sessionId on every published event come from the binding (the
-//    native side). An engine event that carries its own is rejected.
+// 4. scopeId/sessionId/seq on every published event come from the native
+//    side (binding and Store ledger). An engine event carrying any is rejected.
 // 5. At most one channel (DesktopBridge+Receipts) per (scopeId, sessionId).
 //    `unfollow` releases only the channel (renderer left); `dispose` ends the
 //    session (binding and channel). A later follow starts a fresh bridge
 //    whose replay continues strictly after the caller's afterSeq.
-// 6. Publishing never depends on a follower: events are validated first;
-//    with no follower, durable events are already committed records that
-//    replay by afterSeq and transient deltas are discarded.
+// 6. Publishing never depends on a follower: every event commits through
+//    Store.commitEvents (durable envelope atomic with its receipts; transient
+//    events reserve their seq, payload not retained) before any delivery.
+//    Follow replays Store.replayEvents after afterSeq; when that range
+//    crosses a lost transient seq, a real committed `run.reconnect_snapshot`
+//    leads the replay instead of claiming gapless history.
 // 7. Run anchors are durable `run` records under the bound session, bound to
 //    the active branch anchor; repeating a runId returns the existing anchor.
-// Event seq, cursor and replay semantics belong to TD-15 (Receipts and
-// DesktopBridge); this module only binds and routes.
+// Event seq, cursor and replay semantics belong to TD-15 (Store ledger and
+// DesktopBridge); this module only binds, commits and routes.
 
 import {
   type ContractContext,
   type RecordBodies,
   type RecordMetadata,
+  type SplyceEvent,
+  type SplyceEventDraft,
+  CONTRACT_VERSION,
+  PROTOCOL_VERSION,
   TRANSPORT_LIMITS,
-  validateEvent,
 } from "./contracts.js";
-import { BridgeError, DesktopBridge, type Frame } from "./desktop-bridge.js";
+import { DesktopBridge, type Frame } from "./desktop-bridge.js";
 import { Receipts } from "./receipts.js";
-import type { Appended, CallerContext, ListResult, Store } from "./store.js";
+import type { AppendInput, Appended, CallerContext, Store } from "./store.js";
 
 export class SessionMapError extends Error {
-  readonly code: "SESSION_UNKNOWN" | "SESSION_FOREIGN";
+  readonly code: "SESSION_UNKNOWN" | "SESSION_FOREIGN" | "SNAPSHOT_UNANCHORED";
 
   constructor(code: SessionMapError["code"], message: string) {
     super(message);
@@ -112,9 +118,28 @@ export interface SessionChannel extends SessionKey {
 
 export interface FollowResult {
   readonly channel: SessionChannel;
-  /** Durable records with seq > afterSeq for this session only. */
-  readonly replay: ListResult;
+  /**
+   * This session's retained envelopes with seq > afterSeq, led by a committed
+   * `run.reconnect_snapshot` when the range crosses a lost transient seq.
+   */
+  readonly replay: readonly SplyceEvent[];
 }
+
+export interface Published {
+  /** The committed envelope with its ledger seq. */
+  readonly event: SplyceEvent;
+  /** A follower's control frame (overflow resync) the caller must deliver. */
+  readonly frame: Frame | undefined;
+}
+
+const SNAPSHOT_STATE = {
+  pending: "ready",
+  running: "busy",
+  uncertain: "busy",
+  completed: "stopped",
+  failed: "stopped",
+  canceled: "stopped",
+} as const;
 
 interface Bound {
   readonly key: SessionKey;
@@ -137,6 +162,10 @@ export class SessionMap {
   private readonly byPi = new Map<string, Bound>();
   private readonly byKey = new Map<string, Bound>();
   private readonly channels = new Map<string, SessionChannel>();
+  /** Highest ledger seq this process committed per session (incl. transient). */
+  // ponytail: in-process only; trailing transient seqs from a previous process
+  // are invisible until the Store exposes its session highwater.
+  private readonly committed = new Map<string, number>();
 
   constructor(
     private readonly store: Store,
@@ -216,13 +245,19 @@ export class SessionMap {
     const bound = this.byKey.get(keyOf(key));
     if (bound === undefined)
       throw new SessionMapError("SESSION_UNKNOWN", "native session not bound");
+    const { scopeId, sessionId } = bound.key;
+    const events = this.store.replayEvents(scopeId, sessionId, afterSeq);
+    const highest = Math.max(
+      this.committed.get(keyOf(key)) ?? 0,
+      events.at(-1)?.seq ?? afterSeq,
+    );
+    const replay =
+      events.length === highest - afterSeq
+        ? events
+        : [this.reconnectSnapshot(bound), ...events];
     let channel = this.channels.get(keyOf(key));
-    const receipts = channel?.receipts ?? new Receipts(this.store);
-    const replay = receipts.replay(bound.key.scopeId, afterSeq, {
-      ...this.context,
-      sessionId: bound.key.sessionId,
-    });
     if (channel === undefined) {
+      const receipts = new Receipts(this.store);
       const bridge = new DesktopBridge(this.contractContext(bound), receipts);
       channel = Object.freeze({ ...bound.key, receipts, bridge });
       this.channels.set(keyOf(key), channel);
@@ -236,29 +271,27 @@ export class SessionMap {
   }
 
   /**
-   * Stamps native scope/session and validates; delivers to the follower if
-   * any. With none, returns undefined: durable events replay from their
-   * committed records, transient deltas are discarded (invariant 6).
+   * Stamps native scope/session, commits through the Store ledger with its
+   * receipts (atomic), then delivers to the follower if any (invariant 6).
    */
-  publish(piSessionId: string, event: EngineEvent): Frame | undefined {
+  publish(
+    piSessionId: string,
+    event: EngineEvent,
+    receipts: readonly AppendInput[] = [],
+  ): Published {
     const bound = this.bound(piSessionId);
-    if (Object.hasOwn(event, "scopeId") || Object.hasOwn(event, "sessionId"))
+    if (["scopeId", "sessionId", "seq"].some((f) => Object.hasOwn(event, f)))
       throw new SessionMapError(
         "SESSION_FOREIGN",
-        "engine events must not carry scope or session identity",
+        "engine events must not carry scope, session or seq",
       );
-    const stamped = { ...event, ...bound.key };
+    const committed = this.commit(
+      bound,
+      { ...event, ...bound.key } as unknown as SplyceEventDraft,
+      receipts,
+    );
     const channel = this.channels.get(keyOf(bound.key));
-    if (channel !== undefined) return channel.bridge.submit(stamped);
-    try {
-      validateEvent(stamped, this.contractContext(bound));
-    } catch (error) {
-      throw new BridgeError(
-        `CONTRACT_${(error as { code?: string }).code ?? "INVALID_SHAPE"}`,
-        error instanceof Error ? error.message : String(error),
-      );
-    }
-    return undefined;
+    return { event: committed, frame: channel?.bridge.submit(committed) };
   }
 
   /** Ends a session: binding and channel are dropped together. Idempotent. */
@@ -268,6 +301,56 @@ export class SessionMap {
     this.byKey.delete(keyOf(key));
     this.byPi.delete(bound.piSessionId);
     this.channels.delete(keyOf(key));
+  }
+
+  private commit(
+    bound: Bound,
+    draft: SplyceEventDraft,
+    receipts: readonly AppendInput[],
+  ): SplyceEvent {
+    const [event] = this.store.commitEvents(receipts, [draft], {
+      ...this.context,
+      sessionId: bound.key.sessionId,
+    }).events;
+    if (event === undefined) throw new Error("ledger committed no event");
+    this.committed.set(keyOf(bound.key), event.seq);
+    return event;
+  }
+
+  /** A real, committed snapshot for a replay range with lost transients. */
+  private reconnectSnapshot(bound: Bound): SplyceEvent {
+    const { scopeId, sessionId } = bound.key;
+    const run = this.store
+      .list(scopeId, 0, sessionId)
+      .records.findLast((stored) => stored.kind === "run")?.record as
+      (RecordMetadata & RecordBodies["run"]) | undefined;
+    if (run === undefined)
+      throw new SessionMapError(
+        "SNAPSHOT_UNANCHORED",
+        "replay crosses lost transient seqs but the session has no run anchor",
+      );
+    return this.commit(
+      bound,
+      {
+        schemaVersion: CONTRACT_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
+        recordId: run.recordId,
+        eventId: `snapshot-${crypto.randomUUID()}`,
+        createdAt: new Date().toISOString(),
+        sourceIds: [],
+        scopeId,
+        sessionId,
+        durable: true,
+        kind: "run.reconnect_snapshot",
+        payload: {
+          runId: run.runId,
+          lastDurableSeq: this.store.eventCursor(scopeId, sessionId),
+          activeActionIds: [],
+          state: SNAPSHOT_STATE[run.state],
+        },
+      },
+      [],
+    );
   }
 
   private bound(piSessionId: string): Bound {
