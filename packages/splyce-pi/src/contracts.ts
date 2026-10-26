@@ -278,6 +278,15 @@ export interface RecordBodies {
     lastDurableCursor: string;
     expiresAt: string | null;
   };
+  /** Pi-derived ancestry anchor (TD-10); Pi entry ids, never file paths. */
+  branchAnchor: {
+    branchAnchorId: string;
+    piSessionId: string;
+    parentAnchorId: string | null;
+    forkPointEntryId: string | null;
+    firstChildEntryId: string | null;
+    activeLeafEntryId: string | null;
+  };
 }
 export type RecordKind = keyof RecordBodies;
 export type RecordByKind = {
@@ -298,6 +307,7 @@ export type PackageInstallationRecord = RecordByKind["packageInstallation"];
 export type ConfigurationTransitionRecord =
   RecordByKind["configurationTransition"];
 export type SessionWriterLeaseRecord = RecordByKind["sessionWriterLease"];
+export type BranchAnchorRecord = RecordByKind["branchAnchor"];
 
 type Rule =
   | "text"
@@ -305,6 +315,7 @@ type Rule =
   | "id"
   | "ref"
   | "nullableRef"
+  | "nullableId"
   | "refs"
   | "strings"
   | "utc"
@@ -451,6 +462,14 @@ export const RECORD_SCHEMAS = {
     configRevision: "text",
     lastDurableCursor: "text",
     expiresAt: "nullableUtc",
+  },
+  branchAnchor: {
+    branchAnchorId: "id",
+    piSessionId: "ref",
+    parentAnchorId: "nullableRef",
+    forkPointEntryId: "nullableId",
+    firstChildEntryId: "nullableId",
+    activeLeafEntryId: "nullableId",
   },
 } as const satisfies { [K in RecordKind]: Shape };
 
@@ -917,6 +936,9 @@ function rule(
       break;
     case "nullableRef":
       if (value !== null) reference(value, field, context);
+      break;
+    case "nullableId":
+      if (value !== null) opaque(value, field);
       break;
     case "utc":
       utc(value, field);

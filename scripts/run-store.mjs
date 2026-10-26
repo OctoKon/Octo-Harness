@@ -26,6 +26,9 @@ if (args.length === 0) {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
   else if (args[1] === "C1_reconnect_cursor")
     files = ["tests/integration/receipts.ts"];
+  // Needs the built Pi SessionManager (build:pi), so it is a named case only.
+  else if (args[1] === "C1_session_catalog")
+    files = ["tests/integration/session-map.ts"];
   else if (args[1] === "C2_desktop_bridge")
     files = ["tests/integration/bridge.ts"];
   else if (args[1] === "C3_crash_matrix")
@@ -42,7 +45,7 @@ if (args.length === 0) {
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C5_dirty_snapshot | --case C6_event_ledger]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C5_dirty_snapshot | --case C6_event_ledger]",
   );
   process.exit(2);
 }
