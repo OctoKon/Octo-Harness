@@ -1,4 +1,3 @@
-import type { SplyceCredentials } from "./splyce-credentials.ts";
 import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
 import type { AnthropicOptions } from "./api/anthropic-messages.ts";
 import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
@@ -28,6 +27,7 @@ import type {
 	ThinkingLevel,
 	ThinkingLevelMap,
 } from "./providers/model-schema.ts";
+import type { SplyceCredentials } from "./splyce-credentials.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 import type { ClientIdentity } from "./utils/identity.ts";
