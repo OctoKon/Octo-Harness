@@ -76,9 +76,9 @@ vi.mock("@google/genai", () => {
 	};
 });
 
-import type { ProviderConnectionRecord } from "../../../../../packages/splyce-pi/src/contracts.ts";
+import type { ProviderConnectionRecord } from "@splyce/pi/contracts";
 import { NativeCredentialResolver } from "../../../../../packages/splyce-pi/src/credential-resolver.ts";
-import type { ProviderAdmissionPort } from "../../../../../packages/splyce-pi/src/provider-admission.ts";
+import type { ProviderAdmissionPort } from "@splyce/pi/provider-admission";
 import type { CredentialRequest } from "../../../../../packages/splyce-pi/src/provider-auth.ts";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
