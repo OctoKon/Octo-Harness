@@ -1,0 +1,15 @@
+{
+  "protocolVersion": 1,
+  "schemaVersion": 1,
+  "engineProtocolVersion": 1,
+  "bridgeProtocolVersion": 1,
+  "piRevision": "d5b3de22d0e24a3e9c38a9410d3329b099717283",
+  "entryMode": "sdk-host",
+  "disabledBuiltinExtensions": ["llama.cpp", "codemode", "tool-search", "mcp"],
+  "readiness": {
+    "state": "unavailable",
+    "policy": false,
+    "store": false,
+    "receipts": false
+  }
+}

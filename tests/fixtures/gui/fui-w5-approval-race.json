@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "caseId": "FUI-W5",
+  "title": "Approval race condition",
+  "targetTask": "TD-02",
+  "description": "Trigger approval request, followed immediately by user run cancellation. User clicks approve on stale dialog; verify that client refuses late dispatch or engine rejects stale approval.",
+  "preconditions": {
+    "windowMode": "normal",
+    "dpiScale": 1.0,
+    "contrastMode": false,
+    "reducedMotion": false,
+    "engineStatus": "ready"
+  },
+  "eventSequence": [
+    {
+      "delayMs": 0,
+      "event": {
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w5_01",
+        "eventId": "evt_01W5_01",
+        "createdAt": "2026-10-26T12:00:00.000Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
+        "sessionId": "ses_test_race",
+        "seq": 1,
+        "durable": true,
+        "kind": "turn.started",
+        "payload": {
+          "runId": "run_w5_race",
+          "turnId": "turn_01"
+        }
+      }
+    },
+    {
+      "delayMs": 10,
+      "event": {
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w5_02",
+        "eventId": "evt_01W5_02",
+        "createdAt": "2026-10-26T12:00:00.010Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
+        "sessionId": "ses_test_race",
+        "seq": 2,
+        "durable": true,
+        "kind": "approval.requested",
+        "payload": {
+          "approvalRequestId": "app_req_w5_01",
+          "runId": "run_w5_race",
+          "actionId": "act_w5_exec",
+          "capabilityId": "cap_shell_execute",
+          "targetScope": "w-demo",
+          "normalizedTarget": "target_deploy_sh",
+          "riskRationale": "Deploy script execution.",
+          "timeoutMs": 15000
+        }
+      }
+    },
+    {
+      "delayMs": 25,
+      "event": {
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w5_03",
+        "eventId": "evt_01W5_03",
+        "createdAt": "2026-10-26T12:00:00.025Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
+        "sessionId": "ses_test_race",
+        "seq": 3,
+        "durable": true,
+        "kind": "turn.canceled",
+        "payload": {
+          "runId": "run_w5_race",
+          "cleanedUp": true
+        }
+      }
+    }
+  ],
+  "userActions": [
+    {
+      "step": 1,
+      "action": "click",
+      "targetSelector": "button[data-testid='approval-allow-button']"
+    }
+  ],
+  "assertions": {
+    "expectedState": {
+      "runStatus": "canceled",
+      "dialogOpen": false,
+      "lastDispatchedToolCall": null
+    },
+    "expectedDispatches": [],
+    "accessibilityQueries": [
+      {
+        "role": "alert",
+        "name": "Run was canceled",
+        "expectedState": "visible"
+      }
+    ],
+    "guardRemovalCheck": {
+      "action": "bypass_stale_approval_check",
+      "mustFailWith": "ERR_APPROVAL_STALE"
+    }
+  }
+}
