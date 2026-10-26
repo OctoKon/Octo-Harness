@@ -56,7 +56,7 @@
       <section class="turn-pane" aria-label="Transcript">
         <TurnStream
           run={currentRun}
-          stale={turns.stale}
+          stale={turns.stale || status === "unavailable" || status === "error"}
           canRespond={() => false}
           {onApproval}
         />
