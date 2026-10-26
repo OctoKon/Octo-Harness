@@ -61,6 +61,9 @@
   let enableAfterInstall = $state(false);
   let executionGranted = $state(false);
   let lastPlanId: string | null = null;
+  // Set when the reviewed plan is submitted. Only an authoritative operation
+  // update may then advance the screen: a click never proves acceptance.
+  let awaitOperation = $state(false);
 
   let baseButton = $state<HTMLButtonElement>();
   let reviewButton = $state<HTMLButtonElement>();
@@ -110,6 +113,50 @@
     lastPlanId = planId;
     enableAfterInstall = false;
     executionGranted = false;
+    // A replaced plan invalidates the pending submission it was reviewed for.
+    awaitOperation = false;
+  });
+
+  // Authoritative progression only: the engine's operation identity and stage
+  // drive reviewing -> operating -> outcome/recovering. Submitting a request or
+  // clicking a button never advances this state, and success is shown only from
+  // a terminal outcome. An unrelated operation cannot hijack an unsent review.
+  $effect(() => {
+    const operation = snapshot.operation;
+
+    if (step === "reviewing") {
+      if (!awaitOperation || !operation) return;
+      awaitOperation = false;
+      step = "operating";
+      return;
+    }
+
+    if (step !== "operating" && step !== "outcome" && step !== "recovering") {
+      return;
+    }
+
+    // A lost correlation after admission is uncertainty, never success.
+    if (!operation) {
+      if (step === "operating") step = "recovering";
+      return;
+    }
+
+    // Engine exit or restart during an operation leaves pending recovery.
+    if (step === "operating" && snapshot.engine !== "ready") {
+      step = "recovering";
+      return;
+    }
+
+    if (operation.stage !== "outcome") {
+      // A newer authoritative operation replaces a previous terminal view.
+      if (step === "outcome") step = "operating";
+      return;
+    }
+
+    step =
+      operation.outcome === "uncertain" || operation.cleanupPending
+        ? "recovering"
+        : "outcome";
   });
 
   $effect(() => {
@@ -164,24 +211,29 @@
   }
 
   function backToSelection() {
+    awaitOperation = false;
     step = "selecting";
     void tick().then(() => reviewButton?.focus());
   }
 
   function cancelReview() {
     // Cancel closes the unsent review without submission and restores its opener.
+    awaitOperation = false;
     step = "selecting";
     void tick().then(() => reviewButton?.focus());
   }
 
   function install() {
     const plan = snapshot.plan;
-    if (!confirm.enabled || !plan) return;
+    if (!confirm.enabled || !plan || awaitOperation) return;
     onConfirmInstall({
       planId: plan.planId,
       enableRequested: enableAfterInstall,
       executionGranted,
     });
+    // Only record that a submission is pending. The screen advances when the
+    // engine reports an operation, not because the request was sent.
+    awaitOperation = true;
   }
 
   function cancelOperation() {
@@ -523,7 +575,7 @@
         <div class="actions">
           <button
             type="button"
-            disabled={!confirm.enabled}
+            disabled={!confirm.enabled || awaitOperation}
             title={confirm.reason ?? undefined}
             aria-describedby={confirm.reason ? "confirm-reason" : undefined}
             onclick={install}
@@ -539,6 +591,13 @@
         {#if confirm.reason}
           <p id="confirm-reason" role="status" class="reason" data-testid="confirm-reason">
             {confirm.reason}
+          </p>
+        {/if}
+        {#if awaitOperation}
+          <p role="status" class="reason" data-testid="awaiting-operation">
+            Request submitted. Waiting for the engine to accept it and report the
+            operation identity; nothing is shown as installed until its durable
+            outcome.
           </p>
         {/if}
       {/if}

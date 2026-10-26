@@ -23,6 +23,8 @@ import {
   d1BaseSetup,
   d6Catalog,
   d6CurrentPlan,
+  d6Operation,
+  d6OperationSnapshot,
   d6Reviewing,
   d6ReviewingStale,
   engineUnavailable,
@@ -372,6 +374,88 @@ describe("FUI-W10 module lifecycle separation", () => {
       outcome: null,
     });
     expect(offline?.canCancel.enabled).toBe(false);
+  });
+});
+
+describe("operation updates drive the Setup progression", () => {
+  it("reports accepted -> started -> progress -> terminal outcome through one identity", () => {
+    const sequence = [
+      d6Operation(),
+      d6Operation({ stage: "started", message: "Staging started." }),
+      d6Operation({
+        stage: "progress",
+        message: "Fetching the reviewed closure.",
+        progress: { state: "known", transferredBytes: 50, totalBytes: 100 },
+      }),
+      d6Operation({
+        stage: "outcome",
+        outcome: "installed",
+        message: "Committed the installed record.",
+      }),
+    ];
+    const views = sequence.map((operation) => {
+      const view = operationView(d6OperationSnapshot(operation), operation);
+      expect(view).not.toBeNull();
+      return view!;
+    });
+
+    expect(views.map((view) => view.stageLabel)).toEqual([
+      "Accepted",
+      "Started",
+      "In progress",
+      "Outcome",
+    ]);
+    expect(views.map((view) => view.terminal)).toEqual([
+      false,
+      false,
+      false,
+      true,
+    ]);
+    expect(views.every((view) => view.operationId === "op-d6-install")).toBe(
+      true,
+    );
+    // Progress comes from the engine, determinate only when the total is known.
+    expect(views[2].progressValue).toBe(0.5);
+    expect(views[2].progressLabel).toContain("50 of 100 bytes");
+    // Cancel is available while the operation is live and not once it ends.
+    expect(views[1].canCancel.enabled).toBe(true);
+    expect(views[3].canCancel.enabled).toBe(false);
+    expect(views[3].outcomeLabel).toBe("Installed");
+    expect(views[3].outcomeTone).toBe("positive");
+  });
+
+  it("keeps an uncertain outcome and pending cleanup in recovery tone", () => {
+    const operation = d6Operation({
+      stage: "outcome",
+      outcome: "uncertain",
+      message: "Commit was lost; reconciliation required.",
+      cleanupPending: true,
+    });
+    const view = operationView(d6OperationSnapshot(operation), operation)!;
+    expect(view.terminal).toBe(true);
+    expect(view.outcomeLabel).toBe("Uncertain");
+    expect(view.outcomeTone).toBe("warning");
+    expect(view.cleanupLabel).toContain("Cleanup incomplete");
+    expect(view.canCancel.enabled).toBe(false);
+  });
+
+  it("blocks cancellation and retry when the engine is gone", () => {
+    const operation = d6Operation({
+      stage: "outcome",
+      outcome: "failed",
+      retryAllowed: true,
+    });
+    const view = operationView(
+      {
+        ...d6OperationSnapshot(operation),
+        engine: "unavailable",
+        engineReason: "Engine process exited.",
+      },
+      operation,
+    )!;
+    expect(view.canCancel.enabled).toBe(false);
+    expect(view.canRetry.enabled).toBe(false);
+    expect(view.canRetry.reason).toContain("Engine process exited.");
   });
 });
 

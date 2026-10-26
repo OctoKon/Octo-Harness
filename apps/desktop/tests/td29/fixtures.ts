@@ -11,6 +11,7 @@ import {
   type InstalledModule,
   type InstallPlan,
   type ModuleCatalogEntry,
+  type ModuleOperation,
   type ModuleSnapshot,
   type ModuleSource,
 } from "../../src/stores/modules";
@@ -208,6 +209,34 @@ export const d6ReviewingStale: ModuleSnapshot = {
   ...d6Catalog,
   plan: d6StalePlan,
 };
+
+/** One authoritative engine operation for the reviewed D6 plan. */
+export function d6Operation(
+  overrides: Partial<ModuleOperation> = {},
+): ModuleOperation {
+  return {
+    operationId: "op-d6-install",
+    kind: "install",
+    packageId: "fixture-a",
+    stage: "accepted",
+    message: "Accepted the reviewed plan.",
+    progress: null,
+    outcome: null,
+    cleanupPending: false,
+    retryAllowed: false,
+    ...overrides,
+  };
+}
+
+/**
+ * D6 snapshot carrying an engine operation update. Applying successive values
+ * to a mounted Setup screen is how the review covers the real progression.
+ */
+export function d6OperationSnapshot(
+  overrides: Partial<ModuleOperation> = {},
+): ModuleSnapshot {
+  return { ...d6Reviewing, operation: d6Operation(overrides) };
+}
 
 const w10Catalog: readonly ModuleCatalogEntry[] = [
   catalogEntry("fixture-a", "Fixture editor A", {

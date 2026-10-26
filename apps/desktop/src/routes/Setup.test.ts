@@ -1,12 +1,15 @@
 import { flushSync, mount, tick, unmount } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Setup from "./Setup.svelte";
+import SetupLiveHarness from "../../tests/td29/SetupLiveHarness.svelte";
 import {
   d1BaseSetup,
   d6Catalog,
+  d6OperationSnapshot,
   d6Reviewing,
   d6ReviewingStale,
 } from "../../tests/td29/fixtures";
+import type { ModuleSnapshot } from "../stores/modules";
 
 let app: ReturnType<typeof mount> | null = null;
 
@@ -21,6 +24,36 @@ async function render(props: Record<string, unknown>): Promise<void> {
     target: document.body,
     props: props as never,
   });
+  flushSync();
+  await tick();
+  flushSync();
+}
+
+/**
+ * Mounts the harness that can push the engine's next snapshot into the same
+ * mounted Setup instance, so progression is proven reactive.
+ */
+async function renderLive(props: Record<string, unknown>): Promise<{
+  pushSnapshot: (next: ModuleSnapshot) => void;
+}> {
+  const handle = mount(SetupLiveHarness, {
+    target: document.body,
+    props: props as never,
+  });
+  app = handle;
+  flushSync();
+  await tick();
+  flushSync();
+  return handle as unknown as {
+    pushSnapshot: (next: ModuleSnapshot) => void;
+  };
+}
+
+async function push(
+  live: { pushSnapshot: (next: ModuleSnapshot) => void },
+  next: ModuleSnapshot,
+): Promise<void> {
+  live.pushSnapshot(next);
   flushSync();
   await tick();
   flushSync();
@@ -177,6 +210,127 @@ describe("TD-29 Setup.svelte", () => {
       enableRequested: false,
       executionGranted: true,
     });
+  });
+
+  it("D6: advances reviewing -> operating -> outcome only from authoritative operation updates", async () => {
+    const onConfirmInstall = vi.fn();
+    const live = await renderLive({
+      initial: d6Reviewing,
+      onConfirmInstall,
+    });
+    await selectAndReview("fixture-a", "fixture-b");
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+    byTestId("confirm-install").click();
+    flushSync();
+    await tick();
+    flushSync();
+
+    // The click submits a request; it is not evidence of acceptance, so the
+    // screen stays on the review until the engine reports an operation.
+    expect(byTestId("setup").dataset.step).toBe("reviewing");
+    expect(onConfirmInstall).toHaveBeenCalledTimes(1);
+    expect(byTestId("awaiting-operation").textContent).toContain(
+      "Waiting for the engine",
+    );
+    expect((byTestId("confirm-install") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(maybeTestId("setup-operation")).toBeNull();
+
+    // Engine acceptance carries the operation identity and leaves reviewing.
+    await push(
+      live,
+      d6OperationSnapshot({
+        stage: "accepted",
+        message: "Accepted the reviewed plan for staging.",
+      }),
+    );
+    expect(byTestId("setup").dataset.step).toBe("operating");
+    expect(byTestId("setup-operation").textContent).toContain("op-d6-install");
+    expect(byTestId("operation-message").textContent).toContain(
+      "Accepted the reviewed plan for staging.",
+    );
+    // Nothing is reported installed while the operation is staged.
+    expect(byTestId("fact-installed").textContent).toContain(
+      "No installed record",
+    );
+
+    // Progress is shown as reported, including an unknown total.
+    await push(
+      live,
+      d6OperationSnapshot({
+        stage: "progress",
+        message: "Fetching the reviewed closure.",
+        progress: { state: "unknown", transferredBytes: 4096 },
+      }),
+    );
+    expect(byTestId("setup").dataset.step).toBe("operating");
+    expect(byTestId("operation-progress").textContent).toContain(
+      "Unknown total",
+    );
+    expect(byTestId("operation-progress").textContent).toContain("4096");
+
+    // A terminal failure is an outcome, not a success and not a cancel.
+    await push(
+      live,
+      d6OperationSnapshot({
+        stage: "outcome",
+        outcome: "failed",
+        message: "Staging validation failed.",
+        retryAllowed: true,
+      }),
+    );
+    expect(byTestId("setup").dataset.step).toBe("outcome");
+    expect(byTestId("operation-outcome").textContent).toContain("Failed");
+    expect(byTestId("operation-outcome").dataset.tone).toBe("negative");
+    expect(byTestId("fact-installed").textContent).toContain(
+      "No installed record",
+    );
+    // Retry stays unavailable unless the engine exposed a safe reconciled action.
+    expect((byTestId("retry-operation") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+
+    // An uncertain outcome or pending cleanup leaves pending recovery.
+    await push(
+      live,
+      d6OperationSnapshot({
+        stage: "outcome",
+        outcome: "uncertain",
+        message: "Commit was lost; reconciliation required.",
+        cleanupPending: true,
+      }),
+    );
+    expect(byTestId("setup").dataset.step).toBe("recovering");
+    expect(byTestId("setup-recovering").textContent).toContain(
+      "No effect is replayed automatically",
+    );
+  });
+
+  it("D6: engine loss during an operation leaves recovery, never success", async () => {
+    const live = await renderLive({ initial: d6Reviewing });
+    await selectAndReview("fixture-a", "fixture-b");
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+    byTestId("confirm-install").click();
+    flushSync();
+
+    await push(
+      live,
+      d6OperationSnapshot({ stage: "started", message: "Staging started." }),
+    );
+    expect(byTestId("setup").dataset.step).toBe("operating");
+
+    await push(live, {
+      ...d6OperationSnapshot({ stage: "started", message: "Staging started." }),
+      engine: "unavailable",
+      engineReason: "Engine process exited.",
+    });
+    expect(byTestId("setup").dataset.step).toBe("recovering");
+    expect(byTestId("setup-recovering")).not.toBeNull();
+    expect(maybeTestId("operation-outcome")).toBeNull();
+    expect(maybeTestId("fact-installed")).not.toBeNull();
   });
 
   it("D6: keeps confirmation disabled for a stale plan", async () => {
