@@ -53,6 +53,16 @@ describe("byte labels", () => {
     expect(bytesLabel({ state: "known", bytes: -1 })).toContain("Unknown");
   });
 
+  it("picks the unit after rounding, so a rounded 1000 never keeps the smaller unit", () => {
+    expect(bytesLabel({ state: "known", bytes: 999_499 })).toBe("999 kB");
+    expect(bytesLabel({ state: "known", bytes: 999_500 })).toBe("1.0 MB");
+    expect(bytesLabel({ state: "known", bytes: 999_999 })).toBe("1.0 MB");
+    expect(bytesLabel({ state: "known", bytes: 999_950_000 })).toBe("1.0 GB");
+    // The bytes boundary itself still stays in bytes.
+    expect(bytesLabel({ state: "known", bytes: 999 })).toBe("999 B");
+    expect(bytesLabel({ state: "known", bytes: 1000 })).toBe("1.0 kB");
+  });
+
   it("totals known members and stays unknown when any member is unknown", () => {
     expect(totalBytes([])).toEqual({ state: "known", bytes: 0 });
     expect(

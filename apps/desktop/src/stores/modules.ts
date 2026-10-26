@@ -171,11 +171,14 @@ export function bytesLabel(bytes: Bytes): string {
   const units = ["kB", "MB", "GB", "TB"] as const;
   let value = n / 1000;
   let unit = 0;
-  while (value >= 1000 && unit < units.length - 1) {
+  // Choose the unit AFTER rounding: 999_500 B rounds to 1000 kB, which must be
+  // shown as 1.0 MB rather than "1000 kB".
+  const format = () => value.toFixed(value < 10 ? 1 : 0);
+  while (Number(format()) >= 1000 && unit < units.length - 1) {
     value /= 1000;
     unit += 1;
   }
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
+  return `${format()} ${units[unit]}`;
 }
 
 /** A total is unknown when any member is unknown; it never becomes zero. */
