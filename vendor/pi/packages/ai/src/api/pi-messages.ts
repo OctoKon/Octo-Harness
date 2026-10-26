@@ -413,11 +413,14 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 	const eventStream = new AssistantMessageEventStream();
 	const convertEvent = createEventConverter(model);
 
+	// Captured before any caller callback runs: onPayload may mutate options, and error/observer paths must keep the
+	// credentials the call was admitted with.
+	const leasedCredentials = options?.credentials;
 	void (async () => {
 		try {
 			assertCredentialOptions(options ?? {}, model.headers);
 			// Splyce: with a lease the request carries a placeholder and a fetch that leases the real key on every send.
-			const credentials = options?.credentials;
+			const credentials = leasedCredentials;
 			const apiKey = credentials ? "splyce-leased-placeholder" : options?.apiKey;
 			const sendFetch = credentials
 				? createLeasedFetch(credentials, "authorization", options?.fetch, (secret) => `Bearer ${secret}`)
@@ -464,7 +467,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 			});
 
 			await options?.onResponse?.(
-				await redactResponseWithLease(options?.credentials, {
+				await redactResponseWithLease(leasedCredentials, {
 					status: response.status,
 					headers: headersToRecord(response.headers),
 				}),
@@ -481,7 +484,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			for await (const piEvent of readPiMessagesEvents(response.body)) {
 				await options?.onProviderStreamEvent?.(
-					(await redactEventWithLease(options?.credentials, piEvent)) as typeof piEvent,
+					(await redactEventWithLease(leasedCredentials, piEvent)) as typeof piEvent,
 					model,
 				);
 				const event = convertEvent(piEvent);
@@ -493,9 +496,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			throw new Error(`${model.provider} stream ended without a terminal event`);
 		} catch (error) {
-			eventStream.push(
-				await createErrorEvent(model, error, options?.signal?.aborted ?? false, options?.credentials),
-			);
+			eventStream.push(await createErrorEvent(model, error, options?.signal?.aborted ?? false, leasedCredentials));
 		}
 	})();
 

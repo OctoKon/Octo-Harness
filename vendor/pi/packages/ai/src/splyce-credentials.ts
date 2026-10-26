@@ -35,8 +35,10 @@ export function redactorOf(options: { credentials?: SplyceCredentials | undefine
 /** Sanitize inside a live lease; a revoked lease cannot safely expose the provider's error text. */
 export async function redactWithLease(credentials: SplyceCredentials | undefined, text: string): Promise<string> {
 	if (!credentials) return text;
-	// Credentials that fail assertCredentialOptions were never leased: there is no secret to mask, so do not lease now.
-	if (typeof credentials.redact !== "function" || typeof credentials.lease?.use !== "function") return text;
+	// An invalid shape (never leased, or mutated after preflight) must not echo provider text: nothing could mask it.
+	if (typeof credentials.redact !== "function" || typeof credentials.lease?.use !== "function") {
+		return "Provider credential is no longer available";
+	}
 	try {
 		return await credentials.lease.use(() => credentials.redact(text));
 	} catch {

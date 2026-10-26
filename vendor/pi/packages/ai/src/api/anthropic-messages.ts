@@ -588,6 +588,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	const normalizedContext = resolveTranscript(context, getAnthropicCompat(model).supportsMidConvoSystemMessages);
 	const currentTools = getCurrentTools(normalizedContext.messages);
 
+	// Captured before any caller callback runs: onPayload may mutate options, and error/observer paths must keep the
+	// credentials the call was admitted with.
+	const leasedCredentials = options?.credentials;
 	(async () => {
 		const output: AssistantMessage = {
 			role: "assistant",
@@ -619,19 +622,19 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 
 			if (options?.client) {
 				// Splyce: a caller-supplied client carries its own auth and transport, so it cannot be used with a lease.
-				if (options.credentials) throw new Error("credentials cannot be used with a caller-supplied client");
+				if (leasedCredentials) throw new Error("credentials cannot be used with a caller-supplied client");
 				client = options.client;
 				isOAuth = false;
 			} else {
 				assertCredentialOptions(options ?? {}, model.headers);
 				// Splyce: with a lease the SDK client holds only a placeholder; the real key is leased and written into the
 				// auth header on every HTTP send (including SDK retries), and redirects are refused.
-				if (options?.credentials && model.provider === "github-copilot") {
+				if (leasedCredentials && model.provider === "github-copilot") {
 					throw new Error("credentials are not supported for this provider");
 				}
-				const apiKey = options?.credentials ? LEASED_API_KEY_PLACEHOLDER : options?.apiKey;
-				const requestFetch = options?.credentials
-					? createLeasedFetch(options.credentials, "x-api-key", options.fetch)
+				const apiKey = leasedCredentials ? LEASED_API_KEY_PLACEHOLDER : options?.apiKey;
+				const requestFetch = leasedCredentials
+					? createLeasedFetch(leasedCredentials, "x-api-key", options.fetch)
 					: options?.fetch;
 				const federation = getAnthropicFederation(model, apiKey, options?.headers, options?.env);
 				if (!federation) assertRequestAuth(model.provider, apiKey, options?.headers);
@@ -714,7 +717,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				}
 			}
 			await options?.onResponse?.(
-				await redactResponseWithLease(options?.credentials, {
+				await redactResponseWithLease(leasedCredentials, {
 					status: response.status,
 					headers: headersToRecord(response.headers),
 				}),
@@ -731,7 +734,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
 				await options?.onProviderStreamEvent?.(
-					(await redactEventWithLease(options?.credentials, event)) as typeof event,
+					(await redactEventWithLease(leasedCredentials, event)) as typeof event,
 					model,
 				);
 				if (event.type === "message_start") {
@@ -956,7 +959,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			output.content = output.content.filter((block) => block.type !== "toolCall" || finishedToolCalls.has(block));
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = await redactWithLease(
-				options?.credentials,
+				leasedCredentials,
 				error instanceof Error ? error.message : JSON.stringify(error),
 			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });

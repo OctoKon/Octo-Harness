@@ -138,13 +138,16 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 	const stream = new AssistantMessageEventStream();
 	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
 
+	// Captured before any caller callback runs: onPayload may mutate options, and error/observer paths must keep the
+	// credentials the call was admitted with.
+	const leasedCredentials = options?.credentials;
 	(async () => {
 		const output = createOutput(model);
 
 		try {
 			assertCredentialOptions(options ?? {}, model.headers);
 			// Splyce: with a lease the request carries a placeholder and a fetch that leases the real key on every send.
-			const credentials = options?.credentials;
+			const credentials = leasedCredentials;
 			const apiKey = credentials ? "splyce-leased-placeholder" : options?.apiKey;
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
@@ -181,7 +184,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 				options?.onProviderStreamEvent &&
 					(async (chunk, m) =>
 						options.onProviderStreamEvent?.(
-							(await redactEventWithLease(options.credentials, chunk)) as typeof chunk,
+							(await redactEventWithLease(leasedCredentials, chunk)) as typeof chunk,
 							m,
 						)),
 			);
@@ -203,7 +206,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			// An errored or aborted response never carries tool calls into dispatch or persistence.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = await redactWithLease(options?.credentials, formatMistralError(error));
+			output.errorMessage = await redactWithLease(leasedCredentials, formatMistralError(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

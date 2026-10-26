@@ -242,4 +242,39 @@ describe("TD-23 Pi-native: revoked lease at error time", () => {
 		expect(events.join("")).not.toContain(SECRET);
 		expect(events.join("")).toContain("[REDACTED]");
 	});
+
+	it("keeps the admitted credentials when onPayload mutates the caller options (error text and observers stay redacted)", async () => {
+		const events: string[] = [];
+		const options: Record<string, unknown> = {
+			fetch: serve(() => new Response(`denied for ${SECRET}`, { status: 401, headers: { "x-echo": SECRET } })),
+			credentials: creds(),
+			onPayload: () => {
+				options.credentials = undefined;
+			},
+			onResponse: async (response: { headers: Record<string, string> }) => {
+				events.push(JSON.stringify(response.headers));
+			},
+		};
+		const result = await streamPi(model, context() as never, options as never).result();
+		expect(result.stopReason).toBe("error");
+		expect(JSON.stringify(result)).not.toContain(SECRET);
+		expect(events.join("")).not.toContain(SECRET);
+	});
+
+	it("a credentials object whose redact or lease was removed after preflight yields generic text, never raw", async () => {
+		const mutated = creds() as { redact?: unknown };
+		const result = await streamPi(
+			model,
+			context() as never,
+			{
+				fetch: serve(() => new Response(`denied for ${SECRET}`, { status: 401 })),
+				credentials: mutated,
+				onPayload: () => {
+					mutated.redact = undefined;
+				},
+			} as never,
+		).result();
+		expect(result.stopReason).toBe("error");
+		expect(JSON.stringify(result)).not.toContain(SECRET);
+	});
 });

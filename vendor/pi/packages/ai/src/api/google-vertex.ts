@@ -80,6 +80,9 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 	const stream = new AssistantMessageEventStream();
 	const normalizedContext = collapseSystemMessages(context);
 
+	// Captured before any caller callback runs: onPayload may mutate options, and error/observer paths must keep the
+	// credentials the call was admitted with.
+	const leasedCredentials = options?.credentials;
 	(async () => {
 		const output: AssistantMessage = {
 			role: "assistant",
@@ -104,7 +107,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
 			}
 			assertCredentialOptions(options ?? {}, model.headers);
-			const credentials = options?.credentials;
+			const credentials = leasedCredentials;
 			const apiKey = resolveApiKey(options);
 			// Create the client using either a Vertex API key, if provided, or ADC with project and location.
 			// Splyce: with a lease the key is taken per request attempt and no long-lived client holds it.
@@ -147,7 +150,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
 				await options?.onProviderStreamEvent?.(
-					(await redactEventWithLease(options?.credentials, chunk)) as typeof chunk,
+					(await redactEventWithLease(leasedCredentials, chunk)) as typeof chunk,
 					model,
 				);
 				// Vertex uses the same @google/genai GenerateContentResponse type as Gemini.
@@ -334,7 +337,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = await redactWithLease(
-				options?.credentials,
+				leasedCredentials,
 				formatProviderError(normalizeProviderError(error)),
 			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
