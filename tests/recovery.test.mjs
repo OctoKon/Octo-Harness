@@ -145,3 +145,40 @@ test("admission stays closed until every correction has been applied", () => {
     true,
   );
 });
+
+test("takeover stays blocked by an uncertain action whatever state its run is in", () => {
+  for (const runState of ["completed", "failed", "canceled", "uncertain"]) {
+    const report = reconcile(
+      base({
+        runs: [{ runId: "r1", piSessionId: "s1", state: runState }],
+        actions: [action("a1", "uncertain")],
+        writers: [{ lease: lease("s1"), alive: false }],
+      }),
+    );
+    assert.equal(report.takeoverBlocked.length, 1, runState);
+    assert.match(report.takeoverBlocked[0].reason, /uncertain/);
+  }
+});
+
+test("a completed run whose completed action lacks an observed-success outcome blocks takeover", () => {
+  const report = reconcile(
+    base({
+      runs: [{ runId: "r1", piSessionId: "s1", state: "completed" }],
+      actions: [action("a1", "completed")],
+      writers: [{ lease: lease("s1"), alive: false }],
+    }),
+  );
+  assert.deepEqual(report.uncertain, ["a1"]);
+  assert.equal(report.takeoverBlocked[0].piSessionId, "s1");
+});
+
+test("an uncertain action whose run is missing from the journal blocks as unattributed", () => {
+  const report = reconcile(
+    base({
+      runs: [],
+      actions: [action("a1", "uncertain", "ghost")],
+      writers: [],
+    }),
+  );
+  assert.equal(report.takeoverBlocked[0].piSessionId, "unattributed:ghost");
+});

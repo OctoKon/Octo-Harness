@@ -148,13 +148,20 @@ export function reconcile(input: RecoveryInput): RecoveryReport {
     });
   }
 
+  // Takeover is decided from the FINAL uncertain actions' owning runs, whatever label the run carries (a "completed"
+  // run can own an uncertain action, and so can a failed one) and from runs that are themselves uncertain.
+  const runById = new Map(input.runs.map((r) => [r.runId, r]));
   const uncertainRuns = new Set<string>(
-    [
-      ...runCorrections.filter((r) => r.to === "uncertain").map((r) => r.runId),
-    ].concat(
-      input.runs.filter((r) => r.state === "uncertain").map((r) => r.runId),
-    ),
+    input.runs.filter((r) => r.state === "uncertain").map((r) => r.runId),
   );
+  for (const run of runCorrections) {
+    if (run.to === "uncertain") uncertainRuns.add(run.runId);
+  }
+  for (const action of input.actions) {
+    if (finalState.get(action.actionId) === "uncertain") {
+      uncertainRuns.add(action.runId);
+    }
+  }
   const blocked = new Map<string, string>();
   for (const { lease, alive } of input.writers) {
     if (alive !== false) {
@@ -166,11 +173,14 @@ export function reconcile(input: RecoveryInput): RecoveryReport {
       );
     }
   }
-  for (const run of input.runs) {
-    if (uncertainRuns.has(run.runId) && !blocked.has(run.piSessionId)) {
+  for (const runId of uncertainRuns) {
+    const run = runById.get(runId);
+    // An action whose run is missing from the journal cannot be attributed to a session: that is itself unsafe.
+    const piSessionId = run?.piSessionId ?? `unattributed:${runId}`;
+    if (!blocked.has(piSessionId)) {
       blocked.set(
-        run.piSessionId,
-        `run ${run.runId} has uncertain effects awaiting review`,
+        piSessionId,
+        `run ${runId} has uncertain effects awaiting review`,
       );
     }
   }
