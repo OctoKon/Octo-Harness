@@ -1,20 +1,29 @@
 // TD-12 / C1 session navigation: pure reducer cases. The Svelte view renders this state only.
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "vitest";
 import {
   createSessionNav,
   reduceSessionNav,
   visibleNodes,
-} from "../apps/desktop/src/stores/sessions.ts";
+  type SessionNavAction,
+  type SessionNavState,
+  type TreeEventLike,
+} from "./sessions";
 
-const tree = (sessionId, branchAnchorId, leaves = ["e1"], seq = 1) => ({
+const tree = (
+  sessionId: string,
+  branchAnchorId: string,
+  leaves: string[] = ["e1"],
+  seq = 1,
+): TreeEventLike => ({
   kind: "session.tree_updated",
   sessionId,
   seq,
   payload: { sessionId, branchAnchorId, leaves },
 });
-const apply = (state, ...actions) => actions.reduce(reduceSessionNav, state);
-const keys = (state) => visibleNodes(state).map((n) => n.key);
+const apply = (state: SessionNavState, ...actions: SessionNavAction[]) =>
+  actions.reduce(reduceSessionNav, state);
+const keys = (state: SessionNavState) => visibleNodes(state).map((n) => n.key);
 
 test("starts in a distinct loading state with nothing selected", () => {
   const s = createSessionNav();
@@ -50,7 +59,7 @@ test("tree events build nodes keyed by engine identity, not by label", () => {
 });
 
 test("a replayed tree event is idempotent", () => {
-  const e = { type: "event", event: tree("s1", "b1") };
+  const e: SessionNavAction = { type: "event", event: tree("s1", "b1") };
   const once = apply(createSessionNav(), { type: "loaded" }, e);
   const twice = apply(once, e);
   assert.deepEqual(keys(twice), keys(once));
@@ -165,11 +174,11 @@ test("an event with no branch anchor or a non-tree kind is ignored", () => {
     { type: "loaded" },
     { type: "event", event: tree("s1", "b1") },
   );
-  const bad = {
+  const bad: SessionNavAction = {
     type: "event",
     event: { kind: "turn.started", sessionId: "s1", seq: 2, payload: {} },
   };
-  const noAnchor = {
+  const noAnchor: SessionNavAction = {
     type: "event",
     event: {
       kind: "session.tree_updated",
