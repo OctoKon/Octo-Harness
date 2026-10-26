@@ -137,7 +137,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 		const redact = redactorOf(options ?? {});
 
 		try {
-			assertCredentialOptions(options ?? {});
+			assertCredentialOptions(options ?? {}, model.headers);
 			// Splyce: with a lease the request carries a placeholder and a fetch that leases the real key on every send.
 			const credentials = options?.credentials;
 			const apiKey = credentials ? "splyce-leased-placeholder" : options?.apiKey;

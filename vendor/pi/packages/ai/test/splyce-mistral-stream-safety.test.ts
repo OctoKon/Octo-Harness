@@ -6,6 +6,7 @@ import { stream as streamMistral } from "../src/api/mistral-conversations.ts";
 import { getModel } from "../src/compat.ts";
 import type { SplyceCredentials } from "../src/splyce-credentials.ts";
 import type { Context } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const SECRET = "mistral-secret-0123456789";
 const nativeRedact = (text: string) => text.split(SECRET).join("[REDACTED]");
@@ -46,7 +47,7 @@ const toolDelta = (args: string, id = "tc1") => ({
 });
 const toolCalls = (content: Array<{ type: string }>) => content.filter((b) => b.type === "toolCall");
 const run = (extra: Record<string, unknown>, make: () => Response = () => sse([chunk({ content: "ok" }, "stop")])) =>
-	streamMistral(model(), context(), { fetch: serve(make), ...extra }).result();
+	streamMistral(model(), normalizeContext(context()), { fetch: serve(make), ...extra }).result();
 
 beforeEach(() => {
 	sent.length = 0;
@@ -83,6 +84,14 @@ describe("TD-23 Mistral: credentials", () => {
 		);
 		expect(result.stopReason).toBe("error");
 		expect(JSON.stringify(result)).not.toContain(SECRET);
+	});
+
+	it("rejects a caller-supplied auth header, in any letter case, before anything is sent", async () => {
+		for (const name of ["Authorization", "x-api-key", "Cookie"]) {
+			const result = await run({ credentials: creds(), headers: { [name]: "caller-value" } });
+			expect(result.stopReason, name).toBe("error");
+		}
+		expect(sent).toHaveLength(0);
 	});
 
 	it("keeps the legacy apiKey path unchanged", async () => {

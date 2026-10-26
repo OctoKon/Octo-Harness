@@ -76,6 +76,14 @@ describe("TD-23 Pi-native: credentials", () => {
 		expect(sent).toHaveLength(0);
 	});
 
+	it("rejects a caller-supplied auth header before anything is sent", async () => {
+		for (const name of ["Authorization", "X-Api-Key"]) {
+			const result = await run([done("stop")], { credentials: creds(), headers: { [name]: "caller-value" } });
+			expect(result.stopReason, name).toBe("error");
+		}
+		expect(sent).toHaveLength(0);
+	});
+
 	it("redacts the secret from a failing response body", async () => {
 		const result = await streamPi(model, context() as never, {
 			fetch: serve(() => new Response(`denied for ${SECRET}`, { status: 401 })),
