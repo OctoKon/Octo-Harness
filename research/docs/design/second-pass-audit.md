@@ -332,3 +332,9 @@ Nineteen new named cases were added; the validator confirms every named case has
 - **Joint conclusion:** the plan has no remaining planning contract gap that either reviewer could find. Whether it produces the best product cannot be shown on paper. The largest remaining risk is execution: the fused engine could pass its contracts yet deliver weaker real coding outcomes through interactions among context, tools, verification, cancellation and persistence. The core preview, integrated failure tests and `O1_competitive_claim` trials are the planned way to retire it.
 
 Runtime evidence remains **n=0**.
+
+## Chained round R11: activation
+
+**Executed 2026-10-26 in Asia/Kolkata.** PR #5 merged to `main` (`b6007b5`) after all four documentation checks passed on a clean worktree and CI succeeded; PR #3 was closed as superseded. `staging` was created from that head, Protect staging (25846046) and Staging merge permissions (25846047) were applied, Protect main (25824256) was switched to fast-forward-only with all four required checks, the `release` environment was limited to `main`, and PR #4 was retargeted to `staging`. The first staging push passed Documentation quality, CodeQL and the Windows Staging release gate.
+
+Activation falsified round-3 hypothesis H1: GitHub rejected `enqueuePullRequest` with `Cannot update this protected ref` under the leads-only update restriction, in both `pull_request` and `always` bypass modes, because the queue performs the final merge itself. Because only the two leads may merge, the documented fallback replaced the merge queue with strict up-to-date required checks, and the unused `merge_group` triggers were removed. Promotion to `main` stays manual (Itachi-1824 fast-forwards a fully green staging commit) until the release GitHub App exists; `promote.yml` now skips cleanly until `RELEASE_APP_CLIENT_ID` is configured.

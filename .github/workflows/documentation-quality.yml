@@ -2,7 +2,6 @@ name: Documentation quality
 
 on:
   pull_request:
-  merge_group:
   push:
     branches: [main, staging]
   workflow_dispatch:
