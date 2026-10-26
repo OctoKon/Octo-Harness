@@ -216,4 +216,39 @@ describe("MemoryList", () => {
     await tick();
     expect(document.activeElement).toBe(button("Cancel"));
   });
+
+  it.each([
+    ["resolves", true],
+    ["rejects", false],
+  ])(
+    "a forget that %s after unmount raises no unhandled error",
+    async (_name, ok) => {
+      const unhandled: unknown[] = [];
+      const on = (e: PromiseRejectionEvent): void => {
+        unhandled.push(e.reason);
+      };
+      let settle!: () => void;
+      let fail!: () => void;
+      const onForget = vi.fn(
+        () =>
+          new Promise<void>((res, rej) => {
+            settle = res;
+            fail = () => rej(new Error("boom"));
+          }),
+      );
+      process.on("unhandledRejection", on as never);
+      render([entry("m1")], onForget);
+      button("Forget").click();
+      flushSync();
+      button("Forget memory").click();
+      unmount(cmp!);
+      cmp = null;
+      (ok ? settle : fail)();
+      await tick();
+      await tick();
+      await new Promise((r) => setTimeout(r, 0));
+      process.off("unhandledRejection", on as never);
+      expect(unhandled).toEqual([]);
+    },
+  );
 });
