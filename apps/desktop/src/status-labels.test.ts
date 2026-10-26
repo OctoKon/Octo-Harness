@@ -20,8 +20,10 @@ describe("statusLabel", () => {
     expect(statusLabel(42)).toBe("Unknown");
   });
 
-  it("memoizes results", () => {
-    expect(statusLabel("approved")).toBe("Approved");
-    expect(statusLabels()).toHaveProperty("approved", "Approved");
+  it("resolves support-cell statuses", () => {
+    expect(statusLabel("tested")).toBe("Tested");
+    expect(statusLabel("supported")).toBe("Supported");
+    expect(statusLabel("unsupported")).toBe("Unsupported");
+    expect(statusLabel("unrun")).toBe("Unrun (n=0)");
   });
 });

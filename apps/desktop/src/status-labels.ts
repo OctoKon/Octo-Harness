@@ -8,7 +8,19 @@ import {
 // labels defined by status-view.ts (TD-34/55). No I/O, mutation, parsing or
 // security logic. Unknown/unrecognized values resolve to "Unknown".
 
+// Labels for support-record cell statuses (TD-60), which are not part of the
+// runtime status projections but still need stable human-readable labels.
+const SUPPORT_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  tested: "Tested",
+  supported: "Supported",
+  unsupported: "Unsupported",
+  unknown: "Unknown",
+  unrun: "Unrun (n=0)",
+});
+
 function labelFor(value: string): string {
+  if (Object.hasOwn(SUPPORT_LABELS, value)) return SUPPORT_LABELS[value]!;
+
   const run = projectStatus("run", { state: value } as never);
   if (run.label !== "Unknown") return run.label;
 
@@ -21,16 +33,11 @@ function labelFor(value: string): string {
   return "Unknown";
 }
 
-const CACHE: Record<string, string> = Object.create(null);
-
 export function statusLabel(value: unknown): string {
   if (typeof value !== "string") return "Unknown";
-  if (Object.hasOwn(CACHE, value)) return CACHE[value]!;
-  const label = labelFor(value);
-  CACHE[value] = label;
-  return label;
+  return labelFor(value);
 }
 
 export function statusLabels(): Readonly<Record<string, string>> {
-  return Object.freeze({ ...CACHE });
+  return Object.freeze({});
 }

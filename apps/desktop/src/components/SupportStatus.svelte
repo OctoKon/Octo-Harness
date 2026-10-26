@@ -26,7 +26,6 @@
   } = $props();
 
   function cellLabel(status: SupportCellStatus): string {
-    if (status === "unrun") return "Unrun (n=0)";
     return statusLabel(status);
   }
 </script>

@@ -2,19 +2,17 @@
   import StatusLabel from "./StatusLabel.svelte";
   import SupportStatus from "./SupportStatus.svelte";
   import { statusLabel } from "../status-labels";
+  import type { SupportCell } from "./SupportStatus.svelte";
 
-  let { status = "unknown" }: { status?: string } = $props();
-
-  const supportCells = [
-    { id: "run", label: "Runs", status: "tested" as const, count: 1 },
-    { id: "action", label: "Actions", status: "supported" as const, count: 1 },
-    { id: "outcome", label: "Outcomes", status: "unknown" as const, count: 0 },
-  ];
+  let {
+    status = "unknown",
+    cells = [],
+  }: { status?: string; cells?: SupportCell[] } = $props();
 </script>
 
 <section class="status-panel" data-testid="status-panel">
   <p>Current: <StatusLabel {status} /></p>
-  <SupportStatus title="Support matrix" cells={supportCells} help="Fixed projection." />
+  <SupportStatus title="Support matrix" {cells} help="Fixed projection." />
   <p class="sr-only">{statusLabel(status)}</p>
 </section>
 
