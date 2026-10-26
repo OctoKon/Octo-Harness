@@ -229,6 +229,9 @@ export function reduceSessionAction(
       const availability = actionAvailability(context, state, action.kind);
       if (!availability.enabled)
         return { ...state, blocked: availability.reason };
+      // Every new action captures the editor as it is now; a previous action's
+      // snapshot must not be carried into this one.
+      const started = { ...state, preservedDraft: context.draft };
       if (action.kind === "rewind") {
         const selected = context.selected;
         if (selected === null)
@@ -239,13 +242,13 @@ export function reduceSessionAction(
           kind: "rewind",
           choice: "conversation",
           target: selected,
-          preservedDraft: state.preservedDraft ?? context.draft,
+          preservedDraft: context.draft,
           request: null,
           error: null,
           blocked: null,
         };
       }
-      return requested(state, context, action.kind, null);
+      return requested(started, context, action.kind, null);
     }
     case "choose": {
       if (state.phase !== "confirming" || state.kind !== "rewind") return state;

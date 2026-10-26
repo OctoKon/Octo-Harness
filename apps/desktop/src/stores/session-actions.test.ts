@@ -280,6 +280,23 @@ test("the draft captured at the start survives a newer context draft", () => {
   assert.equal(retyped.preservedDraft, "half-typed instruction");
 });
 
+test("a new action captures the current draft, not the previous action's", () => {
+  const context = ready();
+  const canceled = apply(
+    context,
+    { type: "begin", kind: "fork" },
+    { type: "cancel" },
+  );
+  assert.equal(canceled.preservedDraft, "half-typed instruction");
+
+  const next = reduceSessionAction(
+    canceled,
+    { type: "begin", kind: "fork" },
+    { ...context, draft: "a newer draft" },
+  );
+  assert.equal(next.preservedDraft, "a newer draft");
+});
+
 test("confirmation is inert outside a rewind confirmation", () => {
   const idle = apply(ready(), { type: "confirm" });
   assert.equal(idle.phase, "idle");
