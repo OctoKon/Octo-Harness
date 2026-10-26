@@ -1,10 +1,27 @@
 // TD-24: immutable candidate/input manifest with stale-verification.
 // Erasable-syntax-only (runs under Node type stripping).
+//
+// Persistence is Store-backed, not process-local: `persist` writes the
+// manifest bytes to a content file and then commits a frozen-contract
+// `artifact` record (digest, byteLength, mediaType) through TD-09's Store.
+// The store's acknowledged seq/recordId is the authority; the file is
+// content addressed by that record's digest and fails closed on any
+// mismatch, so a manifest can never be read back as verified after a
+// crash, a truncation or an edit.
 
-import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { execSync } from "node:child_process";
+import { CONTRACT_VERSION } from "@splyce/pi/contracts";
 
 export class SnapshotError extends Error {
   readonly code: string;
@@ -30,13 +47,61 @@ export interface SnapshotOptions {
   exclude?: string[];
 }
 
-const manifestStore = new Map<number, SnapshotManifest>();
-let seqCounter = 0;
+/** Media type of a persisted manifest, recorded on the artifact record. */
+export const SNAPSHOT_MEDIA_TYPE =
+  "application/vnd.splyce.snapshot-manifest+json";
+
+/**
+ * The store surface TD-24 depends on: TD-09's `Store` satisfies it. Nothing
+ * is persisted outside the store's own acknowledged record plus the content
+ * file that record's digest addresses.
+ */
+export interface SnapshotStore {
+  readonly path: string;
+  append(
+    input: { kind: "artifact"; record: unknown },
+    caller: SnapshotCaller,
+  ): { seq: number; recordId: string };
+  get(recordId: string): { seq: number; kind: string; record: unknown };
+}
+
+/** Append caller; recorded on every snapshot record. */
+export interface SnapshotCaller {
+  sessionId: string;
+  configRevision: string;
+  profileRevision: string;
+  policyRevision: string;
+  resolveReference?: (id: string, scopeId: string) => boolean;
+}
+
+const DEFAULT_CALLER: SnapshotCaller = {
+  sessionId: "snapshot",
+  configRevision: "cfg-0",
+  profileRevision: "profile-0",
+  policyRevision: "policy-0",
+  resolveReference: () => true,
+};
+
+const DEFAULT_SCOPE = "w-snapshot";
+
+/** Content files live beside the store database, addressed by recordId. */
+function contentPath(storePath: string, recordId: string): string {
+  return join(dirname(storePath), "snapshots", `${recordId}.json`);
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
 
 export class Snapshot {
   readonly manifest: SnapshotManifest;
+  readonly seq: number | undefined;
+  readonly recordId: string | undefined;
 
-  constructor(manifest: SnapshotManifest) {
+  constructor(
+    manifest: SnapshotManifest,
+    meta?: { seq?: number; recordId?: string },
+  ) {
     this.manifest = Object.freeze({
       tracked: Object.freeze(
         manifest.tracked.map((e) => Object.freeze({ ...e })),
@@ -46,6 +111,8 @@ export class Snapshot {
       ),
       excluded: Object.freeze([...manifest.excluded]),
     }) as SnapshotManifest;
+    this.seq = meta?.seq;
+    this.recordId = meta?.recordId;
     Object.freeze(this);
   }
 
@@ -53,19 +120,144 @@ export class Snapshot {
     return new Snapshot(manifest);
   }
 
-  persist(_store: unknown): { seq: number } {
-    seqCounter += 1;
-    const seq = seqCounter;
-    manifestStore.set(seq, this.manifest);
-    return { seq };
+  /**
+   * Commit this manifest durably: content file first, then the acknowledged
+   * store record. If the append fails nothing is acknowledged and the
+   * orphaned content file is removed, so a returned `{seq, recordId}` always
+   * names a record that `Snapshot.load` can read back.
+   */
+  persist(
+    store: SnapshotStore,
+    options?: Partial<SnapshotCaller> & { scopeId?: string },
+  ): { seq: number; recordId: string; digest: string } {
+    const bytes = Buffer.from(JSON.stringify(this.manifest), "utf8");
+    const digest = `sha256:${sha256(bytes)}`;
+    const recordId = `snap-${randomUUID()}`;
+    const target = contentPath(store.path, recordId);
+    const temp = `${target}.tmp`;
+
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(temp, bytes);
+    renameSync(temp, target);
+
+    let appended: { seq: number; recordId: string };
+    try {
+      appended = store.append(
+        {
+          kind: "artifact",
+          record: {
+            schemaVersion: CONTRACT_VERSION,
+            recordId,
+            createdAt: new Date().toISOString(),
+            scopeId: options?.scopeId ?? DEFAULT_SCOPE,
+            sourceIds: [],
+            artifactId: recordId,
+            digest,
+            mediaType: SNAPSHOT_MEDIA_TYPE,
+            byteLength: bytes.length,
+            retentionClass: "persistent",
+          },
+        },
+        {
+          sessionId: options?.sessionId ?? DEFAULT_CALLER.sessionId,
+          configRevision:
+            options?.configRevision ?? DEFAULT_CALLER.configRevision,
+          profileRevision:
+            options?.profileRevision ?? DEFAULT_CALLER.profileRevision,
+          policyRevision:
+            options?.policyRevision ?? DEFAULT_CALLER.policyRevision,
+          resolveReference:
+            options?.resolveReference ?? DEFAULT_CALLER.resolveReference,
+        },
+      );
+    } catch (error) {
+      // Nothing was acknowledged: drop the content we just staged.
+      try {
+        unlinkSync(target);
+      } catch {
+        /* already gone */
+      }
+      throw error;
+    }
+
+    return { seq: appended.seq, recordId: appended.recordId, digest };
   }
 
-  static load(_store: unknown, seq: number): Snapshot {
-    const m = manifestStore.get(seq);
-    if (!m) {
-      throw new SnapshotError("NOT_FOUND", `snapshot seq ${seq} not found`);
+  /**
+   * Read a previously acknowledged snapshot back from the store. Every
+   * failure mode is explicit and fails closed: unknown record, wrong record
+   * kind, missing content, or content that no longer matches the digest and
+   * byteLength the store acknowledged.
+   */
+  static load(store: SnapshotStore, recordId: string): Snapshot {
+    let stored: { seq: number; kind: string; record: unknown };
+    try {
+      stored = store.get(recordId);
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "STORE_NOT_FOUND") {
+        throw new SnapshotError(
+          "NOT_FOUND",
+          `snapshot record ${recordId} not found`,
+        );
+      }
+      throw error;
     }
-    return new Snapshot(m);
+
+    if (stored.kind !== "artifact") {
+      throw new SnapshotError(
+        "NOT_A_SNAPSHOT",
+        `record ${recordId} is a ${stored.kind} record, not a snapshot manifest`,
+      );
+    }
+
+    const record = stored.record as {
+      digest?: unknown;
+      mediaType?: unknown;
+      byteLength?: unknown;
+    };
+    if (record.mediaType !== SNAPSHOT_MEDIA_TYPE) {
+      throw new SnapshotError(
+        "NOT_A_SNAPSHOT",
+        `record ${recordId} has media type ${String(record.mediaType)}`,
+      );
+    }
+
+    const target = contentPath(store.path, recordId);
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(target);
+    } catch {
+      throw new SnapshotError(
+        "CONTENT_MISSING",
+        `snapshot content for ${recordId} is missing at ${target}`,
+      );
+    }
+
+    if (bytes.length !== record.byteLength) {
+      throw new SnapshotError(
+        "DIGEST_MISMATCH",
+        `snapshot content for ${recordId} is ${bytes.length} bytes, store acknowledged ${String(record.byteLength)}`,
+      );
+    }
+    const digest = `sha256:${sha256(bytes)}`;
+    if (digest !== record.digest) {
+      throw new SnapshotError(
+        "DIGEST_MISMATCH",
+        `snapshot content for ${recordId} does not match the acknowledged digest`,
+      );
+    }
+
+    let manifest: SnapshotManifest;
+    try {
+      manifest = JSON.parse(bytes.toString("utf8")) as SnapshotManifest;
+    } catch {
+      throw new SnapshotError(
+        "DIGEST_MISMATCH",
+        `snapshot content for ${recordId} is not a manifest`,
+      );
+    }
+    return new Snapshot(manifest, { seq: stored.seq, recordId });
   }
 }
 

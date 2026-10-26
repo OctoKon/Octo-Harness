@@ -1,16 +1,23 @@
-// TD-24 / C5_dirty_snapshot — failing-first stale-verification tests.
+// TD-24 / C5_dirty_snapshot — stale-verification tests.
 // Immutable candidate/input manifest from dirty tracked/untracked fixture;
 // unchanged HEAD with changed relevant bytes invalidates prior verifier;
-// excluded output cannot hide verifier input.
-//
-// This file is intentionally failing-first: src/snapshots.ts does not exist yet.
-// Tests describe the expected contract; implementation lands in TD-24 proper.
+// excluded output cannot hide verifier input; persistence is Store-backed
+// (acknowledged artifact record + digest-verified content) and survives a
+// process kill.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { execSync } from "node:child_process";
+import { execSync, spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Store } from "../../packages/splyce-pi/dist/store.js";
 import {
@@ -20,6 +27,10 @@ import {
   verifyStale,
 } from "../../src/snapshots.ts";
 
+const CHILD = fileURLToPath(
+  new URL("./snapshots-kill-child.ts", import.meta.url),
+);
+
 const tmpRoot = mkdtempSync(join(tmpdir(), "td24-snapshots-"));
 let counter = 0;
 const freshDir = () => {
@@ -27,6 +38,23 @@ const freshDir = () => {
   const dir = join(tmpRoot, `t${String(counter)}`);
   mkdirSync(dir, { recursive: true });
   return dir;
+};
+
+const waitFor = (file: string, timeoutMs = 15000) => {
+  const start = Date.now();
+  while (!existsSync(file)) {
+    if (Date.now() - start > timeoutMs)
+      throw new Error(`timeout waiting ${file}`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+};
+
+const killTree = (pid: number) => {
+  const result = spawnSync("taskkill", ["/PID", String(pid), "/F", "/T"], {
+    stdio: "ignore",
+  });
+  if (result.status !== 0)
+    throw new Error(`taskkill failed for ${String(pid)}`);
 };
 
 test("createSnapshot builds an immutable manifest from dirty tracked+untracked files", () => {
@@ -104,16 +132,121 @@ test("verifyStale: excluded output cannot hide verifier input", () => {
   );
 });
 
-test("snapshot persists to store and round-trips", () => {
+test("persist writes an acknowledged store record, not process memory", () => {
   const dir = freshDir();
-  writeFileSync(join(dir, "tracked.ts"), "export const x = 1;");
+  const source = join(dir, "fixture");
+  mkdirSync(source);
+  writeFileSync(join(source, "tracked.ts"), "export const x = 1;");
   const store = Store.open(join(dir, "store.db"));
-  const snap = createSnapshot(dir);
+  const snap = createSnapshot(source);
   const persisted = snap.persist(store);
   assert.equal(typeof persisted.seq, "number");
+  assert.equal(typeof persisted.recordId, "string");
 
-  const loaded = Snapshot.load(store, persisted.seq);
+  // The record is a real, readable row in the store.
+  const stored = store.get(persisted.recordId);
+  assert.equal(stored.kind, "artifact");
+  const record = stored.record as Record<string, unknown>;
+  assert.equal(record.digest, persisted.digest);
+  assert.equal(
+    record.mediaType,
+    "application/vnd.splyce.snapshot-manifest+json",
+  );
+  assert.equal(typeof record.byteLength, "number");
+
+  const loaded = Snapshot.load(store, persisted.recordId);
   assert.deepEqual(loaded.manifest, snap.manifest);
+  assert.equal(loaded.recordId, persisted.recordId);
+  assert.equal(loaded.seq, persisted.seq);
+  store.close();
+});
+
+test("a persisted snapshot reloads in a fresh process after a kill", () => {
+  const dir = freshDir();
+  const source = join(dir, "fixture");
+  mkdirSync(source);
+  writeFileSync(join(source, "relevant.ts"), "export const v = 1;");
+
+  const child = spawn(process.execPath, [CHILD, dir], { stdio: "ignore" });
+  const ackPath = join(dir, "ack.json");
+  waitFor(ackPath);
+  const ack = JSON.parse(readFileSync(ackPath, "utf8")) as {
+    seq: number;
+    recordId: string;
+    digest: string;
+    manifest: Snapshot["manifest"];
+  };
+  // Kill after the store acknowledged the commit.
+  killTree(child.pid as number);
+
+  // A different process, a brand-new connection: the manifest must come back
+  // from the store and its content file, not from any in-process cache.
+  const store = Store.open(join(dir, "store.db"));
+  const loaded = Snapshot.load(store, ack.recordId);
+  assert.deepEqual(loaded.manifest, ack.manifest);
+  assert.equal(loaded.seq, ack.seq);
+  assert.equal(loaded.recordId, ack.recordId);
+  assert.deepEqual(
+    loaded.manifest,
+    createSnapshot(source).manifest,
+    "the reloaded manifest still describes the unchanged fixture",
+  );
+  store.close();
+});
+
+test("tampered snapshot content fails closed with DIGEST_MISMATCH", () => {
+  const dir = freshDir();
+  const source = join(dir, "fixture");
+  mkdirSync(source);
+  writeFileSync(join(source, "relevant.ts"), "export const v = 1;");
+  const store = Store.open(join(dir, "store.db"));
+  const snap = createSnapshot(source);
+  const persisted = snap.persist(store);
+
+  const content = join(dir, "snapshots", `${persisted.recordId}.json`);
+  assert.ok(existsSync(content), "content file is written beside the store");
+  writeFileSync(
+    content,
+    JSON.stringify({ ...snap.manifest, excluded: ["*.ts"] }),
+  );
+
+  assert.throws(
+    () => Snapshot.load(store, persisted.recordId),
+    (err: unknown) =>
+      err instanceof SnapshotError && err.code === "DIGEST_MISMATCH",
+    "edited content must not be accepted as the acknowledged manifest",
+  );
+  store.close();
+});
+
+test("missing snapshot content fails closed with CONTENT_MISSING", () => {
+  const dir = freshDir();
+  const source = join(dir, "fixture");
+  mkdirSync(source);
+  writeFileSync(join(source, "relevant.ts"), "export const v = 1;");
+  const store = Store.open(join(dir, "store.db"));
+  const persisted = createSnapshot(source).persist(store);
+
+  rmSync(join(dir, "snapshots", `${persisted.recordId}.json`));
+  assert.throws(
+    () => Snapshot.load(store, persisted.recordId),
+    (err: unknown) =>
+      err instanceof SnapshotError && err.code === "CONTENT_MISSING",
+  );
+  store.close();
+});
+
+test("unknown or non-snapshot records fail closed", () => {
+  const dir = freshDir();
+  const source = join(dir, "fixture");
+  mkdirSync(source);
+  writeFileSync(join(source, "relevant.ts"), "export const v = 1;");
+  const store = Store.open(join(dir, "store.db"));
+
+  assert.throws(
+    () => Snapshot.load(store, "snap-does-not-exist"),
+    (err: unknown) => err instanceof SnapshotError && err.code === "NOT_FOUND",
+  );
   store.close();
 });
 
