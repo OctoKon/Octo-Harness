@@ -216,13 +216,18 @@ describe("direct native Codex SSE", () => {
 			onProviderStreamEvent: (event) => {
 				observed.push(event);
 			},
-			fetch: async () => sse({ type: "error", message: `fixture error ${secret}`, metadata: { [secret]: secret } }),
+			fetch: async () =>
+				sse({
+					type: "error",
+					message: `fixture error ${secret}`,
+					metadata: { [secret]: [secret, { nested: secret }] },
+				}),
 		}).result();
 		expect(result.stopReason).toBe("error");
 		expect(observed).toHaveLength(1);
-		const event = observed[0] as { message: string; metadata: Record<string, string> };
+		const event = observed[0] as { message: string; metadata: Record<string, unknown> };
 		expect(event.message).toBe("fixture error [REDACTED]");
-		expect(event.metadata).toEqual({ "[REDACTED]": "[REDACTED]" });
+		expect(event.metadata).toEqual({ "[REDACTED]": ["[REDACTED]", { nested: "[REDACTED]" }] });
 		expect(result.errorMessage).not.toContain(secret);
 		expect(result.errorMessage).not.toContain(JSON.stringify(secret).slice(1, -1));
 	});

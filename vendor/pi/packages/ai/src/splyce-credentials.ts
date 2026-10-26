@@ -40,10 +40,26 @@ export async function redactWithLease(credentials: SplyceCredentials | undefined
 	}
 }
 
-/**
- * `apiKey` and `credentials` are mutually exclusive, and credentials need a native redactor. With a lease no ambient
- * or fallback credential exists. Throws before anything is leased or sent.
- */
+/** Redact JSON event keys and values inside a live lease before an observer can retain them. */
+export async function redactEventWithLease(
+	credentials: SplyceCredentials | undefined,
+	event: unknown,
+): Promise<unknown> {
+	if (!credentials) return event;
+	const { lease, redact } = credentials;
+	return lease.use(() => {
+		const sanitize = (value: unknown): unknown => {
+			if (typeof value === "string") return redact(value);
+			if (Array.isArray(value)) return value.map(sanitize);
+			if (value && typeof value === "object") {
+				return Object.fromEntries(Object.entries(value).map(([key, item]) => [redact(key), sanitize(item)]));
+			}
+			return value;
+		};
+		return sanitize(event);
+	});
+}
+
 /** Headers that carry or select a credential. With a lease the caller may not supply any of them. */
 const CALLER_AUTH_HEADERS: ReadonlySet<string> = new Set([
 	"authorization",
@@ -115,7 +131,7 @@ export async function withLeasedSecret<T>(
  * A fetch that obtains the secret from the lease on every send and writes it into one auth header, so the SDK client
  * built around it never holds the real key. `format` shapes the header value (default: the raw secret; pass
  * `(s) => `Bearer ${s}`` for bearer schemes). Headers carried by a `Request` input are kept, with `init.headers`
- * taking precedence as `fetch` does. Any other auth header is dropped, and redirects are refused so the key cannot
+ * taking precedence as `fetch` does. Known credential headers are dropped, and redirects are refused so the key cannot
  * follow a response to another host.
  */
 export function createLeasedFetch(
@@ -128,8 +144,7 @@ export function createLeasedFetch(
 		withLeasedSecret(credentials, (secret) => {
 			const headers = new Headers(input instanceof Request ? input.headers : undefined);
 			for (const [name, value] of new Headers(init?.headers)) headers.set(name, value);
-			headers.delete("authorization");
-			headers.delete("x-api-key");
+			for (const name of CALLER_AUTH_HEADERS) headers.delete(name);
 			headers.set(header, format(secret));
 			return base(input, { ...init, headers, redirect: "error" });
 		});

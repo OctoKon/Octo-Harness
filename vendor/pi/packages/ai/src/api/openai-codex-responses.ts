@@ -10,6 +10,7 @@ import { registerSessionResourceCleanup } from "../session-resources.ts";
 import {
 	assertCredentialOptions,
 	createLeasedFetch,
+	redactEventWithLease,
 	redactWithLease,
 	type SplyceCredentials,
 	withLeasedSecret,
@@ -505,7 +506,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				startEmitted = true;
 				stream.push({ type: "start", partial: output });
 			}
-			await processStream(response, output, stream, model, grammarToolInputProperties, options);
+			await processStream(response, output, stream, model, grammarToolInputProperties, options, credentials);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -703,15 +704,10 @@ async function processStream(
 	model: Model<"openai-codex-responses">,
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
+	credentials?: SplyceCredentials,
 ): Promise<void> {
 	await processResponsesStream(
-		mapCodexEvents(
-			parseSSE(response, options?.signal),
-			output,
-			model,
-			options?.onProviderStreamEvent,
-			options?.credentials,
-		),
+		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent, credentials),
 		output,
 		stream,
 		model,
@@ -795,24 +791,7 @@ async function* mapCodexEvents(
 	for await (const event of events) {
 		try {
 			if (onProviderStreamEvent) {
-				let observed: unknown = event;
-				if (credentials) {
-					const { lease, redact } = credentials;
-					observed = await lease.use(() => {
-						const sanitize = (value: unknown): unknown => {
-							if (typeof value === "string") return redact(value);
-							if (Array.isArray(value)) return value.map(sanitize);
-							if (value && typeof value === "object") {
-								return Object.fromEntries(
-									Object.entries(value).map(([key, item]) => [redact(key), sanitize(item)]),
-								);
-							}
-							return value;
-						};
-						return sanitize(event);
-					});
-				}
-				await onProviderStreamEvent(observed, model);
+				await onProviderStreamEvent(await redactEventWithLease(credentials, event), model);
 			}
 		} catch (error) {
 			// Keep callback failures out of Codex's WebSocket retry and SSE fallback path.

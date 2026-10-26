@@ -71,16 +71,18 @@ inside a live lease, before JSON encoding; revoked observers receive no event.
 Terminal errors use the same live-lease redaction boundary as Chat and Responses.
 The direct native/explicit-key conflict remains rejected before any lease/send.
 
-Four new cases use the actual native resolver and OpenAI SDK with only the
+Ten cases use the actual native resolver and OpenAI SDK with only the
 remote service replaced. They reject a connection revision changed after lease
-issuance and protect late stream errors after revocation for both APIs. Removing
-the terminal redaction lease guard fails both late-error cases; restoring the
-exact source passes the selected provider files. Twelve additional Codex SSE
+issuance and protect terminal errors and event observers before and after
+revocation for both APIs. The callbacks share `redactEventWithLease`, which
+sanitizes nested string keys, values and arrays without changing the parser
+input. A revoked lease suppresses the observer; an in-flight result is rejected
+if revocation wins before handoff. Twelve additional Codex SSE
 cases cover direct/simple calls, transport denial, revision changes, retries and
 terminal/observer redaction, including escaped diagnostic strings and keys.
 Removing each transport, per-send lease, observer and terminal redaction guard
-fails its matching test; exact restoration passes nine files, 132 cases with no
-skips.
+fails its matching test. Removing the shared sanitizer, its lease guard or any
+of the three callback bindings also fails the actual observer data assertions.
 The native resolver's 27 cases and the integrated store/bridge/config/snapshot
 suite pass together, 94 cases. The request-port contract and its type fixture
 also pass, alongside 54 shared contract cases. These are local deterministic
@@ -99,7 +101,13 @@ assertion; 18 model-header cases failed before this wiring, and all 36 header
 cases now pass before any lease or send. The admission fixture uses the actual
 native package type declarations, built by `build:contracts`, to keep native
 implementation syntax outside the donor's erasable TypeScript source closure.
-The combined check passes 217 provider/legacy cases. One inherited Google
+The leased fetch strips the existing six known credential headers from both
+Request and init headers before writing its selected auth header. Two local
+socket cases failed first because a placeholder reached the server through an
+alternate header; both now pass while a non-auth trace header is preserved.
+Reverting that strip loop fails both wire cases. All six new shared/callback
+guard-removal probes fail as expected; exact source restoration passes 227
+provider/legacy cases across twelve files. One inherited Google
 cross-origin redirect case remains TODO pending native egress mediation; it is
 not a passing qualification result.
 

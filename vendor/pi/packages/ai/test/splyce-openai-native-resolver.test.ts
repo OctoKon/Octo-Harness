@@ -86,9 +86,13 @@ for (const [api, start] of [
 		it("does not expose a revoked credential in a late stream error", async () => {
 			const { lease, credentials } = await nativeCredentials();
 			let sends = 0;
+			const observed: unknown[] = [];
 			const result = await start({
 				credentials,
 				maxRetries: 0,
+				onProviderStreamEvent: (event) => {
+					observed.push(event);
+				},
 				fetch: async () => {
 					sends++;
 					const body = new ReadableStream<Uint8Array>(
@@ -110,6 +114,67 @@ for (const [api, start] of [
 			expect(result.stopReason).toBe("error");
 			expect(result.errorMessage).toBeTruthy();
 			expect(result.errorMessage).not.toContain(SECRET);
+			expect(JSON.stringify(observed)).not.toContain(SECRET);
 		});
+		it("does not expose credential bytes to an error-event observer", async () => {
+			const { credentials } = await nativeCredentials();
+			const observed: unknown[] = [];
+			const error = { message: `fixture failure ${SECRET}`, code: "fixture_error" };
+			const event = api === "openai-completions" ? { error } : { type: "error", ...error };
+			const result = await start({
+				credentials,
+				maxRetries: 0,
+				onProviderStreamEvent: (value) => {
+					observed.push(value);
+				},
+				fetch: async () =>
+					new Response(`data: ${JSON.stringify(event)}\n\n`, { headers: { "content-type": "text/event-stream" } }),
+			}).result();
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).not.toContain(SECRET);
+			expect(JSON.stringify(observed)).not.toContain(SECRET);
+		});
+		it.each([false, true])(
+			"protects successful event metadata at the observer boundary (revoked=%s)",
+			async (revoked) => {
+				const { lease, credentials } = await nativeCredentials();
+				const observed: unknown[] = [];
+				const result = await start({
+					credentials,
+					maxRetries: 0,
+					onProviderStreamEvent: (event) => {
+						observed.push(event);
+					},
+					fetch: async () => {
+						const text = await successfulResponse(api).text();
+						const event = JSON.parse(text.split("\n")[0]!.slice(6)) as Record<string, unknown>;
+						const body = new ReadableStream<Uint8Array>(
+							{
+								pull(controller) {
+									if (revoked) lease.revoke();
+									controller.enqueue(
+										new TextEncoder().encode(
+											`data: ${JSON.stringify({ ...event, diagnostic: { [SECRET]: [SECRET] } })}\n\n`,
+										),
+									);
+									controller.close();
+								},
+							},
+							{ highWaterMark: 0 },
+						);
+						return new Response(body, { headers: { "content-type": "text/event-stream" } });
+					},
+				}).result();
+				expect(JSON.stringify(observed)).not.toContain(SECRET);
+				if (revoked) {
+					expect(observed).toHaveLength(0);
+					expect(result.stopReason).toBe("error");
+				} else {
+					expect(observed).toHaveLength(1);
+					expect(observed[0]).toMatchObject({ diagnostic: { "[REDACTED]": ["[REDACTED]"] } });
+					expect(result.stopReason).toBe("stop");
+				}
+			},
+		);
 	});
 }

@@ -1,14 +1,15 @@
 diff --git a/vendor/pi/packages/ai/src/api/openai-codex-responses.ts b/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
-index 5165e1c..da42088 100644
+index 5165e1c..5ea2c11 100644
 --- a/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
-@@ -7,6 +7,13 @@ import type {
+@@ -7,6 +7,14 @@ import type {
  } from "openai/resources/responses/responses.js";
  import { clampThinkingLevel } from "../models.ts";
  import { registerSessionResourceCleanup } from "../session-resources.ts";
 +import {
 +	assertCredentialOptions,
 +	createLeasedFetch,
++	redactEventWithLease,
 +	redactWithLease,
 +	type SplyceCredentials,
 +	withLeasedSecret,
@@ -16,7 +17,7 @@ index 5165e1c..da42088 100644
  import type {
  	Api,
  	AssistantMessage,
-@@ -248,6 +255,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -248,6 +256,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
  
  	(async () => {
@@ -24,7 +25,7 @@ index 5165e1c..da42088 100644
  		const output: AssistantMessage = {
  			role: "assistant",
  			content: [],
-@@ -267,12 +275,22 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -267,12 +276,22 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  		};
  
  		try {
@@ -49,7 +50,7 @@ index 5165e1c..da42088 100644
  			const grammarToolInputProperties = createGrammarToolInputProperties(
  				getDeclaredTools(normalizedContext.messages),
  				model.compat?.supportsOpenAIGrammarTools ?? false,
-@@ -412,7 +430,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -412,7 +431,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  						httpTimeoutMs !== undefined && httpTimeoutMs > 0 ? AbortSignal.timeout(httpTimeoutMs) : undefined;
  					const combinedSignal = combineAbortSignals([options?.signal, headerTimeoutSignal]);
  					try {
@@ -58,7 +59,16 @@ index 5165e1c..da42088 100644
  							method: "POST",
  							headers: sseHeaders,
  							body: sseBody,
-@@ -497,8 +515,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -487,7 +506,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+ 				startEmitted = true;
+ 				stream.push({ type: "start", partial: output });
+ 			}
+-			await processStream(response, output, stream, model, grammarToolInputProperties, options);
++			await processStream(response, output, stream, model, grammarToolInputProperties, options, credentials);
+ 
+ 			if (options?.signal?.aborted) {
+ 				throw new Error("Request was aborted");
+@@ -497,8 +516,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  			stream.push({ type: "done", reason: output.stopReason, message: output });
  			stream.end();
  		} catch (error) {
@@ -72,7 +82,7 @@ index 5165e1c..da42088 100644
  			stream.push({ type: "error", reason: output.stopReason, error: output });
  			stream.end();
  		}
-@@ -513,7 +535,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
+@@ -513,7 +536,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
  	options?: SimpleStreamOptions,
  ): AssistantMessageEventStream => {
  	const apiKey = options?.apiKey;
@@ -81,22 +91,19 @@ index 5165e1c..da42088 100644
  		throw new Error(`No API key for provider: ${model.provider}`);
  	}
  
-@@ -683,7 +705,13 @@ async function processStream(
+@@ -681,9 +704,10 @@ async function processStream(
+ 	model: Model<"openai-codex-responses">,
+ 	grammarToolInputProperties: ReadonlyMap<string, string>,
  	options?: OpenAICodexResponsesOptions,
++	credentials?: SplyceCredentials,
  ): Promise<void> {
  	await processResponsesStream(
 -		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent),
-+		mapCodexEvents(
-+			parseSSE(response, options?.signal),
-+			output,
-+			model,
-+			options?.onProviderStreamEvent,
-+			options?.credentials,
-+		),
++		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent, credentials),
  		output,
  		stream,
  		model,
-@@ -762,10 +790,30 @@ async function* mapCodexEvents(
+@@ -762,10 +786,13 @@ async function* mapCodexEvents(
  	output: AssistantMessage,
  	model: Model<"openai-codex-responses">,
  	onProviderStreamEvent: StreamOptions["onProviderStreamEvent"] | undefined,
@@ -106,46 +113,30 @@ index 5165e1c..da42088 100644
  		try {
 -			await onProviderStreamEvent?.(event, model);
 +			if (onProviderStreamEvent) {
-+				let observed: unknown = event;
-+				if (credentials) {
-+					const { lease, redact } = credentials;
-+					observed = await lease.use(() => {
-+						const sanitize = (value: unknown): unknown => {
-+							if (typeof value === "string") return redact(value);
-+							if (Array.isArray(value)) return value.map(sanitize);
-+							if (value && typeof value === "object") {
-+								return Object.fromEntries(
-+									Object.entries(value).map(([key, item]) => [redact(key), sanitize(item)]),
-+								);
-+							}
-+							return value;
-+						};
-+						return sanitize(event);
-+					});
-+				}
-+				await onProviderStreamEvent(observed, model);
++				await onProviderStreamEvent(await redactEventWithLease(credentials, event), model);
 +			}
  		} catch (error) {
  			// Keep callback failures out of Codex's WebSocket retry and SSE fallback path.
  			throw new ProviderStreamEventCallbackError(error);
 diff --git a/vendor/pi/packages/ai/src/api/openai-completions.ts b/vendor/pi/packages/ai/src/api/openai-completions.ts
-index 0e5b606..04ea441 100644
+index 0e5b606..44ab72e 100644
 --- a/vendor/pi/packages/ai/src/api/openai-completions.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-completions.ts
-@@ -12,6 +12,12 @@ import type {
+@@ -12,6 +12,13 @@ import type {
  	ChatCompletionToolMessageParam,
  } from "openai/resources/chat/completions.js";
  import { calculateCost, clampThinkingLevel } from "../models.ts";
 +import {
 +	assertCredentialOptions,
 +	createLeasedFetch,
++	redactEventWithLease,
 +	redactWithLease,
 +	type SplyceCredentials,
 +} from "../splyce-credentials.ts";
  import type {
  	AssistantMessage,
  	CacheRetention,
-@@ -337,6 +343,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -337,6 +344,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  		// `reasoning_details` are replay metadata, not user-visible stream deltas.
  		// Keep them in memory during streaming and serialize once when the block is finalized.
  		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
@@ -153,7 +144,7 @@ index 0e5b606..04ea441 100644
  		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
  			if (streamedReasoningDetails !== undefined) {
  				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
-@@ -344,7 +351,14 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -344,7 +352,14 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  		};
  
  		try {
@@ -169,7 +160,7 @@ index 0e5b606..04ea441 100644
  			const compat = getCompat(model);
  			const grammarToolInputProperties = createGrammarToolInputProperties(
  				getDeclaredTools(normalizedContext.messages),
-@@ -358,7 +372,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -358,7 +373,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  				apiKey,
  				options?.headers,
  				options?.identity,
@@ -178,7 +169,17 @@ index 0e5b606..04ea441 100644
  				cacheSessionId,
  				compat,
  			);
-@@ -692,21 +706,25 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -540,7 +555,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+ 			};
+ 
+ 			for await (const chunk of openaiStream) {
+-				await options?.onProviderStreamEvent?.(chunk, model);
++				const observe = options?.onProviderStreamEvent;
++				if (observe) await observe(await redactEventWithLease(credentials, chunk), model);
+ 				if (!chunk || typeof chunk !== "object") continue;
+ 
+ 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
+@@ -692,21 +708,25 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  			stream.push({ type: "done", reason: output.stopReason, message: output });
  			stream.end();
  		} catch (error) {
@@ -207,7 +208,7 @@ index 0e5b606..04ea441 100644
  			stream.push({ type: "error", reason: output.stopReason, error: output });
  			stream.end();
  		}
-@@ -720,7 +738,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
+@@ -720,7 +740,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
  	context: TranscriptContext,
  	options?: SimpleStreamOptions,
  ): AssistantMessageEventStream => {
@@ -217,16 +218,17 @@ index 0e5b606..04ea441 100644
  	const base = {
  		...buildBaseOptions(model, context, options, options?.apiKey),
 diff --git a/vendor/pi/packages/ai/src/api/openai-responses.ts b/vendor/pi/packages/ai/src/api/openai-responses.ts
-index c29e6ad..aa73a14 100644
+index c29e6ad..97c8601 100644
 --- a/vendor/pi/packages/ai/src/api/openai-responses.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-responses.ts
-@@ -1,6 +1,13 @@
+@@ -1,6 +1,14 @@
  import OpenAI from "openai";
  import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
  import { clampThinkingLevel } from "../models.ts";
 +import {
 +	assertCredentialOptions,
 +	createLeasedFetch,
++	redactEventWithLease,
 +	redactWithLease,
 +	type SplyceCredentials,
 +	withLeasedSecret,
@@ -234,7 +236,7 @@ index c29e6ad..aa73a14 100644
  import type {
  	Api,
  	AssistantMessage,
-@@ -109,12 +116,13 @@ function getConfigurationUpdateEffort(
+@@ -109,12 +117,13 @@ function getConfigurationUpdateEffort(
  	model: Model<"openai-responses">,
  	options: OpenAIResponsesOptions | undefined,
  	compat: Required<OpenAIResponsesCompat>,
@@ -249,7 +251,7 @@ index c29e6ad..aa73a14 100644
  	) {
  		return undefined;
  	}
-@@ -162,14 +170,13 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -162,14 +171,13 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  	// Start async processing
  	(async () => {
  		const compat = getCompat(model);
@@ -265,7 +267,7 @@ index c29e6ad..aa73a14 100644
  			usage: {
  				input: 0,
  				output: 0,
-@@ -184,7 +191,19 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -184,7 +192,19 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  
  		try {
  			// Create OpenAI client
@@ -286,7 +288,7 @@ index c29e6ad..aa73a14 100644
  			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
  			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
  			const grammarToolInputProperties = createGrammarToolInputProperties(
-@@ -197,7 +216,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -197,7 +217,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  				apiKey,
  				options?.headers,
  				options?.identity,
@@ -295,7 +297,7 @@ index c29e6ad..aa73a14 100644
  				cacheSessionId,
  			);
  			let params = buildParams(
-@@ -207,6 +226,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -207,6 +227,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  				compat,
  				grammarToolInputProperties,
  				configurationUpdateEffort,
@@ -303,7 +305,20 @@ index c29e6ad..aa73a14 100644
  			);
  			const nextParams = await options?.onPayload?.(params, model);
  			if (nextParams !== undefined) {
-@@ -249,20 +269,22 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -228,8 +249,11 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+ 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+ 			stream.push({ type: "start", partial: output });
+ 
++			const observe = options?.onProviderStreamEvent;
+ 			await processResponsesStream(openaiStream, output, stream, model, {
+-				onProviderStreamEvent: options?.onProviderStreamEvent,
++				onProviderStreamEvent: observe
++					? async (event, activeModel) => observe(await redactEventWithLease(credentials, event), activeModel)
++					: undefined,
+ 				serviceTier: options?.serviceTier,
+ 				grammarToolInputProperties,
+ 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+@@ -249,20 +273,22 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  			stream.push({ type: "done", reason: output.stopReason, message: output });
  			stream.end();
  		} catch (error) {
@@ -331,7 +346,7 @@ index c29e6ad..aa73a14 100644
  			stream.push({ type: "error", reason: output.stopReason, error: output });
  			stream.end();
  		}
-@@ -276,7 +298,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
+@@ -276,7 +302,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
  	context: TranscriptContext,
  	options?: SimpleStreamOptions,
  ): AssistantMessageEventStream => {
@@ -340,7 +355,7 @@ index c29e6ad..aa73a14 100644
  
  	const base = {
  		...buildBaseOptions(model, context, options, options?.apiKey),
-@@ -343,6 +365,7 @@ function buildParams(
+@@ -343,6 +369,7 @@ function buildParams(
  	compat: Required<OpenAIResponsesCompat>,
  	grammarToolInputProperties: ReadonlyMap<string, string>,
  	configurationUpdateEffort: string | undefined,
@@ -348,7 +363,7 @@ index c29e6ad..aa73a14 100644
  ) {
  	const transcriptTools = resolveTranscriptTools(context.messages, getResponsesToolSupport(compat));
  	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
-@@ -359,7 +382,7 @@ function buildParams(
+@@ -359,7 +386,7 @@ function buildParams(
  
  	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
  	// Sign in with ChatGPT rejects these request fields.
@@ -358,10 +373,10 @@ index c29e6ad..aa73a14 100644
  		model: model.id,
  		input: messages,
 diff --git a/vendor/pi/packages/ai/src/splyce-credentials.ts b/vendor/pi/packages/ai/src/splyce-credentials.ts
-index ef8536d..fa5d7d3 100644
+index ef8536d..d4e2b76 100644
 --- a/vendor/pi/packages/ai/src/splyce-credentials.ts
 +++ b/vendor/pi/packages/ai/src/splyce-credentials.ts
-@@ -26,7 +26,18 @@ const identity = (text: string): string => text;
+@@ -26,13 +26,40 @@ const identity = (text: string): string => text;
  
  /** The redactor to apply to error text: the native one when credentials are in use, otherwise nothing is leased. */
  export function redactorOf(options: { credentials?: SplyceCredentials | undefined }): (text: string) => string {
@@ -378,9 +393,54 @@ index ef8536d..fa5d7d3 100644
 +	} catch {
 +		return "Provider credential is no longer available";
 +	}
++}
++
++/** Redact JSON event keys and values inside a live lease before an observer can retain them. */
++export async function redactEventWithLease(
++	credentials: SplyceCredentials | undefined,
++	event: unknown,
++): Promise<unknown> {
++	if (!credentials) return event;
++	const { lease, redact } = credentials;
++	return lease.use(() => {
++		const sanitize = (value: unknown): unknown => {
++			if (typeof value === "string") return redact(value);
++			if (Array.isArray(value)) return value.map(sanitize);
++			if (value && typeof value === "object") {
++				return Object.fromEntries(Object.entries(value).map(([key, item]) => [redact(key), sanitize(item)]));
++			}
++			return value;
++		};
++		return sanitize(event);
++	});
  }
  
- /**
+-/**
+- * `apiKey` and `credentials` are mutually exclusive, and credentials need a native redactor. With a lease no ambient
+- * or fallback credential exists. Throws before anything is leased or sent.
+- */
+ /** Headers that carry or select a credential. With a lease the caller may not supply any of them. */
+ const CALLER_AUTH_HEADERS: ReadonlySet<string> = new Set([
+ 	"authorization",
+@@ -104,7 +131,7 @@ export async function withLeasedSecret<T>(
+  * A fetch that obtains the secret from the lease on every send and writes it into one auth header, so the SDK client
+  * built around it never holds the real key. `format` shapes the header value (default: the raw secret; pass
+  * `(s) => `Bearer ${s}`` for bearer schemes). Headers carried by a `Request` input are kept, with `init.headers`
+- * taking precedence as `fetch` does. Any other auth header is dropped, and redirects are refused so the key cannot
++ * taking precedence as `fetch` does. Known credential headers are dropped, and redirects are refused so the key cannot
+  * follow a response to another host.
+  */
+ export function createLeasedFetch(
+@@ -117,8 +144,7 @@ export function createLeasedFetch(
+ 		withLeasedSecret(credentials, (secret) => {
+ 			const headers = new Headers(input instanceof Request ? input.headers : undefined);
+ 			for (const [name, value] of new Headers(init?.headers)) headers.set(name, value);
+-			headers.delete("authorization");
+-			headers.delete("x-api-key");
++			for (const name of CALLER_AUTH_HEADERS) headers.delete(name);
+ 			headers.set(header, format(secret));
+ 			return base(input, { ...init, headers, redirect: "error" });
+ 		});
 diff --git a/vendor/pi/packages/ai/src/types.ts b/vendor/pi/packages/ai/src/types.ts
 index d5616ca..e9b43c2 100644
 --- a/vendor/pi/packages/ai/src/types.ts
@@ -479,10 +539,10 @@ index 21eab03..456eabc 100644
  	const types: string[] = [];
 diff --git a/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts b/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts
 new file mode 100644
-index 0000000..033acc5
+index 0000000..612c448
 --- /dev/null
 +++ b/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,234 @@
 +// Splyce #70: actual Codex SSE parser and native resolver; only the remote service is replaced.
 +// Direct adapter evidence only: native final-send authority and public registry activation are separate gates.
 +import { afterEach, describe, expect, it, vi } from "vitest";
@@ -701,13 +761,18 @@ index 0000000..033acc5
 +			onProviderStreamEvent: (event) => {
 +				observed.push(event);
 +			},
-+			fetch: async () => sse({ type: "error", message: `fixture error ${secret}`, metadata: { [secret]: secret } }),
++			fetch: async () =>
++				sse({
++					type: "error",
++					message: `fixture error ${secret}`,
++					metadata: { [secret]: [secret, { nested: secret }] },
++				}),
 +		}).result();
 +		expect(result.stopReason).toBe("error");
 +		expect(observed).toHaveLength(1);
-+		const event = observed[0] as { message: string; metadata: Record<string, string> };
++		const event = observed[0] as { message: string; metadata: Record<string, unknown> };
 +		expect(event.message).toBe("fixture error [REDACTED]");
-+		expect(event.metadata).toEqual({ "[REDACTED]": "[REDACTED]" });
++		expect(event.metadata).toEqual({ "[REDACTED]": ["[REDACTED]", { nested: "[REDACTED]" }] });
 +		expect(result.errorMessage).not.toContain(secret);
 +		expect(result.errorMessage).not.toContain(JSON.stringify(secret).slice(1, -1));
 +	});
@@ -725,6 +790,53 @@ index 28877e9..7d1fe6f 100644
  
  	it("compat.stream throws before any adapter or SDK runs", () => {
  		expect(() => stream(unsupported(), context, { credentials })).toThrow(/not supported/);
+diff --git a/vendor/pi/packages/ai/test/splyce-credentials-wire.test.ts b/vendor/pi/packages/ai/test/splyce-credentials-wire.test.ts
+index ee75413..66b1f21 100644
+--- a/vendor/pi/packages/ai/test/splyce-credentials-wire.test.ts
++++ b/vendor/pi/packages/ai/test/splyce-credentials-wire.test.ts
+@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
+ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+ import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
+ import { getModel } from "../src/compat.ts";
+-import type { SplyceCredentials } from "../src/splyce-credentials.ts";
++import { createLeasedFetch, type SplyceCredentials } from "../src/splyce-credentials.ts";
+ import type { Context } from "../src/types.ts";
+ import { normalizeContext } from "../src/utils/transcript.ts";
+ 
+@@ -77,6 +77,33 @@ const googleOk = (res: ServerResponse) => {
+ const claude = (origin: string) => ({ ...getModel("anthropic", "claude-haiku-4-5"), baseUrl: origin });
+ const gemini = (origin: string) => ({ ...getModel("google", "gemini-2.5-flash"), baseUrl: origin });
+ 
++describe("shared leased fetch on the wire", () => {
++	it.each(["Request", "init"])(
++		"strips alternate credential headers and placeholders from %s headers",
++		async (source) => {
++			const local = await listen((_req, res) => {
++				res.writeHead(200, { "content-type": "application/json" });
++				res.end("{}");
++			});
++			const authNames = ["authorization", "proxy-authorization", "x-api-key", "api-key", "x-goog-api-key", "cookie"];
++			const headers = { ...Object.fromEntries(authNames.map((name) => [name, "splyce-leased"])), "x-trace": "kept" };
++			const leased = createLeasedFetch(creds(), "authorization", globalThis.fetch, (secret) => `Bearer ${secret}`);
++			const response =
++				source === "Request"
++					? await leased(new Request(`${local.origin}/lease`, { headers }))
++					: await leased(`${local.origin}/lease`, { headers });
++			await response.text();
++			expect(local.seen).toHaveLength(1);
++			const sent = local.seen[0]!.headers;
++			expect(sent.authorization).toBe(`Bearer ${SECRET}`);
++			for (const name of authNames.filter((name) => name !== "authorization"))
++				expect(sent[name], name).toBeUndefined();
++			expect(sent["x-trace"]).toBe("kept");
++			expect(JSON.stringify(sent)).not.toContain("splyce-leased");
++		},
++	);
++});
++
+ describe("Anthropic on the wire (real SDK)", () => {
+ 	it("sends exactly the leased key, with no other credential", async () => {
+ 		const local = await listen((_req, res) => anthropicOk(res));
 diff --git a/vendor/pi/packages/ai/test/splyce-credentials.test.ts b/vendor/pi/packages/ai/test/splyce-credentials.test.ts
 index cd15d0a..f3bb22c 100644
 --- a/vendor/pi/packages/ai/test/splyce-credentials.test.ts
@@ -769,6 +881,57 @@ index cd15d0a..f3bb22c 100644
  const lease = (secret = SECRET) => ({
  	use: async <T>(consume: (s: string) => T | Promise<T>) => consume(secret),
  });
+diff --git a/vendor/pi/packages/ai/test/splyce-event-redaction.test.ts b/vendor/pi/packages/ai/test/splyce-event-redaction.test.ts
+new file mode 100644
+index 0000000..5f14318
+--- /dev/null
++++ b/vendor/pi/packages/ai/test/splyce-event-redaction.test.ts
+@@ -0,0 +1,45 @@
++// Shared helper handoff: actual native resolver, no SDK or provider network involved.
++import { describe, expect, it } from "vitest";
++import { NativeCredentialResolver } from "../../../../../packages/splyce-pi/src/credential-resolver.ts";
++import { redactEventWithLease, type SplyceCredentials } from "../src/splyce-credentials.ts";
++
++const SECRET = 'synthetic-event-key"\\';
++async function fixture() {
++	const resolver = new NativeCredentialResolver({ env: { EVENT_FIXTURE_KEY: SECRET } });
++	const request = {
++		providerConnectionId: "event-fixture",
++		connectionRevision: "v1",
++		endpointRef: "endpoint",
++		egressPolicyRef: "policy",
++		actionId: "action",
++	};
++	resolver.register({ ...request, source: { kind: "env", name: "EVENT_FIXTURE_KEY" } });
++	const lease = await resolver.resolve(request);
++	return { lease, credentials: { lease, redact: resolver.redact } satisfies SplyceCredentials };
++}
++
++describe("shared native event redaction", () => {
++	it("gives an observer a sanitized copy while preserving the parser input and JSON value shapes", async () => {
++		const { credentials } = await fixture();
++		const input = { [SECRET]: [SECRET, { nested: SECRET }, 42, true, null], clean: "kept" };
++		const original = structuredClone(input);
++		const observed = await redactEventWithLease(credentials, input);
++		expect(observed).toEqual({
++			"[REDACTED]": ["[REDACTED]", { nested: "[REDACTED]" }, 42, true, null],
++			clean: "kept",
++		});
++		expect(input).toEqual(original);
++		expect(observed).not.toBe(input);
++	});
++
++	it("revocation before the observer handoff prevents retention of an in-flight result", async () => {
++		const { lease, credentials } = await fixture();
++		const retained: unknown[] = [];
++		const pending = redactEventWithLease(credentials, { message: SECRET }).then((event) => {
++			retained.push(event);
++		});
++		lease.revoke();
++		await expect(pending).rejects.toThrow();
++		expect(retained).toHaveLength(0);
++	});
++});
 diff --git a/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts b/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts
 index e1887fe..5660449 100644
 --- a/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts
@@ -1188,10 +1351,10 @@ index 0000000..02c6806
 +}
 diff --git a/vendor/pi/packages/ai/test/splyce-openai-native-resolver.test.ts b/vendor/pi/packages/ai/test/splyce-openai-native-resolver.test.ts
 new file mode 100644
-index 0000000..b4d5baf
+index 0000000..d88d082
 --- /dev/null
 +++ b/vendor/pi/packages/ai/test/splyce-openai-native-resolver.test.ts
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,180 @@
 +// Splyce #70: actual credential resolver + actual OpenAI SDK. Only the remote service is a fixture.
 +// These cases do not qualify native egress admission, receipts or the packaged app.
 +import { describe, expect, it } from "vitest";
@@ -1280,9 +1443,13 @@ index 0000000..b4d5baf
 +		it("does not expose a revoked credential in a late stream error", async () => {
 +			const { lease, credentials } = await nativeCredentials();
 +			let sends = 0;
++			const observed: unknown[] = [];
 +			const result = await start({
 +				credentials,
 +				maxRetries: 0,
++				onProviderStreamEvent: (event) => {
++					observed.push(event);
++				},
 +				fetch: async () => {
 +					sends++;
 +					const body = new ReadableStream<Uint8Array>(
@@ -1304,7 +1471,68 @@ index 0000000..b4d5baf
 +			expect(result.stopReason).toBe("error");
 +			expect(result.errorMessage).toBeTruthy();
 +			expect(result.errorMessage).not.toContain(SECRET);
++			expect(JSON.stringify(observed)).not.toContain(SECRET);
 +		});
++		it("does not expose credential bytes to an error-event observer", async () => {
++			const { credentials } = await nativeCredentials();
++			const observed: unknown[] = [];
++			const error = { message: `fixture failure ${SECRET}`, code: "fixture_error" };
++			const event = api === "openai-completions" ? { error } : { type: "error", ...error };
++			const result = await start({
++				credentials,
++				maxRetries: 0,
++				onProviderStreamEvent: (value) => {
++					observed.push(value);
++				},
++				fetch: async () =>
++					new Response(`data: ${JSON.stringify(event)}\n\n`, { headers: { "content-type": "text/event-stream" } }),
++			}).result();
++			expect(result.stopReason).toBe("error");
++			expect(result.errorMessage).not.toContain(SECRET);
++			expect(JSON.stringify(observed)).not.toContain(SECRET);
++		});
++		it.each([false, true])(
++			"protects successful event metadata at the observer boundary (revoked=%s)",
++			async (revoked) => {
++				const { lease, credentials } = await nativeCredentials();
++				const observed: unknown[] = [];
++				const result = await start({
++					credentials,
++					maxRetries: 0,
++					onProviderStreamEvent: (event) => {
++						observed.push(event);
++					},
++					fetch: async () => {
++						const text = await successfulResponse(api).text();
++						const event = JSON.parse(text.split("\n")[0]!.slice(6)) as Record<string, unknown>;
++						const body = new ReadableStream<Uint8Array>(
++							{
++								pull(controller) {
++									if (revoked) lease.revoke();
++									controller.enqueue(
++										new TextEncoder().encode(
++											`data: ${JSON.stringify({ ...event, diagnostic: { [SECRET]: [SECRET] } })}\n\n`,
++										),
++									);
++									controller.close();
++								},
++							},
++							{ highWaterMark: 0 },
++						);
++						return new Response(body, { headers: { "content-type": "text/event-stream" } });
++					},
++				}).result();
++				expect(JSON.stringify(observed)).not.toContain(SECRET);
++				if (revoked) {
++					expect(observed).toHaveLength(0);
++					expect(result.stopReason).toBe("error");
++				} else {
++					expect(observed).toHaveLength(1);
++					expect(observed[0]).toMatchObject({ diagnostic: { "[REDACTED]": ["[REDACTED]"] } });
++					expect(result.stopReason).toBe("stop");
++				}
++			},
++		);
 +	});
 +}
 diff --git a/vendor/pi/packages/ai/test/splyce-openai-stream-safety.test.ts b/vendor/pi/packages/ai/test/splyce-openai-stream-safety.test.ts

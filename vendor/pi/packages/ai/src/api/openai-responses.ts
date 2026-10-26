@@ -4,6 +4,7 @@ import { clampThinkingLevel } from "../models.ts";
 import {
 	assertCredentialOptions,
 	createLeasedFetch,
+	redactEventWithLease,
 	redactWithLease,
 	type SplyceCredentials,
 	withLeasedSecret,
@@ -248,8 +249,11 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
+			const observe = options?.onProviderStreamEvent;
 			await processResponsesStream(openaiStream, output, stream, model, {
-				onProviderStreamEvent: options?.onProviderStreamEvent,
+				onProviderStreamEvent: observe
+					? async (event, activeModel) => observe(await redactEventWithLease(credentials, event), activeModel)
+					: undefined,
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
