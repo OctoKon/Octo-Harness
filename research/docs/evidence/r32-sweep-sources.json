@@ -1083,5 +1083,173 @@
     "claims": ["SKILL.md frontmatter includes an allowed-tools field."],
     "verification": "primary documentation; parent re-fetched",
     "notes": "No Splyce MCP or skills implementation exists yet."
+  },
+  {
+    "id": "R32-sglang-install",
+    "tool": "SGLang",
+    "url": "https://docs.sglang.io/docs/get-started/install",
+    "title": "SGLang installation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documented installation targets Linux/NVIDIA with CUDA 13; native Windows and supported WSL configuration are not stated."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-sglang-release",
+    "tool": "SGLang",
+    "url": "https://github.com/sgl-project/sglang/releases/tag/v0.5.22",
+    "title": "SGLang v0.5.22",
+    "accessed": "2026-10-26",
+    "claims": ["SGLang v0.5.22 released 2026-10-19."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-vllm-release",
+    "tool": "vLLM",
+    "url": "https://github.com/vllm-project/vllm/releases/tag/v0.32.0",
+    "title": "vLLM v0.32.0",
+    "accessed": "2026-10-26",
+    "claims": ["vLLM v0.32.0 released 2026-10-18."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-ollama-release",
+    "tool": "Ollama",
+    "url": "https://github.com/ollama/ollama/releases/tag/v0.40.11",
+    "title": "Ollama v0.40.11",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Ollama v0.40.11 released 2026-10-24 with CUDA, ROCm and Vulkan Windows lanes."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-ortgenai-release",
+    "tool": "ONNX Runtime GenAI",
+    "url": "https://github.com/microsoft/onnxruntime-genai/releases/tag/v0.17.0",
+    "title": "ONNX Runtime GenAI v0.17.0",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Release provides Windows CPU, CUDA and WinML assets; it is a library, not an OpenAI-compatible HTTP server."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-windows-ml",
+    "tool": "Windows ML",
+    "url": "https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/overview",
+    "title": "Windows ML overview",
+    "accessed": "2026-10-26",
+    "claims": [
+      "New Windows ML is ONNX Runtime-based with shared or self-contained deployment and vendor execution-provider acquisition."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-directml-ep",
+    "tool": "DirectML",
+    "url": "https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html",
+    "title": "DirectML execution provider",
+    "accessed": "2026-10-26",
+    "claims": [
+      "DirectML is a DirectX 12 execution provider under sustained engineering."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-ovms-chat",
+    "tool": "OpenVINO Model Server",
+    "url": "https://docs.openvino.ai/2026/model-server/ovms_docs_rest_api_chat.html",
+    "title": "OVMS chat API",
+    "accessed": "2026-10-26",
+    "claims": [
+      "OVMS serves /v3/chat/completions; guided generation defaults off and can continue unguided when no schema loads."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-qwen3-coder-30b",
+    "tool": "Qwen3-Coder-30B-A3B",
+    "url": "https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct/blob/b2cff646eb4bb1d68355c01b18ae02e7cf42d120/LICENSE",
+    "title": "Qwen3-Coder-30B-A3B license",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Apache-2.0 at the pinned revision; about 30B total and 3B active parameters."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-qwen3-coder-next",
+    "tool": "Qwen3-Coder-Next",
+    "url": "https://huggingface.co/Qwen/Qwen3-Coder-Next/blob/a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb/README.md",
+    "title": "Qwen3-Coder-Next model card",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Card declares Apache-2.0, 80B total and 3B active parameters, 262,144 native context; a same-revision license file was not established."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-glm-47-flash",
+    "tool": "GLM-4.7-Flash",
+    "url": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+    "title": "GLM-4.7-Flash model card",
+    "accessed": "2026-10-26",
+    "claims": [
+      "MIT-licensed 30B-A3B model; immutable card revision not established."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-deepseek-v41-flash",
+    "tool": "DeepSeek V4.1 Flash",
+    "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/314113f8a7dadb388215396ba5fbee2c610a04d6/README.md",
+    "title": "DeepSeek V4.1 Flash model card",
+    "accessed": "2026-10-26",
+    "claims": ["MIT-licensed weights with a 552B backbone."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-minimax-m3-license",
+    "tool": "MiniMax M3",
+    "url": "https://huggingface.co/MiniMaxAI/MiniMax-M3/commit/3a41b311ffa5719cef48fed3974ccf2cc03733ea",
+    "title": "MiniMax M3 license commit",
+    "accessed": "2026-10-26",
+    "claims": ["MiniMax M3 is a 427B model under its own community license."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-kimi-k3-card",
+    "tool": "Kimi K3",
+    "url": "https://huggingface.co/moonshotai/Kimi-K3",
+    "title": "Kimi K3 model card",
+    "accessed": "2026-10-26",
+    "claims": ["Kimi K3 is about 2.8T parameters under its own license."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-glm53-license",
+    "tool": "GLM-5.3",
+    "url": "https://huggingface.co/zai-org/GLM-5.3/commit/30333038ada1f1dacb294a93270305a890b50c14",
+    "title": "GLM-5.3 license commit",
+    "accessed": "2026-10-26",
+    "claims": ["GLM-5.3 uses a custom license rather than MIT."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
   }
 ]
