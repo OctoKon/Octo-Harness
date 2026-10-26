@@ -115,6 +115,14 @@ describe("App wiring", () => {
     expect(q("[data-testid=setup]")).toBeNull();
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
 
+    // Skip setup must enter the workbench too, not leave a dead button.
+    button("Setup").click();
+    flushSync();
+    button("Skip setup").click();
+    flushSync();
+    expect(q("[data-testid=setup]")).toBeNull();
+    expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
+
     button("Modules").click();
     flushSync();
     expect(q("[data-testid=modules]")).not.toBeNull();
