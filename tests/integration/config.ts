@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   ConfigAuthority,
@@ -165,5 +166,41 @@ test("revisions are per scope", () => {
   config.apply(change("c2", "cfg-0", "cfg-9", "w-two"), caller);
   assert.equal(config.effectiveRevision("w-two"), "cfg-9");
   store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an unreadable (future-schema) configuration row fails closed, never adopted", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const { store, config } = open(dir);
+  config.apply(change("c1", "cfg-0", "cfg-1"), caller);
+  store.close();
+  // A newer writer committed an applied transition this build cannot read.
+  const raw = new DatabaseSync(path);
+  raw
+    .prepare(
+      "INSERT INTO records (kind, record_id, schema_version, scope_id, session_id, created_at, payload) VALUES ('configurationTransition', 'future.applied', 99, 'w-demo', 's1', '2026-10-26T00:00:00.000Z', ?)",
+    )
+    .run(
+      JSON.stringify({
+        recordId: "future.applied",
+        scopeId: "w-demo",
+        state: "applied",
+        acceptedConfigRevision: "cfg-future",
+      }),
+    );
+  raw.close();
+  const reopened = open(dir);
+  const unknown = (error: unknown) =>
+    error instanceof StoreError && error.code === "UNKNOWN_SCHEMA";
+  assert.throws(() => reopened.config.effectiveRevision("w-demo"), unknown);
+  // The CAS cannot trust state it cannot read: nothing is appended.
+  const cursor = reopened.store.cursor("w-demo");
+  assert.throws(
+    () => reopened.config.apply(change("c2", "cfg-1", "cfg-2"), caller),
+    unknown,
+  );
+  assert.equal(reopened.store.cursor("w-demo"), cursor);
+  reopened.store.close();
   rmSync(dir, { recursive: true, force: true });
 });

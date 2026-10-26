@@ -463,6 +463,21 @@ export class Store {
   }
 
   private static readConfigRevision(db: DatabaseSync, scopeId: string): string {
+    // The query below reads raw payloads, so it must never trust a row the
+    // normal reader would reject: an unreadable (future-schema) transition
+    // means the effective revision is unknowable, so fail closed (S5).
+    const unreadable = db
+      .prepare(
+        "SELECT schema_version FROM records WHERE scope_id = ? AND kind = 'configurationTransition' " +
+          "AND schema_version != ? LIMIT 1",
+      )
+      .get(scopeId, CONTRACT_VERSION) as
+      { schema_version: number | bigint } | undefined;
+    if (unreadable !== undefined)
+      throw new StoreError(
+        "UNKNOWN_SCHEMA",
+        `scope ${JSON.stringify(scopeId)} holds a configurationTransition with schemaVersion ${String(unreadable.schema_version)}; this store reads ${String(CONTRACT_VERSION)}, so the effective configuration revision cannot be determined`,
+      );
     const row = db
       .prepare(
         "SELECT json_extract(payload, '$.acceptedConfigRevision') AS rev FROM records " +
