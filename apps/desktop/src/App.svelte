@@ -1,20 +1,55 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import Composer from "./components/Composer.svelte";
+  import SessionTree from "./components/SessionTree.svelte";
   import TurnStream from "./components/TurnStream.svelte";
+  import Shell from "./components/shell/Shell.svelte";
+  import UsageView from "./components/usage/UsageView.svelte";
+  import Providers from "./routes/Providers.svelte";
   import {
     connectionState,
     handshake,
     onEvent,
     subscribe,
+    type EngineConnectionState,
   } from "./stores/engine";
-  import { bindSelection, type BindingStatus } from "./stores/session-selection";
+  import {
+    bindSelection,
+    clearSession,
+    selectedSession,
+    selectSession,
+    type BindingStatus,
+  } from "./stores/session-selection";
+  import {
+    createSessionNav,
+    reduceSessionNav,
+    visibleNodes,
+    type SessionNavAction,
+    type SessionNavState,
+    type TreeEventLike,
+  } from "./stores/sessions";
   import {
     createTurnStreamTransport,
     createTurnsState,
     type TurnsState,
   } from "./stores/turns";
 
-  let status = $state("disconnected");
+  type View = "conversation" | "providers" | "usage";
+  const VIEWS: readonly (readonly [View, string])[] = [
+    ["conversation", "Conversation"],
+    ["providers", "Providers"],
+    ["usage", "Usage"],
+  ];
+
+  let view = $state<View>("conversation");
+  let nav = $state.raw<SessionNavState>(createSessionNav());
+  // sessionId -> scopeId, as carried by the engine's own events; never invented.
+  const scopes = new Map<string, string>();
+  const dispatchNav = (action: SessionNavAction) => {
+    nav = untrack(() => reduceSessionNav(nav, action));
+  };
+
+  let status = $state<EngineConnectionState>("disconnected");
   let turns = $state.raw<TurnsState>(createTurnsState());
   let subscription = $state<BindingStatus>({ state: "idle" });
   let retry = $state<() => void>(() => {});
@@ -22,12 +57,31 @@
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
 
+  // Engine readiness drives the sessions load state; unavailable is never shown as loading or empty.
+  $effect(() => {
+    if (status === "ready") dispatchNav({ type: "loaded" });
+    else if (status === "unavailable" || status === "error")
+      dispatchNav({ type: "failed", message: "Engine unavailable." });
+  });
+
+  function onSelect(key: string) {
+    dispatchNav({ type: "select", key });
+    const node = visibleNodes(nav).find((n) => n.key === key);
+    const scopeId = node && scopes.get(node.sessionId);
+    if (node && scopeId) selectSession({ sessionId: node.sessionId, scopeId });
+  }
+
+  // The selected branch vanished from the latest snapshot: drop the selection with it.
+  $effect(() => {
+    if (nav.lostSelection) clearSession();
+  });
+
   function onApproval() {
     // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
   }
 
   onMount(() => {
-    // The workbench selects the session (session-selection store); none is derived from events.
+    // This component is the workbench: the only writer of the session-selection store.
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
@@ -44,7 +98,13 @@
       subscription = next;
     });
     retry = () => void binding.retry();
-    const unsubEvents = onEvent((event) => transport.enqueue(event));
+    const unsubEvents = onEvent((event) => {
+      if (event.kind === "session.tree_updated") {
+        scopes.set(event.sessionId, event.scopeId);
+        dispatchNav({ type: "event", event: event as TreeEventLike });
+      }
+      transport.enqueue(event);
+    });
 
     handshake().catch(() => {
       // Handshake rejection leaves status in 'unavailable' or 'error'
@@ -56,75 +116,110 @@
       unsubBinding();
       binding.dispose();
       transport.dispose();
+      clearSession();
     };
   });
 </script>
 
-<main class="app-shell" data-testid="app-shell">
-  <header class="app-header">
-    <div class="brand">
-      <h1>Splyce</h1>
-      <span class="status-badge" class:ready={status === "ready"} class:unavailable={status !== "ready"}>
-        {status}
-      </span>
-    </div>
-  </header>
+<Shell {rail} {transcript} {composer} {evidence} />
 
+{#snippet rail()}
+  <div class="brand">
+    <h1>Splyce</h1>
+    <span class="status-badge" class:ready={status === "ready"} class:unavailable={status !== "ready"}>
+      {status}
+    </span>
+  </div>
+  <div role="group" aria-label="Views">
+    {#each VIEWS as [id, label] (id)}
+      <button type="button" aria-current={view === id ? "page" : undefined} onclick={() => (view = id)}>
+        {label}
+      </button>
+    {/each}
+  </div>
+  <SessionTree
+    {nav}
+    {onSelect}
+    onFocus={(key) => dispatchNav({ type: "focus", key })}
+    onMove={(to) => dispatchNav({ type: "move", to })}
+    onRetry={() => {
+      dispatchNav({ type: "refresh" });
+      handshake().catch(() => {});
+    }}
+  />
+{/snippet}
+
+{#snippet transcript()}
   {#if subscription.state === "failed"}
     <div class="subscribe-error" role="alert" data-testid="subscribe-error">
       <span>Could not subscribe to the session: {subscription.error}</span>
       <button type="button" onclick={retry}>Retry</button>
     </div>
   {/if}
+  {#if view === "providers"}
+    <!-- No profile service is connected: the list is empty and the add form is disabled, not faked. -->
+    <fieldset disabled data-testid="providers-view">
+      <Providers connections={[]} families={[]} onAddCustom={() => {}} />
+      <p role="status">Provider connections are unavailable: no profile service is connected.</p>
+    </fieldset>
+  {:else if view === "usage"}
+    <UsageView usage={null} />
+    <p role="status" data-testid="usage-unavailable-note">Usage unavailable - no engine usage report.</p>
+  {:else}
+    <div class="app-content" class:conversation={currentRun !== undefined}>
+      {#if currentRun}
+        <section class="turn-pane" aria-label="Transcript">
+          <TurnStream
+            run={currentRun}
+            stale={turns.stale || turns.needsResync || status !== "ready"}
+            showApprovalControls={false}
+            canRespond={() => false}
+            {onApproval}
+          />
+        </section>
+      {:else if status === "ready"}
+        <div class="workspace-view">
+          <p>Ready for workspace execution.</p>
+        </div>
+      {:else}
+        <div class="unavailable-view" data-testid="unavailable-banner">
+          <h2>Engine unavailable</h2>
+          <p>Required engine services are unavailable. Task execution is disabled.</p>
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
 
-  <div class="app-content" class:conversation={currentRun !== undefined}>
-    {#if currentRun}
-      <section class="turn-pane" aria-label="Transcript">
-        <TurnStream
-          run={currentRun}
-          stale={turns.stale || turns.needsResync || status !== "ready"}
-          showApprovalControls={false}
-          canRespond={() => false}
-          {onApproval}
-        />
-      </section>
-    {:else if status === "ready"}
-      <div class="workspace-view">
-        <p>Ready for workspace execution.</p>
-      </div>
-    {:else}
-      <div class="unavailable-view" data-testid="unavailable-banner">
-        <h2>Engine unavailable</h2>
-        <p>Required engine services are unavailable. Task execution is disabled.</p>
-      </div>
-    {/if}
-  </div>
-</main>
+{#snippet composer()}
+  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so sending stays disabled. -->
+  <Composer
+    connection={status}
+    sessionId={$selectedSession?.sessionId ?? null}
+    stale={true}
+    send={async () => {
+      throw new Error("Sending is unavailable: session revisions are not wired.");
+    }}
+  />
+{/snippet}
+
+{#snippet evidence()}
+  <p>No changes or evidence available.</p>
+{/snippet}
 
 <style>
   :global(html),
   :global(body) {
     margin: 0;
-  }
-  .app-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     color: #111827;
     background: #f9fafb;
-  }
-  .app-header {
-    display: flex;
-    align-items: center;
-    padding: 12px 20px;
-    background: #ffffff;
-    border-bottom: 1px solid #e5e7eb;
   }
   .brand {
     display: flex;
     align-items: center;
     gap: 12px;
+    padding: 12px;
   }
   .brand h1 {
     font-size: 1.125rem;
@@ -148,6 +243,14 @@
     background: #fee2e2;
     color: #991b1b;
   }
+  [aria-current="page"] {
+    font-weight: 700;
+  }
+  fieldset {
+    border: 0;
+    margin: 0;
+    padding: 12px;
+  }
   .subscribe-error {
     display: flex;
     align-items: center;
@@ -158,16 +261,16 @@
     font-size: 0.875rem;
   }
   .app-content {
-    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 24px;
+    min-height: 100%;
+    box-sizing: border-box;
   }
   .app-content.conversation {
     align-items: stretch;
     justify-content: flex-start;
-    overflow-y: auto;
   }
   .turn-pane {
     width: 100%;
