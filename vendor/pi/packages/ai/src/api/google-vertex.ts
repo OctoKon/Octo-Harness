@@ -10,7 +10,7 @@ import { calculateCost, clampThinkingLevel } from "../models.ts";
 import {
 	assertCredentialOptions,
 	assertSafeLeasedGooglePayload,
-	redactorOf,
+	redactWithLease,
 	withLeasedSecret,
 } from "../splyce-credentials.ts";
 import type {
@@ -98,7 +98,6 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			timestamp: Date.now(),
 		};
 
-		const redact = redactorOf(options ?? {});
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
@@ -330,7 +329,10 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			// Splyce TD-20: an errored or aborted response never carries tool calls into dispatch or persistence.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = redact(formatProviderError(normalizeProviderError(error)));
+			output.errorMessage = await redactWithLease(
+				options?.credentials,
+				formatProviderError(normalizeProviderError(error)),
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

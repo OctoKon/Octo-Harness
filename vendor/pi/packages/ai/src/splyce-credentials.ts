@@ -1,3 +1,5 @@
+import type { ProviderResponse } from "./types.ts";
+
 // Splyce C4: the one credential option shared by every provider adapter (TD-19..23).
 // Structural mirror of the native SecretLease and Redactor (packages/splyce-pi/src/provider-auth.ts, TD-16): this
 // package must not import @splyce/pi. The native layer builds the lease from ProviderAdmissionPort.admit() and
@@ -26,13 +28,56 @@ const identity = (text: string): string => text;
 
 /** The redactor to apply to error text: the native one when credentials are in use, otherwise nothing is leased. */
 export function redactorOf(options: { credentials?: SplyceCredentials | undefined }): (text: string) => string {
-	return options.credentials?.redact ?? identity;
+	const redact = options.credentials?.redact;
+	return typeof redact === "function" ? redact : identity;
 }
 
-/**
- * `apiKey` and `credentials` are mutually exclusive, and credentials need a native redactor. With a lease no ambient
- * or fallback credential exists. Throws before anything is leased or sent.
- */
+/** Sanitize inside a live lease; a revoked lease cannot safely expose the provider's error text. */
+export async function redactWithLease(credentials: SplyceCredentials | undefined, text: string): Promise<string> {
+	if (!credentials) return text;
+	// Credentials that fail assertCredentialOptions were never leased: there is no secret to mask, so do not lease now.
+	if (typeof credentials.redact !== "function" || typeof credentials.lease?.use !== "function") return text;
+	try {
+		return await credentials.lease.use(() => credentials.redact(text));
+	} catch {
+		return "Provider credential is no longer available";
+	}
+}
+
+/** Redact JSON event keys and values inside a live lease before an observer can retain them. */
+export async function redactEventWithLease(
+	credentials: SplyceCredentials | undefined,
+	event: unknown,
+): Promise<unknown> {
+	if (!credentials) return event;
+	const { lease, redact } = credentials;
+	return lease.use(() => {
+		const sanitize = (value: unknown): unknown => {
+			if (typeof value === "string") return redact(value);
+			if (Array.isArray(value)) return value.map(sanitize);
+			if (value && typeof value === "object") {
+				return Object.fromEntries(Object.entries(value).map(([key, item]) => [redact(key), sanitize(item)]));
+			}
+			return value;
+		};
+		return sanitize(event);
+	});
+}
+
+/** Response metadata is copied and sanitized before a callback can retain it. */
+export async function redactResponseWithLease(
+	credentials: SplyceCredentials | undefined,
+	response: ProviderResponse,
+): Promise<ProviderResponse> {
+	if (!credentials) return response;
+	return credentials.lease.use(() => ({
+		status: response.status,
+		headers: Object.fromEntries(
+			Object.entries(response.headers).map(([key, value]) => [credentials.redact(key), credentials.redact(value)]),
+		),
+	}));
+}
+
 /** Headers that carry or select a credential. With a lease the caller may not supply any of them. */
 const CALLER_AUTH_HEADERS: ReadonlySet<string> = new Set([
 	"authorization",
@@ -72,7 +117,19 @@ export function assertCredentialOptions(
 	if (!credentials) return;
 	if (options.apiKey !== undefined) throw new Error("apiKey and credentials are mutually exclusive");
 	if (typeof credentials.redact !== "function") throw new Error("credentials require a native redact function");
+	if (typeof credentials.lease?.use !== "function") throw new Error("credentials require a native lease.use function");
 	assertNoCallerAuthHeaders(modelHeaders, options.headers);
+}
+
+/** A single-API provider must not reinterpret the API admitted with native credentials. */
+export function assertCredentialApiIdentity(
+	actualApi: string,
+	expectedApi: string,
+	options: { credentials?: SplyceCredentials | undefined } | undefined,
+): void {
+	if (options?.credentials && actualApi !== expectedApi) {
+		throw new Error("Native credential API identity does not match this adapter");
+	}
 }
 
 /**
@@ -104,7 +161,7 @@ export async function withLeasedSecret<T>(
  * A fetch that obtains the secret from the lease on every send and writes it into one auth header, so the SDK client
  * built around it never holds the real key. `format` shapes the header value (default: the raw secret; pass
  * `(s) => `Bearer ${s}`` for bearer schemes). Headers carried by a `Request` input are kept, with `init.headers`
- * taking precedence as `fetch` does. Any other auth header is dropped, and redirects are refused so the key cannot
+ * taking precedence as `fetch` does. Known credential headers are dropped, and redirects are refused so the key cannot
  * follow a response to another host.
  */
 export function createLeasedFetch(
@@ -117,8 +174,7 @@ export function createLeasedFetch(
 		withLeasedSecret(credentials, (secret) => {
 			const headers = new Headers(input instanceof Request ? input.headers : undefined);
 			for (const [name, value] of new Headers(init?.headers)) headers.set(name, value);
-			headers.delete("authorization");
-			headers.delete("x-api-key");
+			for (const name of CALLER_AUTH_HEADERS) headers.delete(name);
 			headers.set(header, format(secret));
 			return base(input, { ...init, headers, redirect: "error" });
 		});
