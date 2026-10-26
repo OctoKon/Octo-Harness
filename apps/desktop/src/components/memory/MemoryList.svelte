@@ -24,6 +24,7 @@
 
   async function restoreFocus(id: string): Promise<void> {
     await tick();
+    if (!listEl?.isConnected) return;
     const target = [...listEl.querySelectorAll<HTMLElement>("[data-forget]")].find(
       (el) => el.dataset.forget === id,
     );
