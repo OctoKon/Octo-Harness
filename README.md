@@ -6,7 +6,7 @@
     <!-- Black Logo for Light Mode users -->
     <source media="(prefers-color-scheme: light)" srcset="./assets/brand/slyce-black.svg">
     <!-- Default fallback logo -->
-    <img alt="Spylce Logo" src="./assets/brand/slyce-black.svg" width="200">
+    <img alt="Spylce Logo" src="./assets/brand/slyce-black.svg" width="150">
   </picture>
 </p>
 
