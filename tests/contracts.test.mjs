@@ -58,6 +58,12 @@ test("TD-01: native build spec comes from the shared operation definitions", () 
   assert.equal(spec.commands["approval.respond"].approvalRequestId, "ref");
   assert.equal(spec.commands["workspace.select"].selectionRef, "ref");
   assert.equal(spec.commands["session.subscribe"].afterSeq, "uint");
+  assert.deepEqual(
+    spec.eventKinds.slice().sort(),
+    fixture("events")
+      .map(({ kind }) => kind)
+      .sort(),
+  );
 });
 const referenceIds = new Set(fixture("references"));
 const context = {

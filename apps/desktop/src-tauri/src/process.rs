@@ -278,7 +278,7 @@ fn encode_frame(value: &Value) -> Result<Vec<u8>, EngineError> {
     Ok(frame)
 }
 
-fn read_frame(reader: &mut impl Read) -> Result<Value, EngineError> {
+fn read_frame(reader: &mut impl Read) -> Result<(Value, usize), EngineError> {
     let mut header = [0u8; 4];
     reader.read_exact(&mut header).map_err(io_error)?;
     let length = u32::from_be_bytes(header) as usize;
@@ -291,22 +291,24 @@ fn read_frame(reader: &mut impl Read) -> Result<Value, EngineError> {
     let mut bytes = vec![0; length];
     reader.read_exact(&mut bytes).map_err(io_error)?;
     serde_json::from_slice(&bytes)
+        .map(|value| (value, length + 4))
         .map_err(|_| EngineError::new("ENGINE_FRAME", "Invalid engine response JSON"))
 }
 
 #[cfg(windows)]
-pub use windows::EngineChild;
+pub use windows::{EngineChild, EngineEvents};
 
 #[cfg(windows)]
 mod windows {
     use super::*;
+    use std::collections::VecDeque;
     use std::ffi::{OsStr, c_void};
     use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::ptr::{null, null_mut};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, mpsc};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
@@ -443,6 +445,80 @@ mod windows {
         }
     }
 
+    #[derive(Clone, Copy, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TransportLimits {
+        pending_queue_max_frames: usize,
+        pending_queue_max_bytes: usize,
+        renderer_max_frames: usize,
+        renderer_max_bytes: usize,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct BridgeProtocol {
+        transport_limits: TransportLimits,
+    }
+
+    struct EventQueue {
+        frames: VecDeque<(Value, usize)>,
+        bytes: usize,
+        terminal: Option<(&'static str, &'static str)>,
+    }
+
+    type SharedEvents = Arc<(Mutex<EventQueue>, Condvar)>;
+
+    #[derive(Clone)]
+    pub struct EngineEvents {
+        shared: SharedEvents,
+        renderer_max_frames: usize,
+        renderer_max_bytes: usize,
+    }
+
+    impl EngineEvents {
+        pub fn drain(&self) -> Result<Vec<Value>, EngineError> {
+            let (mutex, wake) = &*self.shared;
+            let mut queue = mutex.lock().map_err(|_| {
+                EngineError::new("ENGINE_CLEANUP", "Engine event queue is unavailable")
+            })?;
+            let mut frames = Vec::new();
+            let mut bytes = 0;
+            while let Some((_, size)) = queue.frames.front() {
+                if frames.len() == self.renderer_max_frames
+                    || bytes + size > self.renderer_max_bytes
+                {
+                    break;
+                }
+                let (frame, size) = queue.frames.pop_front().expect("front was present");
+                queue.bytes -= size;
+                bytes += size;
+                frames.push(frame);
+            }
+            if !frames.is_empty() {
+                wake.notify_one();
+                return Ok(frames);
+            }
+            if let Some((code, message)) = queue.terminal {
+                return Err(EngineError::new(code, message));
+            }
+            Ok(frames)
+        }
+
+        #[cfg(test)]
+        pub fn pending_for_test(&self) -> (usize, usize) {
+            let queue = self.shared.0.lock().expect("event queue is available");
+            (queue.frames.len(), queue.bytes)
+        }
+    }
+
+    fn close_events(shared: &SharedEvents, code: &'static str, message: &'static str) {
+        let (mutex, wake) = &**shared;
+        if let Ok(mut queue) = mutex.lock() {
+            queue.terminal.get_or_insert((code, message));
+            wake.notify_all();
+        }
+    }
+
     pub struct EngineChild {
         process: OwnedHandle,
         job: OwnedHandle,
@@ -450,6 +526,8 @@ mod windows {
         writes: Option<mpsc::SyncSender<Vec<u8>>>,
         acknowledgements: mpsc::Receiver<Result<(), EngineError>>,
         responses: mpsc::Receiver<Result<Value, EngineError>>,
+        read_resume: Option<mpsc::Sender<()>>,
+        events: EngineEvents,
         failed: Arc<AtomicBool>,
         workers: Vec<JoinHandle<()>>,
         stopped: bool,
@@ -547,6 +625,36 @@ mod windows {
             let (writes, write_queue) = mpsc::sync_channel::<Vec<u8>>(1);
             let (acknowledge, acknowledgements) = mpsc::sync_channel(1);
             let (reply, responses) = mpsc::sync_channel(1);
+            let (read_resume, resume_reads) = mpsc::channel();
+            let protocol: BridgeProtocol = serde_json::from_str(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../../packages/splyce-pi/dist/bridge-protocol.json"
+            )))
+            .map_err(|_| EngineError::new("ENGINE_FRAME", "Invalid bridge transport limits"))?;
+            let bounds = protocol.transport_limits;
+            if bounds.pending_queue_max_frames == 0
+                || bounds.pending_queue_max_bytes < MAX_FRAME_BYTES
+                || bounds.renderer_max_frames == 0
+                || bounds.renderer_max_bytes < MAX_FRAME_BYTES
+            {
+                return Err(EngineError::new(
+                    "ENGINE_FRAME",
+                    "Invalid bridge transport limits",
+                ));
+            }
+            let events = EngineEvents {
+                shared: Arc::new((
+                    Mutex::new(EventQueue {
+                        frames: VecDeque::new(),
+                        bytes: 0,
+                        terminal: None,
+                    }),
+                    Condvar::new(),
+                )),
+                renderer_max_frames: bounds.renderer_max_frames,
+                renderer_max_bytes: bounds.renderer_max_bytes,
+            };
+            let reader_events = events.shared.clone();
             let failed = Arc::new(AtomicBool::new(false));
             let reader_failed = failed.clone();
             let reader = std::thread::Builder::new()
@@ -554,11 +662,63 @@ mod windows {
                 .spawn(move || {
                     let mut output = File::from(stdout_read);
                     loop {
-                        let result = read_frame(&mut output);
-                        let terminal = result.is_err();
-                        if reply.try_send(result).is_err() || terminal {
-                            reader_failed.store(true, Ordering::Release);
-                            break;
+                        match read_frame(&mut output) {
+                            Ok((frame, size))
+                                if frame.as_object().is_some_and(|object| {
+                                    object.len() == 1
+                                        && object.get("event").is_some_and(Value::is_object)
+                                }) =>
+                            {
+                                let (mutex, wake) = &*reader_events;
+                                let mut queue = match mutex.lock() {
+                                    Ok(queue) => queue,
+                                    Err(_) => break,
+                                };
+                                while queue.terminal.is_none()
+                                    && (queue.frames.len() >= bounds.pending_queue_max_frames
+                                        || queue.bytes + size > bounds.pending_queue_max_bytes)
+                                {
+                                    queue = match wake.wait(queue) {
+                                        Ok(queue) => queue,
+                                        Err(_) => return,
+                                    };
+                                }
+                                if queue.terminal.is_some() {
+                                    break;
+                                }
+                                queue.frames.push_back((frame["event"].clone(), size));
+                                queue.bytes += size;
+                            }
+                            Ok((frame, _))
+                                if frame.get("id").and_then(Value::as_str).is_some()
+                                    && frame.get("ok").and_then(Value::as_bool).is_some()
+                                    && frame.get("event").is_none() =>
+                            {
+                                if reply.try_send(Ok(frame)).is_err() {
+                                    close_events(
+                                        &reader_events,
+                                        "ENGINE_FRAME",
+                                        "Unsolicited engine reply",
+                                    );
+                                    reader_failed.store(true, Ordering::Release);
+                                    break;
+                                }
+                                if resume_reads.recv().is_err() {
+                                    break;
+                                }
+                            }
+                            result => {
+                                let error = match result {
+                                    Err(error) => error,
+                                    Ok(_) => {
+                                        EngineError::new("ENGINE_FRAME", "Unknown engine frame")
+                                    }
+                                };
+                                close_events(&reader_events, error.code, error.message);
+                                let _ = reply.try_send(Err(error));
+                                reader_failed.store(true, Ordering::Release);
+                                break;
+                            }
                         }
                     }
                 })
@@ -586,6 +746,8 @@ mod windows {
                 writes: Some(writes),
                 acknowledgements,
                 responses,
+                read_resume: Some(read_resume),
+                events,
                 failed,
                 workers: vec![reader, writer],
                 stopped: false,
@@ -603,6 +765,10 @@ mod windows {
             self.pid
         }
 
+        pub fn events(&self) -> EngineEvents {
+            self.events.clone()
+        }
+
         pub fn is_running(&self) -> bool {
             // SAFETY: querying an owned process with a zero timeout has no side effects.
             !self.stopped
@@ -610,6 +776,14 @@ mod windows {
         }
 
         pub fn request(&mut self, value: &Value) -> Result<Value, EngineError> {
+            self.request_with_response(value, |_| true)
+        }
+
+        pub fn request_with_response(
+            &mut self,
+            value: &Value,
+            on_response: impl FnOnce(&Value) -> bool,
+        ) -> Result<Value, EngineError> {
             let id = value
                 .get("id")
                 .and_then(Value::as_str)
@@ -657,6 +831,17 @@ mod windows {
                         "Engine response identity does not match its request",
                     ));
                 }
+                if !on_response(&response) {
+                    return Err(EngineError::new(
+                        "ENGINE_FRAME",
+                        "Engine response was rejected",
+                    ));
+                }
+                self.read_resume
+                    .as_ref()
+                    .ok_or_else(|| EngineError::new("ENGINE_EXITED", "Engine is disconnected"))?
+                    .send(())
+                    .map_err(|_| EngineError::new("ENGINE_EXITED", "Engine is disconnected"))?;
                 Ok(response)
             })();
             if result.is_err() {
@@ -670,6 +855,12 @@ mod windows {
                 return Ok(());
             }
             self.writes.take();
+            self.read_resume.take();
+            close_events(
+                &self.events.shared,
+                "ENGINE_EXITED",
+                "Engine is disconnected",
+            );
             let deadline = Instant::now() + Duration::from_secs(5);
             // SAFETY: handles remain owned; the short grace period permits EOF shutdown.
             unsafe {
@@ -750,7 +941,9 @@ mod tests {
     fn frames_round_trip_and_enforce_encoded_limit() {
         let value = serde_json::json!({"id":"one","ok":true,"value":null});
         assert_eq!(
-            read_frame(&mut encode_frame(&value).unwrap().as_slice()).unwrap(),
+            read_frame(&mut encode_frame(&value).unwrap().as_slice())
+                .unwrap()
+                .0,
             value
         );
         assert!(read_frame(&mut 0u32.to_be_bytes().as_slice()).is_err());
