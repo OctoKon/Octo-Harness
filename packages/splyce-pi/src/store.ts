@@ -1095,6 +1095,12 @@ export class Store {
     return watermarks;
   }
 
+  /** Highest ALLOCATED envelope sequence, including transient reservations; survives reopen. */
+  eventHighwater(scopeId: string, sessionId: string): number {
+    this.assertOpen();
+    return Store.eventHighwater(this.db, scopeId, sessionId);
+  }
+
   /** Highest retained durable envelope sequence; transient allocation is separate. */
   eventCursor(scopeId: string, sessionId: string): number {
     this.assertOpen();
