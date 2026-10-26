@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectStatus } from "./status-view";
+import { projectStatus, type StatusRecordKind } from "./status-view";
 
 function outcome(
   effectState: "observed-success" | "observed-failure" | "uncertain",
@@ -61,6 +61,45 @@ describe("projectStatus", () => {
     expect(
       projectStatus("packageInstallation", { state: "removed" }).status,
     ).toBe("removed");
+  });
+
+  it("maps every persisted state without falling back to Unknown", () => {
+    const cases: Array<
+      [Exclude<StatusRecordKind, "outcome">, readonly string[]]
+    > = [
+      [
+        "run",
+        ["pending", "running", "completed", "failed", "canceled", "uncertain"],
+      ],
+      [
+        "action",
+        [
+          "proposed",
+          "pending",
+          "approved",
+          "denied",
+          "running",
+          "completed",
+          "failed",
+          "canceled",
+          "uncertain",
+        ],
+      ],
+      ["selectionTransition", ["pending", "ready", "failed", "canceled"]],
+      ["configurationTransition", ["pending", "applied", "draining", "failed"]],
+      [
+        "packageInstallation",
+        ["staging", "installed", "failed", "removing", "removed"],
+      ],
+    ];
+
+    for (const [kind, states] of cases) {
+      for (const state of states) {
+        const projected = projectStatus(kind, { state } as never);
+        expect(projected.status, `${kind}.${state}`).toBe(state);
+        expect(projected.label, `${kind}.${state}`).not.toBe("Unknown");
+      }
+    }
   });
 
   it("keeps pending, failed and uncertain distinct", () => {
