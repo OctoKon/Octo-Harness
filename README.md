@@ -1,27 +1,33 @@
 <p align="center">
   <picture>
     <!-- White Logo for Dark Mode users -->
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/spylce-white.svg">
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/splyce-white.svg">
     <!-- Black Logo for Light Mode users -->
-    <source media="(prefers-color-scheme: light)" srcset="./assets/brand/slyce-black.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/brand/splyce-black.svg">
     <!-- Default fallback logo -->
-    <img alt="Spylce Logo" src="./assets/brand/slyce-black.svg" width="200">
+    <img alt="Splyce Logo" src="./assets/brand/splyce-black.svg" width="200">
   </picture>
 </p>
 
 <div align="center">
   <h1>Splyce</h1>
-<div>
+  <p>A research-led foundation for a Windows desktop coding-agent application: capable models, useful memory, and changes backed by evidence.</p>
 
-<div align="center">
-  A research-led foundation for a Windows desktop coding-agent application: capable models, useful memory, and changes backed by evidence.
+  <p>
+    <a href="research/README.md">Research</a> · 
+    <a href="MASTER-PLAN.md">Master plan</a> · 
+    <a href="research/docs/design/team-delivery-plan.md">Delivery plan</a> · 
+    <a href="CONTRIBUTING.md">Contributing</a>
+  </p>
 
-
-[Research](research/README.md) · [Master plan](MASTER-PLAN.md) · [Delivery plan](research/docs/design/team-delivery-plan.md) · [Contributing](CONTRIBUTING.md)
-
-[![Documentation quality](https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml/badge.svg?branch=main)](https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml)
-[![CodeQL](https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml)
-
+  <p>
+    <a href="https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml">
+      <img src="https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml/badge.svg?branch=main" alt="Documentation quality">
+    </a>
+    <a href="https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml">
+      <img src="https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml/badge.svg?branch=main" alt="CodeQL">
+    </a>
+  </p>
 </div>
 
 ---
@@ -45,4 +51,11 @@ This repository contains public-source research, a Windows desktop implementatio
 
 Start with the [research index](research/README.md) for comparisons and sources, or the [master plan](MASTER-PLAN.md) for the build sequence and acceptance gates. Contributions should connect a mechanism to a source and a testable outcome. The [composition contract](research/docs/design/core-fusion.md#composition-acceptance) requires the selected mechanisms to work together, with shared ownership and evidence for recommended combinations.
 
-[Contribution guide](CONTRIBUTING.md) · [Security reporting](SECURITY.md) · [AGPL-3.0-only](LICENSE) · [Discussions](https://github.com/OctoKon/Splyce/discussions)
+---
+
+<div align="center">
+  <a href="CONTRIBUTING.md">Contribution guide</a> · 
+  <a href="SECURITY.md">Security reporting</a> · 
+  <a href="LICENSE">AGPL-3.0-only</a> · 
+  <a href="https://github.com/OctoKon/Splyce/discussions">Discussions</a>
+</div>
