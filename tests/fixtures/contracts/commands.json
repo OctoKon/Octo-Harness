@@ -1,0 +1,42 @@
+[
+  {
+    "op": "session.start",
+    "payload": {
+      "workspaceId": "w-demo",
+      "profileId": "p1",
+      "piSessionId": "s1",
+      "initialPrompt": "Inspect fixture"
+    }
+  },
+  {
+    "op": "session.prompt",
+    "payload": { "text": "Explain fixture", "contextArtifactIds": ["e1"] }
+  },
+  {
+    "op": "session.steer",
+    "payload": { "actionId": "a1", "instruction": "Inspect evidence" }
+  },
+  { "op": "session.cancel", "payload": { "reason": "User stopped turn" } },
+  {
+    "op": "session.fork",
+    "payload": { "sourceSessionId": "s1", "forkFromEntryId": "entry1" }
+  },
+  {
+    "op": "approval.respond",
+    "payload": {
+      "approvalRequestId": "approval1",
+      "runId": "r1",
+      "actionId": "a1",
+      "decision": "approve"
+    }
+  },
+  { "op": "workspace.select", "payload": { "selectionRef": "selection1" } },
+  { "op": "config.set_profile", "payload": { "profileId": "p1" } },
+  {
+    "op": "lease.acquire",
+    "payload": { "workspaceId": "w-demo", "reason": "User requested edit" }
+  },
+  { "op": "lease.release", "payload": { "leaseRef": "lease1" } },
+  { "op": "engine.restart", "payload": {} },
+  { "op": "session.subscribe", "payload": { "afterSeq": 12 } }
+]

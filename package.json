@@ -1,6 +1,14 @@
 {
+  "name": "splyce-workspace",
+  "version": "0.0.0",
   "private": true,
+  "workspaces": [
+    "packages/splyce-pi"
+  ],
   "scripts": {
+    "build:contracts": "tsc -p packages/splyce-pi/tsconfig.json",
+    "test:contracts": "node scripts/run-contracts.mjs",
+    "test:release-gate": "npm run test:contracts",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "lint:markdown": "markdownlint-cli2 \"**/*.md\" \".skills/**/*.md\" \".github/**/*.md\" \"#node_modules\"",
@@ -9,7 +17,8 @@
   },
   "devDependencies": {
     "markdownlint-cli2": "0.24.0",
-    "prettier": "3.9.10"
+    "prettier": "3.9.10",
+    "typescript": "5.9.3"
   },
   "overrides": {
     "katex": "0.18.11"

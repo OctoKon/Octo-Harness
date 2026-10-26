@@ -1,0 +1,89 @@
+[
+  { "kind": "turn.started", "payload": { "runId": "r1", "turnId": "turn1" } },
+  {
+    "kind": "turn.stream_delta",
+    "durable": false,
+    "payload": { "runId": "r1", "delta": "hello" }
+  },
+  {
+    "kind": "turn.thought_delta",
+    "durable": false,
+    "payload": { "runId": "r1", "delta": "thinking" }
+  },
+  {
+    "kind": "turn.tool_intent",
+    "payload": {
+      "runId": "r1",
+      "actionId": "a1",
+      "capabilityId": "cap1",
+      "target": "target1",
+      "argsSummary": "edit admitted target"
+    }
+  },
+  {
+    "kind": "turn.tool_outcome",
+    "payload": {
+      "runId": "r1",
+      "actionId": "a1",
+      "status": "success",
+      "outcomeRef": "outcome1"
+    }
+  },
+  {
+    "kind": "turn.completed",
+    "payload": {
+      "runId": "r1",
+      "candidateSnapshotId": "snapshot1",
+      "finalRevision": "B"
+    }
+  },
+  {
+    "kind": "turn.failed",
+    "payload": {
+      "runId": "r1",
+      "error": {
+        "code": "POLICY_DENIED",
+        "message": "Denied",
+        "correlationId": "request1",
+        "retryable": false
+      }
+    }
+  },
+  { "kind": "turn.canceled", "payload": { "runId": "r1", "cleanedUp": true } },
+  {
+    "kind": "approval.requested",
+    "payload": {
+      "approvalRequestId": "approval1",
+      "runId": "r1",
+      "actionId": "a1",
+      "capabilityId": "cap1",
+      "targetScope": "w-demo",
+      "normalizedTarget": "target1",
+      "riskRationale": "Workspace edit",
+      "timeoutMs": 30000
+    }
+  },
+  {
+    "kind": "session.tree_updated",
+    "payload": {
+      "sessionId": "s1",
+      "branchAnchorId": "b1",
+      "leaves": ["entry1"]
+    }
+  },
+  {
+    "kind": "engine.status",
+    "payload": { "state": "ready", "activeWorkers": 0 }
+  },
+  { "kind": "stream.resync", "payload": { "fromSeq": 10 } },
+  {
+    "kind": "run.reconnect_snapshot",
+    "payload": {
+      "runId": "r1",
+      "lastDurableSeq": 12,
+      "turnId": "turn1",
+      "activeActionIds": ["a1"],
+      "state": "waiting_approval"
+    }
+  }
+]
