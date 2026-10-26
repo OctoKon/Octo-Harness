@@ -10,7 +10,10 @@ const ipc = vi.hoisted(() => ({
 vi.mock("@tauri-apps/api/core", () => ({ invoke: ipc.invoke }));
 
 import App from "./App.svelte";
-import { dispatchEngineEvent } from "./stores/engine";
+import {
+  dispatchEngineEvent,
+  handshake as engineHandshake,
+} from "./stores/engine";
 import { FOUNDATION, PI_REVISION } from "@splyce/pi/contracts";
 import { clearSession, selectedSession } from "./stores/session-selection";
 
@@ -24,7 +27,7 @@ const subscribes = () =>
   ipc.invoke.mock.calls.filter(([c]) => c === "subscribe");
 
 let app: object | undefined;
-const handshake = {
+const readyHandshake = {
   protocolVersion: 1,
   schemaVersion: 1,
   engineProtocolVersion: 1,
@@ -39,7 +42,7 @@ beforeEach(() => {
   ipc.invoke.mockImplementation(async (cmd: string) => {
     if (cmd !== "handshake") return undefined;
     if (!ipc.ready) throw new Error("no native backend");
-    return handshake;
+    return readyHandshake;
   });
   window.innerWidth = 1400;
   ipc.invoke.mockClear();
@@ -122,5 +125,49 @@ describe("App wiring", () => {
       /No session is selected/,
     );
     expect(button("Send").disabled).toBe(true);
+  });
+
+  it("keeps Send disabled with a draft and makes no send IPC", async () => {
+    ipc.ready = true;
+    await boot();
+    dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
+    await settle();
+    q("[role=treeitem]")!.click();
+    await settle();
+    const ta = q("textarea") as HTMLTextAreaElement;
+    ta.value = "hello";
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        bubbles: true,
+      }),
+    );
+    await settle();
+    expect(button("Send").disabled).toBe(true);
+    expect(q("#composer-status")?.textContent).toBe(
+      "Sending is not available yet",
+    );
+    expect(ipc.invoke.mock.calls.filter(([c]) => c === "send")).toHaveLength(0);
+  });
+
+  it("clears the selection when a refreshed snapshot lacks the session", async () => {
+    ipc.ready = true;
+    await boot();
+    dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
+    await settle();
+    q("[role=treeitem]")!.click();
+    await settle();
+    expect(get(selectedSession)?.sessionId).toBe("ses_1");
+
+    ipc.ready = false;
+    await engineHandshake().catch(() => {});
+    await settle();
+    ipc.ready = true;
+    button("Retry").click();
+    await settle();
+    expect(q("[data-testid=lost-selection]")).not.toBeNull();
+    expect(get(selectedSession)).toBeNull();
   });
 });

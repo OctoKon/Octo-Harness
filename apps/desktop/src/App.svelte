@@ -130,13 +130,13 @@
       {status}
     </span>
   </div>
-  <div role="group" aria-label="Views">
+  <nav aria-label="Views">
     {#each VIEWS as [id, label] (id)}
       <button type="button" aria-current={view === id ? "page" : undefined} onclick={() => (view = id)}>
         {label}
       </button>
     {/each}
-  </div>
+  </nav>
   <SessionTree
     {nav}
     {onSelect}
@@ -192,11 +192,11 @@
 {/snippet}
 
 {#snippet composer()}
-  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so sending stays disabled. -->
+  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so sending is disabled. -->
   <Composer
     connection={status}
     sessionId={$selectedSession?.sessionId ?? null}
-    stale={true}
+    unavailable="Sending is not available yet"
     send={async () => {
       throw new Error("Sending is unavailable: session revisions are not wired.");
     }}
