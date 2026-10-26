@@ -1,0 +1,153 @@
+// TD-15 / C1_reconnect_cursor groundwork — receipt ordering, exclusive
+// afterSeq replay and exactly-one resync, all against the TD-09 store.
+// Frozen contract types only (no unfrozen schema shims, per itachi).
+
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import {
+  Receipts,
+  ReceiptsError,
+} from "../../packages/splyce-pi/dist/receipts.js";
+import { Store } from "../../packages/splyce-pi/dist/store.js";
+import { CONTRACT_VERSION } from "@splyce/pi/contracts";
+
+const fixtures = JSON.parse(
+  readFileSync(
+    new URL("../fixtures/contracts/records.json", import.meta.url),
+    "utf8",
+  ),
+) as Record<string, Record<string, unknown>>;
+
+const caller = {
+  sessionId: "s1",
+  configRevision: "cfg1",
+  profileRevision: "profile1",
+  policyRevision: "policy1",
+  resolveReference: () => true,
+};
+
+let counter = 0;
+const record = (recordId: string) => {
+  counter += 1;
+  const base = structuredClone(fixtures.run) as Record<string, unknown>;
+  base.recordId = recordId;
+  base.scopeId = "w-demo";
+  return base;
+};
+
+const tmpRoot = mkdtempSync(join(tmpdir(), "td15-receipts-"));
+let tmpCounter = 0;
+const freshDir = () => {
+  tmpCounter += 1;
+  const dir = join(tmpRoot, `t${String(tmpCounter)}`);
+  mkdirSync(dir);
+  return dir;
+};
+
+const openReceipts = (dir: string): { store: Store; receipts: Receipts } => {
+  const store = Store.open(join(dir, "store.db"));
+  return { store, receipts: new Receipts(store) };
+};
+
+test("receipt ordering: one atomic chain, failed pre-effect write prevents dispatch", () => {
+  const dir = freshDir();
+  const { store, receipts } = openReceipts(dir);
+  const one = record("rec-r1");
+  const two = record("rec-r2");
+  const acks = receipts.commitStages(
+    [
+      { kind: "run", record: one },
+      { kind: "run", record: two },
+    ],
+    caller,
+  );
+  // Ordered, ascending, and each ack is durable on reopen.
+  assert.ok(acks.seqs[0]! < acks.seqs[1]!);
+  const reopeStore = Store.open(join(dir, "store.db"));
+  assert.equal(reopeStore.get("rec-r1").seq, acks.seqs[0]);
+  assert.equal(reopeStore.get("rec-r2").seq, acks.seqs[1]);
+  reopeStore.close();
+
+  // A failing member rolls the whole chain back and acknowledges nothing.
+  const before = receipts.durableCursor("w-demo");
+  assert.throws(() =>
+    receipts.commitStages(
+      [
+        { kind: "run", record: record("rec-r3") },
+        { kind: "run", record: "not-a-record" },
+      ],
+      caller,
+    ),
+  );
+  assert.equal(receipts.durableCursor("w-demo"), before);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("afterSeq replay is exclusive and cursor-bounded", () => {
+  const dir = freshDir();
+  const { store, receipts } = openReceipts(dir);
+  const one = record("rec-p1");
+  const two = record("rec-p2");
+  receipts.commitStages(
+    [
+      { kind: "run", record: one },
+      { kind: "run", record: two },
+    ],
+    caller,
+  );
+  const cursor = receipts.durableCursor("w-demo");
+
+  // Exclusive: replay at 0 delivers everything; at the cursor delivers nothing.
+  const all = receipts.replay("w-demo", 0, caller);
+  assert.deepEqual(
+    all.records.map((r) => r.record.recordId),
+    [one.recordId, two.recordId],
+  );
+  const none = receipts.replay("w-demo", cursor, caller);
+  assert.equal(none.records.length, 0);
+
+  // A cursor beyond the durable cursor is rejected.
+  assert.throws(
+    () => receipts.replay("w-demo", cursor + 1, caller),
+    (error: unknown) =>
+      error instanceof ReceiptsError &&
+      error.code === "CONTRACT_INVALID_CURSOR",
+  );
+
+  // Delivered records carry the frozen contract version.
+  assert.equal(
+    (all.records[0]?.record as Record<string, unknown>).schemaVersion,
+    CONTRACT_VERSION,
+  );
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("exactly one resync per cursor advance", () => {
+  const dir = freshDir();
+  const { store, receipts } = openReceipts(dir);
+  receipts.commitStages([{ kind: "run", record: record("rec-s1") }], caller);
+  const cursor = receipts.durableCursor("w-demo");
+
+  const resync = receipts.requestResync("w-demo");
+  assert.equal(resync.kind, "stream.resync");
+  assert.equal(resync.fromSeq, cursor);
+
+  // No new durable data: a second resync is refused.
+  assert.throws(
+    () => receipts.requestResync("w-demo"),
+    (error: unknown) =>
+      error instanceof ReceiptsError && error.code === "RESYNC_NOT_PENDING",
+  );
+
+  // Durable progress re-arms the resync with the advanced cursor.
+  receipts.commitStages([{ kind: "run", record: record("rec-s2") }], caller);
+  const resync2 = receipts.requestResync("w-demo");
+  assert.equal(resync2.fromSeq, cursor + 1);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
