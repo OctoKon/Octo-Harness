@@ -198,6 +198,8 @@ test("TD-01: record states, references and numeric bounds fail closed", () => {
     ["memoryObservation", { claimArtifactId: "missing" }],
     ["profileSnapshot", { limitsArtifactId: "missing" }],
     ["configurationTransition", { changedValuesArtifactId: "missing" }],
+    ["branchAnchor", { piSessionId: "missing" }],
+    ["branchAnchor", { parentAnchorId: "missing" }],
     ["action", { targetScopeId: "other-workspace" }],
     ["providerRole", { locality: "hosted", qualificationRef: null }],
     ["providerRole", { limits: { tokens: Infinity } }],
@@ -357,6 +359,39 @@ for (const fields of fixture("events")) {
     );
   });
 }
+
+test("TD-10: branch anchors hold opaque Pi identities, never raw paths", () => {
+  const anchor = records.branchAnchor;
+  assert.deepEqual(
+    validateRecord(
+      "branchAnchor",
+      {
+        ...anchor,
+        parentAnchorId: null,
+        forkPointEntryId: null,
+        activeLeafEntryId: null,
+        firstChildEntryId: "entry2",
+      },
+      context,
+    ).firstChildEntryId,
+    "entry2",
+  );
+  for (const field of [
+    "branchAnchorId",
+    "piSessionId",
+    "forkPointEntryId",
+    "firstChildEntryId",
+    "activeLeafEntryId",
+  ])
+    for (const value of ["C:\\pi\\s1.jsonl", "/home/pi/s1.jsonl", " "])
+      rejects(() =>
+        validateRecord("branchAnchor", { ...anchor, [field]: value }, context),
+      );
+  for (const field of ["branchAnchorId", "piSessionId"])
+    rejects(() =>
+      validateRecord("branchAnchor", { ...anchor, [field]: null }, context),
+    );
+});
 
 test("TD-01: historical records remain readable after configuration/profile changes", () => {
   const advanced = {

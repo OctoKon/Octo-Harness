@@ -10,6 +10,10 @@
     "./contracts": {
       "types": "./dist/contracts.d.ts",
       "import": "./dist/contracts.js"
+    },
+    "./session-map": {
+      "types": "./dist/session-map.d.ts",
+      "import": "./dist/session-map.js"
     }
   },
   "files": [
