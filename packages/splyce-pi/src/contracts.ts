@@ -1,5 +1,15 @@
 export const CONTRACT_VERSION = 1 as const;
 export const PROTOCOL_VERSION = 1 as const;
+// Proposed bounded defaults; performance qualification remains outstanding.
+export const TRANSPORT_LIMITS = Object.freeze({
+  maxInlineBytes: 65536,
+  maxEncodedFrameBytes: 262144, // Includes the four-byte big-endian length header.
+  pendingQueueMaxFrames: 1024,
+  pendingQueueMaxBytes: 8388608,
+  transientCoalesceWindowMs: 16,
+  rendererMaxFrames: 256,
+  rendererMaxBytes: 4194304,
+} as const);
 export const PI_REVISION = "d5b3de22d0e24a3e9c38a9410d3329b099717283" as const;
 export const FOUNDATION = Object.freeze({
   entryMode: "sdk-host",
@@ -678,6 +688,14 @@ export interface Handshake {
     store: boolean;
     receipts: boolean;
   };
+}
+
+export interface NativeLifecycleEvent {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  kind: "engine_exited";
+  expected: boolean;
+  exitCode: number | null;
+  cleanupComplete: boolean;
 }
 
 function requireThat(
