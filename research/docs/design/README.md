@@ -10,7 +10,7 @@
 | [Client contract](client-contract.md)                  | TD-02: Typed window/screen/command/event/error/approval schemas, tokens, shortcuts     |
 | [Fixture contract](fixture-contract.md)                | TD-06: Desktop UI/IPC fixture formats, mock runner interfaces and named test manifests |
 | [Shared contract v1](shared-contract-v1.md)            | TD-01 executable schema, foundation/extension decisions and bootstrap handoff          |
-| [Provider matrix input](provider-matrix-proposal.json) | TD-04 supporting API inventory and admission cases for shared-contract reconciliation  |
+| [Provider matrix input](provider-matrix-proposal.json) | TD-04 source-verified API inventory and admission cases; runtime qualification pending |
 | [Setup flow input](setup-flow.md)                      | TD-05 setup flow: states, operations, frozen-contract gaps, recovery                   |
 | [Core fusion](core-fusion.md)                          | Pi-derived core, composition ownership, interaction coverage and contribution gates    |
 | [Delivery plan](team-delivery-plan.md)                 | Nine-role task/dependency and domain-review handoff                                    |
