@@ -515,3 +515,61 @@ test("resubscribe continues the session event cursor without gaps or foreign eve
   assert.throws(() => map.follow(k1, b.seq + 100), code("INVALID_CURSOR"));
   store.close();
 });
+
+test("follow re-resolves grants at replay time: a revoked reference fails closed with no history and no snapshot", () => {
+  const { store, pi } = setup();
+  let allow = true;
+  const map = new SessionMap(store, {
+    ...context,
+    resolveReference: () => allow,
+  });
+  map.bind(k1, pi);
+  const id = pi.getSessionId();
+  map.anchorRun(id, run("run-1"));
+  const [d1, delta] = fixture.engineEvents;
+  const one = map.publish(id, d1).event;
+  map.publish(id, delta);
+  allow = false;
+  assert.throws(() => map.follow(k1, 0), code("EVENT_SOURCE"));
+  assert.throws(() => map.follow(k1, 0), code("EVENT_SOURCE"));
+  // Nothing was committed on the denied path: no snapshot seq was consumed.
+  assert.equal(store.eventCursor("w-demo", "s1"), 1);
+  allow = true;
+  const [snapshot, ...rest] = map.follow(k1, 0).replay;
+  assert.equal(snapshot!.kind, "run.reconnect_snapshot");
+  assert.equal(snapshot!.seq, 3);
+  assert.deepEqual(rest, [one]);
+  store.close();
+});
+
+test("gap replay order drives the real renderer reducer to the complete state", async () => {
+  const { createTurnStreamTransport } =
+    await import("../../apps/desktop/src/stores/turns.ts");
+  const { store, pi, map } = setup();
+  map.bind(k1, pi);
+  const id = pi.getSessionId();
+  map.anchorRun(id, run("run-1"));
+  const [d1, delta] = fixture.engineEvents;
+  map.publish(id, d1);
+  map.publish(id, delta);
+  map.publish(id, {
+    ...durableEvent("evt-3"),
+    payload: { runId: "run-3", turnId: "turn-3" },
+  });
+  const { replay } = map.follow(k1, 0);
+  const transport = createTurnStreamTransport({
+    sessionId: "s1",
+    scopeId: "w-demo",
+    schedule: () => {},
+  });
+  for (const event of replay) transport.enqueue(event);
+  const state = transport.flush();
+  assert.equal(state.needsResync, false);
+  assert.equal(state.duplicateCount, 0);
+  assert.equal(state.protocolErrors, 0);
+  assert.equal(state.lastDurableSeq, 3);
+  assert.deepEqual(Object.keys(state.runs).sort(), ["run-1", "run-3"]);
+  assert.equal(state.runs["run-1"]!.turnId, "turn-1");
+  assert.equal(state.runs["run-3"]!.turnId, "turn-3");
+  store.close();
+});

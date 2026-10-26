@@ -35,18 +35,24 @@
 // DesktopBridge); this module only binds, commits and routes.
 
 import {
+  CONTRACT_VERSION,
   type ContractContext,
+  PROTOCOL_VERSION,
   type RecordBodies,
   type RecordMetadata,
   type SplyceEvent,
   type SplyceEventDraft,
-  CONTRACT_VERSION,
-  PROTOCOL_VERSION,
   TRANSPORT_LIMITS,
 } from "./contracts.js";
 import { DesktopBridge, type Frame } from "./desktop-bridge.js";
 import { Receipts } from "./receipts.js";
-import type { AppendInput, Appended, CallerContext, Store } from "./store.js";
+import {
+  type Appended,
+  type AppendInput,
+  type CallerContext,
+  type Store,
+  StoreError,
+} from "./store.js";
 
 export class SessionMapError extends Error {
   readonly code: "SESSION_UNKNOWN" | "SESSION_FOREIGN" | "SNAPSHOT_UNANCHORED";
@@ -246,7 +252,9 @@ export class SessionMap {
     if (bound === undefined)
       throw new SessionMapError("SESSION_UNKNOWN", "native session not bound");
     const { scopeId, sessionId } = bound.key;
-    const events = this.store.replayEvents(scopeId, sessionId, afterSeq);
+    const events = this.granted(
+      this.store.replayEvents(scopeId, sessionId, afterSeq),
+    );
     const highest = Math.max(
       this.committed.get(keyOf(key)) ?? 0,
       events.at(-1)?.seq ?? afterSeq,
@@ -254,7 +262,7 @@ export class SessionMap {
     const replay =
       events.length === highest - afterSeq
         ? events
-        : [this.reconnectSnapshot(bound), ...events];
+        : this.granted([this.reconnectSnapshot(bound), ...events]);
     let channel = this.channels.get(keyOf(key));
     if (channel === undefined) {
       const receipts = new Receipts(this.store);
@@ -351,6 +359,29 @@ export class SessionMap {
       },
       [],
     );
+  }
+
+  /**
+   * Re-resolves every envelope reference against the caller's current grants
+   * at replay time; one denial fails the whole replay closed (no history).
+   */
+  private granted(events: SplyceEvent[]): SplyceEvent[] {
+    const resolve = this.context.resolveReference;
+    if (resolve === undefined) return events;
+    for (const event of events)
+      for (const id of [
+        event.recordId,
+        ...event.sourceIds,
+        ...(event.payloadArtifactId === undefined
+          ? []
+          : [event.payloadArtifactId]),
+      ])
+        if (!resolve(id, event.scopeId))
+          throw new StoreError(
+            "EVENT_SOURCE",
+            "event source record is unresolved or denied",
+          );
+    return events;
   }
 
   private bound(piSessionId: string): Bound {
