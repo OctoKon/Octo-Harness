@@ -1,0 +1,395 @@
+{
+  "status": "supporting draft; TD-04 supporting input reconciled by TD-01; adapter qualification pending",
+  "task": "TD-04",
+  "primaryOwner": "dnarsh",
+  "taskComplete": false,
+  "schemaFrozen": false,
+  "runtimeSamples": 0,
+  "observedAt": "2026-10-26",
+  "scope": "Protocol inventory and proposed deterministic cases; no installed adapter, live capability, quality, billing or release-support claim.",
+  "sources": {
+    "piRevision": "d5b3de22d0e24a3e9c38a9410d3329b099717283",
+    "types": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/ai/src/types.ts#L64-L90",
+    "codemode": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/codemode.md#models",
+    "adapterUrlPrefix": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/ai/src/api/",
+    "apiContract": "research/docs/capabilities/provider-api-conformance.md",
+    "profileContract": "research/docs/design/providers-profiles-and-sessions.md",
+    "nativeBoundaryContract": "research/docs/design/core-fusion.md",
+    "verification": "KnownApi, KnownClassifierApi, KnownImageApi and codemode model docs read via GitHub contents API at the pin; chat wire observations reused from the existing API contract. No fetched code executed."
+  },
+  "adoption": {
+    "consumer": "TD-01 tests/fixtures/contracts/",
+    "proposalOnly": "Field names and examples are inputs reconciled by the backend lead, not a second runtime schema or generated expected tests.",
+    "dispatchBoundary": "Actual Pi model-runtime and each native SDK transport, including codemode models; extension callbacks or one fetch wrapper alone cannot establish mediation.",
+    "requiredOrder": [
+      "Resolve immutable provider/binding/operation/profile revisions and current authority",
+      "Validate installed adapter, operation and modality, identity, credentials, current role/data-class and every actual route",
+      "Commit correlated decision/request intent before credential helper spawn or network effect; helper execution has its own effect lifecycle",
+      "Send only admitted request; persist observed outcome, usage and cancellation state with original attempt identity",
+      "Fence late results against current revisions before publishing or persisting"
+    ]
+  },
+  "cellIdentity": [
+    "providerId",
+    "apiId",
+    "wireProtocolAndVersion",
+    "adapterRevision",
+    "modelOrDeploymentAndRevision",
+    "operation",
+    "inputOutputModalities",
+    "role",
+    "profileRevision",
+    "bindingRevision",
+    "endpointAndRouteIdentity",
+    "nonSecretCredentialReference",
+    "accountProjectRegionWhereApplicable",
+    "installedPlatformAndSelectedModuleClosure"
+  ],
+  "admission": {
+    "base": "No automatic provider login, install, enablement, probe or inference; setup may finish without a model. Every cell starts unavailable until explicitly selected and qualified.",
+    "localOnly": "No cloud inference or auth/discovery/catalog/usage fallback. Endpoint labels and loopback alone do not prove local execution; verify actual route/executor locality, including gateway hops.",
+    "cloud": "Per-role endpoint, data-class, credential-scope, hosted training-use and retention qualification is required before construction/send. Generation permission does not authorize classification, images, summary, embeddings or reranking.",
+    "transport": "Authenticated encrypted transport with certificate and hostname validation on hosted hops and data-receiving proxies/redirects. Plain HTTP only for an explicitly verified local-loopback exception. Route/auth/identity changes reopen admission.",
+    "capabilities": "Catalog membership, credentials, provider name, compatible label or shared API do not prove operation support. Validate tools/schema, context/output, modality, thinking/history and cancellation per selected cell.",
+    "customModels": "Release manifest is not a model allowlist. Explicit compatible custom local and hosted identities may pass mandatory operation/locality/authority/data-policy/lifecycle probes as experimental and unmeasured; invalid or unknown cells remain unavailable.",
+    "fallback": "No implicit provider/model/transport fallback, silent installation or widened grants. An optional explicitly configured fallback requires its own admission and visible identity.",
+    "remoteFeatures": "File uploads, server-side tools, persistent conversations and remote object retrieval/deletion stay unavailable absent separately selected capability and lifecycle evidence.",
+    "credentials": "Credential facility or environment only; no values in fixtures, prompts, receipts, logs or exports. Discovery/import never executes command-valued helpers.",
+    "usage": "Keep provider-reported input/output/cache/reasoning definitions, attempt identity and cumulative/delta semantics. Missing usage is unknown; estimates and catalog prices are separate from measured billing.",
+    "cancel": "Record local stop, transport signal and provider acknowledgement separately. Closed socket does not prove remote stop or zero charge. No late publication under revoked revisions; uncertain local effects never replay blindly.",
+    "errors": [
+      "config_or_credential",
+      "policy_denied",
+      "unsupported_operation_or_model",
+      "context_overflow",
+      "invalid_output_or_schema",
+      "rate_limit_or_quota",
+      "transport_timeout",
+      "stream_interrupted",
+      "upstream_error",
+      "local_resource_failure",
+      "canceled"
+    ]
+  },
+  "chatApis": [
+    {
+      "apiId": "openai-completions",
+      "sourceFile": "openai-completions.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission",
+      "wire": "OpenAI SDK chat.completions.create; streamed choice/tool deltas; Chat Completions, not legacy text /completions",
+      "requiredCase": "API_chat_tool_roundtrip",
+      "negativeFixture": "Interleave two tool-index argument fragments; incomplete or mismatched arguments never dispatch a tool."
+    },
+    {
+      "apiId": "mistral-conversations",
+      "sourceFile": "mistral-conversations.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission",
+      "wire": "Pinned implementation POSTs v1/chat/completions and parses SSE choices; enum label does not establish Conversations wire support",
+      "requiredCase": "API_mistral_actual_wire",
+      "negativeFixture": "A Conversations-shaped response instead of expected choice/terminal events fails explicitly; no alternate transport."
+    },
+    {
+      "apiId": "openai-responses",
+      "sourceFile": "openai-responses.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission",
+      "wire": "Responses SDK path; typed SSE item/text/argument/terminal events; WebSocket capability is not inherited from Codex",
+      "requiredCase": "API_responses_sse_terminal",
+      "negativeFixture": "EOF after text without a completed terminal, or failed/incomplete terminal, cannot persist a completed result."
+    },
+    {
+      "apiId": "azure-openai-responses",
+      "sourceFile": "azure-openai-responses.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission",
+      "wire": "Distinct Azure Responses endpoint/version configuration; deployment identity is not a public model ID",
+      "requiredCase": "API_azure_deployment",
+      "negativeFixture": "Wrong resource/deployment/version or credential identity rejects without substituting public OpenAI."
+    },
+    {
+      "apiId": "openai-codex-responses",
+      "sourceFile": "openai-codex-responses.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission; every selected SSE/WebSocket route and transition separately admitted",
+      "wire": "Account-specific Codex Responses with auto/SSE/WebSocket paths; not ordinary API-key Responses",
+      "requiredCase": "API_responses_ws_reconnect",
+      "negativeFixture": "Continuation references unavailable state after reconnect; fail or explicitly re-admit safe history replay without duplicating completed local effects."
+    },
+    {
+      "apiId": "anthropic-messages",
+      "sourceFile": "anthropic-messages.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission",
+      "wire": "Messages SSE indexed content blocks, input_json_delta, message changes and terminal stop",
+      "requiredCase": "API_messages_blocks_usage",
+      "negativeFixture": "Repeated cumulative usage is not added twice; partial JSON and terminal provider error cannot become a completed tool call."
+    },
+    {
+      "apiId": "bedrock-converse-stream",
+      "sourceFile": "bedrock-converse-stream.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission; bind region/profile/model streaming support",
+      "wire": "AWS ConverseStreamCommand event stream, not generic SSE",
+      "requiredCase": "API_bedrock_event_stream",
+      "negativeFixture": "Wrong region/profile, non-streaming model or streaming exception cannot become generic SSE success."
+    },
+    {
+      "apiId": "google-generative-ai",
+      "sourceFile": "google-generative-ai.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission at actual SDK boundary; pinned adapter rejects custom non-global fetch",
+      "wire": "generateContentStream parts/functions and applicable thought signatures; not inferred Interactions support",
+      "requiredCase": "API_gemini_signature_history",
+      "negativeFixture": "Blocked/empty candidate or invalid function/signature history fails; lack of a universal fetch hook never authorizes unmediated send."
+    },
+    {
+      "apiId": "google-vertex",
+      "sourceFile": "google-vertex.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission at actual SDK boundary including auth refresh; bind project/location; custom non-global fetch rejected at pin",
+      "wire": "Vertex generateContentStream; Vertex key or ambient identity with project/location; distinct from Gemini Developer API",
+      "requiredCase": "API_vertex_identity",
+      "negativeFixture": "Wrong project/location or function-response order fails; no alternate project/provider or signature fabrication."
+    },
+    {
+      "apiId": "pi-messages",
+      "sourceFile": "pi-messages.ts",
+      "operation": "chat_generation",
+      "role": "generation or independently admitted text processing",
+      "egress": "admission; full serialized context/options are part of permitted data inventory",
+      "wire": "POST /messages; serialized assistant-event SSE with done/error terminal; explicit gateway endpoint, not an implicit state service",
+      "requiredCase": "API_pi_native_events",
+      "negativeFixture": "Out-of-order or missing terminal assistant event fails visibly without fallback or unapproved persistence."
+    }
+  ],
+  "codemodeApis": [
+    {
+      "apiId": "typesafe-system-one",
+      "sourceType": "KnownClassifierApi",
+      "sourceFile": "typesafe-system-one.ts",
+      "operation": "classify",
+      "role": "typed_decision",
+      "baseDisposition": "denied",
+      "egressRequirement": "No models.classify dispatch in base. Optional enablement needs independent role/data/endpoint and operation qualification, including state/questions and any supported images."
+    },
+    {
+      "apiId": "cloudflare-workers-ai-system-one",
+      "sourceType": "KnownClassifierApi",
+      "sourceFile": "cloudflare-workers-ai-system-one.ts",
+      "operation": "classify",
+      "role": "typed_decision",
+      "baseDisposition": "denied",
+      "egressRequirement": "No models.classify dispatch in base. Optional enablement independently qualifies actual hosted/binding route and role/data/account identity; a worker binding is not proof of local execution."
+    },
+    {
+      "apiId": "llama-cpp-classify",
+      "sourceType": "KnownClassifierApi",
+      "sourceFile": "llama-cpp-classify.ts",
+      "operation": "classify",
+      "role": "typed_decision",
+      "baseDisposition": "denied",
+      "egressRequirement": "No models.classify dispatch in base. Optional enablement verifies selected runtime/route locality and operation; local-looking API name never supplies a grant."
+    },
+    {
+      "apiId": "openai-decisions",
+      "sourceType": "KnownClassifierApi",
+      "sourceFile": "openai-decisions.ts",
+      "operation": "classify",
+      "role": "typed_decision",
+      "baseDisposition": "denied",
+      "egressRequirement": "No models.classify dispatch in base. Optional enablement independently admits classifier state/questions and supported images; chat credentials or generation permission are insufficient."
+    },
+    {
+      "apiId": "openrouter-images",
+      "sourceType": "KnownImageApi",
+      "sourceFile": "openrouter-images.ts",
+      "operation": "generateImages",
+      "role": "image_generation_or_edit",
+      "baseDisposition": "denied",
+      "egressRequirement": "No models.generateImages dispatch in base. Optional enablement independently admits prompt/reference images, actual route, output/temp-file retention and model modality; generation permission is insufficient."
+    }
+  ],
+  "codemodeContract": {
+    "sourceObserved": "models lists chat/image/classifier entries; scripts cannot run chat models. classify/generateImages resolve provider+id with session credentials, return stop/error/aborted rather than throwing on provider errors, and add usage to codemode tool/session cost.",
+    "requiredValidation": "Resolve provider+id against current immutable selected binding; model-supplied catalog fields and working credentials grant no authority. Inspect stopReason/errorMessage and validate typed answers or output blocks before success.",
+    "persistence": "store() session writes and image()/temporary outputs require their own native admission, redaction and base-retention inventory; classifier/image denial must not be bypassed through tools or nested codemode."
+  },
+  "otherOperations": [
+    {
+      "operation": "legacy_text_completions",
+      "baseDisposition": "unsupported; never alias to openai-completions"
+    },
+    {
+      "operation": "ollama_native_generate_ndjson",
+      "baseDisposition": "unsupported until independently installed/qualified; OpenAI-compatible chat does not establish /api/generate"
+    },
+    {
+      "operation": "embedding",
+      "baseDisposition": "optional and denied in base; Ollama /api/embed and TEI /embed are research candidates, not KnownApi IDs; qualify count/dimension/finiteness/model/truncation and index compatibility"
+    },
+    {
+      "operation": "rerank",
+      "baseDisposition": "optional and denied in base; TEI /rerank is a research candidate, not KnownApi; qualify candidate identities, scoring and failure semantics"
+    },
+    {
+      "operation": "vision_audio_forecast_draft_or_unrecognized_api",
+      "baseDisposition": "No standalone capability inferred from chat, classifier or image labels; unknown/unregistered operation or arbitrary string API fails closed until explicitly inventoried and qualified"
+    }
+  ],
+  "fixtureCases": [
+    {
+      "case": "API_chat_tool_roundtrip",
+      "input": {
+        "apiId": "openai-completions",
+        "fragments": ["{\"value\":", "7}"],
+        "toolId": "call_fixture_1",
+        "terminal": "tool_calls",
+        "currentGrant": true
+      },
+      "expect": "After complete schema validation and durable admission, one tool dispatch with value 7 and original ID; exactly one correlated result. No dispatch before completion."
+    },
+    {
+      "case": "API_usage_unknown",
+      "input": {
+        "visibleText": "partial",
+        "terminal": null,
+        "reportedUsage": null
+      },
+      "expect": {
+        "state": "interrupted",
+        "usage": "unknown",
+        "measuredBilling": "unknown",
+        "completed": false
+      }
+    },
+    {
+      "case": "API_messages_blocks_usage",
+      "input": {
+        "semantics": "cumulative",
+        "attempt": "fixture_attempt_1",
+        "inputCounts": [10, 10],
+        "outputCounts": [2, 5]
+      },
+      "expect": { "input": 10, "output": 5, "notSummedOutput": 7 }
+    },
+    {
+      "case": "API_retry_cancel_uncertain",
+      "input": {
+        "localStop": true,
+        "transportClosed": true,
+        "providerAcknowledged": false,
+        "toolEffect": "uncertain",
+        "lateResult": true
+      },
+      "expect": "Local canceled state; remote acknowledgement and final billing unknown; no late publication, completed result or blind tool/turn replay. Count all SDK/host attempts explicitly."
+    },
+    {
+      "case": "API_unsupported_operation",
+      "input": {
+        "apiId": "openai-completions",
+        "operation": "legacy_text_completions"
+      },
+      "expect": {
+        "error": "unsupported_operation_or_model",
+        "networkSends": 0,
+        "fallbacks": 0
+      }
+    },
+    {
+      "case": "API_error_not_success",
+      "input": {
+        "visibleText": "partial",
+        "terminal": "failed",
+        "providerError": "upstream_error"
+      },
+      "expect": "Preserve partial/failed state and redacted diagnostics, original request/attempt identity and observed usage; no completed persistence or blind retry."
+    },
+    {
+      "case": "C4_hosted_transport",
+      "input": {
+        "role": "generation",
+        "endpoint": "https://provider.invalid",
+        "routeAdmitted": true,
+        "tlsIdentityVerified": true,
+        "grantCurrent": true,
+        "intentCommitted": true
+      },
+      "expect": "One synthetic transport-sink send. Changing any prerequisite to false yields zero sends; unapproved redirect/proxy/downgrade reopens admission. Also pass an explicitly verified local-loopback route."
+    },
+    {
+      "case": "C4_cloud_role_policy",
+      "input": {
+        "profile": "mixed",
+        "generationGranted": true,
+        "typedDecisionGranted": false,
+        "imageGenerationGranted": false
+      },
+      "expect": "Admitted generation may send permitted data; all four classifier APIs and the image API remain denied in base, with zero classifier/image transport sends even when credentials exist."
+    },
+    {
+      "case": "C4_local_only_egress",
+      "input": {
+        "profile": "local_only",
+        "claimedLocal": true,
+        "verifiedRouteHasHostedHop": true
+      },
+      "expect": "Deny inference/auth/discovery/catalog/usage and optional-role cloud sends, including loopback gateways with hosted hops. No cloud fallback."
+    },
+    {
+      "case": "C4_custom_not_in_release_manifest",
+      "input": {
+        "explicitlySelected": true,
+        "inReleaseManifest": false,
+        "mandatoryProbesPass": true
+      },
+      "expect": "Admit compatible selected local and separately permitted hosted custom bindings with experimental/unmeasured labels. Unknown protocol, wrong operation or denied policy rejects; no curated model-name gate."
+    },
+    {
+      "case": "API_codemode_inventory_denial",
+      "input": {
+        "apis": [
+          "typesafe-system-one",
+          "cloudflare-workers-ai-system-one",
+          "llama-cpp-classify",
+          "openai-decisions",
+          "openrouter-images"
+        ],
+        "entrypoint": "codemode models",
+        "baseProfile": true
+      },
+      "expect": "Exercise each API individually via native dispatch: denied before credential helper/network effect, zero sends and no successful model result. Repeat with an unknown API string; remove each native guard and the independent sink assertion must fail."
+    },
+    {
+      "case": "API_codemode_result_status",
+      "input": { "stopReason": "error", "answers": {}, "usage": null },
+      "expect": "Error result is not successful classification, generated image or zero usage; aborted likewise stays canceled. A text-only classifier given images fails before send. Optional success requires separate selected-cell qualification; no base success is claimed."
+    },
+    {
+      "case": "API_profile_egress_history",
+      "input": {
+        "turnBindingRevision": 1,
+        "currentBindingRevision": 2,
+        "currentDataGrant": false,
+        "queuedRetryOrHistoryReplay": true
+      },
+      "expect": "No stale dispatch/publication or history upload; retain original stream/provider attribution. Cross-provider conversion preserves complete tool pairing and only compatible opaque signatures."
+    }
+  ],
+  "verificationLimits": [
+    "All fixture cases above are proposed inputs/assertions, not executable or passing tests; TD-01 adopts them independently and preserves named-case ownership in the delivery plan.",
+    "No provider requests, installs, model downloads, package-selectivity tests, Windows GUI E2E, guard-removal runs, CI or live billing/cancellation measurements performed; runtime n=0.",
+    "Classifier/image base denial inventories every enum at the pin; their actual optional wire contracts remain unqualified. New custom API strings require explicit inventory/admission, never inherited support.",
+    "TD-01 owns shared-schema adoption; TD-19 through TD-23/TD-50/TD-52 real-path qualification remains open. This inventory does not complete TD-04 or establish provider support."
+  ]
+}
