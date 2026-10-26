@@ -12,6 +12,7 @@
  * - Uses native @tauri-apps/api/core invoke with zero mock fallback.
  */
 
+import { Channel, invoke as invokeNative } from "@tauri-apps/api/core";
 import {
   PROTOCOL_VERSION,
   type CommandOp,
@@ -21,6 +22,14 @@ import {
   type SplyceEvent,
   validateHandshake,
 } from "@splyce/pi/contracts";
+
+interface EngineLifecycleEvent {
+  protocolVersion: number;
+  kind: "engine_exited";
+  expected: boolean;
+  exitCode: number | null;
+  cleanupComplete: boolean;
+}
 
 export type EngineConnectionState =
   "disconnected" | "connecting" | "unavailable" | "ready" | "busy" | "error";
@@ -70,46 +79,21 @@ function notifyState(next: EngineConnectionState) {
   }
 }
 
+function isTauriRuntime(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 async function getTauriInvoke(): Promise<
   ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null
 > {
-  try {
-    // Dynamic import to satisfy @tauri-apps/api/core module resolution in packaged Tauri WebView
-    const core = (await import("@tauri-apps/api/core" as string)) as {
-      invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-    };
-    return core.invoke;
-  } catch {
-    if (
-      typeof window !== "undefined" &&
-      (
-        window as unknown as {
-          __TAURI__?: {
-            core?: {
-              invoke: (
-                cmd: string,
-                args?: Record<string, unknown>,
-              ) => Promise<unknown>;
-            };
-          };
-        }
-      ).__TAURI__?.core
-    ) {
-      return (
-        window as unknown as {
-          __TAURI__: {
-            core: {
-              invoke: (
-                cmd: string,
-                args?: Record<string, unknown>,
-              ) => Promise<unknown>;
-            };
-          };
-        }
-      ).__TAURI__.core.invoke;
-    }
-    return null;
-  }
+  return isTauriRuntime() ? invokeNative : null;
+}
+
+function handleLifecycle(event: EngineLifecycleEvent): void {
+  if (event.protocolVersion !== PROTOCOL_VERSION) return;
+  if (event.kind !== "engine_exited") return;
+  notifyState("unavailable");
+  for (const dispose of [...activeSubscriptions.values()]) dispose();
 }
 
 /**
@@ -134,10 +118,14 @@ export async function handshake(): Promise<Handshake> {
     throw new Error("TAURI_IPC_UNAVAILABLE: Native backend bridge not found");
   }
 
+  const lifecycle = new Channel<EngineLifecycleEvent>();
+  lifecycle.onmessage = handleLifecycle;
+
   try {
     const raw = await invokeTauri("handshake", {
       protocolVersion: PROTOCOL_VERSION,
       schemaVersion: 1,
+      onLifecycle: lifecycle,
     });
     const verified = validateHandshake(raw);
     lastHandshake = verified;
@@ -148,6 +136,7 @@ export async function handshake(): Promise<Handshake> {
     }
     return verified;
   } catch (err) {
+    lifecycle.onmessage = () => {};
     notifyState("error");
     throw err;
   }
@@ -186,12 +175,23 @@ export async function subscribe(
   activeSubscriptions.get(sessionId)?.();
 
   const fromSeq = afterSeq ?? sessionCursors.get(sessionId) ?? 0;
-  await invokeTauri("subscribe", { sessionId, afterSeq: fromSeq });
+  const events = new Channel<SplyceEvent>();
+  events.onmessage = (event) => dispatchEngineEvent(event);
+  const lifecycle = new Channel<EngineLifecycleEvent>();
+  lifecycle.onmessage = handleLifecycle;
+  await invokeTauri("subscribe", {
+    sessionId,
+    afterSeq: fromSeq,
+    onEvent: events,
+    onLifecycle: lifecycle,
+  });
 
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    events.onmessage = () => {};
+    lifecycle.onmessage = () => {};
     activeSubscriptions.delete(sessionId);
     invokeTauri("cancel", { sessionId, reason: "CLIENT_UNSUBSCRIBED" }).catch(
       () => {},
