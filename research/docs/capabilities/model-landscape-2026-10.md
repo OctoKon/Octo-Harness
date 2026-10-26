@@ -1,6 +1,6 @@
 # Model, provider and local-inference landscape, 2026-10
 
-**Status: research disposition, 2026-10-26; provider calls, installed Windows inference and quality trials n=0.** A Codex deep-research pass read current official model pages, API guides, release notes and pinned repositories; the parent re-fetched async tool calling and Ollama's Responses limits, and other rows remain Codex-sourced primary links. Records: [R32 ledger](../evidence/r32-sweep-sources.json). Pi's pin `d5b3de22` dates from 2026-10-25, so most items below are documentation omissions or unqualified capabilities rather than changes since the pin.
+**Status: research disposition, 2026-10-26; provider calls, installed Windows inference and quality trials n=0.** A Codex deep-research pass read current official model pages, API guides, release notes and pinned repositories; the parent re-fetched async tool calling and Ollama's Responses limits. Every other row's primary source is recorded in the ledger as located by Codex and not yet re-fetched by the parent, so it stays unverified until the owning task qualifies it. Records: [R32 ledger](../evidence/r32-sweep-sources.json). Pi's pin `d5b3de22` dates from 2026-10-25, so most items below are documentation omissions or unqualified capabilities rather than changes since the pin.
 
 ## What changed the contracts
 

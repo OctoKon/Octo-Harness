@@ -53,7 +53,7 @@ jobs:
           git merge-base --is-ancestor "$SHA" origin/staging || { echo "::error::$SHA is not on staging."; exit 1; }
           git merge-base --is-ancestor origin/main "$SHA" || { echo "::error::main is not an ancestor of $SHA; refusing a non-fast-forward."; exit 1; }
           # Only GitHub Actions (app 15368) check runs count, matching the main ruleset.
-          # Several runs can share a name on one SHA (push, merge queue, reruns); the most recently started one counts.
+          # Several runs can share a name on one SHA (push, PR, reruns); the most recently started one counts.
           runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?app_id=15368" --jq '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion)\t\(.started_at)"')
           IFS='|' read -ra names <<< "$REQUIRED"
           for name in "${names[@]}"; do
