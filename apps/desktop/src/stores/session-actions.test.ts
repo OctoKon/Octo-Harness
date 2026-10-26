@@ -7,6 +7,7 @@ import {
   actionAvailability,
   createSessionActionState,
   forkPointLabel,
+  newlyAdmittedRequest,
   reduceSessionAction,
   rewindChoiceAvailability,
   type RewindChoice,
@@ -189,9 +190,15 @@ test("cancellation differs from success and keeps the editor text", () => {
     { type: "begin", kind: "fork" },
     { type: "cancel" },
   );
+  // A confirmation was never dispatched: the source really is untouched.
+  assert.equal(fromConfirm.phase, "canceled");
+  assert.equal(fromConfirm.request, null);
+  assert.equal(fromConfirm.canceledWhileRequesting, false);
+  // A dispatched request cannot be recalled by the renderer: stay pending.
+  assert.equal(fromRequest.phase, "canceling");
+  assert.equal(fromRequest.request, null);
+  assert.equal(fromRequest.canceledWhileRequesting, true);
   for (const s of [fromConfirm, fromRequest]) {
-    assert.equal(s.phase, "canceled");
-    assert.equal(s.request, null);
     assert.equal(s.preservedDraft, "half-typed instruction");
     assert.equal(s.error, null);
   }
@@ -228,15 +235,91 @@ test("another action cannot start on top of a rewind confirmation", () => {
   assert.equal(s.request, null);
 });
 
-test("a late result cannot turn a cancellation into a success", () => {
-  const canceled = apply(
+test("a late result is the engine's answer, not a local claim", () => {
+  const canceling = apply(
     ready(),
     { type: "begin", kind: "fork" },
     { type: "cancel" },
   );
-  const late = reduceSessionAction(canceled, { type: "succeeded" }, ready());
-  assert.equal(late.phase, "canceled");
-  assert.equal(late.request, null);
+  // The executor completed despite the cancel request: say so honestly.
+  const completed = reduceSessionAction(
+    canceling,
+    { type: "succeeded" },
+    ready(),
+  );
+  assert.equal(completed.phase, "succeeded");
+  assert.equal(completed.request, null);
+  assert.equal(completed.canceledWhileRequesting, true);
+
+  const refused = reduceSessionAction(
+    canceling,
+    { type: "failed", message: "The engine stopped the request." },
+    ready(),
+  );
+  assert.equal(refused.phase, "failed");
+  assert.equal(refused.request, null);
+  assert.equal(refused.canceledWhileRequesting, true);
+  assert.equal(refused.error, "The engine stopped the request.");
+});
+
+test("a canceling state blocks every new action until the engine answers", () => {
+  const context = ready();
+  const canceling = apply(
+    context,
+    { type: "begin", kind: "fork" },
+    { type: "cancel" },
+  );
+  for (const kind of ["resume", "fork", "rewind"] as const) {
+    assert.deepEqual(actionAvailability(context, canceling, kind), {
+      enabled: false,
+      reason:
+        "Cancel requested: waiting for the engine to confirm the request stopped.",
+    });
+    const again = reduceSessionAction(
+      canceling,
+      { type: "begin", kind },
+      context,
+    );
+    assert.equal(again.phase, "canceling", kind);
+    assert.equal(again.request, null, kind);
+  }
+});
+
+test("only a newly admitted transition hands over a request", () => {
+  const context = ready();
+  const idle = createSessionActionState();
+  const forked = reduceSessionAction(
+    idle,
+    { type: "begin", kind: "fork" },
+    context,
+  );
+  assert.equal(newlyAdmittedRequest(idle, forked), forked.request);
+
+  // A second activation in the same tick is refused and reuses the in-flight
+  // request; it must not be dispatched again.
+  const again = reduceSessionAction(
+    forked,
+    { type: "begin", kind: "fork" },
+    context,
+  );
+  assert.equal(again.request, forked.request);
+  assert.equal(newlyAdmittedRequest(forked, again), null);
+
+  // The same holds for a second confirm after a rewind request left the dialog.
+  const confirming = apply(context, { type: "begin", kind: "rewind" });
+  const requested = reduceSessionAction(
+    confirming,
+    { type: "confirm" },
+    context,
+  );
+  assert.ok(requested.request);
+  assert.equal(newlyAdmittedRequest(confirming, requested), requested.request);
+  const confirmedAgain = reduceSessionAction(
+    requested,
+    { type: "confirm" },
+    context,
+  );
+  assert.equal(newlyAdmittedRequest(requested, confirmedAgain), null);
 });
 
 test("success and failure settle only an in-flight request", () => {
@@ -297,11 +380,14 @@ test("the draft captured at the start survives a newer context draft", () => {
 
 test("a new action captures the current draft, not the previous action's", () => {
   const context = ready();
+  // Cancel a confirmation (nothing was dispatched), which returns to a state
+  // where a new action may start.
   const canceled = apply(
     context,
-    { type: "begin", kind: "fork" },
+    { type: "begin", kind: "rewind" },
     { type: "cancel" },
   );
+  assert.equal(canceled.phase, "canceled");
   assert.equal(canceled.preservedDraft, "half-typed instruction");
 
   const next = reduceSessionAction(

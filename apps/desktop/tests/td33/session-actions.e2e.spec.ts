@@ -36,7 +36,7 @@ const focusedTestId = (page: Page) =>
   page.evaluate(() => document.activeElement?.getAttribute("data-testid"));
 
 test.describe("TD-33 D4_session_resume_fork", () => {
-  test("fork names the selected ancestry, and cancelling differs from success and restores the draft", async ({
+  test("fork names the selected ancestry, and a canceled request never claims the source is unchanged", async ({
     page,
   }) => {
     await page.goto(url);
@@ -60,19 +60,114 @@ test.describe("TD-33 D4_session_resume_fork", () => {
       },
     ]);
 
-    // The editor is untouched by the request; a cancel restores the captured text.
+    // The user typed after the action captured the editor.
     await page.getByTestId("editor").fill("edited while busy");
     await page.getByTestId("action-cancel").press("Enter");
-    await expect(page.getByTestId("action-canceled")).toContainText(
-      "Fork canceled",
-    );
-    await expect(page.getByTestId("editor")).toHaveValue("start draft");
-    expect(await focusedTestId(page)).toBe("action-fork");
 
-    // A result arriving after the cancel cannot turn it into a success.
+    // The executor cannot be recalled, so the UI is honest: pending, no claim
+    // that the source is unchanged, and the newer draft is untouched.
+    await expect(page.getByTestId("action-canceling")).toContainText(
+      "Cancel requested",
+    );
+    await expect(page.getByTestId("action-canceling")).toContainText(
+      "not guaranteed unchanged",
+    );
+    await expect(page.getByTestId("action-canceled")).toHaveCount(0);
+    await expect(page.getByTestId("editor")).toHaveValue("edited while busy");
+    // Focus moves to the status that explains the pending cancel (the trigger
+    // is disabled while the request may still be running).
+    expect(await focusedTestId(page)).toBe("action-canceling");
+    expect(
+      (await calls(page)).filter((call) => call.name === "onRestoreDraft"),
+    ).toEqual([]);
+
+    // The engine answers: it completed before the cancel took effect, which is
+    // reported as such instead of being hidden as a successful cancel.
     await page.evaluate(() => window.__td33.release());
-    await expect(page.getByTestId("action-canceled")).toBeVisible();
-    await expect(page.getByTestId("action-succeeded")).toHaveCount(0);
+    await expect(page.getByTestId("action-succeeded")).toContainText(
+      "cancel request arrived too late",
+    );
+    await expect(page.getByTestId("action-succeeded")).toContainText(
+      "may have changed",
+    );
+    await expect(page.getByTestId("editor")).toHaveValue("edited while busy");
+    // Once the engine answers, the actions are usable again and focus returns
+    // to the control that started them.
+    expect(await focusedTestId(page)).toBe("action-fork");
+  });
+
+  test("a double activation dispatches exactly one request from each control", async ({
+    page,
+  }) => {
+    await page.goto(url);
+    // Both pointer activations land before Svelte re-renders, the worst case
+    // for a double click: the reducer refuses the second, and it must never be
+    // dispatched as a second request.
+    await page.evaluate(() => {
+      const button = document.querySelector<HTMLButtonElement>(
+        '[data-testid="action-fork"]',
+      );
+      button?.click();
+      button?.click();
+    });
+    expect(await requests(page)).toHaveLength(1);
+    await expect(page.getByTestId("action-busy")).toBeVisible();
+
+    await page.goto(url);
+    await page.evaluate(() => {
+      const button = document.querySelector<HTMLButtonElement>(
+        '[data-testid="action-resume"]',
+      );
+      button?.click();
+      button?.click();
+    });
+    expect(await requests(page)).toHaveLength(1);
+
+    // The rewind confirmation is the same seam: one dialog activation, one
+    // request, even when both land in the same tick.
+    await page.goto(url);
+    await page.getByTestId("action-rewind").click();
+    await expect(page.getByTestId("rewind-dialog")).toBeVisible();
+    await page.evaluate(() => {
+      const button = document.querySelector<HTMLButtonElement>(
+        '[data-testid="rewind-confirm"]',
+      );
+      button?.click();
+      button?.click();
+    });
+    expect(await requests(page)).toHaveLength(1);
+  });
+
+  test("a newer draft survives both a successful and a failed result", async ({
+    page,
+  }) => {
+    await page.goto(url);
+    await page.getByTestId("action-fork").click();
+    await page.getByTestId("editor").fill("newer thought");
+    await page.evaluate(() => window.__td33.release());
+
+    await expect(page.getByTestId("action-succeeded")).toContainText(
+      "Fork created",
+    );
+    await expect(page.getByTestId("editor")).toHaveValue("newer thought");
+    expect(
+      (await calls(page)).filter((call) => call.name === "onRestoreDraft"),
+    ).toEqual([]);
+
+    await page.goto(url);
+    await page.getByTestId("action-fork").click();
+    await page.getByTestId("editor").fill("newer after failure");
+    await page.evaluate(() =>
+      window.__td33.fail("Engine refused after the edit."),
+    );
+
+    await expect(page.getByTestId("action-failed")).toContainText(
+      "Engine refused after the edit.",
+    );
+    await expect(page.getByTestId("editor")).toHaveValue("newer after failure");
+    expect(
+      (await calls(page)).filter((call) => call.name === "onRestoreDraft"),
+    ).toEqual([]);
   });
 
   test("resume requests the session itself and settles on success with focus returned", async ({
@@ -145,8 +240,12 @@ test.describe("TD-33 D4_session_resume_fork", () => {
 
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("rewind-dialog")).toHaveCount(0);
+    // Nothing was dispatched, so this is the one case where "unchanged" is true.
     await expect(page.getByTestId("action-canceled")).toContainText(
-      "Rewind canceled",
+      "Rewind canceled before anything was requested",
+    );
+    await expect(page.getByTestId("action-canceled")).toContainText(
+      "source was left unchanged",
     );
     expect(await requests(page)).toEqual([]);
     expect(await focusedTestId(page)).toBe("action-rewind");

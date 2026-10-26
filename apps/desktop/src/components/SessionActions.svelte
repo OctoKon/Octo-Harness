@@ -13,6 +13,7 @@
     actionAvailability,
     createSessionActionState,
     forkPointLabel,
+    newlyAdmittedRequest,
     reduceSessionAction,
     rewindChoiceAvailability,
     type RewindChoice,
@@ -21,6 +22,7 @@
     type SessionActionsContext,
     type SessionActionKind,
   } from "../stores/session-actions";
+  import { tick } from "svelte";
 
   let {
     context,
@@ -39,9 +41,8 @@
   let dialog: HTMLDialogElement | undefined = $state();
   let cancelButton: HTMLButtonElement | undefined = $state();
   let lastTrigger: HTMLElement | undefined;
+  let cancelingStatus: HTMLElement | undefined = $state();
   let previousPhase: SessionActionState["phase"] = "idle";
-  // Distinguishes a fresh request from a result that arrives after a cancel.
-  let ticket = 0;
 
   const availability = (kind: SessionActionKind) =>
     actionAvailability(context, current, kind);
@@ -88,8 +89,29 @@
     return current;
   };
 
-  function restore(text: string | null) {
-    if (text !== null) onRestoreDraft?.(text);
+  /**
+   * Reduces an action and hands back ONLY the request that this transition
+   * newly admitted. A refused transition (second activation while in flight)
+   * returns null, so the executor is never asked twice for the same intent.
+   */
+  const issue = (
+    action: Parameters<typeof reduceSessionAction>[1],
+  ): SessionActionRequest | null => {
+    const next = reduceSessionAction(current, action, context);
+    const admitted = newlyAdmittedRequest(current, next);
+    current = next;
+    return admitted;
+  };
+
+  /**
+   * Hands the captured editor text back only while the editor still holds what
+   * it held when the action began. If the user typed after capture, their newer
+   * text wins: a lifecycle result must never erase it.
+   */
+  function restore() {
+    const preserved = current.preservedDraft;
+    if (preserved === null || context.draft !== preserved) return;
+    onRestoreDraft?.(preserved);
   }
 
   function focusTrigger() {
@@ -97,29 +119,26 @@
   }
 
   async function run(request: SessionActionRequest) {
-    const mine = ++ticket;
     if (!onRequest) {
       current = reduceSessionAction(
         current,
         { type: "failed", message: "No engine executor is connected." },
         context,
       );
-      restore(current.preservedDraft);
+      restore();
       focusTrigger();
       return;
     }
     try {
       await onRequest(request);
-      if (mine !== ticket) return;
       send({ type: "succeeded" });
-      restore(current.preservedDraft);
+      restore();
     } catch (e) {
-      if (mine !== ticket) return;
       send({
         type: "failed",
         message: e instanceof Error ? e.message : "The request failed.",
       });
-      restore(current.preservedDraft);
+      restore();
     }
     focusTrigger();
   }
@@ -129,13 +148,13 @@
     event: MouseEvent,
   ) {
     lastTrigger = event.currentTarget as HTMLElement;
-    const next = send({ type: "begin", kind });
-    if (next.phase === "requesting" && next.request) await run(next.request);
+    const request = issue({ type: "begin", kind });
+    if (request) await run(request);
   }
 
   async function beginRewind(event: MouseEvent) {
     lastTrigger = event.currentTarget as HTMLElement;
-    send({ type: "begin", kind: "rewind" });
+    issue({ type: "begin", kind: "rewind" });
   }
 
   function choose(next: RewindChoice) {
@@ -143,17 +162,22 @@
   }
 
   async function confirm() {
-    const next = send({ type: "confirm" });
-    if (next.phase === "requesting" && next.request) await run(next.request);
+    const request = issue({ type: "confirm" });
+    if (request) await run(request);
     // A refused confirmation leaves the dialog open: keep focus inside it.
   }
 
   function cancel() {
-    // A canceled request must not be settled by a late result.
-    ticket += 1;
     send({ type: "cancel" });
-    restore(current.preservedDraft);
-    focusTrigger();
+    restore();
+    // A dispatched request leaves every action disabled while its cancel is
+    // pending, so the trigger cannot take focus. Put focus on the status that
+    // explains why instead of dropping it on <body>.
+    if (current.phase === "canceling") {
+      void tick().then(() => cancelingStatus?.focus());
+    } else {
+      focusTrigger();
+    }
   }
 
   $effect(() => {
@@ -173,8 +197,11 @@
 
   $effect(() => {
     const phase = current.phase;
-    const busy = previousPhase === "requesting" || previousPhase === "confirming";
-    if (busy && phase !== "requesting" && phase !== "confirming") {
+    const busy =
+      previousPhase === "requesting" ||
+      previousPhase === "canceling" ||
+      previousPhase === "confirming";
+    if (busy && phase !== "requesting" && phase !== "confirming" && phase !== "canceling") {
       lastTrigger?.focus();
     }
     previousPhase = phase;
@@ -253,14 +280,32 @@
         Cancel
       </button>
     </div>
+  {:else if current.phase === "canceling"}
+    <div
+      class="outcome"
+      role="status"
+      tabindex="-1"
+      bind:this={cancelingStatus}
+      data-testid="action-canceling"
+    >
+      <p>
+        Cancel requested. The {label} request was already sent, so the source is
+        not guaranteed unchanged until the engine confirms it stopped. Your
+        draft is preserved.
+      </p>
+    </div>
   {:else if current.phase === "canceled"}
     <p class="outcome" role="status" data-testid="action-canceled">
       {label === "the rewind" ? "Rewind" : label === "the fork" ? "Fork" : "Resume"}
-      canceled. The source was left unchanged and your draft is preserved.
+      canceled before anything was requested. The source was left unchanged and
+      your draft is preserved.
     </p>
   {:else if current.phase === "succeeded"}
     <p class="outcome" role="status" data-testid="action-succeeded">
-      {#if current.kind === "rewind"}
+      {#if current.canceledWhileRequesting}
+        Your cancel request arrived too late: the engine reports this {label}{" "}
+        completed, so the source may have changed. Your draft is preserved.
+      {:else if current.kind === "rewind"}
         Rewind completed. The source conversation is kept as ancestry.
       {:else if current.kind === "fork"}
         Fork created from {forkPointLabel(current.target)}. Your draft is
@@ -272,7 +317,8 @@
   {:else if current.phase === "failed"}
     <p class="outcome outcome-error" role="alert" data-testid="action-failed">
       {label === "the rewind" ? "Rewind" : label === "the fork" ? "Fork" : "Resume"}
-      failed: {current.error} Your draft is preserved.
+      failed{#if current.canceledWhileRequesting} after your cancel request{/if}:
+      {current.error} Your draft is preserved.
     </p>
   {/if}
 

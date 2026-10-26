@@ -23,7 +23,13 @@ export type SessionActionKind = "resume" | "fork" | "rewind";
 export type RewindChoice = "conversation" | "code" | "both";
 
 export type SessionActionPhase =
-  "idle" | "confirming" | "requesting" | "succeeded" | "canceled" | "failed";
+  | "idle"
+  | "confirming"
+  | "requesting"
+  | "canceling"
+  | "succeeded"
+  | "canceled"
+  | "failed";
 
 export interface CapabilityAvailability {
   readonly status: "ready" | "unavailable";
@@ -70,6 +76,12 @@ export interface SessionActionState {
   readonly preservedDraft: string | null;
   /** Set only while a request is ready to execute. */
   readonly request: SessionActionRequest | null;
+  /**
+   * True while a cancel has been requested for an already-dispatched request.
+   * The executor cannot be recalled by the renderer, so the UI must not claim
+   * the source is unchanged until the engine answers.
+   */
+  readonly canceledWhileRequesting: boolean;
   readonly error: string | null;
   /** Why the last attempt was refused; cleared by the next accepted action. */
   readonly blocked: string | null;
@@ -120,6 +132,7 @@ export function createSessionActionState(): SessionActionState {
     target: null,
     preservedDraft: null,
     request: null,
+    canceledWhileRequesting: false,
     error: null,
     blocked: null,
   };
@@ -163,6 +176,10 @@ export function actionAvailability(
 ): ActionAvailability {
   if (state.phase === "requesting")
     return blocked(`A ${KIND_LABEL[kind]} request is already in flight.`);
+  if (state.phase === "canceling")
+    return blocked(
+      "Cancel requested: waiting for the engine to confirm the request stopped.",
+    );
   if (state.phase === "confirming")
     return blocked("Finish or cancel the rewind confirmation first.");
   const capability = capabilityBlock(context, kind);
@@ -214,6 +231,7 @@ function requested(
       entryId: kind === "resume" ? null : target.branchAnchorId,
       choice,
     },
+    canceledWhileRequesting: false,
     error: null,
     blocked: null,
   };
@@ -244,6 +262,7 @@ export function reduceSessionAction(
           target: selected,
           preservedDraft: context.draft,
           request: null,
+          canceledWhileRequesting: false,
           error: null,
           blocked: null,
         };
@@ -284,20 +303,35 @@ export function reduceSessionAction(
       return requested(state, context, "rewind", choice);
     }
     case "cancel": {
-      if (state.phase !== "confirming" && state.phase !== "requesting")
-        return state;
-      // Cancellation is its own outcome: no request survives and the draft stays.
+      // Cancelling a confirmation means nothing was requested: the source truly
+      // is untouched. Cancelling an already-dispatched request cannot recall the
+      // executor, so it becomes an honest pending state, not a claim.
+      if (state.phase === "confirming") {
+        return {
+          ...state,
+          phase: "canceled",
+          request: null,
+          canceledWhileRequesting: false,
+          error: null,
+          blocked: null,
+        };
+      }
+      if (state.phase !== "requesting") return state;
       return {
         ...state,
-        phase: "canceled",
+        phase: "canceling",
         request: null,
+        canceledWhileRequesting: true,
         error: null,
         blocked: null,
       };
     }
     case "succeeded": {
-      // A result may only settle a request that actually left the UI.
-      if (state.phase !== "requesting") return state;
+      // A result may only settle a request that actually left the UI. A result
+      // that arrives after a cancel request still settles it: the engine, not
+      // the renderer, decides whether the request completed.
+      if (state.phase !== "requesting" && state.phase !== "canceling")
+        return state;
       return {
         ...state,
         phase: "succeeded",
@@ -307,7 +341,8 @@ export function reduceSessionAction(
       };
     }
     case "failed": {
-      if (state.phase !== "requesting") return state;
+      if (state.phase !== "requesting" && state.phase !== "canceling")
+        return state;
       return {
         ...state,
         phase: "failed",
@@ -317,4 +352,21 @@ export function reduceSessionAction(
       };
     }
   }
+}
+
+/**
+ * The request a transition NEWLY admitted, or null when it did not admit one.
+ *
+ * A refused transition (for example a second activation while the first is in
+ * flight) keeps the existing state object and its request reference, so the
+ * caller must not execute it again. Dispatch is keyed on this identity, never
+ * on "the resulting phase is requesting".
+ */
+export function newlyAdmittedRequest(
+  before: SessionActionState,
+  after: SessionActionState,
+): SessionActionRequest | null {
+  return after.request !== null && after.request !== before.request
+    ? after.request
+    : null;
 }
