@@ -90,6 +90,16 @@ core patch to `packages/ai`, recorded here per [core fusion](../../research/docs
   the next send or attempt, and credentials are refused before anything is leased unless the native `redact` is supplied; it is the
   only thing applied to `errorMessage`, so the adapters keep no copy of any secret. TD-19, TD-22 and TD-23 reuse the same helpers
   (`createLeasedFetch`, `withLeasedSecret`, `redactorOf`, `assertCredentialOptions`).
+- **A lease cannot be mixed with another credential.** With `credentials`, a caller-supplied or model-configured auth header
+  (`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `cookie`, any letter case) is refused before
+  anything is leased, because the pinned Google SDK prefers a header already present over its key; the Anthropic adapter refuses a
+  caller-supplied SDK client (it carries its own auth and transport); and the Google/Vertex adapters refuse a payload hook that sets
+  `httpOptions.baseUrl`, `headers`, `retryOptions`, `apiVersion` or `baseUrlResourceScope` (the endpoint, extra headers or SDK-level
+  retries that would reuse one lease). `packages/ai/test/splyce-credentials-wire.test.ts` runs the pinned Anthropic and Google SDKs
+  for real against local HTTP servers: exactly the leased key on the wire, a redirect is not followed on the Anthropic path, and a
+  lease revoked after the first send stops the SDK retry. **Unresolved:** the pinned `@google/genai` calls the global fetch with its
+  own options and follows redirects, so a redirect from the admitted Google/Vertex endpoint would carry `x-goog-api-key` along;
+  those APIs therefore stay behind the native transport's final per-send check (TD-13) and this is recorded as a `todo` test.
 - **Routing keeps the lease the only credential.** `buildBaseOptions` forwards `credentials` to the adapters (it used to drop
   it); `compat.ts` no longer injects an ambient env key beside a lease; `Models.applyAuth` skips stored, environment and
   provider-derived auth entirely when a lease is given (so no key, header or base URL from auth resolution can be mixed in or

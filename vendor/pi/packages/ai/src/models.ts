@@ -20,7 +20,7 @@ import type {
 	ProviderAuth,
 } from "./auth/types.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
-import { assertCredentialsSupported, type SplyceCredentials } from "./splyce-credentials.ts";
+import type { SplyceCredentials } from "./splyce-credentials.ts";
 import { observeModelRequest } from "./telemetry.ts";
 import type {
 	AnyModel,
@@ -62,6 +62,7 @@ import {
 	assertChatModel,
 	assertClassifierInputSupported,
 	assertClassifierModel,
+	assertCredentialsSupported,
 	assertImageModel,
 	classifierErrorResult,
 	getModelType,
