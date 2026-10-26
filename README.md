@@ -1,12 +1,6 @@
 <p align="center">
-  <picture>
-    <!-- White Logo for Dark Mode users -->
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/splyce-white.svg">
-    <!-- Black Logo for Light Mode users -->
-    <source media="(prefers-color-scheme: light)" srcset="./assets/brand/splyce-black.svg">
-    <!-- Default fallback logo -->
-    <img alt="Splyce Logo" src="./assets/brand/splyce-black.svg" width="200">
-  </picture>
+  <img alt="Splyce Logo" src="./assets/brand/splyce-white.svg#gh-dark-mode-only" width="200" />
+  <img alt="Splyce Logo" src="./assets/brand/splyce-black.svg#gh-light-mode-only" width="200" />
 </p>
 
 <div align="center">
