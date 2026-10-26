@@ -205,7 +205,8 @@ test("tampered snapshot content fails closed with DIGEST_MISMATCH", () => {
   const persisted = snap.persist(store);
 
   const content = join(dir, "snapshots", `${persisted.recordId}.json`);
-  assert.ok(existsSync(content), "content file is written beside the store");
+  // reading throws if the content file was not written beside the store
+  JSON.parse(readFileSync(content, "utf8"));
   writeFileSync(
     content,
     JSON.stringify({ ...snap.manifest, excluded: ["*.ts"] }),
