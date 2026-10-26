@@ -64,10 +64,10 @@ test("embedded WebDriver tool pins match their lockfiles", async () => {
   const crate = cargoLock
     .split("[[package]]")
     .find((entry) => entry.includes('name = "tauri-plugin-wdio-webdriver"'));
-  assert.match(crate, /version = "1\.4\.0"/);
+  assert.match(crate, /version = "1\.5\.1"/);
   assert.match(
     crate,
-    /checksum = "52c5e97428174a52b7f4357bbc4535fcce52c6a06c8ee7a379502f7cda1b6045"/,
+    /checksum = "5a775b0b59f6f12b38d1f28667311a89cd07f532f540e27d65c6eadfba1156d8"/,
   );
   const lockedPackages = new Set(
     [...cargoLock.matchAll(/name = "([^"]+)"\nversion = "([^"]+)"/g)].map(
