@@ -7,7 +7,12 @@ import {
 	type ThinkingConfig,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
-import { assertCredentialOptions, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
+import {
+	assertCredentialOptions,
+	assertSafeLeasedGooglePayload,
+	redactorOf,
+	withLeasedSecret,
+} from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -98,7 +103,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
 			}
-			assertCredentialOptions(options ?? {});
+			assertCredentialOptions(options ?? {}, model.headers);
 			const credentials = options?.credentials;
 			const apiKey = resolveApiKey(options);
 			// Create the client using either a Vertex API key, if provided, or ADC with project and location.
@@ -120,6 +125,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
+			if (credentials) assertSafeLeasedGooglePayload(params);
 			const googleStream = await retryGoogleRequest(
 				() =>
 					credentials

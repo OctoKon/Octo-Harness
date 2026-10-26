@@ -18,24 +18,9 @@ export interface SplyceCredentials {
 	readonly redact: (text: string) => string;
 }
 
-/**
- * APIs whose adapters honour `credentials`. Any other API must refuse the option rather than ignore it: ignoring it
- * would let the adapter fall back to an ambient key. The owner of each adapter adds its API here when it is bound.
- */
-export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
-	"anthropic-messages",
-	"google-generative-ai",
-	"google-vertex",
-]);
-
-export function assertCredentialsSupported(
-	api: string,
-	options: { credentials?: SplyceCredentials | undefined } | undefined,
-): void {
-	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
-		throw new Error(`credentials are not supported for api ${api} yet`);
-	}
-}
+// The support set and its guard live in utils/model-operations.ts, which the `./models` entry already reaches, so the
+// entry-graph budget is unchanged; they are re-exported here for the adapters and the compat layer.
+export { assertCredentialsSupported, CREDENTIAL_APIS } from "./utils/model-operations.ts";
 
 const identity = (text: string): string => text;
 
@@ -48,14 +33,58 @@ export function redactorOf(options: { credentials?: SplyceCredentials | undefine
  * `apiKey` and `credentials` are mutually exclusive, and credentials need a native redactor. With a lease no ambient
  * or fallback credential exists. Throws before anything is leased or sent.
  */
-export function assertCredentialOptions(options: {
-	apiKey?: string | undefined;
-	credentials?: SplyceCredentials | undefined;
-}): void {
+/** Headers that carry or select a credential. With a lease the caller may not supply any of them. */
+const CALLER_AUTH_HEADERS: ReadonlySet<string> = new Set([
+	"authorization",
+	"proxy-authorization",
+	"x-api-key",
+	"api-key",
+	"x-goog-api-key",
+	"cookie",
+]);
+
+type HeaderSource = Record<string, string | null | undefined> | undefined;
+
+function assertNoCallerAuthHeaders(...sources: HeaderSource[]): void {
+	for (const source of sources) {
+		for (const [name, value] of Object.entries(source ?? {})) {
+			if (value !== null && value !== undefined && CALLER_AUTH_HEADERS.has(name.toLowerCase())) {
+				throw new Error(`credentials do not allow a caller-supplied ${name} header`);
+			}
+		}
+	}
+}
+
+/**
+ * `apiKey` and `credentials` are mutually exclusive, credentials need a native redactor, and neither the caller nor the
+ * model configuration may add an auth header of their own (a pinned SDK may prefer it to the lease). With a lease no
+ * ambient or fallback credential exists. Throws before anything is leased or sent.
+ */
+export function assertCredentialOptions(
+	options: {
+		apiKey?: string | undefined;
+		credentials?: SplyceCredentials | undefined;
+		headers?: HeaderSource;
+	},
+	modelHeaders?: HeaderSource,
+): void {
 	const { credentials } = options;
 	if (!credentials) return;
 	if (options.apiKey !== undefined) throw new Error("apiKey and credentials are mutually exclusive");
 	if (typeof credentials.redact !== "function") throw new Error("credentials require a native redact function");
+	assertNoCallerAuthHeaders(modelHeaders, options.headers);
+}
+
+/**
+ * The Google SDK takes transport settings from the request payload. With a lease, a payload hook may not move the
+ * endpoint, add headers or turn on SDK-level retries (which would reuse one lease for several sends).
+ */
+export function assertSafeLeasedGooglePayload(params: unknown): void {
+	const http = (params as { config?: { httpOptions?: Record<string, unknown> } } | undefined)?.config?.httpOptions;
+	if (!http) return;
+	for (const key of ["baseUrl", "headers", "retryOptions", "apiVersion", "baseUrlResourceScope"]) {
+		if (http[key] !== undefined) throw new Error(`credentials do not allow the payload to set httpOptions.${key}`);
+	}
 }
 
 /** Runs `consume` with a freshly leased secret; a denied or revoked lease throws and nothing runs. */

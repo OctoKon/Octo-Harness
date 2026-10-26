@@ -5,7 +5,12 @@ import {
 	type ThinkingConfig,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
-import { assertCredentialOptions, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
+import {
+	assertCredentialOptions,
+	assertSafeLeasedGooglePayload,
+	redactorOf,
+	withLeasedSecret,
+} from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -89,7 +94,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
 			}
-			assertCredentialOptions(options ?? {});
+			assertCredentialOptions(options ?? {}, model.headers);
 			const credentials = options?.credentials;
 			const apiKey = options?.apiKey;
 			if (!credentials && !apiKey) {
@@ -102,6 +107,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
+			if (credentials) assertSafeLeasedGooglePayload(params);
 			const googleStream = await retryGoogleRequest(
 				() =>
 					credentials
