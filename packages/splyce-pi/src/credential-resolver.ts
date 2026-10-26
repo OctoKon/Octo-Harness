@@ -239,7 +239,7 @@ export class NativeCredentialResolver implements CredentialResolver {
                 reject(
                   new CredentialError(
                     "CREDENTIAL_UNAVAILABLE",
-                    redact(v instanceof Error ? v.message : String(v)),
+                    safeMessage(v, redact),
                   ),
                 );
             } catch (e) {
@@ -260,6 +260,16 @@ export class NativeCredentialResolver implements CredentialResolver {
     });
   }
 }
+
+/** Redacted message of a value thrown inside `use`; any throw while reading it fails closed. */
+const safeMessage = (v: unknown, redact: Redactor): string => {
+  try {
+    return redact(v instanceof Error ? v.message : String(v));
+  } catch {
+    // The reader's own exception may carry the secret: replace it, never forward it.
+    return "credential use failed";
+  }
+};
 
 const runHelper = (
   command: HelperCommand,
