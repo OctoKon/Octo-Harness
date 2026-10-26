@@ -249,3 +249,19 @@ test("losing the selection to an empty snapshot is still reported", () => {
   assert.equal(s.selectedKey, null);
   assert.equal(s.lostSelection, "s1/b1");
 });
+
+test("an event whose payload names a different session than its envelope is ignored", () => {
+  const mismatched: TreeEventLike = {
+    kind: "session.tree_updated",
+    sessionId: "s1",
+    seq: 2,
+    payload: { sessionId: "s2", branchAnchorId: "b1", leaves: ["e1"] },
+  };
+  const s = apply(
+    createSessionNav(),
+    { type: "loaded" },
+    { type: "event", event: tree("s1", "b1") },
+    { type: "event", event: mismatched },
+  );
+  assert.deepEqual(keys(s), ["s1/b1"]);
+});
