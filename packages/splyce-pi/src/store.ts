@@ -168,6 +168,7 @@ export class Store {
     db: DatabaseSync,
     busyTimeoutMs: number,
     maxInlineBytes: number,
+    private readonly readOnly: boolean,
   ) {
     this.path = path;
     this.db = db;
@@ -180,6 +181,32 @@ export class Store {
       name: string;
     }>;
     return new Set(rows.map((row) => row.name));
+  }
+
+  /** Validates a stamped store's shape without creating anything. */
+  private static validateStamped(
+    db: DatabaseSync,
+    stampedVersion: string,
+  ): void {
+    if (stampedVersion !== String(LAYOUT_VERSION))
+      throw new StoreError(
+        "STORE_LAYOUT",
+        `store layout version ${stampedVersion} is not supported (expected ${String(LAYOUT_VERSION)})`,
+      );
+    const required: Array<[string, readonly string[]]> = [
+      ["records", RECORD_COLUMNS],
+      ["deletions", DELETION_COLUMNS],
+      ["workspace_ownership", OWNERSHIP_COLUMNS],
+    ];
+    for (const [table, columns] of required) {
+      const present = Store.tableColumns(db, table);
+      const missing = columns.filter((column) => !present.has(column));
+      if (missing.length > 0)
+        throw new StoreError(
+          "STORE_LAYOUT",
+          `store claims layout ${stampedVersion} but table ${table} lacks columns: ${missing.join(", ")}`,
+        );
+    }
   }
 
   /** Opens (or creates) the store; initialization is one atomic transaction
@@ -197,6 +224,21 @@ export class Store {
       throw mapSqliteError(error);
     }
     try {
+      // Read-only opens never initialize: they validate the stamped layout
+      // without a write transaction and reject appends explicitly (S3).
+      if (options.readOnly === true) {
+        db.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)};`);
+        const stamped = db
+          .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
+          .get() as { value: string } | undefined;
+        if (stamped === undefined)
+          throw new StoreError(
+            "STORE_LAYOUT",
+            "store is not initialized; read-only open requires a stamped layout",
+          );
+        Store.validateStamped(db, stamped.value);
+        return new Store(path, db, busyTimeoutMs, maxInlineBytes, true);
+      }
       db.exec("PRAGMA journal_mode = WAL;");
       db.exec("PRAGMA synchronous = FULL;");
       db.exec("PRAGMA foreign_keys = ON;");
@@ -245,31 +287,10 @@ export class Store {
           "INSERT INTO store_meta (key, value) VALUES ('layout_version', ?)",
         ).run(String(LAYOUT_VERSION));
       } else {
-        if (row.value !== String(LAYOUT_VERSION)) {
-          throw new StoreError(
-            "STORE_LAYOUT",
-            `store layout version ${row.value} is not supported (expected ${String(LAYOUT_VERSION)})`,
-          );
-        }
-        // A store stamped version 1 must carry the expected tables with the
-        // expected columns; anything else fails closed — never heal silently.
-        const required: Array<[string, readonly string[]]> = [
-          ["records", RECORD_COLUMNS],
-          ["deletions", DELETION_COLUMNS],
-          ["workspace_ownership", OWNERSHIP_COLUMNS],
-        ];
-        for (const [table, columns] of required) {
-          const present = Store.tableColumns(db, table);
-          const missing = columns.filter((column) => !present.has(column));
-          if (missing.length > 0)
-            throw new StoreError(
-              "STORE_LAYOUT",
-              `store claims layout ${row.value} but table ${table} lacks columns: ${missing.join(", ")}`,
-            );
-        }
+        Store.validateStamped(db, row.value);
       }
       db.exec("COMMIT;");
-      return new Store(path, db, busyTimeoutMs, maxInlineBytes);
+      return new Store(path, db, busyTimeoutMs, maxInlineBytes, false);
     } catch (error) {
       try {
         if (db.isTransaction) db.exec("ROLLBACK;");
@@ -287,6 +308,17 @@ export class Store {
 
   private assertOpen(): void {
     if (this.closed) throw new StoreError("STORE_CLOSED", "store is closed");
+  }
+
+  /** Write paths reject a read-only store explicitly before any write attempt. */
+  private assertWritable(): void {
+    this.assertOpen();
+    if (this.readOnly)
+      throw new StoreError(
+        "STORE_READ_ONLY",
+        "store was opened read-only; writes are rejected explicitly",
+        8,
+      );
   }
 
   /** Durable cursor: highest committed seq (0 for an empty scope/store). */
@@ -344,7 +376,7 @@ export class Store {
    * nothing and leaves the store rollable/reopenable.
    */
   append(input: AppendInput, caller: CallerContext): Appended {
-    this.assertOpen();
+    this.assertWritable();
     const recordObject = input.record as Record<string, unknown> | undefined;
     const scopeId =
       isRecordObject(recordObject) && typeof recordObject.scopeId === "string"
@@ -379,7 +411,7 @@ export class Store {
     inputs: readonly AppendInput[],
     caller: CallerContext,
   ): AppendBatchResult {
-    this.assertOpen();
+    this.assertWritable();
     if (inputs.length === 0) return { seqs: [] };
     const prepared: Array<[RecordKind, RecordByKind[RecordKind]]> = [];
     try {
@@ -500,7 +532,7 @@ export class Store {
    * that would drop any tombstone is refused.
    */
   noteDeletion(recordId: string): number {
-    this.assertOpen();
+    this.assertWritable();
     try {
       this.db.exec("BEGIN IMMEDIATE;");
       const epoch = this.metaGet("deletion_epoch") + 1;
@@ -528,17 +560,63 @@ export class Store {
     }
   }
 
-  /** Highest deletion epoch recorded in a (backup) database file. */
-  static deletionEpochOf(dbPath: string): number {
+  /**
+   * Reads a persisted epoch counter from a read-only handle. A missing counter
+   * is NEVER treated as zero when history may exist: absence with any history
+   * rows fails closed, so old layouts cannot be silently migrated.
+   */
+  private static epochOf(
+    db: DatabaseSync,
+    key: string,
+    historyTable: string,
+  ): number {
+    const row = db
+      .prepare("SELECT value FROM store_meta WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+    if (row !== undefined) return Number(row.value);
+    const history = db
+      .prepare(`SELECT COUNT(*) AS n FROM ${historyTable}`)
+      .get() as { n: number | bigint };
+    if (Number(history.n) > 0)
+      throw new StoreError(
+        "STORE_LAYOUT",
+        `${historyTable} history exists but ${key} metadata is absent; refusing to treat history as zero`,
+      );
+    return 0;
+  }
+
+  /** Full read-only validation of a backup file before it may overwrite live bytes. */
+  private static validateBackup(dbPath: string): {
+    deletionEpoch: number;
+    ownershipEpoch: number;
+  } {
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
-      const row = db
-        .prepare("SELECT value FROM store_meta WHERE key = 'deletion_epoch'")
+      const stamped = db
+        .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
         .get() as { value: string } | undefined;
-      return row === undefined ? 0 : Number(row.value);
+      if (stamped === undefined)
+        throw new StoreError(
+          "STORE_LAYOUT",
+          "backup is not a stamped store (no layout_version); refusing to restore",
+        );
+      Store.validateStamped(db, stamped.value);
+      return {
+        deletionEpoch: Store.epochOf(db, "deletion_epoch", "deletions"),
+        ownershipEpoch: Store.epochOf(
+          db,
+          "ownership_epoch",
+          "workspace_ownership",
+        ),
+      };
     } finally {
       db.close();
     }
+  }
+
+  /** Highest deletion epoch recorded in a (backup) database file. */
+  static deletionEpochOf(dbPath: string): number {
+    return Store.validateBackup(dbPath).deletionEpoch;
   }
 
   /** Consistent backup through SQLite itself (`VACUUM INTO`), never a raw copy. */
@@ -554,22 +632,42 @@ export class Store {
   /** Highest deletion epoch recorded in this store's live database. */
   deletionEpoch(): number {
     this.assertOpen();
-    return this.metaGet("deletion_epoch");
+    return Store.epochOf(this.db, "deletion_epoch", "deletions");
+  }
+
+  /** Live ownership epoch (same fail-closed rule as the deletion epoch). */
+  ownershipEpoch(): number {
+    this.assertOpen();
+    return Store.epochOf(this.db, "ownership_epoch", "workspace_ownership");
   }
 
   /**
-   * Restores a backup. Refuses a stale restore: if the live deletion epoch has
-   * advanced past the snapshot's, any tombstone the snapshot lacks would be
-   * lost, so the quarantine ordering is preserved.
+   * Restores a backup with full safety ordering: the backup's layout and epoch
+   * metadata are validated read-only BEFORE any live byte is touched, so an
+   * invalid or future-layout backup preserves acknowledged live records. A
+   * restore never rolls back workspace ownership: a snapshot older than the
+   * live ownership epoch would resurrect a stale owner or permit epoch reuse,
+   * so it is refused.
    */
   restore(backupPath: string): void {
     this.assertOpen();
-    const backupEpoch = Store.deletionEpochOf(backupPath);
-    const liveEpoch = this.deletionEpoch();
-    if (backupEpoch < liveEpoch)
+    let backup: { deletionEpoch: number; ownershipEpoch: number };
+    try {
+      backup = Store.validateBackup(backupPath);
+    } catch (error) {
+      throw error instanceof StoreError ? error : mapSqliteError(error);
+    }
+    const liveDeletionEpoch = this.deletionEpoch();
+    if (backup.deletionEpoch < liveDeletionEpoch)
       throw new StoreError(
         "STALE_RESTORE",
-        `backup deletion epoch ${String(backupEpoch)} is older than current ${String(liveEpoch)}`,
+        `backup deletion epoch ${String(backup.deletionEpoch)} is older than current ${String(liveDeletionEpoch)}`,
+      );
+    const liveOwnershipEpoch = this.ownershipEpoch();
+    if (backup.ownershipEpoch < liveOwnershipEpoch)
+      throw new StoreError(
+        "STALE_OWNERSHIP",
+        `backup ownership epoch ${String(backup.ownershipEpoch)} is older than current ${String(liveOwnershipEpoch)}; restoring would roll back the workspace writer state`,
       );
     this.close();
     try {
@@ -594,7 +692,7 @@ export class Store {
    * same authoritative store as the receipts.
    */
   acquireWorkspace(workspaceId: string, sessionId: string): WorkspaceOwnership {
-    this.assertOpen();
+    this.assertWritable();
     try {
       this.db.exec("BEGIN IMMEDIATE;");
       const row = this.db
@@ -660,7 +758,7 @@ export class Store {
     sessionId: string,
     expectedEpoch: number,
   ): WorkspaceOwnership {
-    this.assertOpen();
+    this.assertWritable();
     try {
       this.db.exec("BEGIN IMMEDIATE;");
       const row = this.db
@@ -809,7 +907,7 @@ export class Store {
 
   /** S8 import: replays a JSONL export into this store in file order. */
   importJSONL(sourcePath: string, caller: CallerContext): number {
-    this.assertOpen();
+    this.assertWritable();
     const text = readFileSync(sourcePath, "utf8");
     const inputs: AppendInput[] = [];
     for (const line of text.split("\n")) {
