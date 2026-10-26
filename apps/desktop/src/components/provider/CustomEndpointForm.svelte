@@ -15,7 +15,6 @@
 
   let connectionId = $state("");
   let baseUrl = $state("");
-  let local = $state(false);
   let headers = $state<{ name: string; value: string }[]>([]);
   let errors = $state<readonly string[]>([]);
 
@@ -24,7 +23,6 @@
     const draft: CustomEndpointDraft = {
       connectionId: connectionId.trim(),
       baseUrl: baseUrl.trim(),
-      locality: local ? "local" : "hosted",
       headers: headers.map((h) => ({ name: h.name.trim(), value: h.value })),
     };
     errors = validateCustomEndpoint(draft, existing);
@@ -41,7 +39,6 @@
   <h3 id="custom-title">Add custom OpenAI-compatible endpoint</h3>
   <label>Connection name <input name="connectionId" bind:value={connectionId} autocomplete="off" /></label>
   <label>Base URL <input name="baseUrl" bind:value={baseUrl} autocomplete="off" /></label>
-  <label><input type="checkbox" name="local" bind:checked={local} /> Endpoint is local (this device)</label>
   {#each headers as header, i (i)}
     <fieldset>
       <legend>Header {i + 1}</legend>

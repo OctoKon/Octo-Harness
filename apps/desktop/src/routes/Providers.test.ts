@@ -71,7 +71,6 @@ const draft = (
 ): CustomEndpointDraft => ({
   connectionId: "gw",
   baseUrl: "https://gw.example.test/v1",
-  locality: "hosted",
   headers: [],
   ...over,
 });
@@ -105,20 +104,94 @@ describe("provider grouping", () => {
 
   it("shows local egress as staying on the device", () => {
     expect(
-      toConnectionView(conn("l", "openai-completions", "configured", "local"))
-        .egress,
+      toConnectionView(
+        conn(
+          "l",
+          "openai-completions",
+          "configured",
+          "local",
+          "http://localhost:11434/v1",
+        ),
+      ).egress,
     ).toMatch(/^Local:/);
   });
 });
 
 describe("custom endpoint validation", () => {
+  it("derives locality from the host, never from a flag", () => {
+    for (const url of [
+      "http://evil.example/v1",
+      "http://localhost.evil.example/v1",
+      "http://127.0.0.1.evil.example/v1",
+    ])
+      expect(validateCustomEndpoint(draft({ baseUrl: url }), [])).toContain(
+        "Base URL must use https unless the endpoint is local.",
+      );
+    for (const url of [
+      "http://localhost:1/v1",
+      "http://127.5.6.7/v1",
+      "http://[::1]:8080/v1",
+    ])
+      expect(validateCustomEndpoint(draft({ baseUrl: url }), [])).toEqual([]);
+  });
+
+  it("labels a non-loopback endpoint as cloud even if the record claims local", () => {
+    const view = toConnectionView(
+      conn(
+        "x",
+        "openai-completions",
+        "configured",
+        "local",
+        "http://evil.example/v1",
+      ),
+    );
+    expect(view.locality).toBe("hosted");
+    expect(view.egress).toMatch(/^Cloud:/);
+  });
+
+  it("rejects query strings and fragments on the base URL", () => {
+    for (const q of ["?api_key=s", "?key=s", "?token=s", "?x=1", "#frag", "?"])
+      expect(
+        validateCustomEndpoint(
+          draft({ baseUrl: `https://gw.example.test/v1${q}` }),
+          [],
+        ),
+        q,
+      ).toContain("Base URL must not contain a query string or fragment.");
+  });
+
+  it("rejects hop-by-hop and transport-controlled header names case-insensitively", () => {
+    for (const name of [
+      "Host",
+      "TRANSFER-ENCODING",
+      "content-length",
+      "Connection",
+      "Upgrade",
+      "Proxy-Authorization",
+      "proxy-x",
+      "Keep-Alive",
+      "te",
+      "Trailer",
+    ])
+      expect(
+        validateCustomEndpoint(draft({ headers: [{ name, value: "v" }] }), []),
+        name,
+      ).toContain(`Header "${name}" is controlled by the transport.`);
+    expect(
+      validateCustomEndpoint(
+        draft({ headers: [{ name: "Authorization", value: "v" }] }),
+        [],
+      ),
+    ).toEqual([]);
+  });
+
   it("rejects http for hosted, accepts it for local", () => {
     expect(
       validateCustomEndpoint(draft({ baseUrl: "http://gw.example.test" }), []),
     ).toContain("Base URL must use https unless the endpoint is local.");
     expect(
       validateCustomEndpoint(
-        draft({ baseUrl: "http://127.0.0.1:11434/v1", locality: "local" }),
+        draft({ baseUrl: "http://127.0.0.1:11434/v1" }),
         [],
       ),
     ).toEqual([]);

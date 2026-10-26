@@ -42,15 +42,20 @@ const CREDENTIAL_ERROR: Record<
 /** Copies whitelisted fields only, so unexpected input properties cannot reach state. */
 export function toConnectionView(input: ConnectionInput): ConnectionView {
   const { record, endpointLabel, credential } = input;
+  // A non-loopback endpoint is cloud egress whatever the record claims.
+  const locality =
+    record.locality === "local" && isLoopbackUrl(endpointLabel)
+      ? "local"
+      : "hosted";
   return {
     id: record.providerConnectionId,
     revision: record.revision,
     apiFamily: record.apiFamily,
     endpointLabel,
     credentialRef: record.credentialRef,
-    locality: record.locality,
+    locality,
     egress:
-      record.locality === "local"
+      locality === "local"
         ? `Local: requests stay on this device (${endpointLabel})`
         : `Cloud: request content is sent to ${endpointLabel}`,
     credential,
@@ -82,7 +87,6 @@ export interface HeaderDraft {
 export interface CustomEndpointDraft {
   readonly connectionId: string;
   readonly baseUrl: string;
-  readonly locality: "local" | "hosted";
   readonly headers: readonly HeaderDraft[];
 }
 
@@ -91,6 +95,23 @@ export interface ExistingEndpoint {
   readonly endpointLabel: string;
 }
 
+/** Loopback only: localhost, 127.0.0.0/8, ::1. Derived from the parsed host. */
+export function isLoopbackUrl(text: string): boolean {
+  let host: string;
+  try {
+    host = new URL(text).hostname;
+  } catch {
+    return false;
+  }
+  return (
+    host === "localhost" ||
+    host === "[::1]" ||
+    /^127(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(host)
+  );
+}
+
+const FORBIDDEN_HEADER =
+  /^(host|transfer-encoding|content-length|connection|upgrade|keep-alive|te|trailer|proxy-.*)$/i;
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
 function normalized(text: string): string | null {
@@ -118,9 +139,11 @@ export function validateCustomEndpoint(
     const url = new URL(draft.baseUrl.trim());
     if (
       url.protocol !== "https:" &&
-      !(url.protocol === "http:" && draft.locality === "local")
+      !(url.protocol === "http:" && isLoopbackUrl(draft.baseUrl.trim()))
     )
       errors.push("Base URL must use https unless the endpoint is local.");
+    if (url.search !== "" || url.hash !== "" || /[?#]/.test(draft.baseUrl))
+      errors.push("Base URL must not contain a query string or fragment.");
     if (url.username !== "" || url.password !== "")
       errors.push("Base URL must not contain credentials; use a header.");
     if (existing.some((e) => normalized(e.endpointLabel) === key))
@@ -132,6 +155,8 @@ export function validateCustomEndpoint(
     const lower = name.trim().toLowerCase();
     if (!HEADER_NAME.test(name.trim()))
       errors.push(`Header name "${name}" is not valid.`);
+    else if (FORBIDDEN_HEADER.test(name.trim()))
+      errors.push(`Header "${name}" is controlled by the transport.`);
     else if (seen.has(lower)) errors.push(`Header "${name}" is duplicated.`);
     else if (value === "") errors.push(`Header "${name}" needs a value.`);
     seen.add(lower);
