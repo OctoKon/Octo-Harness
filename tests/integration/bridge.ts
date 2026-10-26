@@ -458,3 +458,17 @@ test("the frozen maxInlineBytes ceiling holds even when base and options are lar
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("highestQueuedSeq counts durable frames only", () => {
+  const { bridge, store, dir } = makeBridge();
+  bridge.submit(event("turn.stream_delta", { runId: "r0", delta: "d" }));
+  // Transient-only queue: no durable seq is pending.
+  assert.equal(bridge.highestQueuedSeq(), 0);
+  const durable = event("turn.started", { runId: "r1", turnId: "t1" });
+  bridge.submit(durable);
+  bridge.submit(event("turn.stream_delta", { runId: "r1", delta: "d" }));
+  // A later transient seq must not raise the durable high-water mark.
+  assert.equal(bridge.highestQueuedSeq(), durable.seq);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});

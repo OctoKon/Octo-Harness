@@ -1127,7 +1127,7 @@ test("migrateV1 decides attribution inside its write transaction (no check-then-
       "-e",
       `const { DatabaseSync } = require("node:sqlite");
        const fs = require("node:fs");
-       const db = new DatabaseSync(process.argv[1]);
+       const db = new DatabaseSync(process.argv[1], { timeout: 10000 });
        db.exec("BEGIN IMMEDIATE;");
        db.prepare("INSERT INTO records (kind, record_id, schema_version, scope_id, created_at, payload) VALUES ('run', 'rec-race', 1, 'w-demo', '2026-10-26T00:00:00.000Z', '{}')").run();
        fs.writeFileSync(process.argv[2], "1");
@@ -1153,12 +1153,20 @@ test("migrateV1 decides attribution inside its write transaction (no check-then-
     await new Promise((r) => setTimeout(r, 10));
   }
 
-  assert.throws(
-    () => Store.migrateV1(path),
-    (error: unknown) =>
-      error instanceof StoreError && error.message.includes("attribution"),
-  );
+  let migrateError: unknown;
+  try {
+    Store.migrateV1(path);
+  } catch (error) {
+    migrateError = error;
+  }
+  // Check the writer first: if its commit failed, the store really was empty
+  // and a clean migration would be correct, so the harness is what broke.
   assert.equal(await exited, 0, "writer must commit cleanly");
+  assert.ok(
+    migrateError instanceof StoreError &&
+      migrateError.message.includes("attribution"),
+    `expected an attribution refusal, got ${String(migrateError)}`,
+  );
   const check = new DatabaseSync(path);
   const layout = check
     .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
