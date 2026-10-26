@@ -4,11 +4,12 @@ import ThemeSpecimen from "./ThemeSpecimen.svelte";
 import StateMessage, { STATE_KINDS } from "./StateMessage.svelte";
 import StateSpecimen from "./StateSpecimen.svelte";
 import {
+  CONCRETE_THEMES,
   CONTRAST_PAIRS,
-  THEMES,
   TOKENS,
   TOKEN_NAMES,
   contrastRatio,
+  resolveTheme,
 } from "./tokens";
 
 const mounted: object[] = [];
@@ -26,7 +27,7 @@ afterEach(() => {
 
 describe("TD-75 theme specimens", () => {
   it("every token pair meets its contrast minimum in every theme", () => {
-    for (const theme of THEMES)
+    for (const theme of CONCRETE_THEMES)
       for (const p of CONTRAST_PAIRS)
         expect(
           contrastRatio(TOKENS[theme][p.fg], TOKENS[theme][p.bg]),
@@ -40,7 +41,7 @@ describe("TD-75 theme specimens", () => {
   });
 
   it("renders every token in every theme with passing text results", () => {
-    for (const theme of THEMES) {
+    for (const theme of CONCRETE_THEMES) {
       const t = render(ThemeSpecimen, { theme });
       for (const name of TOKEN_NAMES) {
         const li = t.querySelector(`[data-token=${name}]`);
@@ -51,6 +52,34 @@ describe("TD-75 theme specimens", () => {
       expect(rows.length).toBe(CONTRAST_PAIRS.length);
       rows.forEach((r) => expect(r.textContent).toContain("Pass"));
     }
+  });
+
+  it("resolves system from the OS preference, with forced colors winning", () => {
+    expect(resolveTheme("system", { prefersDark: true })).toBe("dark");
+    expect(resolveTheme("system", { prefersDark: false })).toBe("light");
+    expect(
+      resolveTheme("system", { prefersDark: true, forcedColors: true }),
+    ).toBe("high-contrast");
+    expect(resolveTheme("light", { prefersDark: true })).toBe("light");
+    expect(resolveTheme("light", { forcedColors: true })).toBe("high-contrast");
+  });
+
+  it("renders the resolved system sheet", () => {
+    const dark = render(ThemeSpecimen, { theme: "system", prefersDark: true });
+    const darkSection = dark.querySelector("[data-testid=theme-specimen]")!;
+    expect(darkSection.getAttribute("data-resolved-theme")).toBe("dark");
+    expect(dark.textContent).toContain(TOKENS.dark.surface);
+    expect(dark.textContent).toContain("system (dark)");
+
+    const hc = render(ThemeSpecimen, {
+      theme: "system",
+      prefersDark: false,
+      forcedColors: true,
+    });
+    const hcSection = hc.querySelector("[data-testid=theme-specimen]")!;
+    expect(hcSection.getAttribute("data-resolved-theme")).toBe("high-contrast");
+    expect(hc.textContent).toContain(TOKENS["high-contrast"].selection);
+    expect(hc.textContent).toContain("system (high-contrast)");
   });
 
   it("status samples carry glyph and text, not colour alone", () => {

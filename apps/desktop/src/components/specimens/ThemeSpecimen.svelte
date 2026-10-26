@@ -4,12 +4,30 @@
     TOKENS,
     TOKEN_NAMES,
     contrastRatio,
+    resolveTheme,
     type ThemeName,
   } from "./tokens";
 
-  let { theme }: { theme: ThemeName } = $props();
+  function mediaMatches(query: string): boolean {
+    return typeof window !== "undefined" &&
+      typeof window.matchMedia === "function"
+      ? window.matchMedia(query).matches
+      : false;
+  }
 
-  const sheet = $derived(TOKENS[theme]);
+  let {
+    theme,
+    prefersDark = mediaMatches("(prefers-color-scheme: dark)"),
+    forcedColors = mediaMatches("(forced-colors: active)"),
+  }: {
+    theme: ThemeName;
+    prefersDark?: boolean;
+    forcedColors?: boolean;
+  } = $props();
+
+  const resolved = $derived(resolveTheme(theme, { prefersDark, forcedColors }));
+  const label = $derived(theme === "system" ? `system (${resolved})` : theme);
+  const sheet = $derived(TOKENS[resolved]);
   const style = $derived(
     TOKEN_NAMES.map((n) => `--${n}:${sheet[n]}`).join(";"),
   );
@@ -25,10 +43,11 @@
   class="theme"
   {style}
   data-theme={theme}
-  aria-label="{theme} theme specimen"
+  data-resolved-theme={resolved}
+  aria-label="{label} theme specimen"
   data-testid="theme-specimen"
 >
-  <h3>{theme}</h3>
+  <h3>{label}</h3>
   <ul class="tokens">
     {#each TOKEN_NAMES as name (name)}
       <li data-token={name}>
