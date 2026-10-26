@@ -192,6 +192,8 @@ test.describe("TD-33 D4_session_resume_fork", () => {
     // Once admitted, the chosen scope is what the request carries.
     await page.evaluate(() => window.__td33.setCodeRestore("ready", null));
     await page.getByTestId("rewind-choice-code").check();
+    // Changing the scope must not steal focus back to the dialog default.
+    expect(await focusedTestId(page)).toBe("rewind-choice-code");
     await expect(page.getByTestId("rewind-confirm")).toBeEnabled();
     await page.getByTestId("rewind-confirm").click();
     expect((await requests(page)).at(-1)).toEqual({
@@ -214,7 +216,15 @@ test.describe("TD-33 D4_session_resume_fork", () => {
     await expect(page.getByTestId("rewind-blocked")).toContainText(
       "selected branch changed",
     );
+    // A refused confirmation keeps focus in the open dialog.
+    expect(await focusedTestId(page)).toBe("rewind-confirm");
     expect(await requests(page)).toEqual([]);
+
+    // At rest the header follows the live selection, not the refused target.
+    await page.getByTestId("rewind-cancel").click();
+    await expect(page.getByTestId("fork-point")).toHaveText(
+      "Fork point: ses_1 / anchor_2",
+    );
   });
 
   test("an unavailable engine disables every action with its reason, still showing the ancestry", async ({

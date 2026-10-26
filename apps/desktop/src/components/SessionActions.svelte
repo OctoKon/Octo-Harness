@@ -64,8 +64,12 @@
   const choiceAvailability = $derived(
     rewindChoiceAvailability(context, choice),
   );
+  // While an action is open, show the ancestry it captured; at rest, show the
+  // live selection the next action would use.
   const target = $derived(
-    current.target ?? (current.phase === "idle" ? context.selected : null),
+    current.phase === "requesting" || current.phase === "confirming"
+      ? current.target
+      : context.selected,
   );
   const label = $derived(
     current.kind === null
@@ -141,7 +145,7 @@
   async function confirm() {
     const next = send({ type: "confirm" });
     if (next.phase === "requesting" && next.request) await run(next.request);
-    else focusTrigger();
+    // A refused confirmation leaves the dialog open: keep focus inside it.
   }
 
   function cancel() {
@@ -154,9 +158,14 @@
 
   $effect(() => {
     if (current.phase === "confirming") {
-      if (dialog && !dialog.open) dialog.showModal();
-      // The default focus is the non-destructive control.
-      cancelButton?.focus();
+      // Focus and open only on the transition into confirming. Refocusing on
+      // every later state change (choosing a scope, a refused confirmation)
+      // would steal focus from the control the user is on.
+      if (dialog && !dialog.open) {
+        dialog.showModal();
+        // The default focus is the non-destructive control.
+        cancelButton?.focus();
+      }
     } else if (dialog?.open) {
       dialog.close();
     }
