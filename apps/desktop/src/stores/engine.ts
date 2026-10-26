@@ -3,42 +3,65 @@
  *
  * Implements the renderer-to-engine IPC connection layer conforming to TD-02, TD-06,
  * and the frozen @splyce/pi/contracts shared schema (TD-01).
+ *
+ * Enforces:
+ * - Initial state is "disconnected" until an explicit native handshake succeeds.
+ * - Authoritative caller-provided context (no fabricated default scopes/revisions).
+ * - Per-session cursor tracking and subscription disposal.
+ * - Strict error throwing when native Tauri IPC is unavailable (no success fallback).
+ * - Uses native @tauri-apps/api/core invoke with zero mock fallback.
  */
 
-import type {
-  CommandOp,
-  CommandPayloads,
-  EventKind,
-  SplyceCommand,
-  SplyceEvent,
+import {
+  PROTOCOL_VERSION,
+  type CommandOp,
+  type CommandPayloads,
+  type Handshake,
+  type SplyceCommand,
+  type SplyceEvent,
+  validateHandshake,
 } from "@splyce/pi/contracts";
 
 export type EngineConnectionState =
-  "connecting" | "ready" | "busy" | "disconnected" | "error";
+  "disconnected" | "connecting" | "unavailable" | "ready" | "busy" | "error";
 
 export type EventCallback = (event: SplyceEvent) => void;
 export type Unsubscribe = () => void;
+
+export interface CommandContext {
+  sessionId: string;
+  scopeId: string;
+  expectedConfigRevision: string;
+  expectedProfileRevision: string;
+  expectedPolicyRevision: string;
+  correlationId?: string;
+}
 
 export interface EngineStore {
   connectionState: {
     subscribe: (fn: (state: EngineConnectionState) => void) => Unsubscribe;
   };
-  subscribe: (sessionId: string, afterSeq?: number) => Unsubscribe;
+  handshake: () => Promise<Handshake>;
+  subscribe: (sessionId: string, afterSeq?: number) => Promise<Unsubscribe>;
   onEvent: (callback: EventCallback) => Unsubscribe;
   invoke: <O extends CommandOp>(
     op: O,
     payload: CommandPayloads[O],
-    correlationId?: string,
+    context: CommandContext,
   ) => Promise<unknown>;
   ackCursor: (sessionId: string, seq: number) => Promise<void>;
-  resync: (sessionId: string, fromSeq: number) => Promise<void>;
+  getCursor: (sessionId: string) => number;
+  resync: (context: CommandContext, fromSeq: number) => Promise<void>;
+  dispatchEngineEvent: (event: SplyceEvent) => void;
 }
 
 // Internal reactive state
-let currentState: EngineConnectionState = "ready";
+let currentState: EngineConnectionState = "disconnected";
+let lastHandshake: Handshake | null = null;
 const stateListeners = new Set<(state: EngineConnectionState) => void>();
 const eventListeners = new Set<EventCallback>();
-let lastAckedSequence = 0;
+const sessionCursors = new Map<string, number>();
+const activeSubscriptions = new Map<string, Unsubscribe>();
 
 function notifyState(next: EngineConnectionState) {
   currentState = next;
@@ -47,8 +70,50 @@ function notifyState(next: EngineConnectionState) {
   }
 }
 
+async function getTauriInvoke(): Promise<
+  ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null
+> {
+  try {
+    // Dynamic import to satisfy @tauri-apps/api/core module resolution in packaged Tauri WebView
+    const core = (await import("@tauri-apps/api/core" as string)) as {
+      invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+    };
+    return core.invoke;
+  } catch {
+    if (
+      typeof window !== "undefined" &&
+      (
+        window as unknown as {
+          __TAURI__?: {
+            core?: {
+              invoke: (
+                cmd: string,
+                args?: Record<string, unknown>,
+              ) => Promise<unknown>;
+            };
+          };
+        }
+      ).__TAURI__?.core
+    ) {
+      return (
+        window as unknown as {
+          __TAURI__: {
+            core: {
+              invoke: (
+                cmd: string,
+                args?: Record<string, unknown>,
+              ) => Promise<unknown>;
+            };
+          };
+        }
+      ).__TAURI__.core.invoke;
+    }
+    return null;
+  }
+}
+
 /**
- * Readable connection state store
+ * Readable connection state store (starts strictly 'disconnected')
  */
 export const connectionState = {
   subscribe(fn: (state: EngineConnectionState) => void): Unsubscribe {
@@ -59,6 +124,36 @@ export const connectionState = {
 };
 
 /**
+ * Perform native handshake and establish verified readiness
+ */
+export async function handshake(): Promise<Handshake> {
+  notifyState("connecting");
+  const invokeTauri = await getTauriInvoke();
+  if (!invokeTauri) {
+    notifyState("unavailable");
+    throw new Error("TAURI_IPC_UNAVAILABLE: Native backend bridge not found");
+  }
+
+  try {
+    const raw = await invokeTauri("handshake", {
+      protocolVersion: PROTOCOL_VERSION,
+      schemaVersion: 1,
+    });
+    const verified = validateHandshake(raw);
+    lastHandshake = verified;
+    if (verified.readiness.state === "ready") {
+      notifyState("ready");
+    } else {
+      notifyState("unavailable");
+    }
+    return verified;
+  } catch (err) {
+    notifyState("error");
+    throw err;
+  }
+}
+
+/**
  * Register a listener for incoming engine push events
  */
 export function onEvent(callback: EventCallback): Unsubscribe {
@@ -67,7 +162,7 @@ export function onEvent(callback: EventCallback): Unsubscribe {
 }
 
 /**
- * Internal event dispatcher used by the Tauri IPC listener or fixture runners
+ * Internal/testing event dispatcher used by Tauri IPC or fixture harnesses
  */
 export function dispatchEngineEvent(event: SplyceEvent): void {
   for (const listener of eventListeners) {
@@ -76,80 +171,104 @@ export function dispatchEngineEvent(event: SplyceEvent): void {
 }
 
 /**
- * Subscribe to a session stream starting after a monotonic sequence
+ * Subscribe to a session stream starting after a monotonic sequence with full channel cleanup
  */
-export function subscribe(sessionId: string, afterSeq?: number): Unsubscribe {
-  const fromSeq = afterSeq ?? lastAckedSequence;
-  // Dispatches native subscribe command
-  invoke("session.subscribe", { afterSeq: fromSeq }).catch((err) => {
-    notifyState("error");
-    console.error("Failed to subscribe to engine session:", err);
-  });
-  return () => {
-    // Unsubscribe cleanup
+export async function subscribe(
+  sessionId: string,
+  afterSeq?: number,
+): Promise<Unsubscribe> {
+  const invokeTauri = await getTauriInvoke();
+  if (!invokeTauri) {
+    throw new Error("TAURI_IPC_UNAVAILABLE: Native backend bridge not found");
+  }
+
+  // Dispose existing subscription for this session if any
+  activeSubscriptions.get(sessionId)?.();
+
+  const fromSeq = afterSeq ?? sessionCursors.get(sessionId) ?? 0;
+  await invokeTauri("subscribe", { sessionId, afterSeq: fromSeq });
+
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    activeSubscriptions.delete(sessionId);
+    invokeTauri("cancel", { sessionId, reason: "CLIENT_UNSUBSCRIBED" }).catch(
+      () => {},
+    );
   };
+
+  activeSubscriptions.set(sessionId, dispose);
+  return dispose;
 }
 
 /**
- * Invoke a typed engine command conforming to TD-01 shared contract
+ * Invoke a typed engine command conforming to TD-01 shared contract.
+ * Parent native send API takes { op, payload: fullSplyceCommand } where payload.op === op.
  */
 export async function invoke<O extends CommandOp>(
   op: O,
   payload: CommandPayloads[O],
-  correlationId = `req_${Date.now()}`,
+  context: CommandContext,
 ): Promise<unknown> {
-  const commandInput = {
-    protocolVersion: 1,
-    correlationId,
-    sessionId: (payload as { sessionId?: string })?.sessionId ?? "default",
-    scopeId: (payload as { scopeId?: string })?.scopeId ?? "default",
-    expectedConfigRevision: "v1",
-    expectedProfileRevision: "v1",
-    expectedPolicyRevision: "v1",
+  const invokeTauri = await getTauriInvoke();
+  if (!invokeTauri) {
+    throw new Error("TAURI_IPC_UNAVAILABLE: Native backend bridge not found");
+  }
+
+  const fullSplyceCommand = {
+    protocolVersion: PROTOCOL_VERSION,
+    correlationId:
+      context.correlationId ??
+      `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    sessionId: context.sessionId,
+    scopeId: context.scopeId,
+    expectedConfigRevision: context.expectedConfigRevision,
+    expectedProfileRevision: context.expectedProfileRevision,
+    expectedPolicyRevision: context.expectedPolicyRevision,
     op,
     payload,
   };
 
-  if (
-    typeof window !== "undefined" &&
-    (window as unknown as { __TAURI__?: unknown }).__TAURI__
-  ) {
-    const tauri = (
-      window as unknown as {
-        __TAURI__: {
-          core: { invoke: (cmd: string, args: unknown) => Promise<unknown> };
-        };
-      }
-    ).__TAURI__;
-    return await tauri.core.invoke("send", commandInput);
-  }
-
-  // Headless / mock fallback for testing
-  return { ok: true };
+  return await invokeTauri("send", {
+    op,
+    payload: fullSplyceCommand,
+  });
 }
 
 /**
- * Acknowledge durable event sequence
+ * Acknowledge durable event sequence per session
  */
 export async function ackCursor(sessionId: string, seq: number): Promise<void> {
-  lastAckedSequence = Math.max(lastAckedSequence, seq);
+  const current = sessionCursors.get(sessionId) ?? 0;
+  sessionCursors.set(sessionId, Math.max(current, seq));
+}
+
+/**
+ * Read current durable cursor for a session
+ */
+export function getCursor(sessionId: string): number {
+  return sessionCursors.get(sessionId) ?? 0;
 }
 
 /**
  * Request a stream resync snapshot after a sequence gap
  */
 export async function resync(
-  sessionId: string,
+  context: CommandContext,
   fromSeq: number,
 ): Promise<void> {
-  await invoke("session.subscribe", { afterSeq: fromSeq });
+  await invoke("session.subscribe", { afterSeq: fromSeq }, context);
 }
 
 export const engine: EngineStore = {
   connectionState,
+  handshake,
   subscribe,
   onEvent,
   invoke,
   ackCursor,
+  getCursor,
   resync,
+  dispatchEngineEvent,
 };
