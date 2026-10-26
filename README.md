@@ -10,8 +10,10 @@
 </p>
 
 <div align="center">
-  Splyce
+  <h1>Splyce</h1>
 <div>
+
+---
 
 <div align="center">
   A research-led foundation for a Windows desktop coding-agent application: capable models, useful memory, and changes backed by evidence.
@@ -21,7 +23,7 @@
 
 [![Documentation quality](https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml/badge.svg?branch=main)](https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml)
 [![CodeQL](https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml)
-<div>
+</div>
   
 ## The direction
 
