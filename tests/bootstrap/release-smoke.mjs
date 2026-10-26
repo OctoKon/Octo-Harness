@@ -6,6 +6,7 @@ import { createWriteStream } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+import { finished } from "node:stream/promises";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const target = resolve(root, "apps/desktop/src-tauri/target");
@@ -17,6 +18,61 @@ const tauriDriverInventory = resolve(
   root,
   "tests/bootstrap/tauri-driver-inventory.json",
 );
+
+export function sanitizeSmokeDiagnostics(report, driverLog) {
+  const redact = (value) => {
+    for (const directory of [root, process.env.USERPROFILE, process.env.HOME]) {
+      if (directory) {
+        value = value
+          .replaceAll(directory, "<local>")
+          .replaceAll(directory.replaceAll("\\", "/"), "<local>");
+      }
+    }
+    return value
+      .replace(/\b[A-Za-z]:[\\/][^\r\n"'<>]*/g, "<path>")
+      .replace(/\\\\[^\r\n"'<>]+/g, "<path>")
+      .replace(/(\/session\/)[^/\s"']+/g, "$1<session>")
+      .replace(
+        /\b(?:authorization|password|token|api[_-]?key|secret)\b[^\r\n]*/gi,
+        "<redacted>",
+      );
+  };
+  // Public CI artifacts omit DOM text, screenshots and process/path inventories.
+  const fields = [
+    "case",
+    "passed",
+    "pins",
+    "appSha256",
+    "driverSha256",
+    "edgeSha256",
+    "edgeArchiveSha256",
+    "webviewVersion",
+    "webviewScope",
+    "edgeDriverVersion",
+    "failedRequest",
+    "failureProcesses",
+    "failureProcessInspection",
+    "nativeDriverStdout",
+    "error",
+    "captureError",
+    "sessionCleanup",
+    "driverCleanup",
+    "cleanupInspection",
+  ];
+  const result = Object.fromEntries(
+    fields
+      .filter((name) => report[name] !== undefined)
+      .map((name) => [name, report[name]]),
+  );
+  return {
+    result: JSON.stringify(
+      result,
+      (_key, value) => (typeof value === "string" ? redact(value) : value),
+      2,
+    ),
+    driverLog: redact(driverLog.slice(-65536)),
+  };
+}
 
 export function assertUnavailable(state) {
   assert.equal(state.connection, "unavailable");
@@ -198,6 +254,7 @@ export async function runSmoke() {
   const port = 4444;
   const base = `http://127.0.0.1:${port}`;
   async function request(method, path, body) {
+    report.lastRequest = { method, path };
     const response = await fetch(`${base}${path}`, {
       method,
       headers: { "content-type": "application/json" },
@@ -384,6 +441,47 @@ export async function runSmoke() {
     report.passed = true;
   } catch (error) {
     report.error = error.stack;
+    report.failedRequest = report.lastRequest;
+    console.error("Failed at WebDriver request:", report.failedRequest);
+    try {
+      const snapshot = processes();
+      const owned = snapshot.filter(
+        (candidate) => child?.pid && ownedBy(candidate, child.pid, snapshot),
+      );
+      const applications = owned.filter(
+        (candidate) =>
+          candidate.ExecutablePath?.toLowerCase() === app.toLowerCase(),
+      );
+      report.failureProcesses = {
+        driverAlive: child?.exitCode === null,
+        nativeDriverStarted: owned.some(
+          (candidate) =>
+            candidate.ExecutablePath?.toLowerCase() === edge.toLowerCase(),
+        ),
+        applicationStarted: applications.length > 0,
+        applicationWindowStarted: applications.some(
+          (candidate) =>
+            Number(
+              powershell(
+                `(Get-Process -Id ${candidate.ProcessId} -ErrorAction Stop).MainWindowHandle`,
+              ),
+            ) > 0,
+        ),
+        webviewStarted: owned.some((candidate) =>
+          webViewVersionFromProcess(candidate),
+        ),
+        engineStarted: owned.some((candidate) =>
+          candidate.ExecutablePath?.toLowerCase().endsWith(
+            "\\engine\\node.exe",
+          ),
+        ),
+      };
+      console.error("Owned process state:", report.failureProcesses);
+      // Pinned tauri-driver discards native stdout; native stderr inherits our log pipe.
+      report.nativeDriverStdout = "suppressed by tauri-driver 2.1.0";
+    } catch (inspectionError) {
+      report.failureProcessInspection = String(inspectionError);
+    }
     if (session) {
       try {
         await screenshot("failure");
@@ -428,9 +526,24 @@ export async function runSmoke() {
       process.exitCode = 1;
     }
     logs.end();
+    await finished(logs);
     await writeFile(
       resolve(artifacts, "result.json"),
       JSON.stringify(report, null, 2),
+    );
+    const diagnostics = sanitizeSmokeDiagnostics(
+      report,
+      await readFile(resolve(artifacts, "driver.log"), "utf8"),
+    );
+    const diagnosticDirectory = resolve(artifacts, "diagnostics");
+    await mkdir(diagnosticDirectory, { recursive: true });
+    await writeFile(
+      resolve(diagnosticDirectory, "result.json"),
+      diagnostics.result,
+    );
+    await writeFile(
+      resolve(diagnosticDirectory, "driver.log"),
+      diagnostics.driverLog,
     );
     console.log(
       `${report.passed ? "PASS" : "FAIL"} ${report.case}: ${artifacts}`,
@@ -443,7 +556,7 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   runSmoke().catch((error) => {
-    console.error(error.message);
+    console.error(error.stack);
     process.exitCode = 1;
   });
 }

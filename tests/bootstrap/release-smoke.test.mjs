@@ -5,7 +5,54 @@ import {
   assertUnavailable,
   ownedBy,
   sameProcess,
+  sanitizeSmokeDiagnostics,
 } from "./release-smoke.mjs";
+
+test("public smoke diagnostics retain the failed request and omit private data", () => {
+  const diagnostic = sanitizeSmokeDiagnostics(
+    {
+      case: "bootstrap-unavailable-release",
+      passed: false,
+      failureProcesses: {
+        nativeDriverStarted: true,
+        applicationStarted: false,
+        applicationWindowStarted: false,
+      },
+      pins: { webview2: "155.0.4283.62" },
+      failedRequest: {
+        method: "POST",
+        path: "/session/private-session/execute/sync",
+      },
+      error:
+        "Timeout at C:\\Users\\private-user\\Splyce\\smoke.mjs:1\nAuthorization: Bearer private-credential",
+      app: "C:\\Users\\private-user\\app.exe",
+      failureState: { text: "private-workspace-text" },
+      ownedProcesses: [{ ExecutablePath: "private-process" }],
+    },
+    "driver C:\\Users\\private-user\\driver.exe\ntoken=private-credential\nPOST /session/private-session/execute/sync",
+  );
+  const result = JSON.parse(diagnostic.result);
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.failureProcesses, {
+    nativeDriverStarted: true,
+    applicationStarted: false,
+    applicationWindowStarted: false,
+  });
+  assert.equal(result.pins.webview2, "155.0.4283.62");
+  assert.deepEqual(result.failedRequest, {
+    method: "POST",
+    path: "/session/<session>/execute/sync",
+  });
+  for (const value of [diagnostic.result, diagnostic.driverLog]) {
+    assert.doesNotMatch(
+      value,
+      /private-user|private-credential|private-workspace-text|private-process|private-session/,
+    );
+  }
+  assert.equal(result.app, undefined);
+  assert.equal(result.failureState, undefined);
+  assert.equal(result.ownedProcesses, undefined);
+});
 
 test("smoke assertion rejects fabricated readiness and missing unavailable UI", () => {
   const state = {
