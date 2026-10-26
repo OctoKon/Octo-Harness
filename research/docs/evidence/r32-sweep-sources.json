@@ -1323,5 +1323,17 @@
     ],
     "verification": "primary documentation located by an independent researcher; not re-fetched by the parent",
     "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-openai-gpt61-sol",
+    "tool": "OpenAI GPT-6.1 Sol",
+    "url": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+    "title": "GPT-6.1 Sol",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The model page documents tool calling through the Responses API rather than Chat Completions."
+    ],
+    "verification": "primary documentation located by Codex deep research; client-rendered page not re-verified by the parent",
+    "notes": "Vendor documentation; no Splyce provider test."
   }
 ]
