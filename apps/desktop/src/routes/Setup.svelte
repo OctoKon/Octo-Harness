@@ -9,6 +9,7 @@
     planView,
     selectionState,
     setupView,
+    type ModuleOperation,
     type ModuleSnapshot,
   } from "../stores/modules";
 
@@ -61,9 +62,36 @@
   let enableAfterInstall = $state(false);
   let executionGranted = $state(false);
   let lastPlanId: string | null = null;
-  // Set when the reviewed plan is submitted. Only an authoritative operation
-  // update may then advance the screen: a click never proves acceptance.
-  let awaitOperation = $state(false);
+  // The request awaiting an engine operation. It records the reviewed plan and
+  // the operation identity that already existed when the request was sent, so a
+  // pre-existing or unrelated snapshot operation can never be mistaken for this
+  // request's acceptance.
+  let pendingOperation = $state<{
+    readonly correlationId: number;
+    readonly planId: string | null;
+    readonly baselineOperationId: string | null;
+  } | null>(null);
+  let submissionSeq = 0;
+  // The one engine operation this screen may show, and its last seen value so a
+  // replacement by an unrelated operation cannot blank or hijack the outcome.
+  let admittedOperationId = $state<string | null>(
+    untrack(() =>
+      initialStep === "operating" ||
+      initialStep === "outcome" ||
+      initialStep === "recovering"
+        ? (snapshot.operation?.operationId ?? null)
+        : null,
+    ),
+  );
+  let lastAdmittedOperation = $state<ModuleOperation | null>(
+    untrack(() =>
+      initialStep === "operating" ||
+      initialStep === "outcome" ||
+      initialStep === "recovering"
+        ? snapshot.operation
+        : null,
+    ),
+  );
 
   let baseButton = $state<HTMLButtonElement>();
   let reviewButton = $state<HTMLButtonElement>();
@@ -85,11 +113,18 @@
   const review = $derived(
     snapshot.plan ? planView(snapshot.plan, selected) : null,
   );
-  const operation = $derived(operationView(snapshot, snapshot.operation));
+  const shownOperation = $derived(
+    snapshot.operation &&
+      admittedOperationId !== null &&
+      snapshot.operation.operationId === admittedOperationId
+      ? snapshot.operation
+      : lastAdmittedOperation,
+  );
+  const operation = $derived(operationView(snapshot, shownOperation));
   const target = $derived(
-    snapshot.operation?.packageId
+    shownOperation?.packageId
       ? snapshot.installed.find(
-          (item) => item.packageId === snapshot.operation?.packageId,
+          (item) => item.packageId === shownOperation.packageId,
         )
       : undefined,
   );
@@ -113,30 +148,44 @@
     lastPlanId = planId;
     enableAfterInstall = false;
     executionGranted = false;
-    // A replaced plan invalidates the pending submission it was reviewed for.
-    awaitOperation = false;
+    // A replaced plan invalidates the pending request it was reviewed for.
+    pendingOperation = null;
   });
 
-  // Authoritative progression only: the engine's operation identity and stage
-  // drive reviewing -> operating -> outcome/recovering. Submitting a request or
-  // clicking a button never advances this state, and success is shown only from
-  // a terminal outcome. An unrelated operation cannot hijack an unsent review.
+  // Authoritative, correlated progression only: the engine's operation identity
+  // and stage drive reviewing -> operating -> outcome/recovering, and only an
+  // operation that did not already exist when this request was submitted can
+  // accept it. A pre-existing/unrelated operation is ignored and the review
+  // keeps waiting. Submitting or clicking never advances this state.
   $effect(() => {
-    const operation = snapshot.operation;
+    const current = snapshot.operation;
+    const planId = snapshot.plan?.planId ?? null;
 
-    if (step === "reviewing") {
-      if (!awaitOperation || !operation) return;
-      awaitOperation = false;
-      step = "operating";
-      return;
+    // Acceptance of a pending request/retry: a NEW operation identity, and for
+    // an install the reviewed plan must still be the current one.
+    const pending = pendingOperation;
+    if (pending && current && current.operationId !== pending.baselineOperationId) {
+      if (step !== "reviewing" || planId === pending.planId) {
+        admittedOperationId = current.operationId;
+        lastAdmittedOperation = current;
+        pendingOperation = null;
+        step = "operating";
+        return;
+      }
     }
 
     if (step !== "operating" && step !== "outcome" && step !== "recovering") {
       return;
     }
 
+    // Only the admitted operation speaks for this screen; a different
+    // operation is unrelated and cannot advance or replace it.
+    const admitted =
+      current && current.operationId === admittedOperationId ? current : null;
+    if (admitted) lastAdmittedOperation = admitted;
+
     // A lost correlation after admission is uncertainty, never success.
-    if (!operation) {
+    if (!admitted) {
       if (step === "operating") step = "recovering";
       return;
     }
@@ -147,14 +196,14 @@
       return;
     }
 
-    if (operation.stage !== "outcome") {
-      // A newer authoritative operation replaces a previous terminal view.
+    if (admitted.stage !== "outcome") {
+      // A newer update for the same operation replaces a previous terminal view.
       if (step === "outcome") step = "operating";
       return;
     }
 
     step =
-      operation.outcome === "uncertain" || operation.cleanupPending
+      admitted.outcome === "uncertain" || admitted.cleanupPending
         ? "recovering"
         : "outcome";
   });
@@ -211,41 +260,51 @@
   }
 
   function backToSelection() {
-    awaitOperation = false;
+    pendingOperation = null;
     step = "selecting";
     void tick().then(() => reviewButton?.focus());
   }
 
   function cancelReview() {
     // Cancel closes the unsent review without submission and restores its opener.
-    awaitOperation = false;
+    pendingOperation = null;
     step = "selecting";
     void tick().then(() => reviewButton?.focus());
   }
 
   function install() {
     const plan = snapshot.plan;
-    if (!confirm.enabled || !plan || awaitOperation) return;
+    if (!confirm.enabled || !plan || pendingOperation) return;
     onConfirmInstall({
       planId: plan.planId,
       enableRequested: enableAfterInstall,
       executionGranted,
     });
-    // Only record that a submission is pending. The screen advances when the
-    // engine reports an operation, not because the request was sent.
-    awaitOperation = true;
+    // Record the reviewed plan and the operation that already existed, then wait.
+    // The screen advances when the engine reports a DIFFERENT operation id.
+    pendingOperation = {
+      correlationId: ++submissionSeq,
+      planId: plan.planId,
+      baselineOperationId: snapshot.operation?.operationId ?? null,
+    };
   }
 
   function cancelOperation() {
-    const current = snapshot.operation;
+    const current = shownOperation;
     if (!current || !operation?.canCancel.enabled) return;
     onCancelOperation(current.operationId);
   }
 
   function retryOperation() {
-    const current = snapshot.operation;
-    if (!current || !operation?.canRetry.enabled) return;
+    const current = shownOperation;
+    if (!current || !operation?.canRetry.enabled || pendingOperation) return;
     onRetryOperation(current.operationId);
+    // A retry is a new request too: only a new operation identity accepts it.
+    pendingOperation = {
+      correlationId: ++submissionSeq,
+      planId: snapshot.plan?.planId ?? null,
+      baselineOperationId: current.operationId,
+    };
   }
 
   function done() {
@@ -575,7 +634,7 @@
         <div class="actions">
           <button
             type="button"
-            disabled={!confirm.enabled || awaitOperation}
+            disabled={!confirm.enabled || pendingOperation !== null}
             title={confirm.reason ?? undefined}
             aria-describedby={confirm.reason ? "confirm-reason" : undefined}
             onclick={install}
@@ -593,11 +652,12 @@
             {confirm.reason}
           </p>
         {/if}
-        {#if awaitOperation}
+        {#if pendingOperation}
           <p role="status" class="reason" data-testid="awaiting-operation">
-            Request submitted. Waiting for the engine to accept it and report the
-            operation identity; nothing is shown as installed until its durable
-            outcome.
+            Request submitted. Waiting for the engine to accept this request and
+            report its operation identity; an operation that was already in the
+            snapshot before submission is not evidence for this request. Nothing
+            is shown as installed until its durable outcome.
           </p>
         {/if}
       {/if}
@@ -681,7 +741,7 @@
           {:else}
             <button
               type="button"
-              disabled={!operation.canRetry.enabled}
+              disabled={!operation.canRetry.enabled || pendingOperation !== null}
               title={operation.canRetry.reason ?? undefined}
               onclick={retryOperation}
               data-testid="retry-operation"

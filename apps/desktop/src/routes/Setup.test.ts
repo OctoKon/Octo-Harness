@@ -333,6 +333,59 @@ describe("TD-29 Setup.svelte", () => {
     expect(maybeTestId("fact-installed")).not.toBeNull();
   });
 
+  it("previous outcome cannot accept new request", async () => {
+    const onConfirmInstall = vi.fn();
+    await renderLive({
+      initial: d6OperationSnapshot({
+        operationId: "previous-install",
+        stage: "outcome",
+        outcome: "installed",
+        message: "Previous install finished.",
+      }),
+      onConfirmInstall,
+    });
+    await selectAndReview("fixture-a", "fixture-b");
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+    byTestId("confirm-install").click();
+    flushSync();
+    await tick();
+    flushSync();
+    expect(onConfirmInstall).toHaveBeenCalledTimes(1);
+    expect(byTestId("setup").dataset.step).toBe("reviewing");
+    expect(maybeTestId("operation-outcome")).toBeNull();
+  });
+
+  it("D6: correlation accepts only a new operation identity, not the pre-existing one", async () => {
+    const live = await renderLive({
+      initial: d6OperationSnapshot({
+        operationId: "previous-install",
+        stage: "outcome",
+        outcome: "installed",
+        message: "Previous install finished.",
+      }),
+    });
+    await selectAndReview("fixture-a", "fixture-b");
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+    byTestId("confirm-install").click();
+    flushSync();
+    await tick();
+    flushSync();
+
+    // The old operation is still the only one the engine reported.
+    expect(byTestId("setup").dataset.step).toBe("reviewing");
+    expect(byTestId("awaiting-operation").textContent).toContain(
+      "not evidence for this request",
+    );
+
+    // A genuinely new operation id, while the reviewed plan is current, is
+    // this request's acceptance.
+    await push(live, d6OperationSnapshot({ stage: "accepted" }));
+    expect(byTestId("setup").dataset.step).toBe("operating");
+    expect(byTestId("setup-operation").textContent).toContain("op-d6-install");
+  });
+
   it("D6: keeps confirmation disabled for a stale plan", async () => {
     const onConfirmInstall = vi.fn();
     await render({
