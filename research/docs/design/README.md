@@ -1,15 +1,17 @@
 # Design proposals
 
-| Document                                      | Purpose                                                                               |
-| --------------------------------------------- | ------------------------------------------------------------------------------------- |
-| [Historical synthesis](synthesis.md)          | Historical alternatives; current build guidance is in core fusion and the master plan |
-| [Agent skills](agent-skills.md)               | Primary-source rationale for the small conditional workflow set                       |
-| [README references](readme-design.md)         | Public visual/editorial precedents and original Splyce presentation choices           |
-| [Root master plan](../../../MASTER-PLAN.md)   | Implementation sequence and release gates derived from the corpus                     |
-| [Desktop application](desktop-application.md) | Windows GUI entrypoints, IPC, lifecycle and installed E2E contract                    |
-| [Core fusion](core-fusion.md)                 | Pi-derived core, composition ownership, interaction coverage and contribution gates   |
-| [Delivery plan](team-delivery-plan.md)        | Nine-role task/dependency and domain-review handoff                                   |
-| [Brutal gap audit](brutal-gap-audit.md)       | Closed specification repairs and prioritized open research/qualification gates        |
+| Document                                      | Purpose                                                                                |
+| --------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [Historical synthesis](synthesis.md)          | Historical alternatives; current build guidance is in core fusion and the master plan  |
+| [Agent skills](agent-skills.md)               | Primary-source rationale for the small conditional workflow set                        |
+| [README references](readme-design.md)         | Public visual/editorial precedents and original Splyce presentation choices            |
+| [Root master plan](../../../MASTER-PLAN.md)   | Implementation sequence and release gates derived from the corpus                      |
+| [Desktop application](desktop-application.md) | Windows GUI entrypoints, IPC, lifecycle and installed E2E contract                     |
+| [Client contract](client-contract.md)         | TD-02: Typed window/screen/command/event/error/approval schemas, tokens, shortcuts     |
+| [Fixture contract](fixture-contract.md)       | TD-06: Desktop UI/IPC fixture formats, mock runner interfaces and named test manifests |
+| [Core fusion](core-fusion.md)                 | Pi-derived core, composition ownership, interaction coverage and contribution gates    |
+| [Delivery plan](team-delivery-plan.md)        | Nine-role task/dependency and domain-review handoff                                    |
+| [Brutal gap audit](brutal-gap-audit.md)       | Closed specification repairs and prioritized open research/qualification gates         |
 
 | Additional chapter / ledger                                       | Coverage                                                                                                     |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
