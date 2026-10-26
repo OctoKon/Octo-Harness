@@ -1,6 +1,7 @@
 import { flushSync, mount, tick, unmount } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import PermissionModeSelect from "./PermissionModeSelect.svelte";
+import PermissionModeHarness from "../../tests/td30/PermissionModeHarness.svelte";
 import {
   acknowledgeMode,
   initialPermissionMode,
@@ -204,6 +205,108 @@ describe("TD-30 PermissionModeSelect", () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(byTestId("permission-notice").textContent).toContain(
       "already awaiting the engine",
+    );
+  });
+});
+
+type Live = {
+  push(state: PermissionModeState, context?: PermissionModeContext): void;
+};
+
+/** Mounts the selector with mutable props, so a context change is observable. */
+async function renderLive(props: Record<string, unknown> = {}): Promise<Live> {
+  if (app) {
+    unmount(app);
+    app = null;
+    document.body.innerHTML = "";
+  }
+  app = mount(PermissionModeHarness, {
+    target: document.body,
+    props: {
+      initialModeState: initialPermissionMode("ses-1"),
+      initialContext: context(),
+      ...props,
+    } as never,
+  });
+  flushSync();
+  await tick();
+  flushSync();
+  return app as unknown as Live;
+}
+
+const flush = async (): Promise<void> => {
+  flushSync();
+  await tick();
+  flushSync();
+};
+
+describe("TD-30 permission confirmation is bound to what it was opened on", () => {
+  it("closes and refuses the confirmation when the session changes", async () => {
+    const onChange = vi.fn();
+    const onDismissConfirm = vi.fn();
+    const live = await renderLive({ onChange, onDismissConfirm });
+
+    await choose("bypass");
+    expect(dialog().open).toBe(true);
+    expect(document.activeElement).toBe(byTestId("permission-keep"));
+
+    live.push(initialPermissionMode("ses-2"));
+    await flush();
+
+    // The old confirmation cannot answer for the new session.
+    expect(dialog().open).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(byTestId("permission-notice").textContent).toContain(
+      "session changed",
+    );
+    expect(onDismissConfirm).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(select());
+  });
+
+  it("closes and refuses the confirmation when the revisions change", async () => {
+    const onChange = vi.fn();
+    const live = await renderLive({ onChange });
+
+    await choose("bypass");
+    expect(dialog().open).toBe(true);
+
+    live.push(
+      initialPermissionMode("ses-1"),
+      context({ configRevision: "cfg-2", policyRevision: "pol-2" }),
+    );
+    await flush();
+
+    expect(dialog().open).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(byTestId("permission-notice").textContent).toContain(
+      "Configuration or policy changed",
+    );
+  });
+
+  it("closes and refuses the confirmation when the engine goes away", async () => {
+    const onChange = vi.fn();
+    const live = await renderLive({ onChange });
+
+    await choose("bypass");
+    expect(dialog().open).toBe(true);
+
+    live.push(
+      initialPermissionMode("ses-1"),
+      context({
+        engine: "unavailable",
+        engineReason: "Engine process exited.",
+      }),
+    );
+    await flush();
+
+    // No dead modal and no confirm callback: the engine cannot admit it.
+    expect(dialog().open).toBe(false);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(byTestId("permission-notice").textContent).toContain(
+      "Engine process exited.",
+    );
+    expect(byTestId("permission-blocked").textContent).toContain(
+      "Engine process exited.",
     );
   });
 });

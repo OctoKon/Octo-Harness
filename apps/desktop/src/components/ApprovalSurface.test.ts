@@ -1,7 +1,11 @@
 import { flushSync, mount, tick, unmount } from "svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ApprovalSurfaceHarness from "../../tests/td30/ApprovalSurfaceHarness.svelte";
-import { approvalMatching, approvalRequest } from "../../tests/td30/fixtures";
+import {
+  approvalMatching,
+  approvalRequest,
+  approvalRunCanceled,
+} from "../../tests/td30/fixtures";
 import type { ApprovalContext, ApprovalRequestView } from "../stores/approvals";
 
 let app: ReturnType<typeof mount> | null = null;
@@ -176,5 +180,32 @@ describe("TD-30 ApprovalSurface", () => {
     );
     expect(maybeTestId("approval-submitted")).toBeNull();
     expect(onRespond).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the open prompt and says so when the run is canceled", async () => {
+    const onRespond = vi.fn();
+    const onDismiss = vi.fn();
+    const opener = document.createElement("button");
+    opener.textContent = "open approval";
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const surface = await render([approvalRequest], approvalMatching, {
+      onRespond,
+      onDismiss,
+    });
+    expect(maybeTestId("approval-dialog")).not.toBeNull();
+
+    // The run is canceled while the prompt is open: a live context update, not a
+    // remount, so the modal has to react to the change itself.
+    await push(surface, [approvalRequest], approvalRunCanceled);
+
+    expect(maybeTestId("approval-dialog")).toBeNull();
+    expect(onRespond).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledWith("apr-1");
+    expect(document.activeElement).toBe(opener);
+    expect(byTestId("approval-closed-canceled").textContent).toContain(
+      "No action was approved",
+    );
   });
 });

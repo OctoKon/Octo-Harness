@@ -221,14 +221,13 @@ test.describe("TD-30 D3_approval_revision and FUI-W5", () => {
     await expect(page.getByTestId("approval-inert")).toHaveCount(0);
   });
 
-  test("an unavailable engine, canceled run or expiry can never be approved", async ({
+  test("an unavailable engine or expiry can never be approved", async ({
     page,
   }) => {
     await page.goto(url);
 
     for (const [context, reason] of [
       ["engine-unavailable", "Engine process exited."],
-      ["run-canceled", "rejects late approvals"],
       ["expired", "expired"],
     ] as const) {
       await setContext(page, context);
@@ -244,6 +243,38 @@ test.describe("TD-30 D3_approval_revision and FUI-W5", () => {
     await page.getByTestId("approval-dismiss").click();
     await expect(dialog(page)).toHaveCount(0);
     expect(await calls(page)).toEqual([{ name: "onDismiss", args: ["apr-1"] }]);
+  });
+
+  test("a canceled run closes the prompt, restores focus and says no decision was made", async ({
+    page,
+  }) => {
+    await page.goto(url);
+    await expect(dialog(page)).toHaveCount(1);
+    await expect(page.getByTestId("approval-deny")).toBeFocused();
+
+    // The run is canceled while the prompt is open. The question no longer has
+    // an answer, so the modal must not stay up asking it.
+    await setContext(page, "run-canceled");
+
+    await expect(dialog(page)).toHaveCount(0);
+    await expect(page.getByTestId("approval-closed-canceled")).toContainText(
+      "No action was approved",
+    );
+    // Only the dismissal was reported: nothing was approved or denied.
+    expect(await calls(page)).toEqual([{ name: "onDismiss", args: ["apr-1"] }]);
+    // Focus left the modal instead of staying on a control that no longer exists.
+    expect(
+      await page.evaluate(() => document.activeElement === document.body),
+    ).toBe(true);
+    expect(await focusInsideDialog(page)).toBe(false);
+
+    // A late activation of the old prompt cannot decide anything.
+    await page.evaluate(() => {
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="approval-approve"]')
+        ?.click();
+    });
+    expect(await calls(page)).toHaveLength(1);
   });
 
   test("a replacement request remounts the dialog and the older one never resurfaces", async ({

@@ -169,6 +169,92 @@ export function confirmedPermissionModeRequest(
   return requestedMode(state, mode);
 }
 
+/**
+ * The identity a separate confirmation was opened against. A confirmation is
+ * not a capability: it only says "the user agreed to this mode for THIS session
+ * under THESE revisions". If any of those change before the user confirms, the
+ * answer no longer refers to the target being asked about.
+ */
+export interface ModeConfirmation {
+  readonly mode: PermissionMode;
+  readonly sessionId: string | null;
+  readonly configRevision: string | null;
+  readonly policyRevision: string | null;
+}
+
+/** Captures the confirmation identity, or null when the mode needs none/is blocked. */
+export function modeConfirmation(
+  state: PermissionModeState,
+  mode: PermissionMode,
+  context: PermissionModeContext,
+): ModeConfirmation | null {
+  if (!requiresModeConfirmation(mode)) return null;
+  if (blockedModeReason(state, mode, context) !== null) return null;
+  return {
+    mode,
+    sessionId: state.sessionId,
+    configRevision: context.configRevision,
+    policyRevision: context.policyRevision,
+  };
+}
+
+/**
+ * Why a captured confirmation is no longer valid against the current state.
+ * `null` means it still names exactly the target the user is being asked about.
+ * The engine and revision guards are re-run here, so a confirmation opened
+ * before the engine went away cannot be accepted afterwards.
+ */
+export function confirmationInvalidReason(
+  state: PermissionModeState,
+  confirmation: ModeConfirmation,
+  context: PermissionModeContext,
+): string | null {
+  if (state.sessionId !== confirmation.sessionId) {
+    return "The session changed while the confirmation was open. Reopen it for this session.";
+  }
+  if (
+    context.configRevision !== confirmation.configRevision ||
+    context.policyRevision !== confirmation.policyRevision
+  ) {
+    return "Configuration or policy changed while the confirmation was open. Reopen it to review the current revisions.";
+  }
+  return blockedModeReason(state, confirmation.mode, context);
+}
+
+export type ModeConfirmationResult =
+  | { readonly kind: "requested"; readonly state: PermissionModeState }
+  | { readonly kind: "invalidated"; readonly reason: string };
+
+/**
+ * Accepts a previously captured confirmation. It never applies the mode: it
+ * re-validates the captured identity against the CURRENT state and context, and
+ * refuses (producing no request) when anything changed. This is the last guard,
+ * so a stale rendered dialog cannot request a mode for a different session or
+ * after the engine went away.
+ */
+export function confirmPermissionMode(
+  state: PermissionModeState,
+  confirmation: ModeConfirmation,
+  context: PermissionModeContext,
+): ModeConfirmationResult {
+  const invalid = confirmationInvalidReason(state, confirmation, context);
+  if (invalid !== null) return { kind: "invalidated", reason: invalid };
+  const request = confirmedPermissionModeRequest(
+    state,
+    confirmation.mode,
+    context,
+  );
+  if (request.kind === "blocked") {
+    return { kind: "invalidated", reason: request.reason };
+  }
+  if (request.kind !== "requested") {
+    // A confirmed mode never asks for a second confirmation; treat any other
+    // shape as a refusal rather than guessing.
+    return { kind: "invalidated", reason: request.reason };
+  }
+  return { kind: "requested", state: request.state };
+}
+
 /** Engine acknowledgement: the requested mode becomes effective exactly once. */
 export function acknowledgeMode(
   state: PermissionModeState,

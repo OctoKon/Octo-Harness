@@ -113,7 +113,6 @@ describe("TD-30 ApprovalDialog", () => {
   for (const [name, context, reason] of [
     ["a changed target/run", approvalWrongTarget, "different run"],
     ["a stale revision", approvalStaleRevision, "revision changed"],
-    ["a canceled run", approvalRunCanceled, "rejects late approvals"],
     ["a lost engine", approvalEngineUnavailable, "Engine process exited."],
     ["an expired request", approvalExpired, "expired"],
   ] as const) {
@@ -134,6 +133,22 @@ describe("TD-30 ApprovalDialog", () => {
       expect(byTestId("approval-dismiss").textContent?.trim()).toBe("Close");
     });
   }
+
+  it("closes the prompt and returns focus when the run is canceled", async () => {
+    const onRespond = vi.fn();
+    const onDismiss = vi.fn();
+    await render(approvalRunCanceled, { onRespond, onDismiss });
+
+    // A dead prompt never opens, never asks, and never decides.
+    expect(dialog().open).toBe(false);
+    expect(onRespond).not.toHaveBeenCalled();
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(opener);
+    // Nothing in the closed prompt can still be activated as a decision.
+    expect((byTestId("approval-approve") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
 
   it("closes on Escape without approving, and returns focus to the opener", async () => {
     const onRespond = vi.fn();

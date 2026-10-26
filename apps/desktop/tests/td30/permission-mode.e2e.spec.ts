@@ -225,4 +225,87 @@ test.describe("TD-30 U1_permission_mode", () => {
     await expect(select(page)).toHaveValue("manual");
     await expect(page.getByTestId("permission-announcement")).toHaveText("");
   });
+
+  // dnarsh's real-Edge probe: an open bypass confirmation is an answer about
+  // one session under one set of revisions. Each of these mutates the mounted
+  // selector (no reload) and then activates the old Enable control if it still
+  // exists, which is exactly how a stale dialog could request bypass.
+  const staleEnableClick = (page: Page) =>
+    page.evaluate(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="permission-confirm-bypass"]',
+        )
+        ?.click();
+    });
+
+  /** The only call that could change the engine-admitted mode. */
+  const changes = async (page: Page) =>
+    (await calls(page)).filter((call) => call.name === "onChange");
+
+  test("a stale bypass confirmation cannot request bypass in a new session", async ({
+    page,
+  }) => {
+    await page.goto(url);
+
+    await select(page).selectOption("bypass");
+    await expect(confirm(page)).toBeVisible();
+
+    await page.evaluate(() => window.__td30p.newSession("ses-2"));
+    await staleEnableClick(page);
+
+    await expect(confirm(page)).toBeHidden();
+    expect(await changes(page)).toEqual([]);
+    await expect(page.getByTestId("permission-notice")).toContainText(
+      "session changed",
+    );
+    // No pending bypass leaked into the new session.
+    await expect(page.getByTestId("permission-pending")).toHaveCount(0);
+    await expect(page.getByTestId("permission-effective")).toContainText(
+      "Manual",
+    );
+  });
+
+  test("a stale bypass confirmation cannot request bypass after the revisions change", async ({
+    page,
+  }) => {
+    await page.goto(url);
+
+    await select(page).selectOption("bypass");
+    await expect(confirm(page)).toBeVisible();
+
+    await page.evaluate(() => window.__td30p.setRevisions("cfg-2", "pol-2"));
+    await staleEnableClick(page);
+
+    await expect(confirm(page)).toBeHidden();
+    expect(await changes(page)).toEqual([]);
+    await expect(page.getByTestId("permission-notice")).toContainText(
+      "Configuration or policy changed",
+    );
+    await expect(page.getByTestId("permission-pending")).toHaveCount(0);
+  });
+
+  test("a bypass confirmation cannot be accepted after the engine goes away", async ({
+    page,
+  }) => {
+    await page.goto(url);
+
+    await select(page).selectOption("bypass");
+    await expect(confirm(page)).toBeVisible();
+
+    await page.evaluate(() =>
+      window.__td30p.setEngine("unavailable", "Engine lost"),
+    );
+    await staleEnableClick(page);
+
+    await expect(confirm(page)).toBeHidden();
+    expect(await changes(page)).toEqual([]);
+    await expect(page.getByTestId("permission-notice")).toContainText(
+      "Engine lost",
+    );
+    await expect(page.getByTestId("permission-blocked")).toContainText(
+      "Engine lost",
+    );
+    await expect(page.getByTestId("permission-pending")).toHaveCount(0);
+  });
 });

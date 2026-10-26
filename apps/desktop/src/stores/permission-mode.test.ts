@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   acknowledgeMode,
   bindPermissionSession,
+  confirmPermissionMode,
   confirmedPermissionModeRequest,
   initialPermissionMode,
+  modeConfirmation,
   permissionModeView,
   rejectMode,
   requestPermissionMode,
@@ -165,5 +167,80 @@ describe("U1_permission_mode", () => {
 
     // Same session is a no-op, so an in-flight request survives a re-render.
     expect(bindPermissionSession(request.state, "ses-1")).toBe(request.state);
+  });
+
+  it("binds a bypass confirmation to the session and revisions it was opened under", () => {
+    const state = bound("ses-1");
+    const confirmation = modeConfirmation(state, "bypass", context());
+    expect(confirmation).not.toBeNull();
+    if (!confirmation) throw new Error("expected confirmation");
+    expect(modeConfirmation(state, "auto", context())).toBeNull();
+
+    // Unchanged identity is admitted, but still only as a request.
+    const accepted = confirmPermissionMode(state, confirmation, context());
+    expect(accepted.kind).toBe("requested");
+    if (accepted.kind !== "requested") throw new Error("expected request");
+    expect(accepted.state.effective).toBe("manual");
+    expect(accepted.state.requested).toBe("bypass");
+  });
+
+  it("refuses a confirmation after the session changes", () => {
+    const confirmation = modeConfirmation(bound("ses-1"), "bypass", context());
+    if (!confirmation) throw new Error("expected confirmation");
+
+    const result = confirmPermissionMode(
+      bound("ses-2"),
+      confirmation,
+      context(),
+    );
+    expect(result.kind).toBe("invalidated");
+    if (result.kind !== "invalidated") throw new Error("expected refusal");
+    expect(result.reason).toContain("session changed");
+  });
+
+  it("refuses a confirmation after the configuration or policy revision changes", () => {
+    const confirmation = modeConfirmation(bound("ses-1"), "bypass", context());
+    if (!confirmation) throw new Error("expected confirmation");
+
+    expect(
+      confirmPermissionMode(
+        bound("ses-1"),
+        confirmation,
+        context({ configRevision: "cfg-2" }),
+      ),
+    ).toMatchObject({ kind: "invalidated" });
+    expect(
+      confirmPermissionMode(
+        bound("ses-1"),
+        confirmation,
+        context({ policyRevision: "pol-2" }),
+      ),
+    ).toMatchObject({ kind: "invalidated" });
+    // Revisions going away is also a change, never "still fine".
+    expect(
+      confirmPermissionMode(
+        bound("ses-1"),
+        confirmation,
+        context({ policyRevision: null }),
+      ),
+    ).toMatchObject({ kind: "invalidated" });
+  });
+
+  it("refuses a confirmation after the engine goes away", () => {
+    const confirmation = modeConfirmation(bound("ses-1"), "bypass", context());
+    if (!confirmation) throw new Error("expected confirmation");
+
+    const result = confirmPermissionMode(
+      bound("ses-1"),
+      confirmation,
+      context({
+        engine: "unavailable",
+        engineReason: "Engine process exited.",
+      }),
+    );
+    expect(result).toEqual({
+      kind: "invalidated",
+      reason: "Engine process exited.",
+    });
   });
 });

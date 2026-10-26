@@ -48,13 +48,30 @@
 
   onMount(() => {
     opener = document.activeElement;
-    dialog?.showModal();
-    void tick().then(() => denyButton?.focus());
+    // A request whose run is already canceled must not open a dead modal. The
+    // effect below still reports the dismissal so the surface stops showing it.
+    if (!context.runCanceled) {
+      dialog?.showModal();
+      void tick().then(() => denyButton?.focus());
+    }
     return () => {
       if (dialog?.open) dialog.close();
       // Restore focus to the control that opened the dialog, if it still exists.
       if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
     };
+  });
+
+  // A canceled run can no longer accept a decision, so keeping a modal open
+  // would ask the user to answer a question that no longer exists. Close it,
+  // return focus to where it came from, and report the dismissal. A decision
+  // already submitted stays visible instead: its own outcome is still pending.
+  let runEnded = false;
+  $effect(() => {
+    if (!context.runCanceled || runEnded || submitted !== null) return;
+    runEnded = true;
+    if (dialog?.open) dialog.close();
+    if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    onDismiss();
   });
 
   function submit(decision: "approve" | "deny") {

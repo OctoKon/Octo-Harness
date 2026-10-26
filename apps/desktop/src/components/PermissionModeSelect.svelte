@@ -13,8 +13,12 @@
   import { tick } from "svelte";
   import {
     PERMISSION_MODE_LABELS,
+    confirmationInvalidReason,
+    confirmPermissionMode,
+    modeConfirmation,
     permissionModeView,
     requestPermissionMode,
+    type ModeConfirmation,
     type PermissionMode,
     type PermissionModeContext,
     type PermissionModeState,
@@ -49,19 +53,43 @@
       : modeState.effective,
   );
 
-  let confirmMode = $state<PermissionMode | null>(null);
+  let pending = $state<ModeConfirmation | null>(null);
   let notice = $state<string | null>(null);
   let dialog = $state<HTMLDialogElement>();
   let keepButton = $state<HTMLButtonElement>();
   let selectEl = $state<HTMLSelectElement>();
 
+  // The confirmation is only an answer to the exact session/revisions it was
+  // opened under. If any of those (or the engine) changes, it is dead: the
+  // dialog closes and no mode can be requested from it.
+  const pendingInvalidation = $derived(
+    pending ? confirmationInvalidReason(modeState, pending, context) : null,
+  );
+
   // Opening is done after the dialog's content exists, and the safe control
   // takes focus so Enter cannot enable bypass by accident.
   $effect(() => {
-    if (!confirmMode) return;
-    dialog?.showModal();
-    void tick().then(() => keepButton?.focus());
+    if (!pending) return;
+    if (dialog && !dialog.open) {
+      dialog.showModal();
+      void tick().then(() => keepButton?.focus());
+    }
   });
+
+  $effect(() => {
+    const reason = pendingInvalidation;
+    if (!pending || reason === null) return;
+    invalidate(reason);
+  });
+
+  function invalidate(reason: string) {
+    pending = null;
+    notice = reason;
+    if (dialog?.open) dialog.close();
+    resetSelect();
+    onDismissConfirm();
+    void tick().then(() => selectEl?.focus());
+  }
 
   function choose(mode: PermissionMode) {
     notice = null;
@@ -78,7 +106,7 @@
       return;
     }
     if (request.kind === "confirm") {
-      confirmMode = request.mode;
+      pending = modeConfirmation(modeState, mode, context);
       return;
     }
     // The requested mode is not effective yet: show the engine-acknowledged
@@ -97,7 +125,7 @@
   }
 
   function cancelConfirm() {
-    confirmMode = null;
+    pending = null;
     if (dialog?.open) dialog.close();
     resetSelect();
     onDismissConfirm();
@@ -105,10 +133,21 @@
   }
 
   function acceptConfirm() {
-    const mode = confirmMode;
-    confirmMode = null;
+    const confirmation = pending;
+    if (!confirmation) return;
+    // Re-validated against the CURRENT state, not the state at open: a stale
+    // render or a same-tick context change cannot request the mode.
+    const result = confirmPermissionMode(modeState, confirmation, context);
+    pending = null;
     if (dialog?.open) dialog.close();
-    if (mode) onChange(mode);
+    if (result.kind === "invalidated") {
+      notice = result.reason;
+      resetSelect();
+      onDismissConfirm();
+      void tick().then(() => selectEl?.focus());
+      return;
+    }
+    onChange(confirmation.mode);
   }
 
   function oncancel(event: Event) {
@@ -173,12 +212,12 @@
   aria-describedby="permission-confirm-body"
   data-testid="permission-confirm"
 >
-  {#if confirmMode}
+  {#if pending}
     <h2 id="permission-confirm-title">
-      Enable {PERMISSION_MODE_LABELS[confirmMode]}?
+      Enable {PERMISSION_MODE_LABELS[pending.mode]}?
     </h2>
     <p id="permission-confirm-body">
-      {PERMISSION_MODE_LABELS[confirmMode]} removes approval prompts for this
+      {PERMISSION_MODE_LABELS[pending.mode]} removes approval prompts for this
       session. This is a separate, explicit choice and it applies to this session
       only. The safe choice keeps {view.effectiveLabel}.
     </p>
@@ -194,10 +233,12 @@
       <button
         type="button"
         class="danger"
+        disabled={pendingInvalidation !== null}
+        title={pendingInvalidation ?? undefined}
         onclick={acceptConfirm}
         data-testid="permission-confirm-bypass"
       >
-        Enable {PERMISSION_MODE_LABELS[confirmMode]}
+        Enable {PERMISSION_MODE_LABELS[pending.mode]}
       </button>
     </div>
   {/if}

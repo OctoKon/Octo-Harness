@@ -43,6 +43,14 @@
     if (active) dismissed = active.request.approvalRequestId;
     onDismiss(active?.request.approvalRequestId ?? "");
   }
+
+  // The dialog self-dismisses when the run is canceled; say so instead of
+  // letting the prompt vanish with no explanation.
+  const closedByCanceledRun = $derived(
+    active !== null &&
+      dismissed === active.request.approvalRequestId &&
+      context.runCanceled,
+  );
 </script>
 
 {#if visible}
@@ -54,4 +62,11 @@
       onDismiss={dismiss}
     />
   {/key}
+{/if}
+
+{#if closedByCanceledRun}
+  <p role="status" data-testid="approval-closed-canceled">
+    The run was canceled, so this approval request was closed without a
+    decision. No action was approved.
+  </p>
 {/if}
