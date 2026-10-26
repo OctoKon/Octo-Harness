@@ -1,0 +1,120 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  CATALOG,
+  createCommandRegistry,
+  filterCommands,
+  findConflicts,
+  normalizeShortcut,
+  type CommandDef,
+} from "./commands";
+
+const key = (init: KeyboardEventInit) =>
+  new KeyboardEvent("keydown", { cancelable: true, ...init });
+
+describe("filter and ranking", () => {
+  const items = [
+    { label: "Toggle sidebar", category: "Layout" },
+    { label: "Focus session transcript", category: "Landmarks" },
+    { label: "Focus settings and profile selector", category: "Landmarks" },
+  ];
+  it("prefix match outranks scattered subsequence", () => {
+    expect(filterCommands(items, "set")[0]?.label).toMatch(/settings/);
+    expect(filterCommands(items, "tog")[0]?.label).toBe("Toggle sidebar");
+  });
+  it("drops non-matches and keeps order for an empty query", () => {
+    expect(filterCommands(items, "zzz")).toEqual([]);
+    expect(filterCommands(items, "  ")).toEqual(items);
+  });
+});
+
+describe("registry", () => {
+  it("disabled commands report a reason and never run, even when run() is called directly", async () => {
+    const run = vi.fn();
+    const reg = createCommandRegistry({
+      "landmark.rail": { run, unavailable: () => "No workspace selected" },
+    });
+    const c = reg.list().find((x) => x.id === "landmark.rail")!;
+    expect(c).toMatchObject({
+      enabled: false,
+      reason: "No workspace selected",
+    });
+    expect(await reg.run("landmark.rail")).toEqual({
+      ok: false,
+      reason: "No workspace selected",
+    });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("re-checks availability at run time (stale list cannot invoke)", async () => {
+    let blocked: string | undefined;
+    const run = vi.fn();
+    const reg = createCommandRegistry({
+      "landmark.rail": { run, unavailable: () => blocked },
+    });
+    expect(reg.list()[0]!.enabled).toBe(true);
+    blocked = "Session changed";
+    expect((await reg.run("landmark.rail")).ok).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("commands without a handler are unavailable, not silently runnable", async () => {
+    const reg = createCommandRegistry({});
+    expect(await reg.run("landmark.rail")).toMatchObject({ ok: false });
+  });
+
+  it("routes global shortcuts, ignores IME composition and unrouted scoped keys", () => {
+    const open = vi.fn();
+    const submit = vi.fn();
+    const reg = createCommandRegistry({
+      "palette.open": { run: open },
+      "composer.submit": { run: submit },
+    });
+    expect(reg.handleKey(key({ key: "k", ctrlKey: true }))).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(
+      reg.handleKey(key({ key: "k", ctrlKey: true, isComposing: true })),
+    ).toBe(false);
+    expect(reg.handleKey(key({ key: "Enter", ctrlKey: true }))).toBe(false);
+    expect(submit).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shortcut conflicts", () => {
+  it("catalog (registry plus shell bindings) has no duplicate active bindings", () => {
+    expect(findConflicts(CATALOG)).toEqual([]);
+    expect(
+      CATALOG.some(
+        (c) => c.scope === "shell" && c.shortcuts.includes("Ctrl+B"),
+      ),
+    ).toBe(true);
+    expect(CATALOG.some((c) => c.shortcuts.includes("Ctrl+Shift+E"))).toBe(
+      true,
+    );
+  });
+  it("detects same-scope and global-versus-scoped clashes but not disjoint scopes", () => {
+    const d = (
+      id: string,
+      scope: CommandDef["scope"],
+      s: string,
+    ): CommandDef => ({
+      id,
+      label: id,
+      category: "x",
+      scope,
+      shortcuts: [s],
+      palette: false,
+      routed: false,
+    });
+    expect(
+      findConflicts([d("a", "global", "ctrl+b"), d("b", "shell", "Ctrl+B")]),
+    ).toHaveLength(1);
+    expect(
+      findConflicts([d("a", "review", "J"), d("b", "review", "j")]),
+    ).toHaveLength(1);
+    expect(
+      findConflicts([d("a", "review", "Escape"), d("b", "approval", "Escape")]),
+    ).toEqual([]);
+    expect(normalizeShortcut("shift+ctrl+e")).toBe("Ctrl+Shift+E");
+  });
+});
