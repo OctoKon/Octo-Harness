@@ -59,6 +59,34 @@ const CALIBRATION_LABEL: Readonly<Record<CalibrationState, string>> = {
   unavailable: "Calibration unavailable",
 };
 
+function normalizeCalibrationState(state: CalibrationState): CalibrationState {
+  switch (state) {
+    case "calibrated":
+    case "unmeasured":
+    case "insufficient-history":
+    case "unavailable":
+      return state;
+    default:
+      return "unavailable";
+  }
+}
+
+function normalizeCalibration(c: SpecialistCalibration): SpecialistCalibration {
+  const state = normalizeCalibrationState(c.state);
+  if (
+    state === "calibrated" &&
+    c.samples !== undefined &&
+    c.requiredSamples !== undefined &&
+    Number.isFinite(c.samples) &&
+    Number.isFinite(c.requiredSamples) &&
+    c.requiredSamples > 0 &&
+    c.samples < c.requiredSamples
+  ) {
+    return { ...c, state: "insufficient-history", detail: undefined };
+  }
+  return state === c.state ? c : { ...c, state };
+}
+
 function calibrationDetail(c: SpecialistCalibration): string {
   const custom = c.detail?.trim();
   if (custom) return custom;
@@ -91,23 +119,23 @@ function measuredConfidence(c: SpecialistCalibration): number | null {
 }
 
 export function toSpecialistView(input: SpecialistInput): SpecialistView {
-  const bindingUnavailable =
-    input.binding.state === "unavailable"
-      ? input.binding.reason?.trim() || "Specialist model is unavailable."
-      : null;
+  const bindingReady = input.binding.state === "ready";
+  const calibration = normalizeCalibration(input.calibration);
   return {
     kind: input.kind,
     fixture: input.fixture,
     model: input.model,
-    bindingState: input.binding.state,
+    bindingState: bindingReady ? "ready" : "unavailable",
     authority: "advisory",
-    bindingUnavailableReason: bindingUnavailable,
-    advice: bindingUnavailable === null ? (input.advice ?? null) : null,
+    bindingUnavailableReason: bindingReady
+      ? null
+      : input.binding.reason?.trim() || "Specialist model is unavailable.",
+    advice: bindingReady ? (input.advice ?? null) : null,
     calibration: {
-      state: input.calibration.state,
-      label: CALIBRATION_LABEL[input.calibration.state],
-      detail: calibrationDetail(input.calibration),
-      confidence: measuredConfidence(input.calibration),
+      state: calibration.state,
+      label: CALIBRATION_LABEL[calibration.state],
+      detail: calibrationDetail(calibration),
+      confidence: measuredConfidence(calibration),
     },
   };
 }

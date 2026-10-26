@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   toSpecialistView,
   type CalibrationState,
+  type SpecialistBindingState,
   type SpecialistInput,
 } from "./specialist-view";
 
@@ -71,6 +72,67 @@ describe("toSpecialistView", () => {
     expect(view.bindingState).toBe("unavailable");
     expect(view.bindingUnavailableReason).toBe("Local model not installed.");
     expect(view.advice).toBeNull();
+  });
+
+  it("fails closed on an unknown binding state", () => {
+    const view = toSpecialistView(
+      make({
+        binding: { state: "bogus" as unknown as SpecialistBindingState },
+      }),
+    );
+    expect(view.bindingState).toBe("unavailable");
+    expect(view.bindingUnavailableReason).toBe(
+      "Specialist model is unavailable.",
+    );
+    expect(view.advice).toBeNull();
+  });
+
+  it("fails closed on an unknown calibration state", () => {
+    const view = toSpecialistView(
+      make({
+        calibration: {
+          state: "bogus" as unknown as CalibrationState,
+          detail: undefined,
+          confidence: 0.9,
+        },
+      }),
+    );
+    expect(view.calibration.state).toBe("unavailable");
+    expect(view.calibration.label).toBe("Calibration unavailable");
+    expect(view.calibration.detail).toBe("Calibration data is unavailable.");
+    expect(view.calibration.confidence).toBeNull();
+  });
+
+  it("downgrades calibrated advice with insufficient samples", () => {
+    const view = toSpecialistView(
+      make({
+        calibration: {
+          state: "calibrated",
+          samples: 3,
+          requiredSamples: 20,
+          confidence: 0.9,
+        },
+      }),
+    );
+    expect(view.calibration.state).toBe("insufficient-history");
+    expect(view.calibration.label).toBe("Insufficient history");
+    expect(view.calibration.detail).toBe("3 of 20 required samples.");
+    expect(view.calibration.confidence).toBeNull();
+  });
+
+  it("keeps calibrated confidence when samples meet the requirement", () => {
+    const view = toSpecialistView(
+      make({
+        calibration: {
+          state: "calibrated",
+          samples: 20,
+          requiredSamples: 20,
+          confidence: 0.75,
+        },
+      }),
+    );
+    expect(view.calibration.state).toBe("calibrated");
+    expect(view.calibration.confidence).toBe(0.75);
   });
 
   it("uses an honest fixed reason when an unavailable binding has none", () => {
