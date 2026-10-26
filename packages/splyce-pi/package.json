@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./recovery": {
+      "types": "./dist/recovery.d.ts",
+      "import": "./dist/recovery.js"
+    },
     "./contracts": {
       "types": "./dist/contracts.d.ts",
       "import": "./dist/contracts.js"
