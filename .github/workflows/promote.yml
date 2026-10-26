@@ -17,9 +17,7 @@ concurrency:
 jobs:
   promote:
     name: Promote to main
-    # Skips cleanly until a lead configures the release GitHub App (repository-baseline activation steps 1-2).
     if: >-
-      vars.RELEASE_APP_CLIENT_ID != '' &&
       (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository
@@ -29,8 +27,8 @@ jobs:
       - id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.OCTOKON_APP_ID }}
+          private-key: ${{ secrets.OCTOKON_APP_SECRET }}
           permission-contents: write
           permission-checks: read
           permission-workflows: write
