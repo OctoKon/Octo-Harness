@@ -14,7 +14,7 @@ All parent/worker agents inherit the same repository and directory rules. Delega
 
 ## Required validation before opening a PR
 
-**This gate applies before every PR creation/update, including drafts, and before merging to the PR base.** Once the staging flow is active, PRs target `staging` and `main` advances only by fast-forward to a staging commit with every required check green (automated by the release app, or performed by Itachi-1824 until that app exists) after the [staging release gate](research/docs/governance/repository-baseline.md#branch-flow-and-automated-promotion) passes. Local commits and pushes to your own username branch, or to a declared multi-owner integration branch named in the [task plan](research/docs/design/team-delivery-plan.md#bootstrap-and-release-handoff), are permitted for work-in-progress and serial handoffs; they do not publish, close a task or claim verification.
+**This gate applies before every PR creation/update, including drafts, and before merging to the PR base.** Once the staging flow is active, PRs target `staging` and `main` advances only by fast-forward to a staging commit with every required check green (performed only by the release app) after the [staging release gate](research/docs/governance/repository-baseline.md#branch-flow-and-automated-promotion) passes. Local commits and pushes to your own username branch, or to a declared multi-owner integration branch named in the [task plan](research/docs/design/team-delivery-plan.md#bootstrap-and-release-handoff), are permitted for work-in-progress and serial handoffs; they do not publish, close a task or claim verification.
 
 Install documentation tools with `npm ci --ignore-scripts`, then run:
 
