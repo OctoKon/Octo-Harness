@@ -1139,15 +1139,26 @@ test("migrateV1 decides attribution inside its write transaction (no check-then-
     ],
     { stdio: "ignore" },
   );
-  const exited = new Promise((resolve) => writer.once("exit", resolve));
-  while (!existsSync(signal)) await new Promise((r) => setTimeout(r, 10));
+  const exited = new Promise<number | null>((resolve) =>
+    writer.once("exit", resolve),
+  );
+  let writerExit: number | null | undefined;
+  void exited.then((code) => (writerExit = code));
+  // Bounded wait: a writer that crashes or never locks fails the test
+  // instead of hanging it.
+  const deadline = Date.now() + 10_000;
+  while (!existsSync(signal)) {
+    assert.equal(writerExit, undefined, "writer exited before taking the lock");
+    assert.ok(Date.now() < deadline, "writer never took the lock");
+    await new Promise((r) => setTimeout(r, 10));
+  }
 
   assert.throws(
     () => Store.migrateV1(path),
     (error: unknown) =>
       error instanceof StoreError && error.message.includes("attribution"),
   );
-  await exited;
+  assert.equal(await exited, 0, "writer must commit cleanly");
   const check = new DatabaseSync(path);
   const layout = check
     .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
