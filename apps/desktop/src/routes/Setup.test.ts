@@ -1,0 +1,278 @@
+import { flushSync, mount, tick, unmount } from "svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import Setup from "./Setup.svelte";
+import {
+  d1BaseSetup,
+  d6Catalog,
+  d6Reviewing,
+  d6ReviewingStale,
+} from "../../tests/td29/fixtures";
+
+let app: ReturnType<typeof mount> | null = null;
+
+afterEach(() => {
+  if (app) unmount(app);
+  app = null;
+  document.body.innerHTML = "";
+});
+
+async function render(props: Record<string, unknown>): Promise<void> {
+  app = mount(Setup, {
+    target: document.body,
+    props: props as never,
+  });
+  flushSync();
+  await tick();
+  flushSync();
+}
+
+const byTestId = (id: string): HTMLElement => {
+  const element = document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+  if (!element) throw new Error(`missing ${id}`);
+  return element;
+};
+
+const maybeTestId = (id: string): HTMLElement | null =>
+  document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+
+const checkboxFor = (packageId: string): HTMLInputElement => {
+  const element = document.querySelector<HTMLInputElement>(
+    `[data-testid="module-option"][data-package-id="${packageId}"] input`,
+  );
+  if (!element) throw new Error(`missing module option ${packageId}`);
+  return element;
+};
+
+async function selectAndReview(...packageIds: string[]): Promise<void> {
+  for (const packageId of packageIds) checkboxFor(packageId).click();
+  flushSync();
+  byTestId("review-install").click();
+  flushSync();
+  await tick();
+  flushSync();
+}
+
+describe("TD-29 Setup.svelte", () => {
+  it("D1: opens base-first, honest about generation, and never preselects", async () => {
+    const onBaseOnly = vi.fn();
+    const onEnterWorkbench = vi.fn();
+    await render({ snapshot: d1BaseSetup, onBaseOnly, onEnterWorkbench });
+
+    expect(byTestId("setup").dataset.step).toBe("start");
+    // D1: the base path is the primary, focused default.
+    expect(document.activeElement).toBe(byTestId("base-only"));
+    expect(byTestId("generation").dataset.state).toBe("unconfigured");
+    expect(byTestId("generation").textContent).toContain(
+      "Generation unconfigured",
+    );
+    expect(byTestId("generation").textContent).toContain(
+      "No generation model is selected.",
+    );
+    // Ambient configuration is evidence, not an implicit selection or install.
+    expect(byTestId("ambient-notice").textContent).toContain("splyce-memory");
+    expect(byTestId("ambient-notice").textContent).toContain("not permission");
+    expect(maybeTestId("module-option")).toBeNull();
+    expect(maybeTestId("confirm-install")).toBeNull();
+
+    byTestId("base-only").click();
+    flushSync();
+    expect(onBaseOnly).toHaveBeenCalledTimes(1);
+    expect(onEnterWorkbench).toHaveBeenCalledTimes(1);
+    expect(byTestId("setup").dataset.step).toBe("workbench");
+    expect(byTestId("workbench-generation").textContent).toContain(
+      "Generation unconfigured",
+    );
+  });
+
+  it("D6: requires an explicit selection and an unavailable catalog is not empty success", async () => {
+    const onReview = vi.fn();
+    await render({ snapshot: d6Catalog, initialStep: "selecting", onReview });
+
+    expect(byTestId("selection-count").textContent).toContain(
+      "Selected: 0 module(s)",
+    );
+    const review = byTestId("review-install") as HTMLButtonElement;
+    expect(review.disabled).toBe(true);
+    expect(document.querySelector("#selection-reason")?.textContent).toContain(
+      "at least one",
+    );
+    review.click();
+    flushSync();
+    expect(onReview).not.toHaveBeenCalled();
+
+    // Ambient config reference (fixture-e) is never turned into a checkbox state.
+    expect(checkboxFor("fixture-e").checked).toBe(false);
+
+    // An unavailable catalog renders an alert, not an empty success list.
+    if (app) unmount(app);
+    app = null;
+    document.body.innerHTML = "";
+    await render({ snapshot: d1BaseSetup, initialStep: "selecting" });
+    expect(byTestId("catalog-unavailable").textContent).toContain(
+      "Catalog unavailable",
+    );
+    expect(byTestId("catalog-unavailable").textContent).toContain(
+      "not an empty successful catalog",
+    );
+    expect((byTestId("refresh-catalog") as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+  });
+
+  it("D6: reviews the exact A/B -> D closure and excludes unselected E", async () => {
+    const onReview = vi.fn();
+    await render({ snapshot: d6Reviewing, initialStep: "selecting", onReview });
+
+    await selectAndReview("fixture-a", "fixture-b");
+
+    expect(onReview).toHaveBeenCalledWith(["fixture-a", "fixture-b"]);
+    expect(byTestId("setup").dataset.step).toBe("reviewing");
+
+    const roots = [
+      ...document.querySelectorAll<HTMLElement>('[data-testid="plan-root"]'),
+    ].map((row) => row.dataset.packageId);
+    const dependencies = [
+      ...document.querySelectorAll<HTMLElement>(
+        '[data-testid="plan-dependency"]',
+      ),
+    ].map((row) => row.dataset.packageId);
+    expect(roots.sort()).toEqual(["fixture-a", "fixture-b"]);
+    expect(dependencies).toEqual(["fixture-d"]);
+    expect(document.body.textContent).not.toContain("Unselected fixture E");
+
+    // Enabling after install and running the setup step are separate opt-ins.
+    expect((byTestId("enable-after-install") as HTMLInputElement).checked).toBe(
+      false,
+    );
+    expect((byTestId("execution-grant") as HTMLInputElement).checked).toBe(
+      false,
+    );
+    const confirm = byTestId("confirm-install") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    expect(byTestId("confirm-reason").textContent).toContain(
+      "executable setup step",
+    );
+  });
+
+  it("D6: confirms only with a current plan and the separate execution grant", async () => {
+    const onConfirmInstall = vi.fn();
+    await render({
+      snapshot: d6Reviewing,
+      initialStep: "selecting",
+      onConfirmInstall,
+    });
+    await selectAndReview("fixture-a", "fixture-b");
+
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+
+    const confirm = byTestId("confirm-install") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(false);
+    confirm.click();
+    flushSync();
+
+    expect(onConfirmInstall).toHaveBeenCalledTimes(1);
+    expect(onConfirmInstall).toHaveBeenCalledWith({
+      planId: "plan-d6-current",
+      enableRequested: false,
+      executionGranted: true,
+    });
+  });
+
+  it("D6: keeps confirmation disabled for a stale plan", async () => {
+    const onConfirmInstall = vi.fn();
+    await render({
+      snapshot: d6ReviewingStale,
+      initialStep: "selecting",
+      onConfirmInstall,
+    });
+    await selectAndReview("fixture-a", "fixture-b");
+
+    expect(byTestId("plan-state").dataset.current).toBe("false");
+    const confirm = byTestId("confirm-install") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+    expect(confirm.disabled).toBe(true);
+    confirm.click();
+    flushSync();
+    expect(onConfirmInstall).not.toHaveBeenCalled();
+  });
+
+  it("D6: refuses a plan whose roots do not match the reviewed selection", async () => {
+    const onConfirmInstall = vi.fn();
+    await render({
+      snapshot: d6Reviewing,
+      initialStep: "selecting",
+      onConfirmInstall,
+    });
+
+    await selectAndReview("fixture-a");
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+
+    expect(byTestId("confirm-reason").textContent).toContain("does not match");
+    const confirm = byTestId("confirm-install") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    confirm.click();
+    flushSync();
+    expect(onConfirmInstall).not.toHaveBeenCalled();
+  });
+
+  it("dismisses only the unsent review with Escape and restores its opener", async () => {
+    const onConfirmInstall = vi.fn();
+    await render({
+      snapshot: d6Reviewing,
+      initialStep: "selecting",
+      onConfirmInstall,
+    });
+    await selectAndReview("fixture-a", "fixture-b");
+    expect(document.activeElement?.id).toBe("review-title");
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    flushSync();
+    await tick();
+    flushSync();
+
+    expect(byTestId("setup").dataset.step).toBe("selecting");
+    expect(document.activeElement).toBe(byTestId("review-install"));
+    expect(onConfirmInstall).not.toHaveBeenCalled();
+  });
+
+  it("keeps the base path usable while effects are disabled without an engine", async () => {
+    const onRefreshCatalog = vi.fn();
+    const onBaseOnly = vi.fn();
+    await render({
+      snapshot: {
+        ...d1BaseSetup,
+        engine: "unavailable",
+        engineReason: "Engine process exited.",
+      },
+      initialStep: "selecting",
+      onRefreshCatalog,
+      onBaseOnly,
+    });
+
+    expect(byTestId("engine-unavailable").textContent).toContain(
+      "Engine process exited.",
+    );
+    const refresh = byTestId("refresh-catalog") as HTMLButtonElement;
+    expect(refresh.disabled).toBe(true);
+    refresh.click();
+    flushSync();
+    expect(onRefreshCatalog).not.toHaveBeenCalled();
+
+    // The base is not an effect: it stays available with no engine.
+    const baseOnly = document.querySelectorAll<HTMLButtonElement>("button");
+    const continueBase = [...baseOnly].find((button) =>
+      button.textContent?.includes("Continue with base only"),
+    )!;
+    expect(continueBase.disabled).toBe(false);
+    continueBase.click();
+    flushSync();
+    expect(onBaseOnly).toHaveBeenCalledTimes(1);
+    expect(byTestId("setup").dataset.step).toBe("workbench");
+  });
+});
