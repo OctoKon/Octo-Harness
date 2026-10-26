@@ -120,6 +120,55 @@ describe("toSpecialistView", () => {
     expect(view.calibration.confidence).toBeNull();
   });
 
+  it("downgrades calibrated claims with non-finite sample counts", () => {
+    const view = toSpecialistView(
+      make({
+        calibration: {
+          state: "calibrated",
+          samples: Number.NaN,
+          requiredSamples: 50,
+          confidence: 0.9,
+        },
+      }),
+    );
+    expect(view.calibration.state).toBe("insufficient-history");
+    expect(view.calibration.label).toBe("Insufficient history");
+    expect(view.calibration.detail).toBe("Not enough history to calibrate.");
+    expect(view.calibration.confidence).toBeNull();
+  });
+
+  it("downgrades calibrated claims without sample counts", () => {
+    const view = toSpecialistView(
+      make({
+        calibration: {
+          state: "calibrated",
+          samples: undefined,
+          requiredSamples: undefined,
+          confidence: 0.9,
+        },
+      }),
+    );
+    expect(view.calibration.state).toBe("insufficient-history");
+    expect(view.calibration.label).toBe("Insufficient history");
+    expect(view.calibration.detail).toBe("Not enough history to calibrate.");
+    expect(view.calibration.confidence).toBeNull();
+  });
+
+  it("downgrades calibrated claims with a zero requirement", () => {
+    const view = toSpecialistView(
+      make({
+        calibration: {
+          state: "calibrated",
+          samples: 50,
+          requiredSamples: 0,
+          confidence: 0.9,
+        },
+      }),
+    );
+    expect(view.calibration.state).toBe("insufficient-history");
+    expect(view.calibration.confidence).toBeNull();
+  });
+
   it("keeps calibrated confidence when samples meet the requirement", () => {
     const view = toSpecialistView(
       make({

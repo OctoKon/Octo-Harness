@@ -73,16 +73,19 @@ function normalizeCalibrationState(state: CalibrationState): CalibrationState {
 
 function normalizeCalibration(c: SpecialistCalibration): SpecialistCalibration {
   const state = normalizeCalibrationState(c.state);
-  if (
-    state === "calibrated" &&
-    c.samples !== undefined &&
-    c.requiredSamples !== undefined &&
-    Number.isFinite(c.samples) &&
-    Number.isFinite(c.requiredSamples) &&
-    c.requiredSamples > 0 &&
-    c.samples < c.requiredSamples
-  ) {
-    return { ...c, state: "insufficient-history", detail: undefined };
+  if (state === "calibrated") {
+    const samples = c.samples;
+    const requiredSamples = c.requiredSamples;
+    if (
+      typeof samples !== "number" ||
+      !Number.isFinite(samples) ||
+      typeof requiredSamples !== "number" ||
+      !Number.isFinite(requiredSamples) ||
+      requiredSamples <= 0 ||
+      samples < requiredSamples
+    ) {
+      return { ...c, state: "insufficient-history", detail: undefined };
+    }
   }
   return state === c.state ? c : { ...c, state };
 }
@@ -96,8 +99,10 @@ function calibrationDetail(c: SpecialistCalibration): string {
     case "unmeasured":
       return "No calibration evidence has been measured.";
     case "insufficient-history":
-      return c.samples !== undefined &&
-        c.requiredSamples !== undefined &&
+      return typeof c.samples === "number" &&
+        Number.isFinite(c.samples) &&
+        typeof c.requiredSamples === "number" &&
+        Number.isFinite(c.requiredSamples) &&
         c.requiredSamples > 0
         ? `${c.samples} of ${c.requiredSamples} required samples.`
         : "Not enough history to calibrate.";
