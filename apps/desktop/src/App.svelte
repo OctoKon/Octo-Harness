@@ -6,8 +6,8 @@
     handshake,
     onEvent,
     subscribe,
-    type Unsubscribe,
   } from "./stores/engine";
+  import { bindSelection } from "./stores/session-selection";
   import {
     createTurnStreamTransport,
     createTurnsState,
@@ -16,8 +16,6 @@
 
   let status = $state("disconnected");
   let turns = $state.raw<TurnsState>(createTurnsState());
-  let sessionDispose: Unsubscribe | null = null;
-  let subscribedSessionId: string | null = null;
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
@@ -26,52 +24,30 @@
     // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
   }
 
-  async function subscribeActiveSession(
-    sessionId: string | undefined,
-    afterSeq: number,
-  ) {
-    if (!sessionId || subscribedSessionId === sessionId) return;
-    sessionDispose?.();
-    sessionDispose = null;
-    try {
-      sessionDispose = await subscribe(sessionId, afterSeq);
-      subscribedSessionId = sessionId;
-    } catch {
-      // The stream stays paused/stale; no session context is invented here.
-    }
-  }
-
-  function recover(fromSeq: number, sessionId: string) {
-    subscribedSessionId = null;
-    void subscribeActiveSession(sessionId, fromSeq);
-  }
-
   onMount(() => {
+    // The workbench selects the session (session-selection store); none is derived from events.
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
-        void subscribeActiveSession(next.sessionId, next.lastDurableSeq);
       },
-      onResync: recover,
+      onResync: (fromSeq, sessionId) => {
+        void binding.resubscribe(sessionId, fromSeq);
+      },
     });
+    const binding = bindSelection(transport, subscribe);
     const unsubState = connectionState.subscribe((val) => {
       status = val;
     });
     const unsubEvents = onEvent((event) => transport.enqueue(event));
 
-    handshake()
-      .then(() =>
-        subscribeActiveSession(turns.sessionId, turns.lastDurableSeq),
-      )
-      .catch(() => {
-        // Handshake rejection leaves status in 'unavailable' or 'error'
-      });
+    handshake().catch(() => {
+      // Handshake rejection leaves status in 'unavailable' or 'error'
+    });
 
     return () => {
       unsubState();
       unsubEvents();
-      sessionDispose?.();
-      subscribedSessionId = null;
+      binding.dispose();
       transport.dispose();
     };
   });
