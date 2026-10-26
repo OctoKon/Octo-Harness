@@ -1094,3 +1094,65 @@ test("appendBatch precondition rejects an existing actionId with a new key", () 
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("migrateV1 decides attribution inside its write transaction (no check-then-act race)", async () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const raw = new DatabaseSync(path);
+  raw.exec(
+    "CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE records (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, " +
+      "record_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL, scope_id TEXT NOT NULL, " +
+      "created_at TEXT NOT NULL, payload TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE deletions (record_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, deleted_at TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE workspace_ownership (workspace_id TEXT PRIMARY KEY, owner_session_id TEXT NOT NULL, " +
+      "epoch INTEGER NOT NULL, acquired_at TEXT NOT NULL, renewed_at TEXT NOT NULL)",
+  );
+  raw.prepare("INSERT INTO store_meta VALUES ('layout_version', '1')").run();
+  raw.close();
+
+  // A concurrent v1 writer holds the write lock with an uncommitted row and
+  // commits shortly after migrateV1 starts. The empty-looking store must not
+  // be migrated without attribution once that row is committed.
+  const signal = join(dir, "locked");
+  const writer = spawn(
+    process.execPath,
+    [
+      "-e",
+      `const { DatabaseSync } = require("node:sqlite");
+       const fs = require("node:fs");
+       const db = new DatabaseSync(process.argv[1]);
+       db.exec("BEGIN IMMEDIATE;");
+       db.prepare("INSERT INTO records (kind, record_id, schema_version, scope_id, created_at, payload) VALUES ('run', 'rec-race', 1, 'w-demo', '2026-10-26T00:00:00.000Z', '{}')").run();
+       fs.writeFileSync(process.argv[2], "1");
+       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+       db.exec("COMMIT;");
+       db.close();`,
+      path,
+      signal,
+    ],
+    { stdio: "ignore" },
+  );
+  const exited = new Promise((resolve) => writer.once("exit", resolve));
+  while (!existsSync(signal)) await new Promise((r) => setTimeout(r, 10));
+
+  assert.throws(
+    () => Store.migrateV1(path),
+    (error: unknown) =>
+      error instanceof StoreError && error.message.includes("attribution"),
+  );
+  await exited;
+  const check = new DatabaseSync(path);
+  const layout = check
+    .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
+    .get() as { value: string };
+  assert.equal(layout.value, "1");
+  check.close();
+  rmSync(dir, { recursive: true, force: true });
+});

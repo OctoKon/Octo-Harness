@@ -227,6 +227,9 @@ export class Store {
   static migrateV1(path: string, attribution?: { sessionId: string }): void {
     const db = new DatabaseSync(path, { timeout: 5000 });
     try {
+      // Every precondition read runs inside the write transaction, so a
+      // concurrent v1 writer cannot commit rows between the check and the act.
+      db.exec("BEGIN IMMEDIATE;");
       const stamped = db
         .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
         .get() as { value: string } | undefined;
@@ -265,7 +268,6 @@ export class Store {
           "v1 store has records but no explicit session attribution was given; pass migrateV1(path, { sessionId }) so old-session replay is preserved, never silently dropped",
         );
       const sessionId = attribution?.sessionId ?? "";
-      db.exec("BEGIN IMMEDIATE;");
       db.exec(
         "ALTER TABLE records ADD COLUMN session_id TEXT NOT NULL DEFAULT ''",
       );

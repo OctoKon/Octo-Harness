@@ -115,11 +115,12 @@ export class DesktopBridge {
     return {
       ...this.baseContext,
       lastDurableSeq: this.receipts.durableCursor(),
-      // The tighter of the caller's configured budget and the option budget
-      // applies — a configured smaller maxInlineBytes is always honored.
+      // The tightest of the caller's budget, the option budget and the frozen
+      // shared ceiling applies: smaller is honored, larger never widens it.
       maxInlineBytes: Math.min(
         this.baseContext.maxInlineBytes,
         this.limits.maxInlineBytes,
+        TRANSPORT_LIMIT_OPTIONS.maxInlineBytes,
       ),
     };
   }
