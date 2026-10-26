@@ -425,6 +425,7 @@ describe("TD-18 renderer transport", () => {
   it("coalesces a 10x render-rate burst without dropping text or requesting resync", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(started());
@@ -446,6 +447,7 @@ describe("TD-18 renderer transport", () => {
     const errors: string[] = [];
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
       onResync: (fromSeq) => resyncs.push(fromSeq),
       onError: (code) => errors.push(code),
@@ -484,6 +486,7 @@ describe("TD-18 renderer transport", () => {
     const resyncs: number[] = [];
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
       onResync: (fromSeq) => resyncs.push(fromSeq),
     });
@@ -502,6 +505,7 @@ describe("TD-18 renderer transport", () => {
     const errors: string[] = [];
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
       onError: (code) => errors.push(code),
     });
@@ -526,6 +530,7 @@ describe("TD-18 renderer transport", () => {
     const events = fixture.eventSequence.map((step) => step.event);
     const transport = createTurnStreamTransport({
       sessionId: events[0].sessionId,
+      scopeId: events[0].scopeId,
       schedule: manual,
     });
     for (const envelope of events) transport.enqueue(envelope);
@@ -551,6 +556,7 @@ describe("TD-18 renderer transport", () => {
   it("validates and dedupes before coalescing, never duplicating text", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(started());
@@ -570,6 +576,7 @@ describe("TD-18 renderer transport", () => {
     const resyncs: number[] = [];
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
       onResync: (fromSeq) => resyncs.push(fromSeq),
     });
@@ -598,6 +605,7 @@ describe("TD-18 renderer transport", () => {
   it("drops a replayed delta after a flush instead of appending it twice", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(started());
@@ -615,6 +623,7 @@ describe("TD-18 renderer transport", () => {
   it("keeps cross-session state separate instead of dropping one session", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_a",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     const sessionA = event(
@@ -638,7 +647,7 @@ describe("TD-18 renderer transport", () => {
       "ses_b",
     );
 
-    transport.follow("ses_b");
+    transport.follow("ses_b", "scope_spec");
     transport.enqueue(sessionA);
     transport.enqueue(sessionB);
     transport.flush();
@@ -652,6 +661,7 @@ describe("TD-18 renderer transport", () => {
   it("rejects an invalid payload before it can mutate the stream", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(started());
@@ -676,6 +686,7 @@ describe("TD-18 renderer transport", () => {
     const requests: [number, string][] = [];
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
       onResync: (fromSeq, sessionId) => requests.push([fromSeq, sessionId]),
     });
@@ -689,6 +700,7 @@ describe("TD-18 renderer transport", () => {
   it("rejects a malformed frame while paused before inspecting its kind", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(started());
@@ -710,6 +722,7 @@ describe("TD-18 renderer transport", () => {
   it("replays durable events after a reconnect snapshot without skipping them", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(started());
@@ -748,6 +761,7 @@ describe("TD-18 renderer transport", () => {
   it("rejects events for sessions it was not told to follow", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_a",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(
@@ -765,7 +779,7 @@ describe("TD-18 renderer transport", () => {
     expect(transport.current("ses_b").runs.run_b).toBeUndefined();
     expect(transport.rejectedCount()).toBe(1);
 
-    transport.follow("ses_b");
+    transport.follow("ses_b", "scope_spec");
     transport.enqueue(
       event(
         1,
@@ -794,6 +808,7 @@ describe("TD-18 renderer transport", () => {
   it("applies every durable replay frame after a durable-queue overflow and snapshot", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(started());
@@ -823,6 +838,7 @@ describe("TD-18 renderer transport", () => {
   it("drops a retransmitted eventId instead of merging its text twice", () => {
     const transport = createTurnStreamTransport({
       sessionId: "ses_spec",
+      scopeId: "scope_spec",
       schedule: manual,
     });
     transport.enqueue(started());
@@ -834,5 +850,59 @@ describe("TD-18 renderer transport", () => {
 
     expect(state.runs.run_a.text).toBe("x");
     expect(state.duplicateCount).toBe(1);
+  });
+
+  it("keeps the live cursor above the snapshot while replaying durable frames", () => {
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      scopeId: "scope_spec",
+      schedule: manual,
+    });
+    transport.enqueue(started());
+    transport.flush();
+    transport.enqueue(delta(4, "gap"));
+    transport.flush();
+
+    transport.enqueue(
+      event(5, "run.reconnect_snapshot", {
+        runId: "run_a",
+        lastDurableSeq: 2,
+        turnId: "turn_a",
+        activeActionIds: [],
+        state: "busy",
+      }),
+    );
+    transport.enqueue(toolIntent(3, "act_3"));
+    transport.enqueue(toolIntent(4, "act_4"));
+    transport.enqueue(delta(6, "live"));
+    const state = transport.flush();
+
+    expect(state.needsResync).toBe(false);
+    expect(state.resyncCount).toBe(1);
+    expect(state.runs.run_a.actions.map((a) => a.actionId)).toEqual([
+      "act_3",
+      "act_4",
+    ]);
+    expect(state.runs.run_a.text).toBe("live");
+  });
+
+  it("rejects an event whose scope differs from the followed scope", () => {
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_spec",
+      scopeId: "scope_spec",
+      schedule: manual,
+    });
+    transport.enqueue(started());
+    transport.flush();
+
+    transport.enqueue({
+      ...delta(2, "x"),
+      scopeId: "scope_other",
+    } as SplyceEventEnvelope);
+    const state = transport.flush();
+
+    expect(state.runs.run_a.text).toBe("");
+    expect(state.lastSeq).toBe(1);
+    expect(transport.rejectedCount()).toBe(1);
   });
 });

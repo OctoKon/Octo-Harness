@@ -585,6 +585,7 @@ const EVENT_ID_WINDOW = 4096;
 export interface TurnStreamTransportOptions {
   state?: TurnsState;
   sessionId?: string;
+  scopeId?: string;
   schedule?: (task: () => void) => void;
   onState?: (state: TurnsState) => void;
   onResync?: (fromSeq: number, sessionId: string) => void;
@@ -595,7 +596,7 @@ export interface TurnStreamTransport {
   enqueue(event: SplyceEventEnvelope): void;
   flush(): TurnsState;
   current(sessionId?: string): TurnsState;
-  follow(sessionId: string): void;
+  follow(sessionId: string, scopeId: string): void;
   rejectedCount(): number;
   dispose(): void;
 }
@@ -633,14 +634,12 @@ function rendererValidationContext(event: {
   };
 }
 
-function validateForRenderer(event: unknown): SplyceEventEnvelope | null {
-  if (event === null || typeof event !== "object") return null;
-  const candidate = event as { scopeId?: unknown; sessionId?: unknown };
-  const scopeId = candidate.scopeId;
-  const sessionId = candidate.sessionId;
-  if (typeof scopeId !== "string" || typeof sessionId !== "string") {
-    return null;
-  }
+// Scope and session come from the followed subscription, never from the event.
+function validateForRenderer(
+  event: unknown,
+  scopeId: string,
+  sessionId: string,
+): SplyceEventEnvelope | null {
   try {
     return validateEvent(
       event,
@@ -662,9 +661,18 @@ export function createTurnStreamTransport(
   const channels = new Map<string, SessionChannel>();
   let selectedSessionId: string | undefined =
     options.sessionId ?? options.state?.sessionId;
-  const followed = new Set<string>(
-    selectedSessionId ? [selectedSessionId] : [],
+  // sessionId -> scopeId, supplied by the caller (workbench/subscription).
+  const followed = new Map<string, string>(
+    selectedSessionId && options.scopeId
+      ? [[selectedSessionId, options.scopeId]]
+      : [],
   );
+  const channelKey = (scopeId: string, sessionId: string) =>
+    `${scopeId}\u0000${sessionId}`;
+  const keyOf = (sessionId: string) => {
+    const scopeId = followed.get(sessionId);
+    return scopeId === undefined ? undefined : channelKey(scopeId, sessionId);
+  };
   let rejected = 0;
   let scheduled = false;
   let disposed = false;
@@ -679,8 +687,9 @@ export function createTurnStreamTransport(
       }
     });
 
-  function channelFor(sessionId: string): SessionChannel {
-    const existing = channels.get(sessionId);
+  function channelFor(scopeId: string, sessionId: string): SessionChannel {
+    const key = channelKey(scopeId, sessionId);
+    const existing = channels.get(key);
     if (existing) return existing;
     const initial =
       options.state?.sessionId === sessionId
@@ -700,12 +709,13 @@ export function createTurnStreamTransport(
       replayUntil: 0,
       seenEventIds: new Set(),
     };
-    channels.set(sessionId, channel);
+    channels.set(key, channel);
     return channel;
   }
 
   function selectedChannel(): SessionChannel | undefined {
-    return selectedSessionId ? channels.get(selectedSessionId) : undefined;
+    const key = selectedSessionId ? keyOf(selectedSessionId) : undefined;
+    return key ? channels.get(key) : undefined;
   }
 
   function emit(channel: SessionChannel) {
@@ -834,8 +844,11 @@ export function createTurnStreamTransport(
 
   function enqueue(event: SplyceEventEnvelope) {
     if (disposed) return;
-    const claimed = (event as { sessionId?: unknown } | null)?.sessionId;
-    if (typeof claimed === "string" && !followed.has(claimed)) {
+    const claim = event as { sessionId?: unknown; scopeId?: unknown } | null;
+    if (
+      typeof claim?.sessionId === "string" &&
+      followed.get(claim.sessionId) !== claim.scopeId
+    ) {
       rejected += 1;
       return;
     }
@@ -858,7 +871,13 @@ export function createTurnStreamTransport(
       if (channel) overflow(channel, "ERR_FRAME_TOO_LARGE");
       return;
     }
-    const validated = validateForRenderer(event);
+    const validated = claim
+      ? validateForRenderer(
+          event,
+          claim.scopeId as string,
+          claim.sessionId as string,
+        )
+      : null;
     if (!validated) {
       const channel = selectedChannel();
       if (channel) {
@@ -870,8 +889,7 @@ export function createTurnStreamTransport(
       }
       return;
     }
-    const sessionId = validated.sessionId;
-    const channel = channelFor(sessionId);
+    const channel = channelFor(validated.scopeId, validated.sessionId);
 
     if (
       channel.state.needsResync &&
@@ -946,10 +964,10 @@ export function createTurnStreamTransport(
       channel.durableSeq = Math.max(channel.durableSeq, validated.seq);
     }
     if (isSnapshot && "payload" in accepted) {
-      const cursor =
-        (accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ?? 0;
-      channel.replayUntil = cursor;
-      channel.acceptedSeq = cursor;
+      // Replay may carry durable seqs below the snapshot's transport seq; the
+      // live cursor never moves backwards, so frame seq+1 stays contiguous.
+      channel.replayUntil = accepted.seq;
+      channel.acceptedSeq = Math.max(channel.acceptedSeq, accepted.seq);
       // Reduce at once so the resync gate lifts before the replay frames arrive.
       applyPending(channel);
     } else {
@@ -980,15 +998,20 @@ export function createTurnStreamTransport(
   return {
     enqueue,
     flush,
-    follow(sessionId: string) {
-      followed.add(sessionId);
+    follow(sessionId: string, scopeId: string) {
+      followed.set(sessionId, scopeId);
       selectedSessionId ??= sessionId;
     },
     rejectedCount: () => rejected,
-    current: (sessionId?: string) =>
-      (sessionId ? channels.get(sessionId) : selectedChannel())?.state ??
-      options.state ??
-      fallbackState,
+    current: (sessionId?: string) => {
+      const key = sessionId ? keyOf(sessionId) : undefined;
+      const channel = sessionId
+        ? key
+          ? channels.get(key)
+          : undefined
+        : selectedChannel();
+      return channel?.state ?? options.state ?? fallbackState;
+    },
     dispose() {
       disposed = true;
       for (const channel of channels.values()) clearQueue(channel);

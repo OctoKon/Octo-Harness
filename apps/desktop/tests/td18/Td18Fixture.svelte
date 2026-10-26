@@ -21,6 +21,7 @@
 
   const transport = createTurnStreamTransport({
     sessionId: "ses_test_01",
+    scopeId: "w-demo",
     onState: (next) => {
       state = next;
     },
@@ -51,6 +52,7 @@
       sourceIds: [],
       scopeId: "w-demo",
       sessionId: "ses_test_01",
+    scopeId: "w-demo",
       seq,
       durable,
       kind,
