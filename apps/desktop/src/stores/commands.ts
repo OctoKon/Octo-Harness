@@ -226,7 +226,10 @@ export interface CommandRegistry {
 export function createCommandRegistry(
   handlers: Readonly<Record<string, CommandHandler>>,
   defs: readonly CommandDef[] = CATALOG,
+  /** Called with failed results of key-routed runs, which have no caller to return to. */
+  onFailure: (id: string, reason: string) => void = () => {},
 ): CommandRegistry {
+  const running = new Set<string>();
   function resolve(d: CommandDef): ResolvedCommand {
     const h = handlers[d.id];
     if (!h) return { ...d, enabled: false, reason: "Not available yet" };
@@ -238,8 +241,19 @@ export function createCommandRegistry(
     if (!d) return { ok: false, reason: "Unknown command" };
     const r = resolve(d); // availability is re-checked now, never trusted from an earlier render
     if (!r.enabled) return { ok: false, reason: r.reason ?? "Unavailable" };
-    await handlers[id]!.run();
-    return { ok: true };
+    if (running.has(id)) return { ok: false, reason: "Already running" };
+    running.add(id);
+    try {
+      await handlers[id]!.run();
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: err instanceof Error ? err.message : "Command failed",
+      };
+    } finally {
+      running.delete(id);
+    }
   }
   return {
     list: () => defs.map(resolve),
@@ -252,7 +266,9 @@ export function createCommandRegistry(
       );
       if (!d) return false;
       e.preventDefault();
-      void run(d.id);
+      void run(d.id).then((r) => {
+        if (!r.ok) onFailure(d.id, r.reason);
+      });
       return true;
     },
   };

@@ -118,3 +118,67 @@ describe("shortcut conflicts", () => {
     expect(normalizeShortcut("shift+ctrl+e")).toBe("Ctrl+Shift+E");
   });
 });
+
+describe("run boundary", () => {
+  it("a throwing or rejecting handler returns a failure and never leaks a rejection", async () => {
+    const reg = createCommandRegistry({
+      "landmark.rail": {
+        run: () => {
+          throw new Error("boom");
+        },
+      },
+      "landmark.transcript": { run: () => Promise.reject(new Error("nope")) },
+    });
+    expect(await reg.run("landmark.rail")).toEqual({
+      ok: false,
+      reason: "boom",
+    });
+    expect(await reg.run("landmark.transcript")).toEqual({
+      ok: false,
+      reason: "nope",
+    });
+  });
+
+  it("key-routed failure is surfaced through onFailure and the command can run again", async () => {
+    const seen: string[] = [];
+    let fail = true;
+    const reg = createCommandRegistry(
+      {
+        "landmark.rail": {
+          run: () => {
+            if (fail) throw new Error("boom");
+          },
+        },
+      },
+      undefined,
+      (id, reason) => seen.push(`${id}:${reason}`),
+    );
+    reg.handleKey(key({ key: "1", ctrlKey: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen).toEqual(["landmark.rail:boom"]);
+    fail = false;
+    expect(await reg.run("landmark.rail")).toEqual({ ok: true });
+  });
+
+  it("ignores a second run of the same command while the first is in flight", async () => {
+    let release!: () => void;
+    const run = vi.fn(
+      () =>
+        new Promise<void>((r) => {
+          release = r;
+        }),
+    );
+    const reg = createCommandRegistry({ "landmark.rail": { run } });
+    const first = reg.run("landmark.rail");
+    expect(await reg.run("landmark.rail")).toEqual({
+      ok: false,
+      reason: "Already running",
+    });
+    reg.handleKey(key({ key: "1", ctrlKey: true }));
+    expect(run).toHaveBeenCalledTimes(1);
+    release();
+    expect(await first).toEqual({ ok: true });
+    void reg.run("landmark.rail");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+});

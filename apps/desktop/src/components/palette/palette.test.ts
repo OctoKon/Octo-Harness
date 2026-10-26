@@ -229,3 +229,29 @@ describe("settings and help (TD-57)", () => {
     ).not.toBeNull();
   });
 });
+
+describe("palette key path failures", () => {
+  it("a throwing shortcut handler is shown as an alert and the app stays usable", async () => {
+    const s = setup({
+      "landmark.rail": {
+        run: () => {
+          throw new Error("rail exploded");
+        },
+      },
+    });
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "1",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    flushSync();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      "rail exploded",
+    );
+    await openIt(s);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+});
