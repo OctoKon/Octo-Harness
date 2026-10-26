@@ -32,10 +32,10 @@ workspace dialog currently returns `POLICY_DENIED`; smoke checks this harmless
 command remains denied and the app remains unavailable. This does not qualify
 general filesystem/tool effects or native UIA accessibility.
 
-CI hydrates Pi's generated provider data from the immutable revision in
-`vendor/pi/nix/model-catalog.json`, verifies the downloaded bytes against that
-SHA-256 revision, and uses Pi's existing hydrator before the offline build. It
-does not refresh from the live models.dev catalog.
+CI runs Pi's build-only `--hydrate-pinned` command before the offline build. It
+fetches the immutable revision in `vendor/pi/nix/model-catalog.json`, verifies
+its bytes against that SHA-256 revision, and uses Pi's existing hydrator. It
+does not refresh or change the pin from the live models.dev catalog.
 
 ## Qualified tool inputs
 
