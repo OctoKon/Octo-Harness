@@ -129,7 +129,7 @@ describe("credentials through the public entrypoints", () => {
 });
 
 describe("APIs without lease support refuse credentials", () => {
-	const unsupported = () => getModel("openai", "gpt-4o");
+	const unsupported = () => ({ ...getModel("openai", "gpt-4o"), api: "openai-codex-responses" as const });
 
 	it("compat.stream throws before any adapter or SDK runs", () => {
 		expect(() => stream(unsupported(), context, { credentials })).toThrow(/not supported/);

@@ -26,6 +26,8 @@ export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
 	"anthropic-messages",
 	"google-generative-ai",
 	"google-vertex",
+	"openai-completions",
+	"openai-responses",
 ]);
 
 export function assertCredentialsSupported(
@@ -41,7 +43,8 @@ const identity = (text: string): string => text;
 
 /** The redactor to apply to error text: the native one when credentials are in use, otherwise nothing is leased. */
 export function redactorOf(options: { credentials?: SplyceCredentials | undefined }): (text: string) => string {
-	return options.credentials?.redact ?? identity;
+	const redact = options.credentials?.redact;
+	return typeof redact === "function" ? redact : identity;
 }
 
 /**

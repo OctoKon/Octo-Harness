@@ -12,6 +12,7 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { assertCredentialOptions, createLeasedFetch, redactorOf } from "../splyce-credentials.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -344,7 +345,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 		};
 
 		try {
-			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
+			assertCredentialOptions(options ?? {});
+			const apiKey = options?.credentials
+				? "splyce-leased"
+				: getClientApiKey(model.provider, options?.apiKey, options?.headers);
+			const fetch = options?.credentials
+				? createLeasedFetch(options.credentials, "authorization", options.fetch, (secret) => `Bearer ${secret}`)
+				: options?.fetch;
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				getDeclaredTools(normalizedContext.messages),
@@ -358,7 +365,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				apiKey,
 				options?.headers,
 				options?.identity,
-				options?.fetch,
+				fetch,
 				cacheSessionId,
 				compat,
 			);
@@ -709,6 +716,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
 				output.errorMessage += `\n${rawMetadata}`;
 			}
+			output.errorMessage = redactorOf(options ?? {})(output.errorMessage);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -722,7 +730,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	getClientApiKey(model.provider, options?.apiKey, options?.headers);
+	if (!options?.credentials) getClientApiKey(model.provider, options?.apiKey, options?.headers);
 
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),

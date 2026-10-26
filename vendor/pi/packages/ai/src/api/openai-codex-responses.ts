@@ -7,6 +7,7 @@ import type {
 } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
+import { assertCredentialsSupported } from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -267,6 +268,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 		};
 
 		try {
+			assertCredentialsSupported("openai-codex-responses", options);
 			const apiKey = options?.apiKey;
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);

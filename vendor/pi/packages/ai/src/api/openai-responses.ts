@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
+import { assertCredentialOptions, createLeasedFetch, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -109,12 +110,13 @@ function getConfigurationUpdateEffort(
 	model: Model<"openai-responses">,
 	options: OpenAIResponsesOptions | undefined,
 	compat: Required<OpenAIResponsesCompat>,
+	chatGPTSignIn: boolean,
 ): string | undefined {
 	if (
 		!compat.supportsMidConvoEffort ||
 		!options?.reasoningEffort ||
 		// Sign in with ChatGPT rejects configuration_update items.
-		isChatGPTSignIn(model, options.apiKey)
+		chatGPTSignIn
 	) {
 		return undefined;
 	}
@@ -162,14 +164,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 	// Start async processing
 	(async () => {
 		const compat = getCompat(model);
-		const configurationUpdateEffort = getConfigurationUpdateEffort(model, options, compat);
 		const output: AssistantMessage = {
 			role: "assistant",
 			content: [],
 			api: model.api as Api,
 			provider: model.provider,
 			model: model.id,
-			...(configurationUpdateEffort === undefined ? {} : { providerThinkingLevel: configurationUpdateEffort }),
 			usage: {
 				input: 0,
 				output: 0,
@@ -184,7 +184,18 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 		try {
 			// Create OpenAI client
-			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
+			assertCredentialOptions(options ?? {});
+			const chatGPTSignIn = options?.credentials
+				? await withLeasedSecret(options.credentials, (secret) => isChatGPTSignIn(model, secret))
+				: isChatGPTSignIn(model, options?.apiKey);
+			const configurationUpdateEffort = getConfigurationUpdateEffort(model, options, compat, chatGPTSignIn);
+			if (configurationUpdateEffort !== undefined) output.providerThinkingLevel = configurationUpdateEffort;
+			const apiKey = options?.credentials
+				? "splyce-leased"
+				: getClientApiKey(model.provider, options?.apiKey, options?.headers);
+			const fetch = options?.credentials
+				? createLeasedFetch(options.credentials, "authorization", options.fetch, (secret) => `Bearer ${secret}`)
+				: options?.fetch;
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
 			const grammarToolInputProperties = createGrammarToolInputProperties(
@@ -197,7 +208,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				apiKey,
 				options?.headers,
 				options?.identity,
-				options?.fetch,
+				fetch,
 				cacheSessionId,
 			);
 			let params = buildParams(
@@ -207,6 +218,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				compat,
 				grammarToolInputProperties,
 				configurationUpdateEffort,
+				chatGPTSignIn,
 			);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -265,6 +277,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			} else {
 				output.errorMessage = errorMessage;
 			}
+			output.errorMessage = redactorOf(options ?? {})(output.errorMessage);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -278,7 +291,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	getClientApiKey(model.provider, options?.apiKey, options?.headers);
+	if (!options?.credentials) getClientApiKey(model.provider, options?.apiKey, options?.headers);
 
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
@@ -345,6 +358,7 @@ function buildParams(
 	compat: Required<OpenAIResponsesCompat>,
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	configurationUpdateEffort: string | undefined,
+	chatGPTSignIn: boolean,
 ) {
 	const transcriptTools = resolveTranscriptTools(context.messages, getResponsesToolSupport(compat));
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
@@ -361,7 +375,7 @@ function buildParams(
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 	// Sign in with ChatGPT rejects these request fields.
-	const omitUnsupportedFields = isChatGPTSignIn(model, options?.apiKey);
+	const omitUnsupportedFields = chatGPTSignIn;
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
