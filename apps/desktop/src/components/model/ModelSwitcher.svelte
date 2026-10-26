@@ -51,7 +51,7 @@
       {#if t.status === "rejected"}
         · {t.reason}. Still using {labelOf(selection.currentRef)}.
       {:else if t.mismatch}
-        · Engine applied this instead of the model you requested.
+        · Engine chose a different model than you requested.
       {:else if t.status === "requested" || t.status === "pending"}
         · {whenEffective(t.disposition, turnActive)}
       {/if}

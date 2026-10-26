@@ -119,8 +119,31 @@ describe("ModelSwitcher", () => {
     );
     render(s);
     expect(text("model-requested")).toContain(
-      "instead of the model you requested",
+      "different model than you requested",
     );
+    expect(document.querySelector('[role="alert"]')).not.toBeNull();
+  });
+
+  it("keeps the user's requested binding across pending(C) then ready(C) after asking for B", () => {
+    let s = requestSwitch(
+      createModelSelection("bind_a"),
+      "bind_b",
+      "next-turn",
+    );
+    s = applyTransition(s, record("pending", "bind_c"));
+    render(s);
+    expect(text("model-requested")).toContain("Requested: Model B");
+    expect(text("model-requested")).toContain(
+      "different model than you requested",
+    );
+    expect(text("model-current")).toBe("Active: Model A");
+    unmount(cmp!);
+    document.body.innerHTML = "";
+    s = applyTransition(s, record("ready", "bind_c"));
+    render(s);
+    expect(text("model-current")).toBe("Active: Model C");
+    expect(text("model-requested")).toContain("Requested: Model B");
+    expect(s.transition?.mismatch).toBe(true);
     expect(document.querySelector('[role="alert"]')).not.toBeNull();
   });
 
