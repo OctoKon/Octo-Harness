@@ -507,15 +507,20 @@ export class Store {
    *
    * `expectedAbsentActionKey` makes the batch an atomic test-and-set: under
    * the SAME BEGIN IMMEDIATE as the inserts, an action record carrying that
-   * idempotency key in the scope is looked up; if it exists the batch throws
-   * ACTION_ALREADY_EXISTS and acknowledges nothing. Two processes that both
-   * observed the key absent can never both commit — one wins the write lock,
-   * the other sees the row.
+   * idempotency key OR that actionId in the scope is looked up; if either
+   * exists the batch throws ACTION_ALREADY_EXISTS and acknowledges nothing.
+   * Two processes that both observed the key absent can never both commit —
+   * one wins the write lock, the other sees the row — and two host permit
+   * IDs cannot create the same logical action under a new key.
    */
   appendBatch(
     inputs: readonly AppendInput[],
     caller: CallerContext,
-    expectedAbsentActionKey?: { scopeId: string; idempotencyKey: string },
+    expectedAbsentActionKey?: {
+      scopeId: string;
+      idempotencyKey: string;
+      actionId: string;
+    },
     expectedOwnershipEpoch?: { workspaceId: string; epoch: number },
   ): AppendBatchResult {
     this.assertWritable();
@@ -561,18 +566,19 @@ export class Store {
         }
       }
       if (expectedAbsentActionKey !== undefined) {
-        const { scopeId, idempotencyKey } = expectedAbsentActionKey;
+        const { scopeId, idempotencyKey, actionId } = expectedAbsentActionKey;
         const existing = this.db
           .prepare(
             "SELECT 1 FROM records WHERE scope_id = ? AND kind = 'action' " +
-              "AND json_extract(payload, '$.idempotencyKey') = ? LIMIT 1",
+              "AND (json_extract(payload, '$.idempotencyKey') = ? " +
+              "OR json_extract(payload, '$.actionId') = ?) LIMIT 1",
           )
-          .get(scopeId, idempotencyKey);
+          .get(scopeId, idempotencyKey, actionId);
         if (existing !== undefined) {
           this.db.exec("ROLLBACK;");
           throw new StoreError(
             "ACTION_ALREADY_EXISTS",
-            `an action record with idempotencyKey ${JSON.stringify(idempotencyKey)} already exists in scope ${JSON.stringify(scopeId)}; nothing appended`,
+            `an action record with idempotencyKey ${JSON.stringify(idempotencyKey)} or actionId ${JSON.stringify(actionId)} already exists in scope ${JSON.stringify(scopeId)}; nothing appended`,
           );
         }
       }

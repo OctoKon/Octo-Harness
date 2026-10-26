@@ -943,6 +943,7 @@ test("appendBatch idempotency precondition is atomic: second committer sees the 
   const r1 = store.appendBatch([{ kind: "action", record: first }], caller, {
     scopeId: "w-demo",
     idempotencyKey: "idem-1",
+    actionId: "a-new-1",
   });
   assert.equal(r1.seqs.length, 1);
   const cursorAfterFirst = store.cursor();
@@ -961,6 +962,7 @@ test("appendBatch idempotency precondition is atomic: second committer sees the 
       store.appendBatch([{ kind: "action", record: second }], caller, {
         scopeId: "w-demo",
         idempotencyKey: "idem-1",
+        actionId: "a2",
       }),
     (error: unknown) =>
       error instanceof StoreError && error.code === "ACTION_ALREADY_EXISTS",
@@ -977,6 +979,7 @@ test("appendBatch idempotency precondition is atomic: second committer sees the 
   const r3 = store.appendBatch([{ kind: "action", record: third }], caller, {
     scopeId: "w-demo",
     idempotencyKey: "idem-2",
+    actionId: "a-new-2",
   });
   assert.equal(r3.seqs.length, 1);
   store.close();
@@ -995,6 +998,7 @@ test("appendBatch idempotency precondition is atomic: second committer sees the 
       store2.appendBatch([{ kind: "action", record: fourth }], caller, {
         scopeId: "w-demo",
         idempotencyKey: "idem-1",
+        actionId: "a4",
       }),
     (error: unknown) =>
       error instanceof StoreError && error.code === "ACTION_ALREADY_EXISTS",
@@ -1044,6 +1048,49 @@ test("appendBatch can require a same-commit ownership epoch", () => {
       error instanceof StoreError && error.code === "OWNERSHIP_STALE_EPOCH",
   );
   assert.equal(store.cursor(), cursorBefore);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("appendBatch precondition rejects an existing actionId with a new key", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const fixtures = JSON.parse(
+    readFileSync(
+      new URL("../fixtures/contracts/records.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Record<string, Record<string, unknown>>;
+  const first = {
+    ...structuredClone(fixtures.action),
+    recordId: "rec-pa1",
+  } as Record<string, unknown>; // actionId a1, idempotencyKey key1 (fixture)
+  store.appendBatch([{ kind: "action", record: first }], caller, {
+    scopeId: "w-demo",
+    idempotencyKey: "key1",
+    actionId: "a1",
+  });
+  const cursor = store.cursor();
+
+  // A second host permit ID: new actionId check target but SAME logical
+  // action attempted under a NEW key with the OLD actionId -> refused.
+  const second = {
+    ...structuredClone(fixtures.action),
+    recordId: "rec-pa2",
+    idempotencyKey: "brand-new-key",
+  } as Record<string, unknown>;
+  assert.throws(
+    () =>
+      store.appendBatch([{ kind: "action", record: second }], caller, {
+        scopeId: "w-demo",
+        idempotencyKey: "brand-new-key",
+        actionId: "a1", // existing logical action, new key
+      }),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "ACTION_ALREADY_EXISTS",
+  );
+  assert.equal(store.cursor(), cursor); // nothing appended
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
