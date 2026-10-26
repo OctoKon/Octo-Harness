@@ -26,6 +26,8 @@ export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
 	"anthropic-messages",
 	"google-generative-ai",
 	"google-vertex",
+	"mistral-conversations",
+	"pi-messages",
 ]);
 
 export function assertCredentialsSupported(

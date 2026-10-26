@@ -1,0 +1,127 @@
+// TD-23 / C4 Pi-native messages: the declared API name must never substitute the actual wire contract. A terminal or
+// event that does not match it fails the call (no fallback, no half-built result), and the shared credentials option
+// binds the same way as the other families. Real adapter; only `fetch` is replaced.
+import { beforeEach, describe, expect, it } from "vitest";
+import { stream as streamPi } from "../src/api/pi-messages.ts";
+import type { SplyceCredentials } from "../src/splyce-credentials.ts";
+import type { Api, Context, Model } from "../src/types.ts";
+
+const SECRET = "pi-secret-0123456789";
+const lease = () => ({ use: async <T>(consume: (s: string) => T | Promise<T>) => consume(SECRET) });
+const creds = (): SplyceCredentials => ({ lease: lease(), redact: (t) => t.split(SECRET).join("[REDACTED]") });
+const model = {
+	id: "m-1",
+	name: "m-1",
+	api: "pi-messages",
+	provider: "radius",
+	baseUrl: "https://gateway.example/v1",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 100000,
+	maxTokens: 8000,
+} as unknown as Model<Api> as Model<"pi-messages">;
+const context = (): Context => ({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+
+type Sent = { url: string; headers: Headers; redirect: string | undefined };
+const sent: Sent[] = [];
+const sse = (events: unknown[]) =>
+	new Response(events.map((e) => `data: ${JSON.stringify(e)}`).join("\n\n") + "\n\n", {
+		headers: { "content-type": "text/event-stream" },
+	});
+const serve = (make: () => Response) =>
+	(async (input: unknown, init?: RequestInit) => {
+		sent.push({ url: String(input), headers: new Headers(init?.headers), redirect: init?.redirect });
+		return make();
+	}) as unknown as typeof fetch;
+const usage = {
+	input: 1,
+	output: 1,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 2,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+const run = (events: unknown[], extra: Record<string, unknown> = { apiKey: "k" }) =>
+	streamPi(model, context() as never, { fetch: serve(() => sse(events)), ...extra }).result();
+const toolCalls = (content: Array<{ type: string }>) => content.filter((b) => b.type === "toolCall");
+
+const start = { type: "start" };
+const callStart = { type: "toolcall_start", contentIndex: 0, id: "tc1", toolName: "read" };
+const callDelta = { type: "toolcall_delta", contentIndex: 0, delta: '{"path": "/etc/pas' };
+const callEnd = {
+	type: "toolcall_end",
+	contentIndex: 0,
+	toolCall: { type: "toolCall", id: "tc1", name: "read", arguments: { path: "/a" } },
+};
+const done = (reason: string) => ({ type: "done", reason, usage, responseId: "r1" });
+const failed = (reason = "error") => ({ type: "error", reason, usage, errorMessage: "boom", responseId: "r1" });
+
+beforeEach(() => {
+	sent.length = 0;
+});
+
+describe("TD-23 Pi-native: credentials", () => {
+	it("sends the leased secret as the bearer token to <baseUrl>/messages and refuses redirects", async () => {
+		const result = await run([start, done("stop")], { credentials: creds() });
+		expect(result.stopReason).toBe("stop");
+		expect(sent[0]!.url).toBe("https://gateway.example/v1/messages");
+		expect(sent[0]!.headers.get("authorization")).toBe(`Bearer ${SECRET}`);
+		expect(sent[0]!.redirect).toBe("error");
+	});
+
+	it("rejects apiKey with credentials and credentials without redact before anything is sent", async () => {
+		expect((await run([done("stop")], { apiKey: "k", credentials: creds() })).stopReason).toBe("error");
+		expect((await run([done("stop")], { credentials: { lease: lease() } as never })).stopReason).toBe("error");
+		expect(sent).toHaveLength(0);
+	});
+
+	it("redacts the secret from a failing response body", async () => {
+		const result = await streamPi(model, context() as never, {
+			fetch: serve(() => new Response(`denied for ${SECRET}`, { status: 401 })),
+			credentials: creds(),
+		}).result();
+		expect(result.stopReason).toBe("error");
+		expect(JSON.stringify(result)).not.toContain(SECRET);
+	});
+});
+
+describe("TD-23 Pi-native: wire contract", () => {
+	it("a done event while a tool call is still open is an error, not a completed result", async () => {
+		const result = await run([start, callStart, callDelta, done("toolUse")]);
+		expect(result.stopReason).toBe("error");
+		expect(toolCalls(result.content)).toHaveLength(0);
+	});
+
+	it("an error event drops every tool call, finished or not", async () => {
+		const result = await run([start, callStart, callDelta, failed()]);
+		expect(result.stopReason).toBe("error");
+		expect(toolCalls(result.content)).toHaveLength(0);
+	});
+
+	it("an unknown event type fails the call instead of being passed through", async () => {
+		const result = await run([start, { type: "gateway_notice", text: "hi" }, done("stop")]);
+		expect(result.stopReason).toBe("error");
+	});
+
+	it("a terminal reason outside the contract fails the call", async () => {
+		expect((await run([start, done("weird")])).stopReason).toBe("error");
+		expect((await run([start, failed("weird")])).stopReason).toBe("error");
+	});
+
+	it("done with toolUse but no tool call is a mismatch, not a result", async () => {
+		const result = await run([start, done("toolUse")]);
+		expect(result.stopReason).toBe("error");
+	});
+
+	it("a finished tool call with a toolUse terminal is accepted", async () => {
+		const result = await run([start, callStart, callEnd, done("toolUse")]);
+		expect(result.stopReason).toBe("toolUse");
+		expect(toolCalls(result.content)).toHaveLength(1);
+	});
+
+	it("a stream that ends without a terminal event is an error", async () => {
+		const result = await run([start, { type: "text_start", contentIndex: 0 }]);
+		expect(result.stopReason).toBe("error");
+	});
+});

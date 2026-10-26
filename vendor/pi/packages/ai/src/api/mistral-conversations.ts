@@ -1,4 +1,5 @@
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { assertCredentialOptions, createLeasedFetch, redactorOf } from "../splyce-credentials.ts";
 import type {
 	AssistantMessage,
 	Message,
@@ -133,12 +134,27 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 
 	(async () => {
 		const output = createOutput(model);
+		const redact = redactorOf(options ?? {});
 
 		try {
-			const apiKey = options?.apiKey;
+			assertCredentialOptions(options ?? {});
+			// Splyce: with a lease the request carries a placeholder and a fetch that leases the real key on every send.
+			const credentials = options?.credentials;
+			const apiKey = credentials ? "splyce-leased-placeholder" : options?.apiKey;
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
+			const requestOptions: MistralOptions | undefined = credentials
+				? {
+						...options,
+						fetch: createLeasedFetch(
+							credentials,
+							"authorization",
+							options?.fetch,
+							(secret) => `Bearer ${secret}`,
+						),
+					}
+				: options;
 
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
 			const transformedMessages = transformMessages(normalizedContext.messages, model, (id) =>
@@ -150,7 +166,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			if (nextPayload !== undefined) {
 				payload = nextPayload as MistralChatPayload;
 			}
-			const mistralStream = await requestMistralStream(model, payload, apiKey, options);
+			const mistralStream = await requestMistralStream(model, payload, apiKey, requestOptions);
 			stream.push({ type: "start", partial: output });
 			await consumeChatStream(model, output, stream, mistralStream, options?.onProviderStreamEvent);
 
@@ -168,8 +184,10 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			// An errored or aborted response never carries tool calls into dispatch or persistence.
+			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatMistralError(error);
+			output.errorMessage = redact(formatMistralError(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -187,7 +205,7 @@ export const streamSimple: StreamFunction<"mistral-conversations", SimpleStreamO
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	if (!apiKey) {
+	if (!apiKey && !options?.credentials) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
