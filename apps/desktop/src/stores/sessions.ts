@@ -88,6 +88,8 @@ function mergeEvent(
   if (event.kind !== "session.tree_updated" || !payload) return null;
   const { sessionId, branchAnchorId, leaves } = payload;
   if (!sessionId || !branchAnchorId || !Array.isArray(leaves)) return null;
+  // The envelope names the session the engine sent this for; a payload naming another one is a mismatch, not a branch.
+  if (event.sessionId !== sessionId) return null;
   const key = keyOf(sessionId, branchAnchorId);
   const own = into[key];
   if (own && event.seq <= own.seenSeq) return null;
