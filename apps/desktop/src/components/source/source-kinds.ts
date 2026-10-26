@@ -21,7 +21,7 @@ export const SOURCE_VIEWS: Readonly<
   external: { label: "External page", glyph: "W" },
 });
 
-/** External pages are untrusted by definition; callers may mark others. */
+/** Trust follows the kind; a caller flag may only add untrusted, never remove it. */
 export function isUntrusted(kind: SourceKind, untrusted?: boolean): boolean {
-  return untrusted ?? kind === "external";
+  return kind === "external" || untrusted === true;
 }

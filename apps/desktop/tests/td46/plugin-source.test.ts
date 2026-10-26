@@ -129,6 +129,22 @@ describe("TD-78 source labels", () => {
     ).not.toBeNull();
   });
 
+  it("a caller flag cannot remove the untrusted mark from an external page", () => {
+    const t = render(SourceLabel, { kind: "external", untrusted: false });
+    expect(q(t, "untrusted-mark")).not.toBeNull();
+    expect(q(t, "source-label")!.getAttribute("aria-label")).toContain(
+      "untrusted",
+    );
+  });
+
+  it("an unknown kind stays untrusted even with untrusted false", () => {
+    const t = render(SourceLabel, {
+      kind: "bogus" as SourceKind,
+      untrusted: false,
+    });
+    expect(q(t, "untrusted-mark")).not.toBeNull();
+  });
+
   it("an unknown kind is marked untrusted, never presented as a known source", () => {
     const t = render(SourceLabel, { kind: "bogus" as SourceKind });
     expect(q(t, "source-label")!.getAttribute("data-kind")).toBe("unknown");
