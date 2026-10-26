@@ -193,9 +193,7 @@ export async function subscribe(
     events.onmessage = () => {};
     lifecycle.onmessage = () => {};
     activeSubscriptions.delete(sessionId);
-    invokeTauri("cancel", { sessionId, reason: "CLIENT_UNSUBSCRIBED" }).catch(
-      () => {},
-    );
+    // Cancel stops a run; native subscription disposal has a separate contract.
   };
 
   activeSubscriptions.set(sessionId, dispose);
