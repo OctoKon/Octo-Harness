@@ -68,6 +68,38 @@ export class DesktopBridge {
   private lastResyncFromSeq: number | undefined;
   /** Per transient kind+runId: {frame, at} for window-based coalescing. */
   private readonly transient = new Map<string, { frame: Frame; at: number }>();
+  /** Reverse index so drained frames can release their transient entry. */
+  private readonly transientByFrame = new Map<Frame, string>();
+
+  /**
+   * Records a transient frame's coalescing entry. The map is bounded: the
+   * oldest entry is evicted at the queue frame cap, and entries are released
+   * when their frame drains — so 100 finished runs retain no state.
+   */
+  private trackTransient(key: string, frame: Frame): void {
+    if (
+      !this.transient.has(key) &&
+      this.transient.size >= this.limits.pendingQueueMaxFrames
+    ) {
+      for (const oldest of this.transient.keys()) {
+        const evicted = this.transient.get(oldest);
+        this.transient.delete(oldest);
+        if (evicted !== undefined) this.transientByFrame.delete(evicted.frame);
+        break;
+      }
+    }
+    const previous = this.transient.get(key);
+    if (previous !== undefined) this.transientByFrame.delete(previous.frame);
+    this.transient.set(key, { frame, at: Date.now() });
+    this.transientByFrame.set(frame, key);
+  }
+
+  private releaseTransient(frame: Frame): void {
+    const key = this.transientByFrame.get(frame);
+    if (key === undefined) return;
+    this.transientByFrame.delete(frame);
+    if (this.transient.get(key)?.frame === frame) this.transient.delete(key);
+  }
 
   constructor(
     baseContext: ContractContext,
@@ -83,11 +115,11 @@ export class DesktopBridge {
     return {
       ...this.baseContext,
       lastDurableSeq: this.receipts.durableCursor(),
-      // The inline budget can never exceed the frozen shared limit, whatever
-      // the caller's own context claims.
+      // The tighter of the caller's configured budget and the option budget
+      // applies — a configured smaller maxInlineBytes is always honored.
       maxInlineBytes: Math.min(
         this.baseContext.maxInlineBytes,
-        TRANSPORT_LIMITS.maxInlineBytes,
+        this.limits.maxInlineBytes,
       ),
     };
   }
@@ -151,10 +183,11 @@ export class DesktopBridge {
       return undefined;
     }
 
-    // Transient (stream deltas): the only lossless coalescing is dropping an
-    // EXACT duplicate of the still-pending frame within the window — a
-    // repeated identical delta carries no new data. Incremental deltas are
-    // never dropped or replaced: a and b both drain, in order.
+    // Transient (stream deltas): the ONLY skip is a true retransmission —
+    // the same seq arriving again within the window while its frame is still
+    // pending. Distinct seqs with identical bytes (e.g. a repeated "ha"
+    // chunk) are real data and must both drain; nothing else is ever dropped
+    // or replaced, so delivery stays lossless and the byte budget stays true.
     const payload = event.payload as Record<string, unknown> | undefined;
     const runId = typeof payload?.runId === "string" ? payload.runId : "";
     const key = `${event.kind}:${runId}`;
@@ -163,14 +196,12 @@ export class DesktopBridge {
     if (
       previous !== undefined &&
       now - previous.at <= this.limits.transientCoalesceWindowMs &&
-      previous.frame.event.kind === event.kind &&
-      JSON.stringify(previous.frame.event.payload) ===
-        JSON.stringify(event.payload)
+      previous.frame.event.seq === event.seq &&
+      this.queue.includes(previous.frame)
     ) {
-      const index = this.queue.indexOf(previous.frame);
-      if (index >= 0) return undefined; // exact duplicate, lossless skip
+      return undefined; // retransmission of the pending seq, lossless skip
     }
-    this.transient.set(key, { frame, at: now });
+    this.trackTransient(key, frame);
 
     if (
       this.queue.length + 1 > this.limits.pendingQueueMaxFrames ||
@@ -191,13 +222,18 @@ export class DesktopBridge {
     this.queue = [];
     this.queueBytes = 0;
     this.transient.clear();
+    this.transientByFrame.clear();
     this.paused = true;
   }
 
   private resyncFrame(): Frame {
     // Every overflow emits its own resync control frame; the exactly-one
-    // rule is per overflow, not per cursor advance.
-    const fromSeq = this.receipts.durableCursor();
+    // rule is per overflow, not per cursor advance. The base cursor is
+    // session-exact: other sessions'/scopes' records never move it.
+    const fromSeq = this.receipts.sessionDurableCursor(
+      this.baseContext.scopeId,
+      this.baseContext.sessionId,
+    );
     if (fromSeq === 0)
       throw new BridgeError(
         "BRIDGE_OVERFLOW",
@@ -248,6 +284,7 @@ export class DesktopBridge {
       this.queue.shift();
       this.queueBytes -= frame.bytes;
       bytes += frame.bytes;
+      this.releaseTransient(frame);
       frames.push(frame);
     }
     if (this.queue.length === 0) this.paused = false;

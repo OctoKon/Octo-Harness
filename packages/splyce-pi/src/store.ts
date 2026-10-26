@@ -217,10 +217,14 @@ export class Store {
    * Explicit v1 -> v2 migration: adds session attribution to the records
    * table and stamps layout 2. Never invoked implicitly by open() — a v1
    * store refuses to open until it is migrated on purpose, so the schema
-   * change cannot happen silently. Existing rows keep their bytes and get
-   * session_id '' (unknown session); session-filtered replay excludes them.
+   * change cannot happen silently.
+   *
+   * A populated v1 store REQUIRES explicit `attribution.sessionId`: every
+   * pre-existing row is stamped with that session id so its old-session
+   * replay keeps working (no silent loss). An empty v1 store needs no
+   * attribution; migrated rows never end up unreplayable-by-accident.
    */
-  static migrateV1(path: string): void {
+  static migrateV1(path: string, attribution?: { sessionId: string }): void {
     const db = new DatabaseSync(path, { timeout: 5000 });
     try {
       const stamped = db
@@ -249,10 +253,24 @@ export class Store {
           "STORE_LAYOUT",
           "records table already carries session_id; migrateV1 refuses to run twice",
         );
+      const populated =
+        (
+          db.prepare("SELECT COUNT(*) AS n FROM records").get() as {
+            n: number | bigint;
+          }
+        ).n > 0;
+      if (populated && (attribution?.sessionId ?? "") === "")
+        throw new StoreError(
+          "STORE_LAYOUT",
+          "v1 store has records but no explicit session attribution was given; pass migrateV1(path, { sessionId }) so old-session replay is preserved, never silently dropped",
+        );
+      const sessionId = attribution?.sessionId ?? "";
       db.exec("BEGIN IMMEDIATE;");
       db.exec(
         "ALTER TABLE records ADD COLUMN session_id TEXT NOT NULL DEFAULT ''",
       );
+      if (populated)
+        db.prepare("UPDATE records SET session_id = ?").run(sessionId);
       db.prepare(
         "UPDATE store_meta SET value = ? WHERE key = 'layout_version'",
       ).run(String(LAYOUT_VERSION));
@@ -409,6 +427,23 @@ export class Store {
       resolveReference:
         caller.resolveReference ?? ((_id: string, _scopeId: string) => false),
     };
+  }
+
+  /**
+   * Highest committed seq attributed to one session in a scope: the exclusive
+   * cursor for that session's replay/resync. Other sessions' records never
+   * advance another session's cursor, and 0 means the session has no
+   * attributable records (nothing to replay from).
+   */
+  sessionCursor(scopeId: string, sessionId: string): number {
+    this.assertOpen();
+    const row = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(seq), 0) AS s FROM records " +
+          "WHERE scope_id = ? AND session_id = ?",
+      )
+      .get(scopeId, sessionId) as { s: number | bigint };
+    return Number(row.s);
   }
 
   private insertValidated(

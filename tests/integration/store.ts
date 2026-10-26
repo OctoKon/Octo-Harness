@@ -858,3 +858,67 @@ test("v1 stores refuse to open until explicit migrateV1; migration preserves byt
   );
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("populated v1 migration requires explicit attribution and preserves replay", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  // Build a populated v1 store: a committed run record written before
+  // session attribution existed.
+  const raw = new DatabaseSync(path);
+  raw.exec(
+    "CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE records (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, " +
+      "record_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL, scope_id TEXT NOT NULL, " +
+      "created_at TEXT NOT NULL, payload TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE deletions (record_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, deleted_at TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE workspace_ownership (workspace_id TEXT PRIMARY KEY, owner_session_id TEXT NOT NULL, " +
+      "epoch INTEGER NOT NULL, acquired_at TEXT NOT NULL, renewed_at TEXT NOT NULL)",
+  );
+  raw.prepare("INSERT INTO store_meta VALUES ('layout_version', '1')").run();
+  const legacy = JSON.parse(
+    readFileSync(
+      new URL("../fixtures/contracts/records.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Record<string, Record<string, unknown>>;
+  raw
+    .prepare(
+      "INSERT INTO records (kind, record_id, schema_version, scope_id, created_at, payload) VALUES ('run', ?, 1, 'w-demo', '2026-10-26T00:00:00.000Z', ?)",
+    )
+    .run(
+      "rec-legacy",
+      JSON.stringify({
+        ...legacy.run,
+        recordId: "rec-legacy",
+        scopeId: "w-demo",
+      }),
+    );
+  raw.close();
+
+  // Populated v1 + no attribution: refused, never a silent session-less row.
+  assert.throws(
+    () => Store.migrateV1(path),
+    (error: unknown) =>
+      error instanceof StoreError && error.message.includes("attribution"),
+  );
+
+  // Explicit attribution: the old session's records stay replayable.
+  Store.migrateV1(path, { sessionId: "s-legacy" });
+  const migrated = Store.open(path);
+  const scoped = migrated.list("w-demo", 0, "s-legacy");
+  assert.equal(scoped.records.length, 1);
+  assert.equal(
+    (scoped.records[0]?.record as { recordId: string }).recordId,
+    "rec-legacy",
+  );
+  // Another session still sees nothing of it.
+  assert.equal(migrated.list("w-demo", 0, "s-new").records.length, 0);
+  migrated.close();
+  rmSync(dir, { recursive: true, force: true });
+});

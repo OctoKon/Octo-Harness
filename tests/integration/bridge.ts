@@ -230,7 +230,7 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
   assert.ok(resync, "resync frame returned");
   assert.equal(resync.event.kind, "stream.resync");
   const payload = resync.event.payload as { fromSeq: number };
-  assert.equal(payload.fromSeq, store.cursor("w-demo"));
+  assert.equal(payload.fromSeq, store.sessionCursor("w-demo", "s1"));
   assert.equal(bridge.status().pendingFrames, 0);
   assert.equal(bridge.status().paused, true);
   assert.equal(bridge.status().lastResyncFromSeq, payload.fromSeq);
@@ -254,7 +254,7 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
   assert.equal(resync2.event.kind, "stream.resync");
   assert.equal(
     (resync2.event.payload as { fromSeq: number }).fromSeq,
-    store.cursor("w-demo"),
+    store.sessionCursor("w-demo", "s1"),
   );
 
   // New durable progress advances the resync cursor.
@@ -262,7 +262,7 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
   const resync3 = bridge["resyncFrame"]();
   assert.equal(
     (resync3.event.payload as { fromSeq: number }).fromSeq,
-    store.cursor("w-demo"),
+    store.sessionCursor("w-demo", "s1"),
   );
   assert.equal(
     (resync3.event.payload as { fromSeq: number }).fromSeq > payload.fromSeq,
@@ -354,6 +354,73 @@ test("durable delivery order is preserved alongside transient coalescing", () =>
   // Six durable events, each strictly greater than the previous.
   assert.equal(seqs.length, 6);
   for (let i = 1; i < seqs.length; i += 1) assert.ok(seqs[i]! > seqs[i - 1]!);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("repeated identical chunk text with distinct seqs is never dropped", () => {
+  const { bridge, store, dir } = makeBridge();
+  // "haha" arrives as two chunks with identical bytes but increasing seqs:
+  // both are real data and must drain, in order.
+  bridge.submit(event("turn.stream_delta", { runId: "r1", delta: "ha" }));
+  bridge.submit(event("turn.stream_delta", { runId: "r1", delta: "ha" }));
+  assert.equal(bridge.status().pendingFrames, 2);
+  const { frames } = bridge.drain();
+  const seqs = frames.map((f) => f.event.seq);
+  assert.deepEqual(seqs, [seqs[0], seqs[0]! + 1]);
+
+  // A true retransmission (same seq re-sent within the window) still skips.
+  const original = event("turn.stream_delta", { runId: "r1", delta: "rt" });
+  bridge.submit(original);
+  const pending = bridge.status().pendingFrames;
+  bridge.submit({ ...original });
+  assert.equal(bridge.status().pendingFrames, pending);
+  bridge.drain();
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a configured tighter maxInlineBytes is honored", () => {
+  const { bridge, store, dir } = makeBridge({ maxInlineBytes: 4096 });
+  // 5 KB inline payload is under the shared 65536 limit but over the
+  // configured 4096 budget: the tighter configuration must win.
+  assert.throws(
+    () =>
+      bridge.submit(
+        event("turn.started", {
+          runId: "r1",
+          turnId: "t1",
+          blob: "x".repeat(5000),
+        }),
+      ),
+    (error: unknown) =>
+      error instanceof BridgeError && error.code === "CONTRACT_FRAME_TOO_LARGE",
+  );
+  // Within the configured budget still passes.
+  bridge.submit(event("turn.started", { runId: "r1", turnId: "t2" }));
+  assert.equal(bridge.status().pendingFrames, 1);
+  bridge.drain();
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("the transient coalescing state is bounded and released after drain", () => {
+  const { bridge, store, dir } = makeBridge();
+  for (let i = 0; i < 100; i += 1) {
+    bridge.submit(
+      event("turn.stream_delta", { runId: `r${String(i)}`, delta: "d" }),
+    );
+  }
+  // 100 distinct runs are all pending before drain.
+  assert.equal(bridge.status().pendingFrames, 100);
+  const pending = bridge["transient"].size;
+  assert.equal(pending, 100);
+  // Draining releases every entry: no run state retained after delivery.
+  let result = bridge.drain();
+  while (result.morePending) result = bridge.drain();
+  assert.equal(bridge.status().pendingFrames, 0);
+  assert.equal(bridge["transient"].size, 0);
+  assert.equal(bridge["transientByFrame"].size, 0);
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });

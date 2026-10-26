@@ -127,27 +127,37 @@ test("afterSeq replay is exclusive and cursor-bounded", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("exactly one resync per cursor advance", () => {
+test("exactly one resync per session-cursor advance", () => {
   const dir = freshDir();
   const { store, receipts } = openReceipts(dir);
   receipts.commitStages([{ kind: "run", record: record("rec-s1") }], caller);
   const cursor = receipts.durableCursor("w-demo");
+  // Another session's record must NOT advance s1's resync cursor.
+  const other = { ...caller, sessionId: "s-other" };
+  receipts.commitStages([{ kind: "run", record: record("rec-o1") }], other);
 
-  const resync = receipts.requestResync("w-demo");
+  const resync = receipts.requestResync("w-demo", caller.sessionId);
   assert.equal(resync.kind, "stream.resync");
   assert.equal(resync.fromSeq, cursor);
 
-  // No new durable data: a second resync is refused.
+  // No new session-attributed durable data: a second resync is refused even
+  // though another session committed (cursor stays session-exact).
   assert.throws(
-    () => receipts.requestResync("w-demo"),
+    () => receipts.requestResync("w-demo", caller.sessionId),
     (error: unknown) =>
       error instanceof ReceiptsError && error.code === "RESYNC_NOT_PENDING",
   );
 
-  // Durable progress re-arms the resync with the advanced cursor.
+  // Durable progress re-arms the resync with the advanced session cursor
+  // (the interleaved other-session record occupies its own global seq, so
+  // the expected value is s1's session cursor, not global cursor + 1).
   receipts.commitStages([{ kind: "run", record: record("rec-s2") }], caller);
-  const resync2 = receipts.requestResync("w-demo");
-  assert.equal(resync2.fromSeq, cursor + 1);
+  const resync2 = receipts.requestResync("w-demo", caller.sessionId);
+  assert.equal(
+    resync2.fromSeq,
+    store.sessionCursor("w-demo", caller.sessionId),
+  );
+  assert.ok(resync2.fromSeq > cursor);
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });

@@ -51,6 +51,15 @@ export class Receipts {
   }
 
   /**
+   * Durable cursor for ONE session: the highest committed seq attributed to
+   * that session in the scope. Other sessions' (or scopes') records never
+   * advance it, so replay cursors and resync bases stay session-exact.
+   */
+  sessionDurableCursor(scopeId: string, sessionId: string): number {
+    return this.store.sessionCursor(scopeId, sessionId);
+  }
+
+  /**
    * Ordered, atomic receipt commits (decision -> intent -> outcome in array
    * order). The caller must dispatch a native effect only after this returns
    * an acknowledgement; any failure rolls the whole chain back and acknowledges
@@ -75,7 +84,9 @@ export class Receipts {
       configRevision: caller.configRevision,
       profileRevision: caller.profileRevision,
       policyRevision: caller.policyRevision,
-      lastDurableSeq: this.store.cursor(),
+      // Session-exact cursor bound: another session's records never advance
+      // or gate this session's replay cursor.
+      lastDurableSeq: this.store.sessionCursor(scopeId, caller.sessionId),
       maxInlineBytes: TRANSPORT_LIMITS.maxInlineBytes,
       resolveReference: caller.resolveReference ?? (() => false),
     };
@@ -95,12 +106,13 @@ export class Receipts {
   }
 
   /**
-   * Exactly one resync per cursor advance: returns
-   * `stream.resync {fromSeq = durable cursor}` and refuses a second resync
-   * while no new durable data has arrived since the last one.
+   * Exactly one resync per cursor advance, scoped to the session: returns
+   * `stream.resync {fromSeq = session durable cursor}` and refuses a second
+   * resync while no new durable data attributable to that session has
+   * arrived since the last one.
    */
-  requestResync(scopeId: string): ResyncEvent {
-    const cursor = this.store.cursor(scopeId);
+  requestResync(scopeId: string, sessionId: string): ResyncEvent {
+    const cursor = this.store.sessionCursor(scopeId, sessionId);
     const last = this.lastResyncCursor.get(scopeId);
     if (last !== undefined && cursor <= last)
       throw new ReceiptsError(
