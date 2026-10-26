@@ -4,7 +4,7 @@ Donor: [earendil-works/pi](https://github.com/earendil-works/pi/tree/d5b3de22d0e
 commit `d5b3de22d0e24a3e9c38a9410d3329b099717283`.
 The audited `@earendil-works/pi-agent-core` and coding-agent packages are 1.4.0.
 Preserve the donor MIT license and Mario Zechner copyright in `vendor/pi/LICENSE`.
-No dependency or package-manifest changes are part of this patch.
+Patch 0001 does not change dependencies or package manifests.
 
 `0001-unavailable-readiness.patch` applies from the Splyce root to `vendor/pi/`.
 It implements the bounded TD-07 unavailable-readiness seam of CF-01/02/06/08
@@ -66,6 +66,13 @@ continues to qualify default unavailability independently.
 This is a native admission slice, not full TD-13 or production activation.
 Atomic cross-process key reservation, qualified filesystem identity/race checks,
 actual session/GUI/provider integration, redaction and owned process execution
-remain required. Trusted in-process code retains direct OS authority. Reapply both
-patches on donor upgrades and rerun the physical and installed-app gates before
-publishing a new candidate.
+remain required. Trusted in-process code retains direct OS authority. Reapply
+all three patches on donor upgrades and rerun the physical and installed-app
+gates before publishing a new candidate.
+
+## Pi HTTP client update
+
+`0003-undici-8.12.3.patch` applies after the native admission patch. It updates
+Pi's exact `undici` pin to 8.12.3, which includes the fix for
+[GHSA-xjj6-f33q-929c](https://github.com/nodejs/undici/security/advisories/GHSA-xjj6-f33q-929c).
+Regenerate and verify both npm lockfiles after applying it.
