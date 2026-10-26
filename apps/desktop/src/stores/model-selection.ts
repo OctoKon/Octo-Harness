@@ -70,17 +70,20 @@ export function applyTransition(
   reason?: string,
 ): ModelSelectionState {
   const status = STATUS[record.state];
-  const intended = state.transition?.requestedRef;
-  const mismatch =
-    status === "applied" &&
-    intended !== undefined &&
-    intended !== record.requestedBindingRef;
+  // The user's intent lives for the whole transition; engine records never overwrite it.
+  const prev = state.transition;
+  const requestedRef =
+    prev &&
+    (prev.transitionId === null || prev.transitionId === record.transitionId)
+      ? prev.requestedRef
+      : record.requestedBindingRef;
+  const mismatch = record.requestedBindingRef !== requestedRef;
   return {
     currentRef:
       status === "applied" ? record.requestedBindingRef : state.currentRef,
     transition: {
       transitionId: record.transitionId,
-      requestedRef: record.requestedBindingRef,
+      requestedRef,
       disposition: record.disposition,
       status,
       reason: status === "rejected" ? (reason ?? "No reason reported") : reason,
