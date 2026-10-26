@@ -86,6 +86,7 @@ export class NativePolicy {
   private readonly current: () => CurrentPolicy;
   private readonly permits = new Map<string, Readonly<ActionPermit>>();
   private readonly prepared = new Set<string>();
+  private readonly ready = new Map<string, string>();
 
   constructor(
     store: Store,
@@ -113,9 +114,24 @@ export class NativePolicy {
     toolCallId: string,
     toolName: string,
     signal: AbortSignal | undefined,
+    phase?: "prepare",
   ): void {
     const permit = this.permits.get(toolCallId);
     if (!permit) throw new AdmissionError("POLICY_DENIED");
+    if (
+      phase === "prepare" &&
+      (this.prepared.has(toolCallId) ||
+        this.store
+          .list(permit.targetScopeId)
+          .records.some(
+            ({ kind, record }) =>
+              kind === "action" &&
+              ((record as ActionRecord).idempotencyKey ===
+                permit.idempotencyKey ||
+                (record as ActionRecord).actionId === permit.actionId),
+          ))
+    )
+      throw new AdmissionError("ACTION_REQUIRES_RECONCILIATION");
     if (signal?.aborted) this.deny(permit, "CANCELED");
     const policy = this.current();
     if (
@@ -163,7 +179,7 @@ export class NativePolicy {
     parentToolCallId: string | undefined,
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    this.check(toolCallId, toolName, signal);
+    this.check(toolCallId, toolName, signal, "prepare");
     const permit = this.permits.get(toolCallId)!;
     if (this.prepared.has(toolCallId))
       throw new AdmissionError("ACTION_REQUIRES_RECONCILIATION");
@@ -198,6 +214,7 @@ export class NativePolicy {
       if (latest?.state !== "running") this.deny(permit, "PARENT_NOT_RUNNING");
     }
     this.prepared.add(toolCallId);
+    this.ready.set(toolCallId, actionArgumentsDigest(validatedArgs));
   }
 
   async execute<T extends { isError: boolean }>(
@@ -210,9 +227,13 @@ export class NativePolicy {
     this.check(toolCallId, toolName, signal);
     const permit = this.permits.get(toolCallId)!;
     const serialized = canonical(args);
+    const preparedDigest = this.ready.get(toolCallId);
+    if (!preparedDigest) throw new AdmissionError("PREPARATION_REQUIRED");
+    this.ready.delete(toolCallId);
     if (
       `sha256:${createHash("sha256").update(serialized).digest("hex")}` !==
-      permit.argumentsDigest
+        permit.argumentsDigest ||
+      preparedDigest !== permit.argumentsDigest
     )
       this.deny(permit, "ARGUMENTS_CHANGED");
     const admittedArgs = freezeJson(JSON.parse(serialized) as JsonValue);
@@ -275,6 +296,7 @@ export class NativePolicy {
 
   private deny(permit: ActionPermit, code: string): never {
     this.prepared.add(permit.toolCallId);
+    this.ready.delete(permit.toolCallId);
     this.store.append(
       {
         kind: "action",

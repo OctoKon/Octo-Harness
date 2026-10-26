@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -218,8 +219,9 @@ test("native Pi tool effect follows durable decision/intent and precedes durable
 test("native preparation denies changed validated arguments before extension hooks", async (t) => {
   const f = await fixture(t);
   let hooks = 0;
-  await assert.rejects(
-    runToolCall(
+  let error;
+  try {
+    await runToolCall(
       { ...f.call, arguments: { text: "different" } },
       {
         ...f.options,
@@ -228,14 +230,16 @@ test("native preparation denies changed validated arguments before extension hoo
           await writeFile(f.canary, "hook");
         },
       },
-    ),
-    { code: "ARGUMENTS_CHANGED" },
-  );
+    );
+  } catch (caught) {
+    error = caught;
+  }
   assert.equal(
     await readFile(f.canary, "utf8"),
     "unchanged",
     "native preparation must precede extension effects",
   );
+  assert.equal(error?.code, "ARGUMENTS_CHANGED");
   assert.equal(hooks, 0);
   assert.equal(f.executions, 0);
 });
@@ -738,22 +742,28 @@ test("removing native preparation, cancellation reservation, authority or intent
     `import { registerHooks } from 'node:module';
 registerHooks({load(url, context, next) {
   const result = next(url, context);
-  if (process.env.SPLYCE_ADMISSION_MUTATION === 'preparation') {
+  if (process.env.SPLYCE_ADMISSION_MUTATION.startsWith('preparation')) {
     if (!url.endsWith('/agent/dist/agent-loop.js')) return result;
     const source = String(result.source);
     const start = source.indexOf('    await requireSplyceToolAdmission(tool).prepare(');
     const end = source.indexOf(');', start);
     if (start < 0 || end < 0) throw new Error('preparation mutation target missing');
-    return {...result, source: source.slice(0, start) + source.slice(end + 2)};
+    return {...result, source: source.slice(0, start) + (process.env.SPLYCE_ADMISSION_MUTATION === 'preparation-child' ? '    if (toolCall.id !== \"child\") ' + source.slice(start, end + 2) : '') + source.slice(end + 2)};
   }
   if (!url.endsWith('/splyce-pi/dist/policy.js')) return result;
   let source = String(result.source);
   if (process.env.SPLYCE_ADMISSION_MUTATION === 'reservation') {
-    const target = '    deny(permit, code) {\\n        this.prepared.add(permit.toolCallId);';
-    if (!source.includes(target)) throw new Error('reservation mutation target missing');
-    source = source.replace(target, '    deny(permit, code) {');
+    const start = source.indexOf('        if (phase === "prepare"');
+    const end = source.indexOf('        if (signal?.aborted)', start);
+    if (start < 0 || end < 0) throw new Error('reservation mutation target missing');
+    source = source.slice(0, start) + source.slice(end);
+  } else if (process.env.SPLYCE_ADMISSION_MUTATION === 'execution') {
+    const target = '        if (!preparedDigest)\\n            throw new AdmissionError("PREPARATION_REQUIRED");';
+    if (!source.includes(target)) throw new Error('execution mutation target missing');
+    source = source.replace(target, '');
+    source = source.replace('preparedDigest !== permit.argumentsDigest', 'false');
   } else if (process.env.SPLYCE_ADMISSION_MUTATION === 'authority') {
-    const start = source.indexOf('    check(toolCallId, toolName, signal) {');
+    const start = source.indexOf('    check(toolCallId, toolName, signal, phase) {');
     const end = source.indexOf('    async prepare(', start);
     if (start < 0 || end < 0) throw new Error('authority mutation target missing');
     source = source.slice(0, start) + '    check() {}\\n' + source.slice(end);
@@ -783,14 +793,19 @@ registerHooks({load(url, context, next) {
       "native preparation must precede extension effects",
     ],
     [
-      "preparation",
+      "preparation-child",
       "native preparation rejects missing parent",
       "invalid native parent must precede extension effects",
     ],
     [
       "reservation",
-      "cancellation before preparation reserves the call ID",
-      "canceled call reservation must precede extension effects",
+      "canceled ID cannot run argument preparation",
+      "canceled argument callback must preserve physical bytes",
+    ],
+    [
+      "execution",
+      "direct execution requires native preparation",
+      "unprepared dispatch must preserve physical bytes",
     ],
     [
       "authority",
@@ -826,4 +841,132 @@ registerHooks({load(url, context, next) {
       `${mutation} must fail its physical assertion: ${result.stdout}${result.stderr}`,
     );
   }
+});
+test("reserved IDs and unprepared execution cannot reach physical callbacks", async (t) => {
+  const f = await fixture(t);
+  await f.policy.prepare(
+    f.call.id,
+    f.call.name,
+    f.call.arguments,
+    undefined,
+    undefined,
+  );
+  f.tool.prepareArguments = (args) => {
+    throw new Error("PREPARATION_CALLBACK_RAN");
+  };
+  await assert.rejects(runToolCall(f.call, f.options), {
+    code: "ACTION_REQUIRES_RECONCILIATION",
+  });
+  const other = await fixture(t);
+  await assert.rejects(
+    other.policy.execute(
+      other.call.id,
+      other.call.name,
+      other.call.arguments,
+      async () => {
+        await writeFile(other.canary, "effect");
+        return { isError: false };
+      },
+      undefined,
+    ),
+    { code: "PREPARATION_REQUIRED" },
+  );
+  assert.equal(await readFile(other.canary, "utf8"), "unchanged");
+});
+
+for (const outcome of ["completed", "uncertain"]) {
+  test(`reopened ${outcome} action is rejected before argument preparation`, async (t) => {
+    const f = await fixture(t);
+    if (outcome === "uncertain") {
+      f.store.db.exec(
+        "CREATE TRIGGER refuse_outcome BEFORE INSERT ON records WHEN NEW.kind = 'outcome' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+      );
+      await assert.rejects(runToolCall(f.call, f.options));
+    } else {
+      await runToolCall(f.call, f.options);
+    }
+    await writeFile(f.canary, "before-replay");
+    f.unbind();
+    const reopened = Store.open(f.path);
+
+    const policy = new NativePolicy(reopened, f.caller, () => ({
+      ...f.caller,
+      grantIds: ["grant1"],
+      planMode: false,
+    }));
+    policy.authorize(f.permit);
+    const unbind = bindSplyceToolAdmission(f.tool, policy);
+    t.after(unbind);
+    f.tool.prepareArguments = (args) => {
+      throw new Error("PREPARATION_CALLBACK_RAN");
+    };
+    await assert.rejects(runToolCall(f.call, f.options), {
+      code: "ACTION_REQUIRES_RECONCILIATION",
+    });
+    assert.equal(await readFile(f.canary, "utf8"), "before-replay");
+    assert.equal(f.executions, 1);
+    reopened.close();
+  });
+}
+
+test("canceled ID cannot run argument preparation and fresh ID recovers", async (t) => {
+  const f = await fixture(t);
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    runToolCall(f.call, { ...f.options, signal: controller.signal }),
+    { code: "CANCELED" },
+  );
+  let calls = 0;
+  f.tool.prepareArguments = (args) => {
+    calls++;
+    writeFileSync(f.canary, "callback");
+    return args;
+  };
+  await assert.rejects(runToolCall(f.call, f.options), {
+    code: "ACTION_REQUIRES_RECONCILIATION",
+  });
+  assert.equal(
+    await readFile(f.canary, "utf8"),
+    "unchanged",
+    "canceled argument callback must preserve physical bytes",
+  );
+  assert.equal(calls, 0);
+  f.policy.authorize({
+    ...f.permit,
+    toolCallId: "new",
+    actionId: "new-action",
+    idempotencyKey: "new-effect",
+  });
+  assert.equal(
+    (await runToolCall({ ...f.call, id: "new" }, f.options)).isError,
+    false,
+  );
+  assert.equal(calls, 1);
+  assert.equal(await readFile(f.canary, "utf8"), "changed");
+});
+
+test("direct execution requires native preparation", async (t) => {
+  const f = await fixture(t);
+  let error;
+  try {
+    await f.policy.execute(
+      f.call.id,
+      f.call.name,
+      f.call.arguments,
+      async () => {
+        await writeFile(f.canary, "effect");
+        return { isError: false };
+      },
+      undefined,
+    );
+  } catch (caught) {
+    error = caught;
+  }
+  assert.equal(
+    await readFile(f.canary, "utf8"),
+    "unchanged",
+    "unprepared dispatch must preserve physical bytes",
+  );
+  assert.equal(error?.code, "PREPARATION_REQUIRED");
 });

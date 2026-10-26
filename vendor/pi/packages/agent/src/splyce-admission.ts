@@ -2,7 +2,7 @@ import { assertSplyceReady } from "./splyce-readiness.ts";
 
 /** Host bindings are object identities, never model arguments or tool annotations. */
 export interface SplyceToolAdmission {
-	check(toolCallId: string, toolName: string, signal: AbortSignal | undefined): void;
+	check(toolCallId: string, toolName: string, signal: AbortSignal | undefined, phase?: "prepare"): void;
 	prepare(
 		toolCallId: string,
 		toolName: string,

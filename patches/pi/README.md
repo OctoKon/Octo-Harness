@@ -75,7 +75,7 @@ gates before publishing a new candidate.
 `0008-validated-tool-preparation.patch` extends the owned Pi 1.4.0 admission seam
 after the preceding patches. `prepareToolCall` validates arguments, awaits the
 required native `prepare` method, then invokes extension hooks. Native preparation
-errors reject; missing preparation and cancellation reach no hook or effect.
+errors reject; reserved and durable action identities are refused before argument callbacks. Missing preparation and cancellation reach no hook or effect.
 `AgentSession._executeNestedToolCall` forwards the actual parent tool-call ID
 through `RunToolCallOptions`. Preparation commits no effect intent.
 
@@ -83,7 +83,7 @@ The direct `NativePolicy` implementation checks an already authorized permit,
 validated argument digest and same-run/scope/workspace parent action. The parent
 must still be running. Prepared and denied IDs stay reserved, including cancellation
 before preparation; a fresh call ID is required. Execution retains its final current-authority,
-parent-state, durable intent and outcome checks. No grant minting or production
+parent-state, durable intent and outcome checks, and consumes a matching native preparation before execution. No grant minting or production
 readiness is enabled.
 
 `tests/native-admission.test.mjs` exercises schema/preparation/hook ordering,

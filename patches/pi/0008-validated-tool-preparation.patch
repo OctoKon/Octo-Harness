@@ -1,15 +1,19 @@
 diff --git a/vendor/pi/packages/agent/src/agent-loop.ts b/vendor/pi/packages/agent/src/agent-loop.ts
-index bbcc817..c596c13 100644
+index bbcc817..c768050 100644
 --- a/vendor/pi/packages/agent/src/agent-loop.ts
 +++ b/vendor/pi/packages/agent/src/agent-loop.ts
-@@ -728,6 +728,7 @@ async function prepareToolCall(
+@@ -728,9 +728,10 @@ async function prepareToolCall(
  	config: ToolCallHooks,
  	signal: AbortSignal | undefined,
  	tools: readonly AgentTool<any>[] = currentContext.tools ?? [],
 +	parentToolCallId?: string,
  ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
  	const tool = tools.find((t) => t.name === toolCall.name);
- 	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal);
+-	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal);
++	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal, "prepare");
+ 	if (!tool) {
+ 		return {
+ 			kind: "immediate",
 @@ -739,9 +740,26 @@ async function prepareToolCall(
  		};
  	}
@@ -65,13 +69,15 @@ index bbcc817..c596c13 100644
  		return { toolCall, result: preparation.result, isError: preparation.isError };
  	}
 diff --git a/vendor/pi/packages/agent/src/splyce-admission.ts b/vendor/pi/packages/agent/src/splyce-admission.ts
-index 5da656d..ae88403 100644
+index 5da656d..71ff318 100644
 --- a/vendor/pi/packages/agent/src/splyce-admission.ts
 +++ b/vendor/pi/packages/agent/src/splyce-admission.ts
-@@ -3,6 +3,13 @@ import { assertSplyceReady } from "./splyce-readiness.ts";
+@@ -2,7 +2,14 @@ import { assertSplyceReady } from "./splyce-readiness.ts";
+ 
  /** Host bindings are object identities, never model arguments or tool annotations. */
  export interface SplyceToolAdmission {
- 	check(toolCallId: string, toolName: string, signal: AbortSignal | undefined): void;
+-	check(toolCallId: string, toolName: string, signal: AbortSignal | undefined): void;
++	check(toolCallId: string, toolName: string, signal: AbortSignal | undefined, phase?: "prepare"): void;
 +	prepare(
 +		toolCallId: string,
 +		toolName: string,

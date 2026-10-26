@@ -731,7 +731,7 @@ async function prepareToolCall(
 	parentToolCallId?: string,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
 	const tool = tools.find((t) => t.name === toolCall.name);
-	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal);
+	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal, "prepare");
 	if (!tool) {
 		return {
 			kind: "immediate",
