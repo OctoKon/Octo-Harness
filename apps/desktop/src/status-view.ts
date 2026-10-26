@@ -22,7 +22,11 @@ export type StatusValue =
   | "applied"
   | "draining"
   | "cleanup-pending"
-  | "timed-out";
+  | "timed-out"
+  | "streaming"
+  | "waiting-approval"
+  | "stopped"
+  | "success";
 
 export interface StatusView {
   readonly label: string;
@@ -89,6 +93,54 @@ const STATE_VIEWS: Readonly<Record<string, StatusView>> = Object.freeze({
 function projectState(state: unknown): StatusView {
   if (typeof state !== "string") return UNKNOWN;
   return STATE_VIEWS[state] ?? UNKNOWN;
+}
+
+export type TurnViewStatus =
+  | "streaming"
+  | "waiting_approval"
+  | "completed"
+  | "failed"
+  | "canceled"
+  | "stopped";
+
+export type ToolViewStatus =
+  "pending" | "success" | "error" | "uncertain" | "canceled";
+
+const TURN_STATUS_VIEWS: Readonly<Record<TurnViewStatus, StatusView>> =
+  Object.freeze({
+    streaming: view("Working", "active", "streaming"),
+    waiting_approval: view(
+      "Waiting for approval",
+      "warning",
+      "waiting-approval",
+    ),
+    completed: view("Completed", "positive", "completed"),
+    failed: view("Failed", "negative", "failed"),
+    canceled: view("Canceled", "neutral", "canceled"),
+    stopped: view("Stopped", "neutral", "stopped"),
+  });
+
+const TOOL_STATUS_VIEWS: Readonly<Record<ToolViewStatus, StatusView>> =
+  Object.freeze({
+    pending: view("Pending - not executed", "neutral", "pending"),
+    success: view("Success", "positive", "success"),
+    error: view("Failed", "negative", "failed"),
+    uncertain: view("Uncertain", "warning", "uncertain"),
+    canceled: view("Canceled", "neutral", "canceled"),
+  });
+
+export function projectTurnStatus(
+  status: TurnViewStatus | null | undefined,
+): StatusView {
+  if (!status) return UNKNOWN;
+  return TURN_STATUS_VIEWS[status] ?? UNKNOWN;
+}
+
+export function projectToolStatus(
+  status: ToolViewStatus | null | undefined,
+): StatusView {
+  if (!status) return UNKNOWN;
+  return TOOL_STATUS_VIEWS[status] ?? UNKNOWN;
 }
 
 function projectOutcome(
