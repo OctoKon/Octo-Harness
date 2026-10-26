@@ -54,8 +54,8 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-async function boot() {
-  app = mount(App, { target: document.body });
+async function boot(props: Record<string, unknown> = {}) {
+  app = mount(App, { target: document.body, props });
   await settle();
 }
 
@@ -152,21 +152,37 @@ describe("App wiring", () => {
     expect(ipc.invoke.mock.calls.filter(([c]) => c === "send")).toHaveLength(0);
   });
 
-  it("clears the selection when a refreshed snapshot lacks the session", async () => {
-    ipc.ready = true;
-    await boot();
-    dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
-    await settle();
-    q("[role=treeitem]")!.click();
-    await settle();
-    expect(get(selectedSession)?.sessionId).toBe("ses_1");
-
+  async function dropAndRecover() {
     ipc.ready = false;
     await engineHandshake().catch(() => {});
     await settle();
     ipc.ready = true;
     button("Retry").click();
     await settle();
+  }
+
+  it("keeps the selection and binding across Retry when no snapshot arrives", async () => {
+    ipc.ready = true;
+    await boot();
+    dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
+    await settle();
+    q("[role=treeitem]")!.click();
+    await settle();
+    await dropAndRecover();
+    expect(q("[data-testid=lost-selection]")).toBeNull();
+    expect(get(selectedSession)?.sessionId).toBe("ses_1");
+    expect(q("[role=treeitem]")?.getAttribute("aria-selected")).toBe("true");
+    expect(subscribes()).toHaveLength(1);
+  });
+
+  it("clears the selection when a real snapshot lacks the session", async () => {
+    ipc.ready = true;
+    const snapshots = [[treeEvent("ses_1", "scope_1")], []];
+    await boot({ loadSessions: async () => snapshots.shift() ?? [] });
+    q("[role=treeitem]")!.click();
+    await settle();
+    expect(get(selectedSession)?.sessionId).toBe("ses_1");
+    await dropAndRecover();
     expect(q("[data-testid=lost-selection]")).not.toBeNull();
     expect(get(selectedSession)).toBeNull();
   });

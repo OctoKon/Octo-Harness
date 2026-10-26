@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import type { SplyceEvent } from "@splyce/pi/contracts";
   import Composer from "./components/Composer.svelte";
   import SessionTree from "./components/SessionTree.svelte";
   import TurnStream from "./components/TurnStream.svelte";
@@ -41,6 +42,11 @@
     ["usage", "Usage"],
   ];
 
+  // Snapshot seam: the only thing allowed to complete a session load. Readiness proves nothing about sessions.
+  let {
+    loadSessions,
+  }: { loadSessions?: () => Promise<readonly SplyceEvent[]> } = $props();
+
   let view = $state<View>("conversation");
   let nav = $state.raw<SessionNavState>(createSessionNav());
   // sessionId -> scopeId, as carried by the engine's own events; never invented.
@@ -57,10 +63,32 @@
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
 
-  // Engine readiness drives the sessions load state; unavailable is never shown as loading or empty.
+  function applyTree(event: SplyceEvent) {
+    if (event.kind !== "session.tree_updated") return;
+    scopes.set(event.sessionId, event.scopeId);
+    dispatchNav({ type: "event", event: event as TreeEventLike });
+  }
+
+  async function runLoad() {
+    dispatchNav({ type: "refresh" });
+    try {
+      for (const event of await loadSessions!()) applyTree(event);
+      dispatchNav({ type: "loaded" });
+    } catch (e) {
+      dispatchNav({
+        type: "failed",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  // Readiness never completes a load: without a snapshot the previous navigation state is kept, selection included.
   $effect(() => {
-    if (status === "ready") dispatchNav({ type: "loaded" });
-    else if (status === "unavailable" || status === "error")
+    if (status === "ready") {
+      if (loadSessions) void runLoad();
+      else if (untrack(() => Object.keys(nav.branches).length > 0))
+        dispatchNav({ type: "loaded" });
+    } else if (status === "unavailable" || status === "error")
       dispatchNav({ type: "failed", message: "Engine unavailable." });
   });
 
@@ -99,10 +127,7 @@
     });
     retry = () => void binding.retry();
     const unsubEvents = onEvent((event) => {
-      if (event.kind === "session.tree_updated") {
-        scopes.set(event.sessionId, event.scopeId);
-        dispatchNav({ type: "event", event: event as TreeEventLike });
-      }
+      applyTree(event);
       transport.enqueue(event);
     });
 
@@ -143,8 +168,8 @@
     onFocus={(key) => dispatchNav({ type: "focus", key })}
     onMove={(to) => dispatchNav({ type: "move", to })}
     onRetry={() => {
-      dispatchNav({ type: "refresh" });
-      handshake().catch(() => {});
+      if (status === "ready" && loadSessions) void runLoad();
+      else handshake().catch(() => {});
     }}
   />
 {/snippet}
