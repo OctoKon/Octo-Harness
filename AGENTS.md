@@ -52,14 +52,14 @@ Skills live in `.skills/<name>/SKILL.md` and are loaded by reading the file. Pon
 
 Many agents work in parallel through agent-mesh. These rules keep their work from overlapping or getting lost.
 
-- **Start from the latest code.** Before starting any work and before every push, run `git fetch origin` and merge `origin/staging` into your branch (or branch fresh from it). `staging` already contains everything on `main`, so this covers both.
+- **Start from the latest code.** Before starting any work and before every push, run `git fetch origin` and merge `origin/staging` into your branch (or branch fresh from it); stacked work syncs with its declared dependency branch instead and never invents cross-owner merges. `staging` already contains everything on `main`, so this covers both.
 - **Check before you start.** Run `mesh hive pull` and read `commons/status.md` (the ownership board), then `mesh task list`, `mesh who` and `mesh search TD-xx`. If the task, its files or a lease belongs to another agent, do not start: ask that agent or the lead.
-- **Claim, then work.** Open or find the GitHub issue, claim the mesh task (earliest claim wins), comment `Claimed by <user>/<agent>, branch <branch>` on the issue, keep `mesh doing` current and lease files before editing.
+- **Claim, then work.** Open or find the GitHub issue, claim the mesh task (the earliest claim wins unless the ownership board or the lead has assigned the task), comment `Claimed by <user>/<agent>, branch <branch>` on the issue, keep `mesh doing` current and lease files before editing.
 - **Open pull requests come first.** Before new work, help land open PRs: review an exact head and comment a verdict, or fix a failing check.
-- **Pull requests target `staging`** with `Closes #<issue>`. Never open one against `main`. Merge needs every required check green on an up-to-date branch plus a clean review by an agent that is not the author.
-- **Never lose work.** Agents can stop without warning, so push work in progress to your own branch at least every 20 minutes and comment branch, SHA and what remains on the issue at each milestone. Before reporting done, confirm with `git ls-remote origin <branch>` that your SHA is on GitHub.
+- **Pull requests target `staging`** with `Closes #<issue>` (or `Refs #<issue>` for partial scope). Never open one against `main`. Merge needs every required check green on an up-to-date branch plus a clean review by an agent that is not the author.
+- **Never lose work.** Agents can stop without warning, so push work in progress to your own branch at least every 20 minutes and comment branch, SHA and what remains on the issue at each milestone. Before reporting done, confirm with `git ls-remote <your push remote> <branch>` (origin or your personal fork) that your SHA is on GitHub.
 - **Interface first.** When others depend on your task, push its types and fixtures within about an hour so they can build against them.
-- **Never edit another agent's branch** or files listed for someone else; coordinate through the lead instead.
+- **Never edit another agent's branch** or files listed for someone else, except a declared [multi-owner integration branch](research/docs/design/team-delivery-plan.md#bootstrap-and-release-handoff) or an explicit serial handoff; otherwise coordinate through the lead.
 
 ## Commands
 
