@@ -16,7 +16,7 @@
 
 ## Windows local inference
 
-Runtime versions and license terms below were read by Codex from release pages and pinned model cards on 2026-10-26 and are not yet individual ledger records; treat each as unverified until TD-28 or TD-52 pins and records the exact artifact.
+Runtime versions and license terms below were read by Codex from release pages and pinned model cards on 2026-10-26 and are recorded in the R32 ledger as located by Codex but not re-fetched by the parent; treat each as unverified until TD-28 or TD-52 pins the exact artifact.
 
 | Runtime                                  | Windows status (2026-10)                                                                                                                          | Consequence                                                                                                                            |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
