@@ -1,7 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import TurnStream from "./components/TurnStream.svelte";
-  import { connectionState, handshake, onEvent } from "./stores/engine";
+  import {
+    connectionState,
+    handshake,
+    onEvent,
+    subscribe,
+    type Unsubscribe,
+  } from "./stores/engine";
   import {
     createTurnStreamTransport,
     createTurnsState,
@@ -10,6 +16,7 @@
 
   let status = $state("disconnected");
   let turns = $state.raw<TurnsState>(createTurnsState());
+  let sessionDispose: Unsubscribe | null = null;
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
@@ -18,11 +25,25 @@
     // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
   }
 
+  function recover(fromSeq: number, sessionId: string) {
+    sessionDispose?.();
+    sessionDispose = null;
+    if (!sessionId) return;
+    subscribe(sessionId, fromSeq)
+      .then((dispose) => {
+        sessionDispose = dispose;
+      })
+      .catch(() => {
+        // The stream stays paused/stale; no session context is invented here.
+      });
+  }
+
   onMount(() => {
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
       },
+      onResync: recover,
     });
     const unsubState = connectionState.subscribe((val) => {
       status = val;
@@ -36,6 +57,7 @@
     return () => {
       unsubState();
       unsubEvents();
+      sessionDispose?.();
       transport.dispose();
     };
   });
@@ -56,7 +78,7 @@
       <section class="turn-pane" aria-label="Transcript">
         <TurnStream
           run={currentRun}
-          stale={turns.stale || status === "unavailable" || status === "error"}
+          stale={turns.stale || turns.needsResync || status !== "ready"}
           canRespond={() => false}
           {onApproval}
         />

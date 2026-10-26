@@ -22,6 +22,7 @@ function event<K extends EventKind>(
   kind: K,
   payload: EventPayloads[K],
   durable = kind !== "turn.stream_delta" && kind !== "turn.thought_delta",
+  sessionId = "ses_spec",
 ): SplyceEventEnvelope {
   return {
     schemaVersion: 1,
@@ -31,7 +32,7 @@ function event<K extends EventKind>(
     createdAt: "2026-10-26T00:00:00.000Z",
     sourceIds: [],
     scopeId: "scope_spec",
-    sessionId: "ses_spec",
+    sessionId,
     seq,
     durable,
     kind,
@@ -78,7 +79,7 @@ const toolIntent = (seq: number, actionId = "act_1"): SplyceEventEnvelope =>
     runId: "run_a",
     actionId,
     capabilityId: "fs.read_tree",
-    target: "apps/desktop/src",
+    target: "target_desktop_src",
     argsSummary: "depth: 2",
   });
 
@@ -536,5 +537,131 @@ describe("TD-18 renderer transport", () => {
         action.status,
       ]),
     );
+  });
+
+  it("validates and dedupes before coalescing, never duplicating text", () => {
+    const transport = createTurnStreamTransport({ schedule: manual });
+    transport.enqueue(started());
+    transport.flush();
+
+    const duplicate = delta(2, "x");
+    transport.enqueue(duplicate);
+    transport.enqueue(duplicate);
+    const state = transport.flush();
+
+    expect(state.runs.run_a.text).toBe("x");
+    expect(state.duplicateCount).toBe(1);
+    expect(state.lastSeq).toBe(2);
+  });
+
+  it("does not merge across a gap and ignores late out-of-order deltas", () => {
+    const resyncs: number[] = [];
+    const transport = createTurnStreamTransport({
+      schedule: manual,
+      onResync: (fromSeq) => resyncs.push(fromSeq),
+    });
+    transport.enqueue(started());
+    transport.flush();
+
+    transport.enqueue(delta(2, "a"));
+    transport.enqueue(delta(4, "c"));
+    const gapped = transport.flush();
+
+    expect(gapped.runs.run_a.text).toBe("a");
+    expect(gapped.needsResync).toBe(true);
+    expect(gapped.lastDurableSeq).toBe(1);
+    expect(resyncs).toEqual([1]);
+
+    transport.enqueue(delta(3, "b"));
+    const paused = transport.flush();
+    expect(paused.runs.run_a.text).toBe("a");
+
+    transport.enqueue(snapshot(5));
+    const recovered = transport.flush();
+    expect(recovered.needsResync).toBe(false);
+    expect(recovered.resyncCount).toBe(1);
+  });
+
+  it("drops a replayed delta after a flush instead of appending it twice", () => {
+    const transport = createTurnStreamTransport({ schedule: manual });
+    transport.enqueue(started());
+    transport.flush();
+    transport.enqueue(delta(2, "x"));
+    transport.flush();
+    transport.enqueue(delta(2, "x"));
+    transport.enqueue(delta(3, "y"));
+    const state = transport.flush();
+
+    expect(state.runs.run_a.text).toBe("xy");
+    expect(state.duplicateCount).toBe(1);
+  });
+
+  it("keeps cross-session state separate instead of dropping one session", () => {
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_a",
+      schedule: manual,
+    });
+    const sessionA = event(
+      1,
+      "turn.started",
+      {
+        runId: "run_a",
+        turnId: "turn_a",
+      },
+      true,
+      "ses_a",
+    );
+    const sessionB = event(
+      1,
+      "turn.started",
+      {
+        runId: "run_b",
+        turnId: "turn_b",
+      },
+      true,
+      "ses_b",
+    );
+
+    transport.enqueue(sessionA);
+    transport.enqueue(sessionB);
+    transport.flush();
+
+    expect(transport.current("ses_a").runs.run_a).toBeDefined();
+    expect(transport.current("ses_b").runs.run_b).toBeDefined();
+    expect(transport.current("ses_a").duplicateCount).toBe(0);
+    expect(transport.current("ses_b").duplicateCount).toBe(0);
+  });
+
+  it("rejects an invalid payload before it can mutate the stream", () => {
+    const transport = createTurnStreamTransport({ schedule: manual });
+    transport.enqueue(started());
+    transport.flush();
+
+    transport.enqueue({
+      ...delta(2, "x"),
+      payload: { runId: "run_a", turnId: "turn_a", delta: 42 },
+    } as unknown as SplyceEventEnvelope);
+    transport.enqueue({
+      ...delta(3, "y"),
+      payload: null,
+    } as unknown as SplyceEventEnvelope);
+    const state = transport.flush();
+
+    expect(state.runs.run_a.text).toBe("");
+    expect(state.protocolErrors).toBe(2);
+    expect(state.lastSeq).toBe(1);
+  });
+
+  it("offers the session id with the recovery request", () => {
+    const requests: [number, string][] = [];
+    const transport = createTurnStreamTransport({
+      schedule: manual,
+      onResync: (fromSeq, sessionId) => requests.push([fromSeq, sessionId]),
+    });
+    transport.enqueue(started());
+    transport.flush();
+    transport.enqueue(delta(4, "gap"));
+
+    expect(requests).toEqual([[1, "ses_spec"]]);
   });
 });

@@ -1,8 +1,10 @@
-import type {
-  EventKind,
-  EventPayloads,
-  SplyceErrorPayload,
-  SplyceEventEnvelope,
+import {
+  validateEvent,
+  type ContractContext,
+  type EventKind,
+  type EventPayloads,
+  type SplyceErrorPayload,
+  type SplyceEventEnvelope,
 } from "@splyce/pi/contracts";
 
 export type ApprovalState = "requested" | "allowed" | "denied" | "canceled";
@@ -562,22 +564,35 @@ interface PendingFrame {
   coalesced: boolean;
 }
 
+interface SessionChannel {
+  state: TurnsState;
+  acceptedSeq: number;
+  pending: PendingFrame[];
+  durableFrames: number;
+  durableBytes: number;
+  transientFrames: number;
+  transientBytes: number;
+  resyncNotified: boolean;
+}
+
 export interface TurnStreamTransportOptions {
   state?: TurnsState;
+  sessionId?: string;
   schedule?: (task: () => void) => void;
   onState?: (state: TurnsState) => void;
-  onResync?: (fromSeq: number) => void;
+  onResync?: (fromSeq: number, sessionId: string) => void;
   onError?: (code: TurnStreamErrorCode) => void;
 }
 
 export interface TurnStreamTransport {
   enqueue(event: SplyceEventEnvelope): void;
   flush(): TurnsState;
-  current(): TurnsState;
+  current(sessionId?: string): TurnsState;
   dispose(): void;
 }
 
 const frameEncoder = new TextEncoder();
+const fallbackState = createTurnsState();
 
 function isTransientKind(kind: EventKind): boolean {
   return kind === "turn.stream_delta" || kind === "turn.thought_delta";
@@ -587,23 +602,59 @@ function frameBytes(event: SplyceEventEnvelope): number {
   return 4 + frameEncoder.encode(JSON.stringify(event)).length;
 }
 
+function payloadBytes(event: SplyceEventEnvelope): number {
+  return "payload" in event && event.payload !== undefined
+    ? frameEncoder.encode(JSON.stringify(event.payload)).length
+    : 0;
+}
+
+function rendererValidationContext(event: {
+  scopeId: string;
+  sessionId: string;
+}): ContractContext {
+  return {
+    scopeId: event.scopeId,
+    sessionId: event.sessionId,
+    configRevision: "renderer",
+    profileRevision: "renderer",
+    policyRevision: "renderer",
+    lastDurableSeq: Number.MAX_SAFE_INTEGER,
+    maxInlineBytes: TRANSPORT_LIMITS.maxInlineBytes,
+    resolveReference: () => true,
+  };
+}
+
+function validateForRenderer(event: unknown): SplyceEventEnvelope | null {
+  if (event === null || typeof event !== "object") return null;
+  const candidate = event as { scopeId?: unknown; sessionId?: unknown };
+  const scopeId = candidate.scopeId;
+  const sessionId = candidate.sessionId;
+  if (typeof scopeId !== "string" || typeof sessionId !== "string") {
+    return null;
+  }
+  try {
+    return validateEvent(
+      event,
+      rendererValidationContext({ scopeId, sessionId }),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Bounded renderer intake. Transient deltas are coalesced in place before the
- * queue is measured, so rapid text/thought streams cost one frame per kind per
- * batch. Any overflow requests exactly one resync from the durable cursor.
+ * Bounded renderer intake. Every frame is validated and sequence-checked per
+ * session before transient coalescing, so duplicates, gaps and cross-session
+ * traffic cannot reorder or merge into the rendered transcript.
  */
 export function createTurnStreamTransport(
   options: TurnStreamTransportOptions = {},
 ): TurnStreamTransport {
-  let state = options.state ?? createTurnsState();
-  let pending: PendingFrame[] = [];
-  let durableFrames = 0;
-  let durableBytes = 0;
-  let transientFrames = 0;
-  let transientBytes = 0;
+  const channels = new Map<string, SessionChannel>();
+  let selectedSessionId: string | undefined =
+    options.sessionId ?? options.state?.sessionId;
   let scheduled = false;
   let disposed = false;
-  let resyncNotified = false;
 
   const schedule =
     options.schedule ??
@@ -615,36 +666,101 @@ export function createTurnStreamTransport(
       }
     });
 
-  function emit() {
-    options.onState?.(state);
-  }
-
-  function notifyResync() {
-    if (!state.needsResync || resyncNotified) return;
-    resyncNotified = true;
-    options.onResync?.(state.lastDurableSeq);
-  }
-
-  function resetQueue() {
-    pending = [];
-    durableFrames = 0;
-    durableBytes = 0;
-    transientFrames = 0;
-    transientBytes = 0;
-  }
-
-  function overflow(code: TurnStreamErrorCode) {
-    options.onError?.(code);
-    if (state.needsResync) return;
-    resetQueue();
-    state = {
-      ...state,
-      needsResync: true,
-      resyncFromSeq: state.lastDurableSeq,
-      resyncAfterSeq: state.lastDurableSeq,
+  function channelFor(sessionId: string): SessionChannel {
+    const existing = channels.get(sessionId);
+    if (existing) return existing;
+    const initial =
+      options.state?.sessionId === sessionId
+        ? options.state
+        : createTurnsState();
+    initial.sessionId = sessionId;
+    const channel: SessionChannel = {
+      state: initial,
+      acceptedSeq: initial.lastSeq,
+      pending: [],
+      durableFrames: 0,
+      durableBytes: 0,
+      transientFrames: 0,
+      transientBytes: 0,
+      resyncNotified: false,
     };
-    notifyResync();
-    emit();
+    channels.set(sessionId, channel);
+    if (selectedSessionId === undefined) selectedSessionId = sessionId;
+    return channel;
+  }
+
+  function selectedChannel(): SessionChannel | undefined {
+    return selectedSessionId ? channels.get(selectedSessionId) : undefined;
+  }
+
+  function emit(channel: SessionChannel) {
+    if (channel.state.sessionId === selectedSessionId) {
+      options.onState?.(channel.state);
+    }
+  }
+
+  function notifyResync(channel: SessionChannel) {
+    if (!channel.state.needsResync || channel.resyncNotified) return;
+    channel.resyncNotified = true;
+    options.onResync?.(
+      channel.state.lastDurableSeq,
+      channel.state.sessionId ?? "",
+    );
+  }
+
+  function clearQueue(channel: SessionChannel) {
+    channel.pending = [];
+    channel.durableFrames = 0;
+    channel.durableBytes = 0;
+    channel.transientFrames = 0;
+    channel.transientBytes = 0;
+  }
+
+  function overflow(channel: SessionChannel, code: TurnStreamErrorCode) {
+    options.onError?.(code);
+    if (channel.state.needsResync) {
+      clearQueue(channel);
+      return;
+    }
+    clearQueue(channel);
+    channel.acceptedSeq = channel.state.lastSeq;
+    channel.state = {
+      ...channel.state,
+      needsResync: true,
+      resyncFromSeq: channel.state.lastDurableSeq,
+      resyncAfterSeq: channel.state.lastDurableSeq,
+    };
+    notifyResync(channel);
+    emit(channel);
+  }
+
+  function applyPending(channel: SessionChannel) {
+    if (!channel.pending.length) return;
+    const batch = channel.pending;
+    clearQueue(channel);
+    const hadResync = channel.state.needsResync;
+    for (const frame of batch) {
+      channel.state = reduceTurns(
+        channel.state,
+        frame.event,
+        frame.coalesced ? { coalesced: true } : undefined,
+      );
+    }
+    if (channel.state.needsResync && !hadResync) notifyResync(channel);
+    if (!channel.state.needsResync) channel.resyncNotified = false;
+  }
+
+  function pauseForResync(channel: SessionChannel) {
+    applyPending(channel);
+    channel.acceptedSeq = channel.state.lastSeq;
+    channel.state = {
+      ...channel.state,
+      needsResync: true,
+      resyncFromSeq: channel.state.lastDurableSeq,
+      resyncAfterSeq: channel.state.lastDurableSeq,
+    };
+    notifyResync(channel);
+    emit(channel);
   }
 
   function scheduleFlush() {
@@ -656,29 +772,29 @@ export function createTurnStreamTransport(
   }
 
   function canMerge(
-    previous: SplyceEventEnvelope,
+    previous: PendingFrame,
     event: SplyceEventEnvelope,
   ): boolean {
-    if (!isTransientKind(event.kind) || previous.kind !== event.kind) {
+    if (!isTransientKind(event.kind) || previous.event.kind !== event.kind) {
       return false;
     }
-    if (!("payload" in previous) || !("payload" in event)) return false;
-    const previousPayload = previous.payload as { runId?: string };
-    const eventPayload = event.payload as { runId?: string };
-    return previousPayload.runId === eventPayload.runId;
+    if (previous.event.seq + 1 !== event.seq) return false;
+    if (!("payload" in previous.event) || !("payload" in event)) return false;
+    const previousPayload = previous.event.payload as {
+      runId?: string;
+      turnId?: string;
+    };
+    const eventPayload = event.payload as { runId?: string; turnId?: string };
+    return (
+      previousPayload.runId === eventPayload.runId &&
+      previousPayload.turnId === eventPayload.turnId
+    );
   }
 
   function mergedEvent(
     previous: SplyceEventEnvelope,
     event: SplyceEventEnvelope,
   ): SplyceEventEnvelope {
-    if (
-      !("payload" in previous) ||
-      !("payload" in event) ||
-      previous.kind !== event.kind
-    ) {
-      return event;
-    }
     if (
       event.kind !== "turn.stream_delta" &&
       event.kind !== "turn.thought_delta"
@@ -699,40 +815,108 @@ export function createTurnStreamTransport(
 
   function enqueue(event: SplyceEventEnvelope) {
     if (disposed) return;
-    if (state.needsResync && event.kind !== "run.reconnect_snapshot") return;
+    const candidate = event as unknown as {
+      sessionId?: unknown;
+      kind?: unknown;
+    };
+    const sessionId =
+      typeof candidate?.sessionId === "string"
+        ? candidate.sessionId
+        : selectedSessionId;
+    if (!sessionId) return;
+    const channel = channelFor(sessionId);
 
-    const bytes = frameBytes(event);
-    if (bytes > TRANSPORT_LIMITS.maxEncodedFrameBytes) {
-      overflow("ERR_FRAME_TOO_LARGE");
+    if (
+      channel.state.needsResync &&
+      candidate.kind !== "run.reconnect_snapshot"
+    ) {
       return;
     }
 
-    const transient = isTransientKind(event.kind);
-    const previous = pending[pending.length - 1];
-    if (transient && previous && canMerge(previous.event, event)) {
-      const merged = mergedEvent(previous.event, event);
-      const mergedBytes = frameBytes(merged);
-      transientBytes += mergedBytes - frameBytes(previous.event);
-      previous.event = merged;
-      previous.coalesced = true;
-    } else {
-      pending.push({ event, coalesced: false });
-      if (transient) {
-        transientFrames += 1;
-        transientBytes += bytes;
+    let bytes: number;
+    try {
+      bytes = frameBytes(event);
+    } catch {
+      channel.state = {
+        ...channel.state,
+        protocolErrors: channel.state.protocolErrors + 1,
+      };
+      emit(channel);
+      return;
+    }
+    if (bytes > TRANSPORT_LIMITS.maxEncodedFrameBytes) {
+      overflow(channel, "ERR_FRAME_TOO_LARGE");
+      return;
+    }
+
+    const validated = validateForRenderer(event);
+    if (!validated || validated.sessionId !== sessionId) {
+      channel.state = {
+        ...channel.state,
+        protocolErrors: channel.state.protocolErrors + 1,
+      };
+      emit(channel);
+      return;
+    }
+
+    if (validated.seq <= channel.acceptedSeq) {
+      channel.state = {
+        ...channel.state,
+        duplicateCount: channel.state.duplicateCount + 1,
+      };
+      emit(channel);
+      return;
+    }
+
+    const isSnapshot = validated.kind === "run.reconnect_snapshot";
+    if (!isSnapshot && validated.seq !== channel.acceptedSeq + 1) {
+      pauseForResync(channel);
+      return;
+    }
+
+    const transient = isTransientKind(validated.kind);
+    const previous = channel.pending[channel.pending.length - 1];
+    let accepted = validated;
+    if (transient && previous && canMerge(previous, validated)) {
+      const merged = mergedEvent(previous.event, validated);
+      if (payloadBytes(merged) <= TRANSPORT_LIMITS.maxInlineBytes) {
+        const mergedBytes = frameBytes(merged);
+        channel.transientBytes += mergedBytes - frameBytes(previous.event);
+        previous.event = merged;
+        previous.coalesced = true;
+        accepted = merged;
       } else {
-        durableFrames += 1;
-        durableBytes += bytes;
+        channel.pending.push({ event: validated, coalesced: false });
+        channel.transientFrames += 1;
+        channel.transientBytes += bytes;
+      }
+    } else {
+      channel.pending.push({ event: validated, coalesced: false });
+      if (transient) {
+        channel.transientFrames += 1;
+        channel.transientBytes += bytes;
+      } else {
+        channel.durableFrames += 1;
+        channel.durableBytes += bytes;
       }
     }
 
+    channel.acceptedSeq = Math.max(
+      channel.acceptedSeq,
+      accepted.seq,
+      isSnapshot && "payload" in accepted
+        ? ((accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ??
+            0)
+        : 0,
+    );
+
     if (
-      transientFrames > TRANSPORT_LIMITS.rendererQueueFrames ||
-      transientBytes > TRANSPORT_LIMITS.rendererQueueBytes ||
-      durableFrames > TRANSPORT_LIMITS.pendingQueueFrames ||
-      durableBytes > TRANSPORT_LIMITS.pendingQueueBytes
+      channel.transientFrames > TRANSPORT_LIMITS.rendererQueueFrames ||
+      channel.transientBytes > TRANSPORT_LIMITS.rendererQueueBytes ||
+      channel.durableFrames > TRANSPORT_LIMITS.pendingQueueFrames ||
+      channel.durableBytes > TRANSPORT_LIMITS.pendingQueueBytes
     ) {
-      overflow("ERR_STREAM_RENDER_OVERFLOW");
+      overflow(channel, "ERR_STREAM_RENDER_OVERFLOW");
       return;
     }
 
@@ -741,31 +925,23 @@ export function createTurnStreamTransport(
 
   function flush(): TurnsState {
     scheduled = false;
-    if (!pending.length) return state;
-
-    const batch = pending;
-    resetQueue();
-    const hadResync = state.needsResync;
-    for (const frame of batch) {
-      state = reduceTurns(
-        state,
-        frame.event,
-        frame.coalesced ? { coalesced: true } : undefined,
-      );
-    }
-    if (state.needsResync && !hadResync) notifyResync();
-    if (!state.needsResync) resyncNotified = false;
-    emit();
-    return state;
+    for (const channel of channels.values()) applyPending(channel);
+    const selected = selectedChannel();
+    if (selected) emit(selected);
+    return selected?.state ?? options.state ?? fallbackState;
   }
 
   return {
     enqueue,
     flush,
-    current: () => state,
+    current: (sessionId?: string) =>
+      (sessionId ? channels.get(sessionId) : selectedChannel())?.state ??
+      options.state ??
+      fallbackState,
     dispose() {
       disposed = true;
-      resetQueue();
+      for (const channel of channels.values()) clearQueue(channel);
+      channels.clear();
       scheduled = false;
     },
   };
