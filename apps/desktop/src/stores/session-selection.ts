@@ -1,4 +1,4 @@
-import { writable } from "svelte/store";
+import { writable, type Readable } from "svelte/store";
 import type { TurnStreamTransport } from "./turns";
 
 export interface SessionSelection {
@@ -17,7 +17,15 @@ export type Subscribe = (
   afterSeq?: number,
 ) => Promise<() => void>;
 
+export type BindingStatus =
+  | { state: "idle" }
+  | { state: "subscribing" }
+  | { state: "live" }
+  | { state: "failed"; error: string };
+
 export interface SelectionBinding {
+  status: Readable<BindingStatus>;
+  retry(): Promise<void>;
   resubscribe(sessionId: string, afterSeq: number): Promise<void>;
   dispose(): void;
 }
@@ -33,22 +41,30 @@ export function bindSelection(
   let current: SessionSelection | null = null;
   let release: (() => void) | null = null;
   let generation = 0;
+  const status = writable<BindingStatus>({ state: "idle" });
 
   async function connect(afterSeq: number): Promise<void> {
     const selection = current;
     if (!selection) return;
     const mine = ++generation;
+    status.set({ state: "subscribing" });
     try {
       const dispose = await subscribe(selection.sessionId, afterSeq);
-      if (mine === generation) release = dispose;
-      else dispose();
-    } catch {
-      // The stream stays paused; recovery re-subscribes the selected session.
+      if (mine !== generation) return dispose();
+      release = dispose;
+      status.set({ state: "live" });
+    } catch (error) {
+      if (mine !== generation) return;
+      status.set({
+        state: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
   function drop(): void {
     generation += 1;
+    status.set({ state: "idle" });
     release?.();
     release = null;
     if (current) transport.unfollow(current.sessionId);
@@ -56,6 +72,15 @@ export function bindSelection(
   }
 
   const unsubscribe = selectedSession.subscribe((selection) => {
+    // Re-selecting the current session keeps its channel and subscription.
+    // Switching A -> B -> A restarts A deliberately: its channel was dropped.
+    if (
+      selection &&
+      selection.sessionId === current?.sessionId &&
+      selection.scopeId === current.scopeId
+    ) {
+      return;
+    }
     drop();
     if (!selection) return;
     current = selection;
@@ -64,6 +89,13 @@ export function bindSelection(
   });
 
   return {
+    status: { subscribe: status.subscribe },
+    async retry() {
+      if (!current) return;
+      release?.();
+      release = null;
+      await connect(transport.current(current.sessionId).lastDurableSeq);
+    },
     async resubscribe(sessionId, afterSeq) {
       if (current?.sessionId !== sessionId) return;
       generation += 1;

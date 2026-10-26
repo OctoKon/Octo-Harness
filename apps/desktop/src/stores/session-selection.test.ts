@@ -114,4 +114,50 @@ describe("session selection binding", () => {
     expect(calls).toEqual(["subscribe s1 0", "dispose s1", "subscribe s1 7"]);
     binding.dispose();
   });
+
+  it("surfaces a rejected subscribe as failed state and goes live on retry", async () => {
+    clearSession();
+    let fail = true;
+    const calls: string[] = [];
+    const transport = createTurnStreamTransport({ schedule: () => {} });
+    const binding = bindSelection(transport, async (sessionId) => {
+      calls.push(sessionId);
+      if (fail) throw new Error("engine offline");
+      return () => {};
+    });
+    selectSession({ sessionId: "s1", scopeId: "scopeA" });
+    await settle();
+
+    expect(get(binding.status)).toEqual({
+      state: "failed",
+      error: "engine offline",
+    });
+
+    fail = false;
+    await binding.retry();
+    expect(get(binding.status)).toEqual({ state: "live" });
+    expect(calls).toEqual(["s1", "s1"]);
+    binding.dispose();
+  });
+
+  it("ignores re-selecting the same session but restarts on A to B to A", async () => {
+    clearSession();
+    const { calls, transport, binding } = setup();
+    selectSession({ sessionId: "s1", scopeId: "scopeA" });
+    await settle();
+    transport.enqueue(started("s1", "scopeA"));
+    transport.flush();
+    selectSession({ sessionId: "s1", scopeId: "scopeA" });
+    await settle();
+
+    expect(calls).toEqual(["subscribe s1 0"]);
+    expect(transport.current("s1").runs.run_s1).toBeDefined();
+
+    // Deliberate: switching away and back drops the channel and replays from the cursor.
+    selectSession({ sessionId: "s2", scopeId: "scopeA" });
+    selectSession({ sessionId: "s1", scopeId: "scopeA" });
+    await settle();
+    expect(calls.filter((c) => c === "subscribe s1 0")).toHaveLength(2);
+    binding.dispose();
+  });
 });
