@@ -26,7 +26,7 @@ const context = (): Context => ({ messages: [{ role: "user", content: "hi", time
 type Sent = { url: string; headers: Headers; redirect: string | undefined };
 const sent: Sent[] = [];
 const sse = (events: unknown[]) =>
-	new Response(events.map((e) => `data: ${JSON.stringify(e)}`).join("\n\n") + "\n\n", {
+	new Response(`${events.map((e) => `data: ${JSON.stringify(e)}`).join("\n\n")}\n\n`, {
 		headers: { "content-type": "text/event-stream" },
 	});
 const serve = (make: () => Response) =>
