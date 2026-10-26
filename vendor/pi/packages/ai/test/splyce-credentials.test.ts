@@ -23,11 +23,18 @@ vi.mock("@anthropic-ai/sdk", () => {
 						asResponse: async () => {
 							// The real SDK sends through its configured fetch; do the same so the lease is exercised.
 							const send = this.opts.fetch as typeof fetch | undefined;
-							if (send) await send("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": String(this.opts.apiKey) } });
+							if (send)
+								await send("https://api.anthropic.com/v1/messages", {
+									method: "POST",
+									headers: { "x-api-key": String(this.opts.apiKey) },
+								});
 							if (sdk.failWith) throw new Error(sdk.failWith);
 							return new Response(
 								[
-									{ type: "message_start", message: { id: "m", usage: { input_tokens: 1, output_tokens: 0 } } },
+									{
+										type: "message_start",
+										message: { id: "m", usage: { input_tokens: 1, output_tokens: 0 } },
+									},
 									{ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
 									{ type: "message_stop" },
 								]
@@ -132,7 +139,12 @@ const families = [
 		perSend: true,
 		run: (extra: Record<string, unknown>) =>
 			streamAnthropic(
-				model("anthropic", "anthropic-messages", "claude-haiku-4-5", "https://api.anthropic.com") as Model<"anthropic-messages">,
+				model(
+					"anthropic",
+					"anthropic-messages",
+					"claude-haiku-4-5",
+					"https://api.anthropic.com",
+				) as Model<"anthropic-messages">,
 				context(),
 				{ fetch: recordingFetch, ...extra },
 			).result(),
@@ -148,7 +160,12 @@ const families = [
 		perSend: false,
 		run: (extra: Record<string, unknown>) =>
 			streamGoogle(
-				model("google", "google-generative-ai", "gemini-3-flash-preview", "https://generativelanguage.example/v1beta") as Model<"google-generative-ai">,
+				model(
+					"google",
+					"google-generative-ai",
+					"gemini-3-flash-preview",
+					"https://generativelanguage.example/v1beta",
+				) as Model<"google-generative-ai">,
 				context(),
 				extra,
 			).result(),
@@ -163,7 +180,12 @@ const families = [
 		perSend: false,
 		run: (extra: Record<string, unknown>) =>
 			streamVertex(
-				model("google-vertex", "google-vertex", "gemini-3-flash-preview", "https://vertex.example") as Model<"google-vertex">,
+				model(
+					"google-vertex",
+					"google-vertex",
+					"gemini-3-flash-preview",
+					"https://vertex.example",
+				) as Model<"google-vertex">,
 				context(),
 				{ project: "p", location: "us-central1", ...extra },
 			).result(),
@@ -271,7 +293,12 @@ describe("Anthropic per-send enforcement", () => {
 	};
 	const start = (credentialLease: { use: <T>(c: (s: string) => T | Promise<T>) => Promise<T> }) =>
 		streamAnthropic(
-			model("anthropic", "anthropic-messages", "claude-haiku-4-5", "https://api.anthropic.com") as Model<"anthropic-messages">,
+			model(
+				"anthropic",
+				"anthropic-messages",
+				"claude-haiku-4-5",
+				"https://api.anthropic.com",
+			) as Model<"anthropic-messages">,
 			context(),
 			{ fetch: recordingFetch, credentials: creds(credentialLease) },
 		).result();
@@ -326,17 +353,10 @@ describe("shared credential helpers", () => {
 
 	it("writes a bearer scheme through format and drops a caller-supplied x-api-key", async () => {
 		const { calls, base } = record();
-		const leased = createLeasedFetch(
-			creds(lease()),
-			"authorization",
-			base,
-			(secret) => `Bearer ${secret}`,
-		);
+		const leased = createLeasedFetch(creds(lease()), "authorization", base, (secret) => `Bearer ${secret}`);
 		await leased("https://api.example/v1", { headers: { "x-api-key": "caller-key" } });
 		expect(calls[0]!.headers.get("authorization")).toBe(`Bearer ${SECRET}`);
 		expect(calls[0]!.headers.get("x-api-key")).toBeNull();
 		expect(calls[0]!.redirect).toBe("error");
 	});
-
-
 });

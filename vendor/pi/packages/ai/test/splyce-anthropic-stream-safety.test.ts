@@ -21,7 +21,11 @@ const start = (usage: Record<string, number> = { input_tokens: 12, output_tokens
 });
 const toolStart: Ev = {
 	event: "content_block_start",
-	data: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tu_1", name: "read", input: {} } },
+	data: {
+		type: "content_block_start",
+		index: 0,
+		content_block: { type: "tool_use", id: "tu_1", name: "read", input: {} },
+	},
 };
 const jsonDelta = (partial_json: string): Ev => ({
 	event: "content_block_delta",

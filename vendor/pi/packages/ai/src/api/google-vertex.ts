@@ -7,6 +7,7 @@ import {
 	type ThinkingConfig,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { assertCredentialOptions, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -46,7 +47,6 @@ import {
 	toGoogleThinkingLevel,
 	usesGoogleThinkingLevel,
 } from "./google-shared.ts";
-import { assertCredentialOptions, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 export interface GoogleVertexOptions extends StreamOptions {
@@ -106,15 +106,15 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			const client = credentials
 				? undefined
 				: apiKey
-				? createClientWithApiKey(model, apiKey, options?.headers, options?.identity)
-				: createClient(
-						model,
-						resolveProject(options),
-						resolveLocation(options),
-						options?.headers,
-						options?.env,
-						options?.identity,
-					);
+					? createClientWithApiKey(model, apiKey, options?.headers, options?.identity)
+					: createClient(
+							model,
+							resolveProject(options),
+							resolveLocation(options),
+							options?.headers,
+							options?.env,
+							options?.identity,
+						);
 			let params = buildParams(model, normalizedContext, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -124,9 +124,12 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 				() =>
 					credentials
 						? withLeasedSecret(credentials, (secret) =>
-								createClientWithApiKey(model, secret, options?.headers, options?.identity).models.generateContentStream(
-									params,
-								),
+								createClientWithApiKey(
+									model,
+									secret,
+									options?.headers,
+									options?.identity,
+								).models.generateContentStream(params),
 							)
 						: client!.models.generateContentStream(params),
 				options,
