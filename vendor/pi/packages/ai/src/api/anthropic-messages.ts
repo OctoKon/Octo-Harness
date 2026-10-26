@@ -978,7 +978,8 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	if (!getAnthropicFederation(model, options?.apiKey, options?.headers, options?.env)) {
+	// Splyce: a leased credential is checked by the stream itself, on every send.
+	if (!options?.credentials && !getAnthropicFederation(model, options?.apiKey, options?.headers, options?.env)) {
 		assertRequestAuth(model.provider, options?.apiKey, options?.headers);
 	}
 
