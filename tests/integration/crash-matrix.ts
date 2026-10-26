@@ -4,7 +4,7 @@
 // Uses the existing store-kill-child harness (tests/integration/store-kill-child.ts).
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
   existsSync,
@@ -39,8 +39,10 @@ const wait = (f: string, ms = 15000) => {
 // Portable hard kill: no taskkill, so the case runs on POSIX runners too.
 // SIGKILL is a TerminateProcess on Windows and unblockable elsewhere, which is
 // exactly the crash under test — the child gets no cleanup path.
-const kill = async (child: ReturnType<typeof spawn>) => {
-  const exited = once(child, "exit");
+const kill = async (child: ChildProcess) => {
+  assert.equal(child.exitCode, null);
+  assert.equal(child.signalCode, null);
+  const exited = once(child, "exit", { signal: AbortSignal.timeout(15000) });
   assert.ok(child.kill("SIGKILL"));
   await exited;
   assert.equal(child.signalCode, "SIGKILL");
