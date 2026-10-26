@@ -6,21 +6,23 @@ IPC, adds capabilities or treats missing tools/app as a pass. It is the bootstra
 unavailable/readiness and child-exit subset, not full TD-11 or UI qualification.
 
 Run from the repository root after building the release app and staging its engine
-resources beside the executable:
+resources beside the executable. The preparation script rebuilds the pinned
+`tauri-driver`, selects the Microsoft WebDriver for the registered Evergreen
+WebView2 runtime, and writes a per-run provenance manifest before the smoke starts:
 
 ```powershell
+& tests/bootstrap/prepare-release-drivers.ps1
 & apps/desktop/src-tauri/resources/engine/node.exe tests/bootstrap/release-smoke.mjs
 ```
 
 `SPLYCE_SMOKE_APP` can select an installed release executable. The default is
 `apps/desktop/src-tauri/target/release/splyce-desktop.exe`; testing that build is
-packaged-resource evidence, not installer/uninstall evidence. Driver paths can be
-selected using `SPLYCE_TAURI_DRIVER` and `SPLYCE_EDGE_DRIVER`, but must match the
-qualified hashes. Ports 4444 and 4445 must be free. Run in an interactive Windows
-desktop session. The runner closes only its own app and driver process tree; its
-crash case terminates the confirmed direct bundled Node child, never an ambient
-Node process. Screenshots, process identities, artifact hashes, failures and driver
-logs remain under ignored `apps/desktop/src-tauri/target/bootstrap-smoke/`.
+packaged-resource evidence, not installer/uninstall evidence. Ports 4444 and 4445
+must be free. Run in an interactive Windows desktop session. The runner closes
+only its own app and driver process tree; its crash case terminates the confirmed
+direct bundled Node child, never an ambient Node process. Screenshots, process
+identities, artifact hashes, failures and driver logs remain under ignored
+`apps/desktop/src-tauri/target/bootstrap-smoke/`.
 
 The production DOM must expose `data-connection-state` and validated
 `data-readiness-policy/store/receipts` on `[data-testid="app-shell"]`, an unavailable
@@ -41,32 +43,34 @@ release smoke does not replace it.
 - Node **24.22.1**: the repository's packaged engine runtime.
 - `tauri-driver` **2.1.0**, the stable 2.x crate from the
   [official Tauri repository](https://github.com/tauri-apps/tauri), licensed
-  **Apache-2.0 OR MIT**. Crate SHA-256:
-  `2f2e29bd6900fb718dfdc06f2e7a371d6087c085daaf83709847ef3e6b0c1953`.
-  Built with Rust **1.99.1**, the published crate lockfile and this isolated command:
+  **Apache-2.0 OR MIT**. The source archive SHA-256 is pinned in
+  `tauri-driver-inventory.json`. The helper installs it with the published crate
+  lockfile and verifies the cached archive against that pin before recording the
+  build's executable hash in `target/smoke-tools/driver-manifest.json`:
 
   ```powershell
-  cargo +1.99.1 install tauri-driver --version 2.1.0 --locked --root apps/desktop/src-tauri/target/smoke-tools --target-dir apps/desktop/src-tauri/target/smoke-driver-build
+  cargo install tauri-driver --version 2.1.0 --locked --force --root apps/desktop/src-tauri/target/smoke-tools --target-dir apps/desktop/src-tauri/target/smoke-driver-build
   ```
 
-  The runner binds the locally built executable hash; rebuilding requires explicit
-  qualification of the new hash. `tauri-driver-inventory.json` records published
-  package versions, licenses and source repositories from Cargo metadata. Original
-  crate licenses and lockfile remain in the Cargo registry install sources.
+  `tauri-driver-inventory.json` records package versions, licenses, repositories
+  and the selected crate checksum. Original crate licenses and lockfile remain in
+  the Cargo registry install sources. The driver has no version flag, so the smoke
+  binds its executable bytes to the verified source pin and per-run manifest.
 
-- Microsoft Edge WebDriver **155.0.4283.62**, x64, matches the installed WebView2
-  **155.0.4283.62**. Microsoft documents matching the first three version components
-  in its [WebDriver guide](https://learn.microsoft.com/en-us/microsoft-edge/webdriver/).
-  Selected official archive:
-  [Microsoft driver download](https://msedgedriver.microsoft.com/155.0.4283.62/edgedriver_win64.zip).
-  Archive SHA-256:
-  `00dd7fbc6fc4bd68e6e86badbe76e6570513414085f476e73d3787ba3410d562`.
-  Extract to `target/smoke-tools/edge-155.0.4283.62/` beneath `src-tauri`, retaining
-  `Driver_Notes/EULA`, `LICENSE` and `credits.html`. Microsoft software terms apply
-  to the driver; bundled third-party notices are separate and are not relabeled MIT.
+- Microsoft Edge WebDriver is selected from the
+  [official download page](https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver)
+  for the registered Evergreen WebView2 runtime. Microsoft's
+  [matching rule](https://learn.microsoft.com/en-us/microsoft-edge/webdriver-chromium/)
+  requires the first three version components to match. The helper downloads the
+  x64 archive, records its URL and SHA-256, and records the extracted executable
+  SHA-256 in the per-run manifest. The smoke rechecks those bytes and versions,
+  then confirms the packaged app starts the registered WebView2 runtime. Microsoft
+  software terms apply to the driver; bundled third-party notices remain in the
+  extracted directory and are not relabeled MIT.
 
-The release runner checks exact driver binary hashes before execution and records
-the app hash and runtime version. No tool downloads occur inside a smoke run.
+The release runner checks driver archive and executable hashes before execution
+and records the app hash and runtime version. No tool downloads occur inside a
+smoke run.
 
 Self-check the fail-closed readiness assertions:
 
