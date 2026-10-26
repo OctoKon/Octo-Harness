@@ -27,7 +27,8 @@
         "require_last_push_approval": false,
         "required_approving_review_count": 0,
         "required_review_thread_resolution": false,
-        "allowed_merge_methods": ["squash"]
+        "allowed_merge_methods": ["squash"],
+        "require_extra_approval_for_unattributed_changes": false
       }
     },
     {
