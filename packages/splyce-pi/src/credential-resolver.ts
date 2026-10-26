@@ -234,7 +234,14 @@ export class NativeCredentialResolver implements CredentialResolver {
             try {
               guard();
               if (ok) resolve(v as T);
-              else reject(scrub(v, redact));
+              // Fail closed: never rethrow the original (causes, own props, AggregateError).
+              else
+                reject(
+                  new CredentialError(
+                    "CREDENTIAL_UNAVAILABLE",
+                    redact(v instanceof Error ? v.message : String(v)),
+                  ),
+                );
             } catch (e) {
               reject(e);
             } finally {
@@ -253,18 +260,6 @@ export class NativeCredentialResolver implements CredentialResolver {
     });
   }
 }
-
-/** Redact an error raised inside `use` (message, stack and cause chain) in place. */
-const scrub = (e: unknown, redact: Redactor): unknown => {
-  if (typeof e === "string") return redact(e);
-  for (let err = e, depth = 0; err instanceof Error && depth < 8; depth += 1) {
-    err.message = redact(err.message);
-    if (err.stack) err.stack = redact(err.stack);
-    if (typeof err.cause === "string") err.cause = redact(err.cause);
-    err = err.cause;
-  }
-  return e;
-};
 
 const runHelper = (
   command: HelperCommand,
