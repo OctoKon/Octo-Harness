@@ -94,6 +94,22 @@ describe("TD-30 ApprovalDialog", () => {
     expect(document.body.textContent).not.toContain("executed action");
   });
 
+  it("submits a one-use decision only once when two activations land in the same tick", async () => {
+    const onRespond = vi.fn();
+    await render(approvalMatching, { onRespond });
+
+    const approve = byTestId("approval-approve") as HTMLButtonElement;
+    approve.click();
+    approve.click();
+    flushSync();
+    await tick();
+    flushSync();
+
+    expect(onRespond).toHaveBeenCalledTimes(1);
+    expect(maybeTestId("approval-approve")).toBeNull();
+    expect(maybeTestId("approval-deny")).toBeNull();
+  });
+
   for (const [name, context, reason] of [
     ["a changed target/run", approvalWrongTarget, "different run"],
     ["a stale revision", approvalStaleRevision, "revision changed"],

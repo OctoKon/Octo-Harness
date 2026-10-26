@@ -142,6 +142,42 @@ test.describe("TD-30 D3_approval_revision and FUI-W5", () => {
     await expect(dialog(page)).not.toContainText("executed action");
   });
 
+  test("a decision is one-use: two activations in the same tick submit once", async ({
+    page,
+  }) => {
+    await page.goto(url);
+
+    // Both clicks land before Svelte re-renders, which is the worst case for a
+    // double activation (pointer double-click or Enter repeat).
+    await page.evaluate(() => {
+      const button = document.querySelector<HTMLButtonElement>(
+        '[data-testid="approval-approve"]',
+      );
+      button?.click();
+      button?.click();
+    });
+
+    expect(await calls(page)).toEqual([
+      {
+        name: "onRespond",
+        args: [
+          {
+            approvalRequestId: "apr-1",
+            runId: "run-1",
+            actionId: "act-1",
+            decision: "approve",
+          },
+        ],
+      },
+    ]);
+    await expect(page.getByTestId("approval-submitted")).toContainText("act-1");
+    // No control remains that could submit the same request again.
+    await expect(page.getByTestId("approval-approve")).toHaveCount(0);
+    await expect(page.getByTestId("approval-deny")).toHaveCount(0);
+    await page.keyboard.press("Enter");
+    expect(await calls(page)).toHaveLength(1);
+  });
+
   test("a wrong target or stale revision keeps the dialog inert", async ({
     page,
   }) => {

@@ -38,6 +38,7 @@
   let denyButton = $state<HTMLButtonElement>();
   let submitted = $state<ApprovalResponsePayload | null>(null);
   let rejection = $state<string | null>(null);
+  let decided = $state(false);
   let opener: Element | null = null;
 
   const blockers = $derived(approvalBlockers(request, context));
@@ -57,11 +58,15 @@
   });
 
   function submit(decision: "approve" | "deny") {
+    // The request is one-use: a second activation that lands before the re-render
+    // must not submit a second decision for the same target.
+    if (decided) return;
     const result = approvalResponse(request, context, decision);
     if (!result.ok) {
       rejection = result.reason;
       return;
     }
+    decided = true;
     rejection = null;
     submitted = result.payload;
     onRespond(result.payload);
