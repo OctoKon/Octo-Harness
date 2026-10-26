@@ -12,6 +12,7 @@
    * and Escape dismiss without approving, and no effect runs from this component.
    */
   import { onMount, tick } from "svelte";
+  import ApprovalSummary from "./ApprovalSummary.svelte";
   import {
     approvalBlockers,
     approvalDecisionState,
@@ -82,28 +83,13 @@
   bind:this={dialog}
   {oncancel}
   aria-labelledby="approval-title"
-  aria-describedby="approval-target approval-risk"
+  aria-describedby="approval-risk"
   data-testid="approval-dialog"
   data-inert={inert ? "true" : "false"}
 >
   <h2 id="approval-title">{submitted ? "Approval submitted" : "Approval required"}</h2>
 
-  <dl id="approval-target" data-testid="approval-target">
-    <dt>Capability</dt>
-    <dd data-testid="approval-capability">{request.request.capabilityId}</dd>
-    <dt>Target</dt>
-    <dd data-testid="approval-normalized-target">
-      {request.request.normalizedTarget}
-    </dd>
-    <dt>Scope</dt>
-    <dd>{request.request.targetScope}</dd>
-    <dt>Run / action</dt>
-    <dd>{request.request.runId} / {request.request.actionId}</dd>
-  </dl>
-
-  <p id="approval-risk" data-testid="approval-risk">
-    {request.request.riskRationale}
-  </p>
+  <ApprovalSummary request={request.request} riskId="approval-risk" />
 
   {#if submitted}
     <p role="status" data-testid="approval-submitted">
@@ -175,19 +161,6 @@
   }
   dialog::backdrop {
     background: rgb(17 24 39 / 45%);
-  }
-  dl {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 4px 12px;
-    margin: 12px 0;
-  }
-  dt {
-    font-weight: 600;
-  }
-  dd {
-    margin: 0;
-    overflow-wrap: anywhere;
   }
   .banner {
     border: 1px solid #fcd34d;
