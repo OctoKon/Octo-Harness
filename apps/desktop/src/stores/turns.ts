@@ -72,6 +72,8 @@ export interface TurnsState {
   resyncCount: number;
   duplicateCount: number;
   unknownKindCount: number;
+  unresolvedPayloadCount: number;
+  pendingPayloadIds: string[];
   protocolErrors: number;
   stale: boolean;
 }
@@ -86,6 +88,8 @@ export function createTurnsState(): TurnsState {
     resyncCount: 0,
     duplicateCount: 0,
     unknownKindCount: 0,
+    unresolvedPayloadCount: 0,
+    pendingPayloadIds: [],
     protocolErrors: 0,
     stale: false,
   };
@@ -288,6 +292,15 @@ export function reduceTurns(
       : state.lastDurableSeq,
     seenEventIds: new Set(state.seenEventIds).add(envelope.eventId),
   };
+
+  if (!("payload" in envelope)) {
+    next.unresolvedPayloadCount = state.unresolvedPayloadCount + 1;
+    if (envelope.durable) {
+      next.stale = true;
+      next.pendingPayloadIds = [...state.pendingPayloadIds, envelope.eventId];
+    }
+    return next;
+  }
 
   switch (envelope.kind) {
     case "turn.started": {

@@ -365,6 +365,39 @@ describe("ordering, replay and attribution", () => {
     expect(state.runs.run_a.cleanedUp).toBe(true);
   });
 
+  it("never applies an unresolved durable payload and marks the projection stale", () => {
+    const { payload: _payload, ...rest } = event(2, "turn.completed", {
+      runId: "run_a",
+      candidateSnapshotId: "snap",
+      finalRevision: "rev",
+    });
+    const reference = {
+      ...rest,
+      payloadArtifactId: "art_1",
+    } as unknown as SplyceEventEnvelope;
+    const state = applyAll(createTurnsState(), [started(), reference]);
+
+    expect(state.runs.run_a.status).toBe("streaming");
+    expect(state.stale).toBe(true);
+    expect(state.unresolvedPayloadCount).toBe(1);
+    expect(state.pendingPayloadIds).toEqual(["evt_2"]);
+    expect(state.lastSeq).toBe(2);
+  });
+
+  it("skips a transient artifact ref without staling the stream", () => {
+    const { payload: _payload, ...rest } = delta(2, "unused");
+    const reference = {
+      ...rest,
+      payloadArtifactId: "art_2",
+    } as unknown as SplyceEventEnvelope;
+    const state = applyAll(createTurnsState(), [started(), reference]);
+
+    expect(state.runs.run_a.text).toBe("");
+    expect(state.stale).toBe(false);
+    expect(state.unresolvedPayloadCount).toBe(1);
+    expect(state.pendingPayloadIds).toEqual([]);
+  });
+
   it("marks the stream stale on engine.stop without failing the turn", () => {
     const state = applyAll(createTurnsState(), [
       started(),
