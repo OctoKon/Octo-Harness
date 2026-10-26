@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { projectStatus, type StatusRecordKind } from "./status-view";
+import {
+  projectStatus,
+  projectToolStatus,
+  projectTurnStatus,
+  type StatusRecordKind,
+} from "./status-view";
 
 function outcome(
   effectState: "observed-success" | "observed-failure" | "uncertain",
@@ -100,6 +105,36 @@ describe("projectStatus", () => {
         expect(projected.label, `${kind}.${state}`).not.toBe("Unknown");
       }
     }
+  });
+
+  it("maps turn and tool view statuses used by the transcript", () => {
+    expect(projectTurnStatus("streaming")).toEqual({
+      label: "Working",
+      tone: "active",
+      status: "streaming",
+    });
+    expect(projectTurnStatus("waiting_approval").status).toBe(
+      "waiting-approval",
+    );
+    expect(projectTurnStatus("completed").status).toBe("completed");
+    expect(projectTurnStatus("failed").status).toBe("failed");
+    expect(projectTurnStatus("canceled").status).toBe("canceled");
+    expect(projectTurnStatus("stopped").status).toBe("stopped");
+    expect(projectToolStatus("pending")).toEqual({
+      label: "Pending - not executed",
+      tone: "neutral",
+      status: "pending",
+    });
+    expect(projectToolStatus("success").status).toBe("success");
+    expect(projectToolStatus("error")).toEqual({
+      label: "Failed",
+      tone: "negative",
+      status: "failed",
+    });
+    expect(projectToolStatus("uncertain").status).toBe("uncertain");
+    expect(projectToolStatus("canceled").status).toBe("canceled");
+    expect(projectTurnStatus(null).status).toBe("unknown");
+    expect(projectToolStatus("bogus" as never).status).toBe("unknown");
   });
 
   it("keeps pending, failed and uncertain distinct", () => {
