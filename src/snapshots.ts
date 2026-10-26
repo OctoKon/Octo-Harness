@@ -2,12 +2,7 @@
 // Erasable-syntax-only (runs under Node type stripping).
 
 import { createHash } from "node:crypto";
-import {
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 
@@ -43,7 +38,9 @@ export class Snapshot {
 
   constructor(manifest: SnapshotManifest) {
     this.manifest = Object.freeze({
-      tracked: Object.freeze(manifest.tracked.map((e) => Object.freeze({ ...e }))),
+      tracked: Object.freeze(
+        manifest.tracked.map((e) => Object.freeze({ ...e })),
+      ),
       untracked: Object.freeze(
         manifest.untracked.map((e) => Object.freeze({ ...e })),
       ),
@@ -149,7 +146,10 @@ export function createSnapshot(
 
   for (const rel of files) {
     if (isExcluded(rel, exclude)) continue;
-    const entry: SnapshotEntry = { path: rel, sha256: sha256File(join(dir, rel)) };
+    const entry: SnapshotEntry = {
+      path: rel,
+      sha256: sha256File(join(dir, rel)),
+    };
     if (trackedSet === null) {
       // non-git: treat all as tracked
       tracked.push(entry);
@@ -161,7 +161,10 @@ export function createSnapshot(
   }
 
   if (tracked.length === 0 && untracked.length === 0) {
-    throw new SnapshotError("EMPTY_SNAPSHOT", "directory has no snapshot entries");
+    throw new SnapshotError(
+      "EMPTY_SNAPSHOT",
+      "directory has no snapshot entries",
+    );
   }
 
   return new Snapshot({
@@ -180,7 +183,10 @@ export function verifyStale(snapshot: Snapshot, dir: string): void {
     try {
       current = sha256File(join(dir, entry.path));
     } catch {
-      throw new SnapshotError("STALE_RELEVANT_BYTES", `missing file ${entry.path}`);
+      throw new SnapshotError(
+        "STALE_RELEVANT_BYTES",
+        `missing file ${entry.path}`,
+      );
     }
     if (current !== entry.sha256) {
       throw new SnapshotError(
