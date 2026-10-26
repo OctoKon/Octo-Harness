@@ -11,16 +11,21 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock("@anthropic-ai/sdk", () => {
 	class FakeAnthropic {
+		private readonly opts: Record<string, unknown>;
 		constructor(opts: Record<string, unknown>) {
+			this.opts = opts;
 			sdk.anthropicOpts.push(opts);
 		}
 		beta = {
 			messages: {
 				create: () => {
-					if (sdk.failWith) throw new Error(sdk.failWith);
 					return {
-						asResponse: async () =>
-							new Response(
+						asResponse: async () => {
+							// The real SDK sends through its configured fetch; do the same so the lease is exercised.
+							const send = this.opts.fetch as typeof fetch | undefined;
+							if (send) await send("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "x-api-key": String(this.opts.apiKey) } });
+							if (sdk.failWith) throw new Error(sdk.failWith);
+							return new Response(
 								[
 									{ type: "message_start", message: { id: "m", usage: { input_tokens: 1, output_tokens: 0 } } },
 									{ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } },
@@ -29,7 +34,8 @@ vi.mock("@anthropic-ai/sdk", () => {
 									.map((data) => `event: ${data.type}\ndata: ${JSON.stringify(data)}\n`)
 									.join("\n"),
 								{ status: 200, headers: { "content-type": "text/event-stream" } },
-							),
+							);
+						},
 					};
 				},
 			},
@@ -90,26 +96,50 @@ const brokenLease = (message = "CREDENTIAL_REVOKED") => ({
 		throw new Error(message);
 	},
 });
+/** A lease that works `times` times, then behaves as revoked; counts every use. */
+const expiringLease = (times: number) => {
+	const state = { uses: 0 };
+	return {
+		state,
+		use: async <T>(consume: (s: string) => T | Promise<T>): Promise<T> => {
+			state.uses += 1;
+			if (state.uses > times) throw new Error("CREDENTIAL_REVOKED");
+			return consume(SECRET);
+		},
+	};
+};
 const seen = (list: Array<Record<string, unknown>>) => JSON.stringify(list);
+
+/** Records what actually leaves through fetch; the SDK mock sends through it like the real client. */
+const wire = { sent: [] as Array<{ headers: Headers; redirect: string | undefined }> };
+const recordingFetch = (async (_url: unknown, init?: RequestInit) => {
+	wire.sent.push({ headers: new Headers(init?.headers), redirect: init?.redirect });
+	return new Response("{}");
+}) as unknown as typeof fetch;
 
 const families = [
 	{
 		name: "Anthropic Messages",
 		sdkCalls: () => sdk.anthropicOpts,
 		baseUrl: "https://api.anthropic.com",
+		/** Anthropic leases on every HTTP send, so the secret shows up on the wire, never in the client options. */
+		perSend: true,
 		run: (extra: Record<string, unknown>) =>
 			streamAnthropic(
 				model("anthropic", "anthropic-messages", "claude-haiku-4-5", "https://api.anthropic.com") as Model<"anthropic-messages">,
 				context(),
-				extra,
+				{ fetch: recordingFetch, ...extra },
 			).result(),
 		baseKey: (opts: Record<string, unknown>) => opts.baseURL,
 		ambient: { ANTHROPIC_API_KEY: "env-secret-anthropic", ANTHROPIC_AUTH_TOKEN: "env-secret-token" },
+		/** Where the real secret was delivered. */
+		delivered: () => wire.sent.map((s) => s.headers.get("x-api-key")),
 	},
 	{
 		name: "Google Generative AI",
 		sdkCalls: () => sdk.googleOpts,
 		baseUrl: "https://generativelanguage.example/v1beta",
+		perSend: false,
 		run: (extra: Record<string, unknown>) =>
 			streamGoogle(
 				model("google", "google-generative-ai", "gemini-3-flash-preview", "https://generativelanguage.example/v1beta") as Model<"google-generative-ai">,
@@ -118,11 +148,13 @@ const families = [
 			).result(),
 		baseKey: (opts: Record<string, unknown>) => (opts.httpOptions as { baseUrl?: string } | undefined)?.baseUrl,
 		ambient: { GEMINI_API_KEY: "env-secret-gemini", GOOGLE_API_KEY: "env-secret-google" },
+		delivered: () => sdk.googleOpts.map((o) => o.apiKey),
 	},
 	{
 		name: "Google Vertex",
 		sdkCalls: () => sdk.googleOpts,
 		baseUrl: "https://vertex.example",
+		perSend: false,
 		run: (extra: Record<string, unknown>) =>
 			streamVertex(
 				model("google-vertex", "google-vertex", "gemini-3-flash-preview", "https://vertex.example") as Model<"google-vertex">,
@@ -131,6 +163,7 @@ const families = [
 			).result(),
 		baseKey: (opts: Record<string, unknown>) => (opts.httpOptions as { baseUrl?: string } | undefined)?.baseUrl,
 		ambient: { GOOGLE_API_KEY: "env-secret-vertex", GOOGLE_CLOUD_API_KEY: "env-secret-vertex2" },
+		delivered: () => sdk.googleOpts.map((o) => o.apiKey),
 	},
 ];
 
@@ -138,35 +171,44 @@ beforeEach(() => {
 	sdk.anthropicOpts.length = 0;
 	sdk.googleOpts.length = 0;
 	sdk.failWith = undefined;
+	wire.sent.length = 0;
 });
 
 describe.each(families)("credentials option: $name", (family) => {
-	it("gives the SDK the leased secret and the admitted base URL, nothing else", async () => {
+	it("delivers the leased secret and the admitted base URL", async () => {
 		const result = await family.run({ credentials: { lease: lease() } });
 		expect(result.stopReason).not.toBe("error");
-		expect(family.sdkCalls()).toHaveLength(1);
-		expect(seen(family.sdkCalls())).toContain(SECRET);
+		expect(family.delivered()).toContain(SECRET);
 		expect(family.baseKey(family.sdkCalls()[0]!)).toBe(family.baseUrl);
 	});
 
-	it("rejects apiKey together with credentials before any SDK client exists", async () => {
+	it("never stores the secret in client options when a lease is used", async () => {
+		await family.run({ credentials: { lease: lease() } });
+		if (family.perSend) expect(seen(family.sdkCalls())).not.toContain(SECRET);
+		expect(seen(family.sdkCalls())).not.toContain("env-secret");
+	});
+
+	it("rejects apiKey together with credentials before anything is sent", async () => {
 		const result = await family.run({ apiKey: "other-key", credentials: { lease: lease() } });
 		expect(result.stopReason).toBe("error");
 		expect(family.sdkCalls()).toHaveLength(0);
+		expect(wire.sent).toHaveLength(0);
 		expect(result.errorMessage ?? "").not.toContain(SECRET);
 		expect(result.errorMessage ?? "").not.toContain("other-key");
 	});
 
-	it("fails closed on a revoked lease: no SDK client, no env fallback", async () => {
+	it("fails closed on a revoked lease: nothing delivered, no env fallback", async () => {
 		const result = await family.run({ credentials: { lease: brokenLease() }, env: family.ambient });
 		expect(result.stopReason).toBe("error");
-		expect(family.sdkCalls()).toHaveLength(0);
+		expect(family.delivered().filter(Boolean)).toHaveLength(0);
+		expect(wire.sent).toHaveLength(0);
 		expect(seen(family.sdkCalls())).not.toContain("env-secret");
 	});
 
 	it("does not use ambient env keys when a lease is supplied", async () => {
 		await family.run({ credentials: { lease: lease() }, env: family.ambient });
-		expect(seen(family.sdkCalls())).toContain(SECRET);
+		expect(family.delivered()).toContain(SECRET);
+		expect(JSON.stringify(family.delivered())).not.toContain("env-secret");
 		expect(seen(family.sdkCalls())).not.toContain("env-secret");
 	});
 
@@ -179,9 +221,53 @@ describe.each(families)("credentials option: $name", (family) => {
 		expect(JSON.stringify(result)).not.toContain(SECRET);
 	});
 
+	it("asks the lease again for every use instead of keeping the first answer", async () => {
+		const counted = expiringLease(100);
+		await family.run({ credentials: { lease: counted } });
+		expect(counted.state.uses).toBeGreaterThanOrEqual(1);
+		expect(counted.state.uses).toBe(family.delivered().filter(Boolean).length);
+	});
+
 	it("keeps the legacy apiKey path unchanged when no lease is given", async () => {
 		const result = await family.run({ apiKey: "legacy-key" });
 		expect(result.stopReason).not.toBe("error");
 		expect(seen(family.sdkCalls())).toContain("legacy-key");
+	});
+});
+
+describe("Anthropic per-send enforcement", () => {
+	const send = async (): Promise<unknown> => {
+		const opts = sdk.anthropicOpts[0]!;
+		return (opts.fetch as typeof fetch)("https://api.anthropic.com/v1/messages", {
+			method: "POST",
+			headers: { "x-api-key": "placeholder", authorization: "Bearer other" },
+		});
+	};
+	const start = (credentialLease: { use: <T>(c: (s: string) => T | Promise<T>) => Promise<T> }) =>
+		streamAnthropic(
+			model("anthropic", "anthropic-messages", "claude-haiku-4-5", "https://api.anthropic.com") as Model<"anthropic-messages">,
+			context(),
+			{ fetch: recordingFetch, credentials: { lease: credentialLease } },
+		).result();
+
+	it("a lease revoked after the first send stops every later send or SDK retry", async () => {
+		await start(expiringLease(1));
+		expect(wire.sent).toHaveLength(1);
+		await expect(send()).rejects.toThrow("CREDENTIAL_REVOKED");
+		expect(wire.sent).toHaveLength(1);
+	});
+
+	it("replaces the placeholder and any other auth header with the leased secret", async () => {
+		await start(lease());
+		await send();
+		const last = wire.sent.at(-1)!;
+		expect(last.headers.get("x-api-key")).toBe(SECRET);
+		expect(last.headers.get("authorization")).toBeNull();
+	});
+
+	it("refuses redirects so the key cannot follow a response to another host", async () => {
+		await start(lease());
+		await send();
+		expect(wire.sent.every((s) => s.redirect === "error")).toBe(true);
 	});
 });

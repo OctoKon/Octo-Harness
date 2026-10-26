@@ -83,11 +83,14 @@ Regenerate and verify both npm lockfiles after applying it.
 core patch to `packages/ai`, recorded here per [core fusion](../../research/docs/design/core-fusion.md).
 
 - **Shared `credentials` option.** `src/splyce-credentials.ts` adds `SplyceCredentials { lease }`, a structural mirror of the
-  native `SecretLease` (TD-16), and `StreamOptions.credentials`. The Anthropic, Google and Vertex adapters obtain their key only
-  from the lease: it is mutually exclusive with `apiKey`, a failing or revoked lease throws before any SDK client exists, no
-  environment or fallback credential is read, and the secret is redacted from `errorMessage`. TD-19, TD-22 and TD-23 reuse the
-  same option and helper. Limit: the SDK client necessarily holds the key for the request's lifetime; revocation mid-stream relies
-  on the native layer aborting the request. Vertex application-default credentials are not covered by this option.
+  native `SecretLease` (TD-16), and `StreamOptions.credentials`. The secret is taken from the lease for each use, never once:
+  the Anthropic adapter builds its SDK client with a placeholder key and a fetch that leases the real key into `x-api-key` on
+  every HTTP send (so SDK retries re-check the lease) and refuses redirects; the Google and Vertex adapters create their client
+  inside `lease.use` for each request attempt. `apiKey` and `credentials` are mutually exclusive, a failing or revoked lease
+  stops the next send or attempt, no environment or fallback credential is read, and every leased secret is redacted from
+  `errorMessage`. TD-19, TD-22 and TD-23 reuse the same helpers. Limits: an SDK client built for one Google/Vertex attempt
+  holds the key until that attempt ends, and Google/Vertex redirects are inside the SDK; the native transport (TD-13) must
+  still do the final per-send check there. Vertex application-default credentials are not covered by this option.
 - **No tool calls from errored responses.** Anthropic returns a tool call only after its `content_block_stop`; a stream that ends
   with an unfinished tool call is an error, and the error path drops unfinished calls. The Google and Vertex error paths drop all
   tool calls, so a malformed-function-call finish or a stream without a finish reason cannot reach dispatch.
