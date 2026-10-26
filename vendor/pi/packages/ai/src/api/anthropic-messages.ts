@@ -608,7 +608,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 		// Splyce TD-21: only tool calls closed by content_block_stop may be returned; a partial one never reaches dispatch.
 		const finishedToolCalls = new WeakSet<object>();
 		const LEASED_API_KEY_PLACEHOLDER = "splyce-leased-placeholder";
-		const secrets = createSecretTracker();
+		const secrets = createSecretTracker(options?.credentials?.redact);
 
 		try {
 			let client: Anthropic;

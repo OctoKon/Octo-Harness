@@ -13,6 +13,12 @@ export interface SplyceSecretLease {
 
 export interface SplyceCredentials {
 	readonly lease: SplyceSecretLease;
+	/**
+	 * Native-owned redactor (TD-16 `Redactor`): replaces every active secret in a text. When supplied, adapters keep no
+	 * copy of any secret and use this for error text. When absent, the adapter remembers the secrets it saw during one
+	 * request, only until that request ends (a fallback for callers without a native redactor).
+	 */
+	readonly redact?: (text: string) => string;
 }
 
 /** Remembers the secrets seen during one request only so they can be redacted from error text. */
@@ -23,7 +29,8 @@ export interface SecretTracker {
 	clear(): void;
 }
 
-export function createSecretTracker(): SecretTracker {
+export function createSecretTracker(external?: (text: string) => string): SecretTracker {
+	if (external) return { note: () => {}, redact: external, clear: () => {} };
 	const seen = new Set<string>();
 	return {
 		note: (secret) => {

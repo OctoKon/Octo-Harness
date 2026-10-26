@@ -88,7 +88,8 @@ core patch to `packages/ai`, recorded here per [core fusion](../../research/docs
   every HTTP send (so SDK retries re-check the lease) and refuses redirects; the Google and Vertex adapters create their client
   inside `lease.use` for each request attempt. `apiKey` and `credentials` are mutually exclusive, a failing or revoked lease
   stops the next send or attempt, no environment or fallback credential is read, and every leased secret is redacted from
-  `errorMessage`. TD-19, TD-22 and TD-23 reuse the same helpers. Limits: an SDK client built for one Google/Vertex attempt
+  `errorMessage` (preferably by the native-owned `credentials.redact`, in which case the adapter keeps no copy of any secret;
+  without it the adapter remembers the secrets of one request only until that request ends). TD-19, TD-22 and TD-23 reuse the same helpers. Limits: an SDK client built for one Google/Vertex attempt
   holds the key until that attempt ends, and Google/Vertex redirects are inside the SDK; the native transport (TD-13) must
   still do the final per-send check there. Vertex application-default credentials are not covered by this option.
 - **No tool calls from errored responses.** Anthropic returns a tool call only after its `content_block_stop`; a stream that ends

@@ -222,6 +222,17 @@ describe.each(families)("credentials option: $name", (family) => {
 		expect(JSON.stringify(result)).not.toContain(SECRET);
 	});
 
+	it("uses the native-owned redactor when one is supplied", async () => {
+		sdk.failWith = `401 invalid x-api-key ${SECRET}`;
+		const result = await family.run({
+			credentials: { lease: lease(), redact: (text: string) => text.split(SECRET).join("[native]") },
+		});
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage ?? "").toContain("[native]");
+		expect(result.errorMessage ?? "").not.toContain("[redacted]");
+		expect(result.errorMessage ?? "").not.toContain(SECRET);
+	});
+
 	it("asks the lease again for every use instead of keeping the first answer", async () => {
 		const counted = expiringLease(100);
 		await family.run({ credentials: { lease: counted } });
@@ -312,6 +323,18 @@ describe("shared credential helpers", () => {
 		expect(calls[0]!.headers.get("authorization")).toBe(`Bearer ${SECRET}`);
 		expect(calls[0]!.headers.get("x-api-key")).toBeNull();
 		expect(calls[0]!.redirect).toBe("error");
+	});
+
+	it("keeps no copy of a secret when the native redactor is supplied", () => {
+		const calls: string[] = [];
+		const tracker = createSecretTracker((text) => {
+			calls.push(text);
+			return "<native>";
+		});
+		tracker.note(SECRET);
+		expect(tracker.redact(`key ${SECRET}`)).toBe("<native>");
+		expect(calls).toEqual([`key ${SECRET}`]);
+		tracker.clear();
 	});
 
 	it("forgets every noted secret on clear", () => {

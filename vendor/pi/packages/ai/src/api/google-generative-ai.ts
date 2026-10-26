@@ -84,7 +84,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			timestamp: Date.now(),
 		};
 
-		const secrets = createSecretTracker();
+		const secrets = createSecretTracker(options?.credentials?.redact);
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
