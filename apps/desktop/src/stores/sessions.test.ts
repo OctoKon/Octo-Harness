@@ -211,3 +211,41 @@ test("a late older event cannot overwrite a newer branch state", () => {
   );
   assert.deepEqual(visibleNodes(s)[0].leaves, ["e1", "e2"]);
 });
+
+test("an older event after a refresh cannot replace a newer branch state", () => {
+  const s = apply(
+    createSessionNav(),
+    { type: "loaded" },
+    { type: "event", event: tree("s1", "b1", ["newer"], 5) },
+    { type: "refresh" },
+    { type: "event", event: tree("s1", "b1", ["older"], 3) },
+    { type: "loaded" },
+  );
+  assert.deepEqual(visibleNodes(s)[0]?.leaves, ["newer"]);
+});
+
+test("a newer event after a refresh still replaces the previous state", () => {
+  const s = apply(
+    createSessionNav(),
+    { type: "loaded" },
+    { type: "event", event: tree("s1", "b1", ["old"], 5) },
+    { type: "refresh" },
+    { type: "event", event: tree("s1", "b1", ["new"], 6) },
+    { type: "loaded" },
+  );
+  assert.deepEqual(visibleNodes(s)[0]?.leaves, ["new"]);
+});
+
+test("losing the selection to an empty snapshot is still reported", () => {
+  const s = apply(
+    createSessionNav(),
+    { type: "loaded" },
+    { type: "event", event: tree("s1", "b1") },
+    { type: "select", key: "s1/b1" },
+    { type: "refresh" },
+    { type: "loaded" },
+  );
+  assert.equal(s.load, "empty");
+  assert.equal(s.selectedKey, null);
+  assert.equal(s.lostSelection, "s1/b1");
+});

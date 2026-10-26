@@ -77,14 +77,22 @@ const keyOf = (sessionId: string, branchAnchorId: string) =>
 function mergeEvent(
   into: Record<string, Branch>,
   event: TreeEventLike,
+  /**
+   * Set while a refresh collects a new snapshot: the branches known before it. A snapshot event older than what is
+   * known is not applied (the newer known state is carried into the snapshot instead), while an event with the same
+   * sequence number is an ordinary re-delivery and is applied.
+   */
+  known?: Record<string, Branch>,
 ): Record<string, Branch> | null {
   const payload = event.payload;
   if (event.kind !== "session.tree_updated" || !payload) return null;
   const { sessionId, branchAnchorId, leaves } = payload;
   if (!sessionId || !branchAnchorId || !Array.isArray(leaves)) return null;
   const key = keyOf(sessionId, branchAnchorId);
-  const existing = into[key];
-  if (existing && event.seq <= existing.seenSeq) return null;
+  const own = into[key];
+  if (own && event.seq <= own.seenSeq) return null;
+  const prior = known?.[key];
+  if (prior && event.seq < prior.seenSeq) return { ...into, [key]: prior };
   return {
     ...into,
     [key]: {
@@ -112,7 +120,7 @@ export function reduceSessionNav(
   switch (action.type) {
     case "event": {
       if (state.fresh !== null) {
-        const merged = mergeEvent(state.fresh, action.event);
+        const merged = mergeEvent(state.fresh, action.event, state.branches);
         return merged ? { ...state, fresh: merged } : state;
       }
       const merged = mergeEvent(state.branches, action.event);

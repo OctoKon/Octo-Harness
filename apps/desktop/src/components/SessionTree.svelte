@@ -52,6 +52,12 @@
 </script>
 
 <section class="session-tree" aria-label="Sessions" data-testid="session-tree">
+  <!-- Shown in every load state, so an empty or failed refresh cannot hide that the selection was lost. -->
+  {#if nav.lostSelection}
+    <p role="status" class="state" data-testid="lost-selection">
+      The selected branch is no longer available: {nav.lostSelection}
+    </p>
+  {/if}
   {#if nav.load === "error"}
     <div role="alert" class="state state-error">
       <p>Sessions could not be loaded{nav.error ? `: ${nav.error}` : "."}</p>
@@ -64,11 +70,6 @@
   {:else}
     {#if nav.load === "loading"}
       <p role="status" class="state">Refreshing…</p>
-    {/if}
-    {#if nav.lostSelection}
-      <p role="status" class="state">
-        The selected branch is no longer available: {nav.lostSelection}
-      </p>
     {/if}
     <ul role="tree" aria-label="Session branches" bind:this={container}>
       {#each nodes as node (node.key)}
