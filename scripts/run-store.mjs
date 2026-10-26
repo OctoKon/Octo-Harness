@@ -19,13 +19,15 @@ if (args.length === 0) {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
   else if (args[1] === "C1_reconnect_cursor")
     files = ["tests/integration/receipts.ts"];
+  else if (args[1] === "C2_desktop_bridge")
+    files = ["tests/integration/bridge.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C2_desktop_bridge]",
   );
   process.exit(2);
 }
