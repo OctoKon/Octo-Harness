@@ -6,6 +6,7 @@ import {
   PROTOCOL_VERSION,
   PI_REVISION,
   FOUNDATION,
+  BRIDGE_PROTOCOL_JSON,
   ContractError,
   validateRecord,
   validateCommand,
@@ -22,6 +23,21 @@ const fixture = (name) =>
     ),
   );
 const records = fixture("records");
+test("TD-01: native build spec comes from the shared operation definitions", () => {
+  const spec = JSON.parse(BRIDGE_PROTOCOL_JSON);
+  assert.equal(spec.protocolVersion, 1);
+  assert.equal(spec.schemaVersion, 1);
+  assert.equal(spec.piRevision, "d5b3de22d0e24a3e9c38a9410d3329b099717283");
+  assert.deepEqual(
+    Object.keys(spec.commands).sort(),
+    fixture("commands")
+      .map(({ op }) => op)
+      .sort(),
+  );
+  assert.equal(spec.commands["approval.respond"].approvalRequestId, "ref");
+  assert.equal(spec.commands["workspace.select"].selectionRef, "ref");
+  assert.equal(spec.commands["session.subscribe"].afterSeq, "uint");
+});
 const referenceIds = new Set(fixture("references"));
 const context = {
   scopeId: "w-demo",

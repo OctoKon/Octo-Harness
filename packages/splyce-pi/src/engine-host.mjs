@@ -75,9 +75,9 @@ export async function* readFrames(input) {
 async function unavailableHandshake() {
   const { createAgentSession } =
     await import("@earendil-works/pi-coding-agent");
+  let result;
   try {
-    const result = await createAgentSession();
-    await result.session.dispose();
+    result = await createAgentSession();
   } catch (error) {
     if (error?.code !== "SPLYCE_UNAVAILABLE") throw error;
     return validateHandshake({
@@ -96,6 +96,7 @@ async function unavailableHandshake() {
       },
     });
   }
+  await result.session.dispose();
   throw new Error("Native unavailable readiness was not enforced");
 }
 

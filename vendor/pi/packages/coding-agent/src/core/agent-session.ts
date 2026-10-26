@@ -25,6 +25,7 @@ import {
 	type AgentState,
 	type AgentTool,
 	type AgentToolCallOutcome,
+	assertSplyceReady,
 	type BeforeToolCallContext,
 	type BeforeToolCallResult,
 	type PrepareNextTurnContext,
@@ -659,6 +660,7 @@ export class AgentSession {
 		{ toolCall, args }: BeforeToolCallContext,
 		parentToolCallId?: string,
 	): Promise<BeforeToolCallResult | undefined> {
+		assertSplyceReady();
 		const runner = this._extensionRunner;
 		if (!runner.hasHandlers("tool_call")) {
 			return undefined;
@@ -3316,6 +3318,7 @@ export class AgentSession {
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
+		assertSplyceReady();
 		if (bindings.uiContext !== undefined) {
 			this._extensionUIContext = bindings.uiContext;
 		}
@@ -3903,6 +3906,7 @@ export class AgentSession {
 		onChunk?: (chunk: string) => void,
 		options?: { excludeFromContext?: boolean; id?: string; operations?: BashOperations },
 	): Promise<BashResult> {
+		assertSplyceReady();
 		const abortController = new AbortController();
 		this._bashAbortControllers.add(abortController);
 

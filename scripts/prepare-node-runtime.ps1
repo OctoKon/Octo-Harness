@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [System.Runtime.InteropServices.Architecture]::X64) {
   throw "The pinned Node runtime is for Windows x64."
 }
 
