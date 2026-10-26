@@ -37,12 +37,14 @@
 import {
   CONTRACT_VERSION,
   type ContractContext,
+  ContractError,
   PROTOCOL_VERSION,
   type RecordBodies,
   type RecordMetadata,
   type SplyceEvent,
   type SplyceEventDraft,
   TRANSPORT_LIMITS,
+  validateEvent,
 } from "./contracts.js";
 import { DesktopBridge, type Frame } from "./desktop-bridge.js";
 import { Receipts } from "./receipts.js";
@@ -249,6 +251,7 @@ export class SessionMap {
       throw new SessionMapError("SESSION_UNKNOWN", "native session not bound");
     const { scopeId, sessionId } = bound.key;
     const events = this.granted(
+      bound,
       this.store.replayEvents(scopeId, sessionId, afterSeq),
     );
     // The persisted highwater includes transient reservations, so a lost
@@ -257,7 +260,7 @@ export class SessionMap {
     const replay =
       events.length === highest - afterSeq
         ? events
-        : this.granted([this.reconnectSnapshot(bound), ...events]);
+        : this.granted(bound, [this.reconnectSnapshot(bound), ...events]);
     let channel = this.channels.get(keyOf(key));
     if (channel === undefined) {
       const receipts = new Receipts(this.store);
@@ -356,25 +359,38 @@ export class SessionMap {
   }
 
   /**
-   * Re-resolves every envelope reference against the caller's current grants
-   * at replay time; one denial fails the whole replay closed (no history).
+   * Re-resolves every reference against the caller's current grants at replay
+   * time: the source recordId, plus every ref-typed envelope and payload field
+   * via the frozen event schema (validateEvent). One denial fails the whole
+   * replay closed (no history).
    */
-  private granted(events: SplyceEvent[]): SplyceEvent[] {
+  private granted(bound: Bound, events: SplyceEvent[]): SplyceEvent[] {
     const resolve = this.context.resolveReference;
     if (resolve === undefined) return events;
-    for (const event of events)
-      for (const id of [
-        event.recordId,
-        ...event.sourceIds,
-        ...(event.payloadArtifactId === undefined
-          ? []
-          : [event.payloadArtifactId]),
-      ])
-        if (!resolve(id, event.scopeId))
-          throw new StoreError(
-            "EVENT_SOURCE",
-            "event source record is unresolved or denied",
-          );
+    const { scopeId, sessionId } = bound.key;
+    const context: ContractContext = {
+      ...this.contractContext(bound),
+      lastDurableSeq: this.store.eventHighwater(scopeId, sessionId),
+      resolveReference: resolve,
+    };
+    const denied = () =>
+      new StoreError(
+        "EVENT_SOURCE",
+        "event source record is unresolved or denied",
+      );
+    for (const event of events) {
+      if (!resolve(event.recordId, event.scopeId)) throw denied();
+      try {
+        validateEvent(event, context);
+      } catch (error) {
+        if (
+          error instanceof ContractError &&
+          error.code === "UNRESOLVED_REFERENCE"
+        )
+          throw denied();
+        throw error;
+      }
+    }
     return events;
   }
 

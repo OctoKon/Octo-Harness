@@ -603,3 +603,40 @@ test("a trailing lost transient is detected after reopen by a fresh SessionMap",
   assert.deepEqual(reopened.replayEvents("w-demo", "s1", 2), [snapshot]);
   reopened.close();
 });
+
+test("follow re-resolves payload references from the event schema: a revoked payload ref fails closed", () => {
+  const { store, pi } = setup();
+  const denied = new Set<string>();
+  const map = new SessionMap(store, {
+    ...context,
+    resolveReference: (id: string) => !denied.has(id),
+  });
+  map.bind(k1, pi);
+  const id = pi.getSessionId();
+  map.anchorRun(id, run("run-1"));
+  const started = map.publish(id, fixture.engineEvents[0]).event;
+  const intent = map.publish(id, {
+    ...fixture.engineEvents[0],
+    eventId: "evt-intent",
+    kind: "turn.tool_intent",
+    payload: {
+      runId: "run-2",
+      actionId: "act-1",
+      capabilityId: "cap-1",
+      target: "target-1",
+      argsSummary: "args",
+    },
+  }).event;
+  const before = store.eventCursor("w-demo", "s1");
+
+  // The source record stays granted; only a payload ref is revoked.
+  for (const revoked of ["run-1", "act-1", "cap-1"]) {
+    denied.add(revoked);
+    assert.ok(!denied.has("rec-run-1"));
+    assert.throws(() => map.follow(k1, 0), code("EVENT_SOURCE"), revoked);
+    denied.delete(revoked);
+  }
+  assert.equal(store.eventCursor("w-demo", "s1"), before);
+  assert.deepEqual(map.follow(k1, 0).replay, [started, intent]);
+  store.close();
+});
