@@ -1,0 +1,150 @@
+{
+  "schemaVersion": 1,
+  "caseId": "FUI-W4",
+  "title": "Stream & backpressure",
+  "targetTask": "TD-18",
+  "description": "Feed high-frequency interleaved text, thought, and tool call stream deltas to verify virtualized render without dropped tokens or frame tearing under backpressure.",
+  "preconditions": {
+    "windowMode": "normal",
+    "dpiScale": 1.0,
+    "contrastMode": false,
+    "reducedMotion": false,
+    "engineStatus": "ready"
+  },
+  "eventSequence": [
+    {
+      "delayMs": 0,
+      "event": {
+        "seq": 1,
+        "eventId": "evt_01J0001",
+        "ts": 1729930000000,
+        "sessionId": "ses_test_01",
+        "durability": "durable",
+        "event": {
+          "kind": "turn.started",
+          "runId": "run_w4_01",
+          "turnId": "turn_01"
+        }
+      }
+    },
+    {
+      "delayMs": 5,
+      "event": {
+        "seq": 2,
+        "eventId": "evt_01J0002",
+        "ts": 1729930000005,
+        "sessionId": "ses_test_01",
+        "durability": "transient",
+        "event": {
+          "kind": "turn.thought_delta",
+          "runId": "run_w4_01",
+          "turnId": "turn_01",
+          "delta": "Analyzing directory layout and package dependencies."
+        }
+      }
+    },
+    {
+      "delayMs": 10,
+      "event": {
+        "seq": 3,
+        "eventId": "evt_01J0003",
+        "ts": 1729930000010,
+        "sessionId": "ses_test_01",
+        "durability": "transient",
+        "event": {
+          "kind": "turn.stream_delta",
+          "runId": "run_w4_01",
+          "turnId": "turn_01",
+          "delta": "I will inspect the local repository structure.\n\n"
+        }
+      }
+    },
+    {
+      "delayMs": 15,
+      "event": {
+        "seq": 4,
+        "eventId": "evt_01J0004",
+        "ts": 1729930000015,
+        "sessionId": "ses_test_01",
+        "durability": "durable",
+        "event": {
+          "kind": "turn.tool_intent",
+          "runId": "run_w4_01",
+          "actionId": "act_w4_scan",
+          "capabilityId": "fs.read_tree",
+          "target": "apps/desktop/src",
+          "argsSummary": "depth: 2, filter: '*.svelte'"
+        }
+      }
+    },
+    {
+      "delayMs": 20,
+      "event": {
+        "seq": 5,
+        "eventId": "evt_01J0005",
+        "ts": 1729930000020,
+        "sessionId": "ses_test_01",
+        "durability": "durable",
+        "event": {
+          "kind": "turn.tool_outcome",
+          "runId": "run_w4_01",
+          "actionId": "act_w4_scan",
+          "status": "success",
+          "outcomeRef": "ref_fs_tree_result"
+        }
+      }
+    },
+    {
+      "delayMs": 25,
+      "event": {
+        "seq": 6,
+        "eventId": "evt_01J0006",
+        "ts": 1729930000025,
+        "sessionId": "ses_test_01",
+        "durability": "transient",
+        "event": {
+          "kind": "turn.stream_delta",
+          "runId": "run_w4_01",
+          "turnId": "turn_01",
+          "delta": "Scan completed successfully. Found 14 Svelte components."
+        }
+      }
+    },
+    {
+      "delayMs": 30,
+      "event": {
+        "seq": 7,
+        "eventId": "evt_01J0007",
+        "ts": 1729930000030,
+        "sessionId": "ses_test_01",
+        "durability": "durable",
+        "event": {
+          "kind": "turn.completed",
+          "runId": "run_w4_01",
+          "candidateSnapshotId": "snap_w4_clean",
+          "finalRevision": "rev_w4_01"
+        }
+      }
+    }
+  ],
+  "userActions": [],
+  "assertions": {
+    "expectedState": {
+      "runStatus": "completed",
+      "visibleToolCards": 1,
+      "hasTornFrames": false
+    },
+    "expectedDispatches": [],
+    "accessibilityQueries": [
+      {
+        "role": "region",
+        "name": "Transcript",
+        "expectedState": "visible"
+      }
+    ],
+    "guardRemovalCheck": {
+      "action": "bypass_frame_coalescing",
+      "mustFailWith": "ERR_STREAM_RENDER_OVERFLOW"
+    }
+  }
+}

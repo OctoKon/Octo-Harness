@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "caseId": "FUI-W5",
+  "title": "Approval race condition",
+  "targetTask": "TD-02",
+  "description": "Trigger approval request, followed immediately by user run cancellation. User clicks approve on stale dialog; verify that client refuses late dispatch or engine rejects stale approval.",
+  "preconditions": {
+    "windowMode": "normal",
+    "dpiScale": 1.0,
+    "contrastMode": false,
+    "reducedMotion": false,
+    "engineStatus": "ready"
+  },
+  "eventSequence": [
+    {
+      "delayMs": 0,
+      "event": {
+        "seq": 1,
+        "eventId": "evt_01W5_01",
+        "ts": 1729930100000,
+        "sessionId": "ses_test_race",
+        "durability": "durable",
+        "event": {
+          "kind": "turn.started",
+          "runId": "run_w5_race",
+          "turnId": "turn_01"
+        }
+      }
+    },
+    {
+      "delayMs": 10,
+      "event": {
+        "seq": 2,
+        "eventId": "evt_01W5_02",
+        "ts": 1729930100010,
+        "sessionId": "ses_test_race",
+        "durability": "durable",
+        "event": {
+          "kind": "approval.requested",
+          "runId": "run_w5_race",
+          "actionId": "act_w5_exec",
+          "capabilityId": "shell.execute",
+          "targetScope": "scripts/deploy.sh",
+          "normalizedTarget": "F:/test/Splyce/scripts/deploy.sh",
+          "riskRationale": "Deploy script execution.",
+          "timeoutMs": 15000
+        }
+      }
+    },
+    {
+      "delayMs": 25,
+      "event": {
+        "seq": 3,
+        "eventId": "evt_01W5_03",
+        "ts": 1729930100025,
+        "sessionId": "ses_test_race",
+        "durability": "durable",
+        "event": {
+          "kind": "turn.canceled",
+          "runId": "run_w5_race",
+          "cleanedUp": true
+        }
+      }
+    }
+  ],
+  "userActions": [
+    {
+      "step": 1,
+      "action": "click",
+      "targetSelector": "button[data-testid='approval-allow-button']"
+    }
+  ],
+  "assertions": {
+    "expectedState": {
+      "runStatus": "canceled",
+      "dialogOpen": false,
+      "lastDispatchedToolCall": null
+    },
+    "expectedDispatches": [],
+    "accessibilityQueries": [
+      {
+        "role": "alert",
+        "name": "Run was canceled",
+        "expectedState": "visible"
+      }
+    ],
+    "guardRemovalCheck": {
+      "action": "bypass_stale_approval_check",
+      "mustFailWith": "ERR_APPROVAL_STALE"
+    }
+  }
+}
