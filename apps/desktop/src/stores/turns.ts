@@ -265,16 +265,22 @@ export function reduceTurns(
   ) {
     return { ...state, protocolErrors: state.protocolErrors + 1 };
   }
+  const isSnapshot = envelope.kind === "run.reconnect_snapshot";
   if (
     state.seenEventIds.has(envelope.eventId) ||
-    envelope.seq <= state.lastSeq
+    (envelope.durable
+      ? envelope.seq <= state.lastDurableSeq
+      : envelope.seq <= state.lastSeq)
   ) {
     return { ...state, duplicateCount: state.duplicateCount + 1 };
   }
 
-  const isSnapshot = envelope.kind === "run.reconnect_snapshot";
   if (state.needsResync && !isSnapshot) return state;
-  if (!isSnapshot && envelope.seq !== state.lastSeq + 1) {
+  if (
+    !isSnapshot &&
+    envelope.seq > state.lastSeq &&
+    envelope.seq !== state.lastSeq + 1
+  ) {
     return {
       ...state,
       needsResync: true,
@@ -287,9 +293,10 @@ export function reduceTurns(
     ...state,
     sessionId: envelope.sessionId,
     lastSeq: Math.max(state.lastSeq, envelope.seq),
-    lastDurableSeq: envelope.durable
-      ? Math.max(state.lastDurableSeq, envelope.seq)
-      : state.lastDurableSeq,
+    lastDurableSeq:
+      envelope.durable && !isSnapshot
+        ? Math.max(state.lastDurableSeq, envelope.seq)
+        : state.lastDurableSeq,
     seenEventIds: new Set(state.seenEventIds).add(envelope.eventId),
   };
 
@@ -465,7 +472,8 @@ export function reduceTurns(
       next.needsResync = false;
       delete next.resyncFromSeq;
       delete next.resyncAfterSeq;
-      next.lastDurableSeq = Math.max(next.lastDurableSeq, lastDurableSeq);
+      next.lastDurableSeq = Math.max(state.lastDurableSeq, lastDurableSeq);
+      next.lastSeq = Math.max(next.lastSeq, lastDurableSeq);
       const status: TurnStatus =
         snapshotState === "waiting_approval"
           ? "waiting_approval"

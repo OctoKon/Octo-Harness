@@ -267,6 +267,40 @@ describe("ordering, replay and attribution", () => {
     expect(done.runs.run_a.status).toBe("completed");
   });
 
+  it("applies durable replay below the transient high-water mark after a snapshot", () => {
+    const state = applyAll(createTurnsState(), [
+      started(),
+      delta(2, "partial"),
+      event(5, "run.reconnect_snapshot", {
+        runId: "run_a",
+        lastDurableSeq: 2,
+        activeActionIds: ["act_replay"],
+        state: "busy",
+      }),
+      event(3, "turn.tool_intent", {
+        runId: "run_a",
+        actionId: "act_replay",
+        capabilityId: "fs.read_tree",
+        target: "apps/desktop/src",
+        argsSummary: "depth: 2",
+      }),
+      event(4, "turn.tool_outcome", {
+        runId: "run_a",
+        actionId: "act_replay",
+        status: "success",
+        outcomeRef: "ref_replay",
+      }),
+    ]);
+
+    expect(state.needsResync).toBe(false);
+    expect(state.lastDurableSeq).toBe(4);
+    expect(state.lastSeq).toBe(5);
+    expect(state.runs.run_a.actions[0]).toMatchObject({
+      actionId: "act_replay",
+      status: "success",
+    });
+  });
+
   it("accepts an engine stream.resync and reconciles with the snapshot", () => {
     const resynced = applyAll(createTurnsState(), [
       started(),
