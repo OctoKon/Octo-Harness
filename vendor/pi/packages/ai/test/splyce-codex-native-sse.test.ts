@@ -69,7 +69,7 @@ describe("direct native Codex SSE", () => {
 				credentials,
 				transport: "sse",
 				maxRetries: 0,
-				headers: { authorization: "caller-override", "x-api-key": "caller-override" },
+				headers: { "x-trace": "fixture-trace" },
 				fetch: async (input, init) => {
 					sends++;
 					expect(String(input)).toBe("https://provider.invalid/backend-api/codex/responses");

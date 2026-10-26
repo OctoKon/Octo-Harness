@@ -191,7 +191,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 
 		try {
 			// Create OpenAI client
-			assertCredentialOptions(options ?? {});
+			assertCredentialOptions(options ?? {}, model.headers);
 			credentials = options?.credentials;
 			const chatGPTSignIn = credentials
 				? await withLeasedSecret(credentials, (secret) => isChatGPTSignIn(model, secret))

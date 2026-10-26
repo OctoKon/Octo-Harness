@@ -101,7 +101,7 @@ for (const [api, start] of [
 				credentials,
 				fetch,
 				maxRetries: 0,
-				headers: { authorization: "caller-override", "x-api-key": "caller-override" },
+				headers: { "x-trace": "fixture-trace" },
 			}).result();
 			expect(result.stopReason).toBe("stop");
 			expect(sends).toBe(1);
@@ -294,3 +294,51 @@ it("rejects conflicting native and explicit Codex credentials before any effect"
 	expect(state.uses).toBe(0);
 	expect(sends).toBe(0);
 });
+
+// #70: the shared header contract must also reject auth carried by model configuration.
+for (const [api, start] of [
+	[
+		"openai-completions",
+		(options: StreamOptions, headers: Record<string, string>) =>
+			chat({ ...makeModel("openai-completions"), headers }, context, options),
+	],
+	[
+		"openai-responses",
+		(options: StreamOptions, headers: Record<string, string>) =>
+			responses({ ...makeModel("openai-responses"), headers }, context, options),
+	],
+	[
+		"openai-codex-responses",
+		(options: StreamOptions, headers: Record<string, string>) =>
+			codex({ ...makeModel("openai-codex-responses"), headers }, context, options),
+	],
+] as const) {
+	for (const source of ["options", "model"] as const) {
+		it.each(["Authorization", "Proxy-Authorization", "X-Api-Key", "api-key", "X-Goog-Api-Key", "Cookie"])(
+			`${api} rejects ${source} auth header %s before any lease or send`,
+			async (name) => {
+				const token = `fixture.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } })).toString("base64")}.fixture`;
+				const { credentials, state } = leaseFixture(token);
+				let sends = 0;
+				const headers = { [name]: "caller-override" };
+				const result = await start(
+					{
+						credentials,
+						transport: "sse",
+						maxRetries: 0,
+						headers: source === "options" ? headers : {},
+						fetch: async () => {
+							sends++;
+							return new Response(payload(api), { headers: { "content-type": "text/event-stream" } });
+						},
+					},
+					source === "model" ? headers : {},
+				).result();
+				expect(result.stopReason).toBe("error");
+				expect(result.errorMessage).toMatch(/caller-supplied.*header/);
+				expect(state.uses).toBe(0);
+				expect(sends).toBe(0);
+			},
+		);
+	}
+}

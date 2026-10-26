@@ -76,6 +76,8 @@ vi.mock("@google/genai", () => {
 	};
 });
 
+import type { ProviderConnectionRecord } from "@splyce/pi/contracts";
+import type { ProviderAdmissionPort } from "@splyce/pi/provider-admission";
 import { NativeCredentialResolver } from "../../../../../packages/splyce-pi/src/credential-resolver.ts";
 import type { CredentialRequest } from "../../../../../packages/splyce-pi/src/provider-auth.ts";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
@@ -103,12 +105,9 @@ const model = <TApi extends Api>(provider: string, api: TApi, baseUrl: string): 
 const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
 
 /** Interface-only upstream; this is the smallest faithful implementation: admit only the bound endpoint. */
-const admission = (connectionId: string, revision: string) => ({
-	async admit(
-		connection: { providerConnectionId: string; revision: string },
-		endpointRef: string,
-		signal?: AbortSignal,
-	) {
+/** The per-action port the native layer constructs: the action's signal is bound at construction, so admit takes two arguments. */
+const admission = (connectionId: string, revision: string, signal?: AbortSignal): ProviderAdmissionPort => ({
+	async admit(connection, endpointRef) {
 		if (connection.providerConnectionId !== connectionId || connection.revision !== revision)
 			throw new Error("ADMISSION_DENIED");
 		if (endpointRef !== ADMITTED) throw new Error("ADMISSION_DENIED");
@@ -139,14 +138,13 @@ function nativeSide(env: Record<string, string | undefined>, signal?: AbortContr
 		egressPolicyRef: "egress-1",
 		source: { kind: "env", name: "PROVIDER_KEY" },
 	});
-	const admit = admission("conn-1", "r1");
+	const admit = admission("conn-1", "r1", signal?.signal);
 	return {
 		resolver,
 		async credentials(endpointRef = ADMITTED): Promise<SplyceCredentials> {
 			const request = await admit.admit(
-				{ providerConnectionId: "conn-1", revision: "r1" },
+				{ providerConnectionId: "conn-1", revision: "r1" } as ProviderConnectionRecord,
 				endpointRef,
-				signal?.signal,
 			);
 			const lease = await resolver.resolve(request);
 			return { lease, redact: resolver.redact };

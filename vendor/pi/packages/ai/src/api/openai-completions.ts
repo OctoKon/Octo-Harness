@@ -351,7 +351,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 		};
 
 		try {
-			assertCredentialOptions(options ?? {});
+			assertCredentialOptions(options ?? {}, model.headers);
 			credentials = options?.credentials;
 			const apiKey = credentials
 				? "splyce-leased"

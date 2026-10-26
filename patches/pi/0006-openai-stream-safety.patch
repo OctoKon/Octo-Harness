@@ -1,5 +1,5 @@
 diff --git a/vendor/pi/packages/ai/src/api/openai-codex-responses.ts b/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
-index 5165e1c..41b09ec 100644
+index 5165e1c..da42088 100644
 --- a/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
 @@ -7,6 +7,13 @@ import type {
@@ -29,7 +29,7 @@ index 5165e1c..41b09ec 100644
  
  		try {
 -			const apiKey = options?.apiKey;
-+			assertCredentialOptions(options ?? {});
++			assertCredentialOptions(options ?? {}, model.headers);
 +			credentials = options?.credentials;
 +			if (credentials && options?.transport !== "sse") {
 +				throw new Error("Native Codex credentials require explicit SSE transport");
@@ -129,7 +129,7 @@ index 5165e1c..41b09ec 100644
  			// Keep callback failures out of Codex's WebSocket retry and SSE fallback path.
  			throw new ProviderStreamEventCallbackError(error);
 diff --git a/vendor/pi/packages/ai/src/api/openai-completions.ts b/vendor/pi/packages/ai/src/api/openai-completions.ts
-index 0e5b606..e50d3b8 100644
+index 0e5b606..04ea441 100644
 --- a/vendor/pi/packages/ai/src/api/openai-completions.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-completions.ts
 @@ -12,6 +12,12 @@ import type {
@@ -158,7 +158,7 @@ index 0e5b606..e50d3b8 100644
  
  		try {
 -			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
-+			assertCredentialOptions(options ?? {});
++			assertCredentialOptions(options ?? {}, model.headers);
 +			credentials = options?.credentials;
 +			const apiKey = credentials
 +				? "splyce-leased"
@@ -217,7 +217,7 @@ index 0e5b606..e50d3b8 100644
  	const base = {
  		...buildBaseOptions(model, context, options, options?.apiKey),
 diff --git a/vendor/pi/packages/ai/src/api/openai-responses.ts b/vendor/pi/packages/ai/src/api/openai-responses.ts
-index c29e6ad..e448f58 100644
+index c29e6ad..aa73a14 100644
 --- a/vendor/pi/packages/ai/src/api/openai-responses.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-responses.ts
 @@ -1,6 +1,13 @@
@@ -270,7 +270,7 @@ index c29e6ad..e448f58 100644
  		try {
  			// Create OpenAI client
 -			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
-+			assertCredentialOptions(options ?? {});
++			assertCredentialOptions(options ?? {}, model.headers);
 +			credentials = options?.credentials;
 +			const chatGPTSignIn = credentials
 +				? await withLeasedSecret(credentials, (secret) => isChatGPTSignIn(model, secret))
@@ -357,56 +357,11 @@ index c29e6ad..e448f58 100644
  	const params: ResponseCreateParamsStreaming = {
  		model: model.id,
  		input: messages,
-diff --git a/vendor/pi/packages/ai/src/models.ts b/vendor/pi/packages/ai/src/models.ts
-index 339bbe7..bd396ea 100644
---- a/vendor/pi/packages/ai/src/models.ts
-+++ b/vendor/pi/packages/ai/src/models.ts
-@@ -20,7 +20,7 @@ import type {
- 	ProviderAuth,
- } from "./auth/types.ts";
- import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
--import { assertCredentialsSupported, type SplyceCredentials } from "./splyce-credentials.ts";
-+import type { SplyceCredentials } from "./splyce-credentials.ts";
- import { observeModelRequest } from "./telemetry.ts";
- import type {
- 	AnyModel,
-@@ -62,6 +62,7 @@ import {
- 	assertChatModel,
- 	assertClassifierInputSupported,
- 	assertClassifierModel,
-+	assertCredentialsSupported,
- 	assertImageModel,
- 	classifierErrorResult,
- 	getModelType,
 diff --git a/vendor/pi/packages/ai/src/splyce-credentials.ts b/vendor/pi/packages/ai/src/splyce-credentials.ts
-index fe674e3..d6c8d70 100644
+index ef8536d..fa5d7d3 100644
 --- a/vendor/pi/packages/ai/src/splyce-credentials.ts
 +++ b/vendor/pi/packages/ai/src/splyce-credentials.ts
-@@ -18,30 +18,24 @@ export interface SplyceCredentials {
- 	readonly redact: (text: string) => string;
- }
- 
--/**
-- * APIs whose adapters honour `credentials`. Any other API must refuse the option rather than ignore it: ignoring it
-- * would let the adapter fall back to an ambient key. The owner of each adapter adds its API here when it is bound.
-- */
--export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
--	"anthropic-messages",
--	"google-generative-ai",
--	"google-vertex",
--]);
--
--export function assertCredentialsSupported(
--	api: string,
--	options: { credentials?: SplyceCredentials | undefined } | undefined,
--): void {
--	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
--		throw new Error(`credentials are not supported for api ${api} yet`);
--	}
--}
-+export { assertCredentialsSupported, CREDENTIAL_APIS } from "./utils/model-operations.ts";
- 
- const identity = (text: string): string => text;
+@@ -26,7 +26,18 @@ const identity = (text: string): string => text;
  
  /** The redactor to apply to error text: the native one when credentials are in use, otherwise nothing is leased. */
  export function redactorOf(options: { credentials?: SplyceCredentials | undefined }): (text: string) => string {
@@ -444,7 +399,7 @@ index d5616ca..e9b43c2 100644
  import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
  import type { ClientIdentity } from "./utils/identity.ts";
 diff --git a/vendor/pi/packages/ai/src/utils/model-operations.ts b/vendor/pi/packages/ai/src/utils/model-operations.ts
-index b23e061..5848774 100644
+index e034cd3..5848774 100644
 --- a/vendor/pi/packages/ai/src/utils/model-operations.ts
 +++ b/vendor/pi/packages/ai/src/utils/model-operations.ts
 @@ -1,3 +1,4 @@
@@ -452,46 +407,53 @@ index b23e061..5848774 100644
  import type {
  	AnyModel,
  	Api,
-@@ -14,6 +15,24 @@ import type {
+@@ -14,24 +15,25 @@ import type {
  } from "../types.ts";
  import { ModelsError } from "./models-error.ts";
  
+-/** The type of a model. Models without `type` are chat models. */
+-/**
+- * APIs whose adapters honour `credentials` (the shared Splyce lease option, see splyce-credentials.ts). Any other API must
+- * refuse the option rather than ignore it: ignoring it would let the adapter fall back to an ambient key. The owner of
+- * each adapter adds its API here when it is bound.
+- */
 +/** Only adapters bound to native credentials may bypass ordinary provider auth. */
-+export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
-+	"anthropic-messages",
-+	"google-generative-ai",
-+	"google-vertex",
+ export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
+ 	"anthropic-messages",
+ 	"google-generative-ai",
+ 	"google-vertex",
 +	"openai-completions",
 +	"openai-responses",
-+]);
-+
+ ]);
+ 
+-export function assertCredentialsSupported(api: string, options: { credentials?: unknown } | undefined): void {
 +export function assertCredentialsSupported(
 +	api: string,
 +	options: { credentials?: SplyceCredentials | undefined } | undefined,
 +): void {
-+	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
-+		throw new Error(`credentials are not supported for api ${api} yet`);
-+	}
-+}
-+
- /** The type of a model. Models without `type` are chat models. */
+ 	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
+ 		throw new Error(`credentials are not supported for api ${api} yet`);
+ 	}
+ }
+ 
++/** The type of a model. Models without `type` are chat models. */
  export function getModelType(model: AnyModel): ModelType {
  	return model.type ?? "chat";
+ }
 diff --git a/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts b/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
-index 2344257..456eabc 100644
+index 21eab03..456eabc 100644
 --- a/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
 +++ b/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
-@@ -4,7 +4,8 @@ import type Anthropic from "@anthropic-ai/sdk";
+@@ -4,7 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
  import { Type } from "typebox";
  import { describe, expect, it } from "vitest";
  import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 -import type { Api, Context, Model } from "../src/types.ts";
 +import type { Model } from "../src/types.ts";
-+import { normalizeContext } from "../src/utils/transcript.ts";
+ import { normalizeContext } from "../src/utils/transcript.ts";
  
  type Ev = { event: string; data: unknown };
- const sse = (events: Ev[]) =>
-@@ -38,7 +39,7 @@ const delta = (stop_reason: string, usage: Record<string, number>): Ev => ({
+@@ -39,7 +39,7 @@ const delta = (stop_reason: string, usage: Record<string, number>): Ev => ({
  });
  const msgStop: Ev = { event: "message_stop", data: { type: "message_stop" } };
  
@@ -500,27 +462,24 @@ index 2344257..456eabc 100644
  	id: "claude-haiku-4-5",
  	name: "Claude Haiku 4.5",
  	api: "anthropic-messages",
-@@ -49,11 +50,12 @@ const model = {
+@@ -50,12 +50,12 @@ const model = {
  	cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
  	contextWindow: 200000,
  	maxTokens: 64000,
--} as unknown as Model<Api>;
--const context = (): Context => ({
--	messages: [{ role: "user", content: "go", timestamp: 1 }],
--	tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
--});
+-} as unknown as Model<"anthropic-messages">;
 +};
-+const context = () =>
-+	normalizeContext({
-+		messages: [{ role: "user", content: "go", timestamp: 1 }],
-+		tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
+ const context = () =>
+ 	normalizeContext({
+ 		messages: [{ role: "user", content: "go", timestamp: 1 }],
+ 		tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
+-	} satisfies Context);
 +	});
  const run = async (events: Ev[]) => {
  	const s = streamAnthropic(model, context(), { client: client(sse(events)) });
  	const types: string[] = [];
 diff --git a/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts b/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts
 new file mode 100644
-index 0000000..082d111
+index 0000000..033acc5
 --- /dev/null
 +++ b/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts
 @@ -0,0 +1,229 @@
@@ -595,7 +554,7 @@ index 0000000..082d111
 +				credentials,
 +				transport: "sse",
 +				maxRetries: 0,
-+				headers: { authorization: "caller-override", "x-api-key": "caller-override" },
++				headers: { "x-trace": "fixture-trace" },
 +				fetch: async (input, init) => {
 +					sends++;
 +					expect(String(input)).toBe("https://provider.invalid/backend-api/codex/responses");
@@ -767,20 +726,20 @@ index 28877e9..7d1fe6f 100644
  	it("compat.stream throws before any adapter or SDK runs", () => {
  		expect(() => stream(unsupported(), context, { credentials })).toThrow(/not supported/);
 diff --git a/vendor/pi/packages/ai/test/splyce-credentials.test.ts b/vendor/pi/packages/ai/test/splyce-credentials.test.ts
-index f5011a8..f3bb22c 100644
+index cd15d0a..f3bb22c 100644
 --- a/vendor/pi/packages/ai/test/splyce-credentials.test.ts
 +++ b/vendor/pi/packages/ai/test/splyce-credentials.test.ts
-@@ -79,24 +79,24 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+@@ -79,25 +79,24 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
  import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
  import { stream as streamVertex } from "../src/api/google-vertex.ts";
  import { createLeasedFetch } from "../src/splyce-credentials.ts";
 -import type { Api, Context, Model } from "../src/types.ts";
 +import type { Api, Model } from "../src/types.ts";
-+import { normalizeContext } from "../src/utils/transcript.ts";
+ import { normalizeContext } from "../src/utils/transcript.ts";
  
  const SECRET = "sk-test-secret-0123456789";
  const nativeRedact = (text: string) => text.split(SECRET).join("[redacted]");
--const model = (provider: string, api: string, id: string, baseUrl: string) =>
+-const model = <TApi extends Api>(provider: string, api: TApi, id: string, baseUrl: string): Model<TApi> =>
 -	({
 -		id,
 -		name: id,
@@ -792,8 +751,8 @@ index f5011a8..f3bb22c 100644
 -		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
 -		contextWindow: 100000,
 -		maxTokens: 8000,
--	}) as unknown as Model<Api>;
--const context = (): Context => ({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+-	}) as unknown as Model<TApi>;
+-const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] } satisfies Context);
 +const model = <TApi extends Api>(provider: string, api: TApi, id: string, baseUrl: string): Model<TApi> => ({
 +	id,
 +	name: id,
@@ -811,18 +770,18 @@ index f5011a8..f3bb22c 100644
  	use: async <T>(consume: (s: string) => T | Promise<T>) => consume(secret),
  });
 diff --git a/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts b/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts
-index 82351a7..5660449 100644
+index e1887fe..5660449 100644
 --- a/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts
 +++ b/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts
-@@ -39,28 +39,29 @@ import { Type } from "typebox";
+@@ -39,22 +39,21 @@ import { Type } from "typebox";
  import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
  import { convertMessages } from "../src/api/google-shared.ts";
  import { stream as streamVertex } from "../src/api/google-vertex.ts";
 -import type { Api, AssistantMessage, Context, Model } from "../src/types.ts";
 +import type { Api, AssistantMessage, Model } from "../src/types.ts";
-+import { normalizeContext } from "../src/utils/transcript.ts";
+ import { normalizeContext } from "../src/utils/transcript.ts";
  
--const model = (provider: string, api: string, id: string) =>
+-const model = <TApi extends Api>(provider: string, api: TApi, id: string): Model<TApi> =>
 -	({
 -		id,
 -		name: id,
@@ -834,7 +793,7 @@ index 82351a7..5660449 100644
 -		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
 -		contextWindow: 100000,
 -		maxTokens: 8000,
--	}) as unknown as Model<Api>;
+-	}) as unknown as Model<TApi>;
 +const model = <TApi extends Api>(provider: string, api: TApi, id: string): Model<TApi> => ({
 +	id,
 +	name: id,
@@ -850,28 +809,23 @@ index 82351a7..5660449 100644
  const gemini = model("google", "google-generative-ai", "gemini-3-flash-preview");
  const vertex = model("google-vertex", "google-vertex", "gemini-3-flash-preview");
  
--const context = (): Context => ({
--	messages: [{ role: "user", content: "go", timestamp: 1 }],
--	tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
--});
-+const context = () =>
-+	normalizeContext({
-+		messages: [{ role: "user", content: "go", timestamp: 1 }],
-+		tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
+@@ -62,7 +61,7 @@ const context = () =>
+ 	normalizeContext({
+ 		messages: [{ role: "user", content: "go", timestamp: 1 }],
+ 		tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
+-	} satisfies Context);
 +	});
  const call = (extra: Record<string, unknown> = {}) => ({
  	functionCall: { id: "fc_1", name: "read", args: { path: "/workspace/a.txt" } },
  	...extra,
-@@ -83,11 +84,14 @@ describe("TD-20 Google families under the shared core contract", () => {
- 		const original = toolCalls(result.content)[0] as unknown as { thoughtSignature?: string };
+@@ -86,10 +85,13 @@ describe("TD-20 Google families under the shared core contract", () => {
  		expect(original.thoughtSignature).toBe("c2lnbmF0dXJlLTE=");
  
--		const replay = (target: Model<Api>) =>
+ 		const replay = (target: Model<"google-generative-ai">) =>
 -			convertMessages(target as Model<"google-generative-ai">, {
 -				...context(),
 -				messages: [...context().messages, result as AssistantMessage],
 -			});
-+		const replay = (target: Model<"google-generative-ai">) =>
 +			convertMessages(
 +				target,
 +				normalizeContext({
@@ -884,10 +838,10 @@ index 82351a7..5660449 100644
  		const otherModel = JSON.stringify(replay(model("google", "google-generative-ai", "gemini-2.5-flash")));
 diff --git a/vendor/pi/packages/ai/test/splyce-openai-credentials.test.ts b/vendor/pi/packages/ai/test/splyce-openai-credentials.test.ts
 new file mode 100644
-index 0000000..5dc5e61
+index 0000000..02c6806
 --- /dev/null
 +++ b/vendor/pi/packages/ai/test/splyce-openai-credentials.test.ts
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,344 @@
 +// Splyce #70: actual OpenAI SDK with a fake remote service; this is adapter evidence, not native-authority proof.
 +import { afterEach, describe, expect, it, vi } from "vitest";
 +import { stream as codex } from "../src/api/openai-codex-responses.ts";
@@ -991,7 +945,7 @@ index 0000000..5dc5e61
 +				credentials,
 +				fetch,
 +				maxRetries: 0,
-+				headers: { authorization: "caller-override", "x-api-key": "caller-override" },
++				headers: { "x-trace": "fixture-trace" },
 +			}).result();
 +			expect(result.stopReason).toBe("stop");
 +			expect(sends).toBe(1);
@@ -1184,6 +1138,54 @@ index 0000000..5dc5e61
 +	expect(state.uses).toBe(0);
 +	expect(sends).toBe(0);
 +});
++
++// #70: the shared header contract must also reject auth carried by model configuration.
++for (const [api, start] of [
++	[
++		"openai-completions",
++		(options: StreamOptions, headers: Record<string, string>) =>
++			chat({ ...makeModel("openai-completions"), headers }, context, options),
++	],
++	[
++		"openai-responses",
++		(options: StreamOptions, headers: Record<string, string>) =>
++			responses({ ...makeModel("openai-responses"), headers }, context, options),
++	],
++	[
++		"openai-codex-responses",
++		(options: StreamOptions, headers: Record<string, string>) =>
++			codex({ ...makeModel("openai-codex-responses"), headers }, context, options),
++	],
++] as const) {
++	for (const source of ["options", "model"] as const) {
++		it.each(["Authorization", "Proxy-Authorization", "X-Api-Key", "api-key", "X-Goog-Api-Key", "Cookie"])(
++			`${api} rejects ${source} auth header %s before any lease or send`,
++			async (name) => {
++				const token = `fixture.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } })).toString("base64")}.fixture`;
++				const { credentials, state } = leaseFixture(token);
++				let sends = 0;
++				const headers = { [name]: "caller-override" };
++				const result = await start(
++					{
++						credentials,
++						transport: "sse",
++						maxRetries: 0,
++						headers: source === "options" ? headers : {},
++						fetch: async () => {
++							sends++;
++							return new Response(payload(api), { headers: { "content-type": "text/event-stream" } });
++						},
++					},
++					source === "model" ? headers : {},
++				).result();
++				expect(result.stopReason).toBe("error");
++				expect(result.errorMessage).toMatch(/caller-supplied.*header/);
++				expect(state.uses).toBe(0);
++				expect(sends).toBe(0);
++			},
++		);
++	}
++}
 diff --git a/vendor/pi/packages/ai/test/splyce-openai-native-resolver.test.ts b/vendor/pi/packages/ai/test/splyce-openai-native-resolver.test.ts
 new file mode 100644
 index 0000000..b4d5baf
@@ -1596,21 +1598,31 @@ index 0000000..5b7665c
 +	});
 +});
 diff --git a/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts b/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
-index 6df2065..2a386e1 100644
+index 7830a1a..0b82dbc 100644
 --- a/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
 +++ b/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
-@@ -82,25 +82,25 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+@@ -76,34 +76,33 @@ vi.mock("@google/genai", () => {
+ 	};
+ });
+ 
+-import type { ProviderConnectionRecord } from "../../../../../packages/splyce-pi/src/contracts.ts";
++import type { ProviderConnectionRecord } from "@splyce/pi/contracts";
++import type { ProviderAdmissionPort } from "@splyce/pi/provider-admission";
+ import { NativeCredentialResolver } from "../../../../../packages/splyce-pi/src/credential-resolver.ts";
+-import type { ProviderAdmissionPort } from "../../../../../packages/splyce-pi/src/provider-admission.ts";
+ import type { CredentialRequest } from "../../../../../packages/splyce-pi/src/provider-auth.ts";
+ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
  import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
  import { stream as streamVertex } from "../src/api/google-vertex.ts";
  import type { SplyceCredentials } from "../src/splyce-credentials.ts";
 -import type { Api, Context, Model } from "../src/types.ts";
 +import type { Api, Model } from "../src/types.ts";
-+import { normalizeContext } from "../src/utils/transcript.ts";
+ import { normalizeContext } from "../src/utils/transcript.ts";
  
  const SECRET = "e2e-secret-value-0123456789";
  const ADMITTED = "endpoint-admitted";
  
--const model = (provider: string, api: string, baseUrl: string) =>
+-const model = <TApi extends Api>(provider: string, api: TApi, baseUrl: string): Model<TApi> =>
 -	({
 -		id: "m-1",
 -		name: "m-1",
@@ -1622,8 +1634,8 @@ index 6df2065..2a386e1 100644
 -		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
 -		contextWindow: 100000,
 -		maxTokens: 8000,
--	}) as unknown as Model<Api>;
--const context = (): Context => ({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+-	}) as unknown as Model<TApi>;
+-const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] } satisfies Context);
 +const model = <TApi extends Api>(provider: string, api: TApi, baseUrl: string): Model<TApi> => ({
 +	id: "m-1",
 +	name: "m-1",
@@ -1639,4 +1651,4 @@ index 6df2065..2a386e1 100644
 +const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
  
  /** Interface-only upstream; this is the smallest faithful implementation: admit only the bound endpoint. */
- const admission = (connectionId: string, revision: string) => ({
+ /** The per-action port the native layer constructs: the action's signal is bound at construction, so admit takes two arguments. */

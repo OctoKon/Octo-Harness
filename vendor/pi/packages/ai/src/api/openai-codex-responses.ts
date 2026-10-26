@@ -275,7 +275,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 		};
 
 		try {
-			assertCredentialOptions(options ?? {});
+			assertCredentialOptions(options ?? {}, model.headers);
 			credentials = options?.credentials;
 			if (credentials && options?.transport !== "sse") {
 				throw new Error("Native Codex credentials require explicit SSE transport");

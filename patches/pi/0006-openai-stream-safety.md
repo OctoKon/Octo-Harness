@@ -4,7 +4,7 @@ Refs [TD-19 / issue 70](https://github.com/OctoKon/Splyce/issues/70).
 Donor: Pi commit `d5b3de22d0e24a3e9c38a9410d3329b099717283`,
 `@earendil-works/pi-ai` 1.4.0. Preserve the donor MIT license.
 Apply `0006-openai-stream-safety.patch` from the Splyce root after the native
-bootstrap and patch 0004's shared credential routing handoff at `079a2bb`.
+bootstrap and patch 0004's shared credential routing handoff at `b0dde52`.
 The native resolver integration cases also require the reviewed TD-16 resolver
 at `febf67d`; native changes are consumed as a dependency, not bundled here.
 The initial stream-cleanup slice is checkpointed separately at `da0ae10`.
@@ -49,8 +49,9 @@ establish equivalence to every artifact built from the donor source pin.
 Chat Completions and Responses now use the shared native lease/redactor option
 through their direct, compatibility and Models stream/simple entrypoints. The
 actual OpenAI SDK talks to a deterministic fake service in the tests. Every HTTP
-send obtains a fresh lease use, replaces caller authentication with the leased
-bearer, refuses redirects and preserves the admitted endpoint. A revoked lease
+send obtains a fresh lease use, replaces the SDK placeholder with the leased
+bearer, refuses redirects and preserves the admitted endpoint. Caller or model
+configuration cannot supply a competing auth header. A revoked lease
 stops the next retry. Native redaction runs inside a live lease on terminal error
 text; an unavailable lease produces a fixed safe message. Request
 classification for ChatGPT sign-in returns only a boolean from the lease scope;
@@ -91,6 +92,16 @@ keeps the Models entrypoint within its existing import-graph budget. Shared test
 models use their concrete API type and normalized transcript contexts. The full
 vendor `npm run check` passes with TypeScript 7.0.2, original graph budgets and
 browser smoke checks. No dependency, threshold or assertion is relaxed.
+
+The `b0dde52` shared handoff adds caller-auth, custom-client and Google payload
+guards. All three OpenAI adapters pass both option and model headers to that
+assertion; 18 model-header cases failed before this wiring, and all 36 header
+cases now pass before any lease or send. The admission fixture uses the actual
+native package type declarations, built by `build:contracts`, to keep native
+implementation syntax outside the donor's erasable TypeScript source closure.
+The combined check passes 217 provider/legacy cases. One inherited Google
+cross-origin redirect case remains TODO pending native egress mediation; it is
+not a passing qualification result.
 
 ## Integration still required
 
