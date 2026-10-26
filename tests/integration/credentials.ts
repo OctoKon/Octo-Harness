@@ -421,3 +421,165 @@ test("register rejects malformed references at the trust boundary", () => {
     resolver.register(binding({ kind: "env", name: "K" }, { endpointRef: "" })),
   );
 });
+
+const deferred = <T>() => {
+  let resolve: (v: T) => void = () => {};
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+};
+const flush = () => new Promise((r) => setImmediate(r));
+
+test("R1: a binding replaced while resolve awaits the source fails closed STALE and leases nothing", async () => {
+  const read = deferred<string>();
+  const resolver = new NativeCredentialResolver({
+    env: {},
+    readCredentialStore: () => read.promise,
+  });
+  resolver.register(binding({ kind: "credentialStore", target: "t" }));
+  const pending = resolver.resolve(request());
+  resolver.register(
+    binding(
+      { kind: "credentialStore", target: "t" },
+      { connectionRevision: "r2" },
+    ),
+  );
+  read.resolve(STORE_SECRET);
+  await rejectsWith(pending, "CREDENTIAL_STALE_REVISION");
+  assert.equal(resolver.redact(STORE_SECRET), STORE_SECRET); // never leased
+});
+
+test("R1: a binding replaced during the helper decision spawns nothing and fails STALE", async () => {
+  const file = stateFile();
+  const outcomes: HelperOutcome[] = [];
+  const decision = deferred<void>();
+  const resolver = new NativeCredentialResolver({
+    env: {},
+    helpers: {
+      "helper-ref": {
+        file: process.execPath,
+        args: [helperScript, "ok", file],
+      },
+    },
+    admitHelper: async () => {
+      await decision.promise;
+      return { intentId: "i", outcome: (o) => void outcomes.push(o) };
+    },
+  });
+  resolver.register(binding({ kind: "helper", commandRef: "helper-ref" }));
+  const pending = resolver.resolve(request());
+  resolver.register(
+    binding(
+      { kind: "helper", commandRef: "helper-ref" },
+      { connectionRevision: "r2" },
+    ),
+  );
+  decision.resolve();
+  await rejectsWith(pending, "CREDENTIAL_STALE_REVISION");
+  assert.deepEqual(spawnedPids(file), []);
+  assert.deepEqual(outcomes, [{ status: "aborted", exitCode: null }]);
+});
+
+test("R1: a lease is unusable once its binding is replaced, before or during use", async () => {
+  const resolver = new NativeCredentialResolver({
+    env: { TD16_KEY: ENV_SECRET },
+  });
+  resolver.register(binding({ kind: "env", name: "TD16_KEY" }));
+  const before = await resolver.resolve(request());
+  const during = await resolver.resolve(request());
+  const gate = deferred<void>();
+  const inFlight = during.use(async (s) => {
+    await gate.promise;
+    return s;
+  });
+  resolver.register(
+    binding({ kind: "env", name: "TD16_KEY" }, { connectionRevision: "r2" }),
+  );
+  await rejectsWith(
+    before.use((s) => s),
+    "CREDENTIAL_STALE_REVISION",
+  );
+  gate.resolve();
+  await rejectsWith(inFlight, "CREDENTIAL_STALE_REVISION");
+  await rejectsWith(
+    during.use((s) => s),
+    "CREDENTIAL_REVOKED",
+  );
+});
+
+test("R2: abort or revoke during use rejects REVOKED once, before the use ends, and drops late output", async () => {
+  const resolver = new NativeCredentialResolver({
+    env: { TD16_KEY: ENV_SECRET },
+  });
+  resolver.register(binding({ kind: "env", name: "TD16_KEY" }));
+  for (const stop of ["abort", "revoke"] as const) {
+    const controller = new AbortController();
+    const lease = await resolver.resolve(
+      request({ signal: controller.signal }),
+    );
+    const gate = deferred<void>();
+    let settled = 0;
+    const inFlight = lease
+      .use(async (s) => {
+        await gate.promise;
+        return `late ${s}`;
+      })
+      .finally(() => {
+        settled += 1;
+      });
+    if (stop === "abort") controller.abort();
+    else lease.revoke();
+    await rejectsWith(inFlight, "CREDENTIAL_REVOKED"); // gate still closed
+    gate.resolve();
+    await gate.promise;
+    await flush();
+    assert.equal(settled, 1);
+  }
+});
+
+test("R3: a pending use keeps its secret redactable after revoke/rotation until it finishes", async () => {
+  const env: Record<string, string> = { TD16_KEY: ENV_SECRET };
+  const resolver = new NativeCredentialResolver({ env });
+  resolver.register(binding({ kind: "env", name: "TD16_KEY" }));
+  const a = await resolver.resolve(request());
+  const b = await resolver.resolve(request());
+  const gate = deferred<void>();
+  const inFlight = a.use(async (s) => {
+    await gate.promise;
+    throw new Error(`late failure ${s}`);
+  });
+  b.revoke(); // releasing another lease of the same value
+  a.revoke(); // and the pending use's own lease
+  env.TD16_KEY = STORE_SECRET; // rotation to a newer lease
+  resolver.register(
+    binding({ kind: "env", name: "TD16_KEY" }, { connectionRevision: "r2" }),
+  );
+  const rotated = await resolver.resolve(request({ connectionRevision: "r2" }));
+  rotated.revoke();
+  await rejectsWith(inFlight, "CREDENTIAL_REVOKED");
+  assert.equal(resolver.redact(`x ${ENV_SECRET}`), "x [REDACTED]");
+  gate.resolve();
+  await gate.promise;
+  await flush();
+  assert.equal(resolver.redact(ENV_SECRET), ENV_SECRET); // dropped once finished
+});
+
+test("R3: errors raised during a use are redacted, including their causes", async () => {
+  const resolver = new NativeCredentialResolver({
+    env: { TD16_KEY: ENV_SECRET },
+  });
+  resolver.register(binding({ kind: "env", name: "TD16_KEY" }));
+  const lease = await resolver.resolve(request());
+  const err = await lease
+    .use((s) => {
+      throw new Error(`upstream rejected ${s}`, {
+        cause: new Error(`key ${s}`),
+      });
+    })
+    .catch((e: unknown) => e);
+  assert.ok(err instanceof Error);
+  const text = inspect(err, { depth: 5 });
+  assert.ok(!text.includes(ENV_SECRET), text);
+  assert.equal(err.message, "upstream rejected [REDACTED]");
+});

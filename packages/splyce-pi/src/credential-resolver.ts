@@ -125,17 +125,26 @@ export class NativeCredentialResolver implements CredentialResolver {
         "endpoint or egress policy not bound to this connection",
       );
 
-    const secret = await this.#read(binding.source, request);
+    // Re-checked after every await: a cancel or a replaced binding fails closed.
+    const current = () =>
+      this.#bindings.get(binding.providerConnectionId) === binding;
+    const check = () => {
+      if (signal?.aborted) revoked();
+      if (!current())
+        fail("CREDENTIAL_STALE_REVISION", "connection binding changed");
+    };
+    const secret = await this.#read(binding.source, request, check);
     // Late result after cancellation is dropped here: never leased, never kept.
-    if (signal?.aborted) revoked();
+    check();
     if (!nonEmpty(secret))
       fail("CREDENTIAL_UNAVAILABLE", "credential source returned nothing");
-    return this.#lease(secret as string, signal);
+    return this.#lease(secret as string, signal, current);
   }
 
   async #read(
     source: CredentialSource,
     request: CredentialRequest,
+    check: () => void,
   ): Promise<string | undefined> {
     if (source.kind === "env") return this.#deps.env[source.name];
     if (source.kind === "credentialStore") {
@@ -161,39 +170,101 @@ export class NativeCredentialResolver implements CredentialResolver {
       );
     }
     if (!intent) fail("CREDENTIAL_HELPER_NOT_ADMITTED", "helper denied");
-    const { outcome, stdout } = request.signal?.aborted
+    let halted: unknown;
+    try {
+      check();
+    } catch (e) {
+      halted = e;
+    }
+    const { outcome, stdout } = halted
       ? { outcome: { status: "aborted", exitCode: null } as const, stdout: "" }
       : await runHelper(command, request.signal);
     await (intent as HelperIntent).outcome(outcome);
+    if (halted) throw halted;
     if (outcome.status === "aborted") return undefined;
     if (outcome.status !== "succeeded")
       fail("CREDENTIAL_UNAVAILABLE", `helper ${outcome.status}`);
     return stdout.replace(/\r?\n$/, "");
   }
 
-  #lease(value: string, signal: AbortSignal | undefined): SecretLease {
+  #lease(
+    value: string,
+    signal: AbortSignal | undefined,
+    current: () => boolean,
+  ): SecretLease {
     const entry = { secret: value };
     const active = this.#active;
+    const redact = this.redact;
     active.add(entry);
     let live = true;
-    const revoke = () => {
-      live = false;
+    let pending = 0;
+    const cancels = new Set<() => void>();
+    // The secret stays redactable until the lease is dead AND no use is in flight.
+    const drop = () => {
+      if (live || pending > 0) return;
       entry.secret = "";
       active.delete(entry);
+    };
+    const revoke = () => {
+      if (!live) return;
+      live = false;
       signal?.removeEventListener("abort", revoke);
+      for (const cancel of cancels) cancel();
+      drop();
+    };
+    const guard = () => {
+      if (!live) fail("CREDENTIAL_REVOKED", "lease revoked");
+      if (!current()) {
+        revoke();
+        fail("CREDENTIAL_STALE_REVISION", "connection binding changed");
+      }
     };
     signal?.addEventListener("abort", revoke, { once: true });
     return Object.freeze({
-      use: async <T>(consume: (secret: string) => T | Promise<T>) => {
-        if (!live) fail("CREDENTIAL_REVOKED", "lease revoked");
-        return consume(entry.secret);
-      },
+      use: <T>(consume: (secret: string) => T | Promise<T>) =>
+        new Promise<T>((resolve, reject) => {
+          guard();
+          pending += 1;
+          const cancel = () =>
+            reject(new CredentialError("CREDENTIAL_REVOKED", "lease revoked"));
+          cancels.add(cancel);
+          // A result or error after revoke/abort is discarded (reject already ran).
+          const finish = (ok: boolean, v: unknown) => {
+            cancels.delete(cancel);
+            try {
+              guard();
+              if (ok) resolve(v as T);
+              else reject(scrub(v, redact));
+            } catch (e) {
+              reject(e);
+            } finally {
+              pending -= 1;
+              drop();
+            }
+          };
+          new Promise<T>((r) => r(consume(entry.secret))).then(
+            (v) => finish(true, v),
+            (e: unknown) => finish(false, e),
+          );
+        }),
       revoke,
       toString: () => "[SecretLease]",
       toJSON: () => "[SecretLease]",
     });
   }
 }
+
+/** Redact an error raised inside `use` (message, stack and cause chain) in place. */
+const scrub = (e: unknown, redact: Redactor): unknown => {
+  if (typeof e === "string") return redact(e);
+  for (let err = e, depth = 0; err instanceof Error && depth < 8; depth += 1) {
+    err.message = redact(err.message);
+    if (err.stack) err.stack = redact(err.stack);
+    if (typeof err.cause === "string") err.cause = redact(err.cause);
+    err = err.cause;
+  }
+  return e;
+};
 
 const runHelper = (
   command: HelperCommand,
