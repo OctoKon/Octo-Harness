@@ -27,7 +27,9 @@ The official [Tauri templates](https://v2.tauri.app/start/create-project/) expli
 | Case                    | Required observation                                                                                                                                                                                                                                                                             |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `R1_signature_coverage` | Every shipped PE (installer, app, uninstaller and Node sidecar) passes `signtool verify /pa` with a timestamp, or the release is labeled unsigned; signing ran on a GitHub-hosted runner, and the attestation covers the signed bytes with an SBOM derived from lockfiles and the staged bundle. |
-| `R1_windows11_install`  | On Windows 11, a non-admin user installs and uninstalls with Smart App Control both on and off, with WebView2 missing in both bootstrapper and offline modes; the result and any block are recorded, and uninstall leaves no unowned residue while user data follows the retention choice.       | Development/build dependencies are excluded from the shipping runtime unless the actual dependency audit proves they are required. |
+| `R1_windows11_install`  | On Windows 11, a non-admin user installs and uninstalls with Smart App Control both on and off, with WebView2 missing in both bootstrapper and offline modes; the result and any block are recorded, and uninstall leaves no unowned residue while user data follows the retention choice.       |
+
+Development/build dependencies are excluded from the shipping runtime unless the actual dependency audit proves they are required. |
 
 ## Frontend and editor comparison
 
