@@ -18,6 +18,25 @@ export interface SplyceCredentials {
 	readonly redact: (text: string) => string;
 }
 
+/**
+ * APIs whose adapters honour `credentials`. Any other API must refuse the option rather than ignore it: ignoring it
+ * would let the adapter fall back to an ambient key. The owner of each adapter adds its API here when it is bound.
+ */
+export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
+	"anthropic-messages",
+	"google-generative-ai",
+	"google-vertex",
+]);
+
+export function assertCredentialsSupported(
+	api: string,
+	options: { credentials?: SplyceCredentials | undefined } | undefined,
+): void {
+	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
+		throw new Error(`credentials are not supported for api ${api} yet`);
+	}
+}
+
 const identity = (text: string): string => text;
 
 /** The redactor to apply to error text: the native one when credentials are in use, otherwise nothing is leased. */

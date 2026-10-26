@@ -5,6 +5,7 @@ import {
 	type ThinkingConfig,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import { assertCredentialOptions, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -42,7 +43,6 @@ import {
 	toGoogleThinkingLevel,
 	usesGoogleThinkingLevel,
 } from "./google-shared.ts";
-import { assertCredentialOptions, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 export interface GoogleOptions extends StreamOptions {
@@ -106,7 +106,9 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 				() =>
 					credentials
 						? withLeasedSecret(credentials, (secret) =>
-								createClient(model, secret, options?.headers, options?.identity).models.generateContentStream(params),
+								createClient(model, secret, options?.headers, options?.identity).models.generateContentStream(
+									params,
+								),
 							)
 						: client!.models.generateContentStream(params),
 				options,
@@ -317,7 +319,7 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	if (!apiKey) {
+	if (!apiKey && !options?.credentials) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 

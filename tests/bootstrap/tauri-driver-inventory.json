@@ -255,7 +255,8 @@
     "name": "tauri-driver",
     "version": "2.1.0",
     "license": "Apache-2.0 OR MIT",
-    "repository": "https://github.com/tauri-apps/tauri"
+    "repository": "https://github.com/tauri-apps/tauri",
+    "crateSha256": "2f2e29bd6900fb718dfdc06f2e7a371d6087c085daaf83709847ef3e6b0c1953"
   },
   {
     "name": "thiserror",
