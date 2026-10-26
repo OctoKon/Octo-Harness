@@ -9,7 +9,7 @@
   </picture>
 </p>
 
-# Splyce
+<h1 align="center">Splyce<h1>
 
 A research-led foundation for a Windows desktop coding-agent application: capable models, useful memory, and changes backed by evidence.
 
