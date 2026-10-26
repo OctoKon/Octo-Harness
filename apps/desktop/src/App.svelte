@@ -5,18 +5,19 @@
 
   let status = $state("disconnected");
   let readiness = $state<Handshake["readiness"] | null>(null);
-  let engineWasReady = $state(false);
-  let stopped = $derived(engineWasReady && status === "disconnected");
+  let engineConnected = $state(false);
+  let stopped = $derived(engineConnected && status === "disconnected");
 
   onMount(() => {
     const unsub = connectionState.subscribe((val) => {
       status = val;
-      if (val === "ready") engineWasReady = true;
+      if (val === "disconnected") readiness = null;
     });
 
     handshake()
       .then((verified) => {
         readiness = verified.readiness;
+        engineConnected = true;
       })
       .catch(() => {
         // Handshake rejection leaves status in 'unavailable' or 'error'
