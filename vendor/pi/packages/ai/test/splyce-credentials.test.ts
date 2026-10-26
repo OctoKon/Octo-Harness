@@ -71,10 +71,11 @@ vi.mock("@google/genai", () => {
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
 import { stream as streamVertex } from "../src/api/google-vertex.ts";
-import { createLeasedFetch, createSecretTracker } from "../src/splyce-credentials.ts";
+import { createLeasedFetch } from "../src/splyce-credentials.ts";
 import type { Api, Context, Model } from "../src/types.ts";
 
 const SECRET = "sk-test-secret-0123456789";
+const nativeRedact = (text: string) => text.split(SECRET).join("[redacted]");
 const model = (provider: string, api: string, id: string, baseUrl: string) =>
 	({
 		id,
@@ -110,6 +111,10 @@ const expiringLease = (times: number) => {
 	};
 };
 const seen = (list: Array<Record<string, unknown>>) => JSON.stringify(list);
+const creds = (leaseOrBroken: { use: <T>(c: (s: string) => T | Promise<T>) => Promise<T> }) => ({
+	lease: leaseOrBroken,
+	redact: nativeRedact,
+});
 
 /** Records what actually leaves through fetch; the SDK mock sends through it like the real client. */
 const wire = { sent: [] as Array<{ headers: Headers; redirect: string | undefined }> };
@@ -177,20 +182,20 @@ beforeEach(() => {
 
 describe.each(families)("credentials option: $name", (family) => {
 	it("delivers the leased secret and the admitted base URL", async () => {
-		const result = await family.run({ credentials: { lease: lease() } });
+		const result = await family.run({ credentials: creds(lease()) });
 		expect(result.stopReason).not.toBe("error");
 		expect(family.delivered()).toContain(SECRET);
 		expect(family.baseKey(family.sdkCalls()[0]!)).toBe(family.baseUrl);
 	});
 
 	it("never stores the secret in client options when a lease is used", async () => {
-		await family.run({ credentials: { lease: lease() } });
+		await family.run({ credentials: creds(lease()) });
 		if (family.perSend) expect(seen(family.sdkCalls())).not.toContain(SECRET);
 		expect(seen(family.sdkCalls())).not.toContain("env-secret");
 	});
 
 	it("rejects apiKey together with credentials before anything is sent", async () => {
-		const result = await family.run({ apiKey: "other-key", credentials: { lease: lease() } });
+		const result = await family.run({ apiKey: "other-key", credentials: creds(lease()) });
 		expect(result.stopReason).toBe("error");
 		expect(family.sdkCalls()).toHaveLength(0);
 		expect(wire.sent).toHaveLength(0);
@@ -199,7 +204,7 @@ describe.each(families)("credentials option: $name", (family) => {
 	});
 
 	it("fails closed on a revoked lease: nothing delivered, no env fallback", async () => {
-		const result = await family.run({ credentials: { lease: brokenLease() }, env: family.ambient });
+		const result = await family.run({ credentials: creds(brokenLease()), env: family.ambient });
 		expect(result.stopReason).toBe("error");
 		expect(family.delivered().filter(Boolean)).toHaveLength(0);
 		expect(wire.sent).toHaveLength(0);
@@ -207,7 +212,7 @@ describe.each(families)("credentials option: $name", (family) => {
 	});
 
 	it("does not use ambient env keys when a lease is supplied", async () => {
-		await family.run({ credentials: { lease: lease() }, env: family.ambient });
+		await family.run({ credentials: creds(lease()), env: family.ambient });
 		expect(family.delivered()).toContain(SECRET);
 		expect(JSON.stringify(family.delivered())).not.toContain("env-secret");
 		expect(seen(family.sdkCalls())).not.toContain("env-secret");
@@ -215,7 +220,7 @@ describe.each(families)("credentials option: $name", (family) => {
 
 	it("redacts the secret from provider error text", async () => {
 		sdk.failWith = `401 invalid x-api-key ${SECRET}`;
-		const result = await family.run({ credentials: { lease: lease() } });
+		const result = await family.run({ credentials: creds(lease()) });
 		expect(result.stopReason).toBe("error");
 		expect(result.errorMessage ?? "").not.toContain(SECRET);
 		expect(result.errorMessage ?? "").toContain("[redacted]");
@@ -235,9 +240,18 @@ describe.each(families)("credentials option: $name", (family) => {
 
 	it("asks the lease again for every use instead of keeping the first answer", async () => {
 		const counted = expiringLease(100);
-		await family.run({ credentials: { lease: counted } });
+		await family.run({ credentials: creds(counted) });
 		expect(counted.state.uses).toBeGreaterThanOrEqual(1);
 		expect(counted.state.uses).toBe(family.delivered().filter(Boolean).length);
+	});
+
+	it("refuses credentials without a native redact function before anything is leased", async () => {
+		const counted = expiringLease(100);
+		const result = await family.run({ credentials: { lease: counted } as never });
+		expect(result.stopReason).toBe("error");
+		expect(counted.state.uses).toBe(0);
+		expect(family.sdkCalls()).toHaveLength(0);
+		expect(wire.sent).toHaveLength(0);
 	});
 
 	it("keeps the legacy apiKey path unchanged when no lease is given", async () => {
@@ -259,7 +273,7 @@ describe("Anthropic per-send enforcement", () => {
 		streamAnthropic(
 			model("anthropic", "anthropic-messages", "claude-haiku-4-5", "https://api.anthropic.com") as Model<"anthropic-messages">,
 			context(),
-			{ fetch: recordingFetch, credentials: { lease: credentialLease } },
+			{ fetch: recordingFetch, credentials: creds(credentialLease) },
 		).result();
 
 	it("a lease revoked after the first send stops every later send or SDK retry", async () => {
@@ -296,7 +310,7 @@ describe("shared credential helpers", () => {
 
 	it("keeps the headers of a Request input and lets init.headers take precedence", async () => {
 		const { calls, base } = record();
-		const leased = createLeasedFetch({ lease: lease() }, createSecretTracker(), "x-api-key", base);
+		const leased = createLeasedFetch(creds(lease()), "x-api-key", base);
 		const request = new Request("https://api.example/v1", {
 			method: "POST",
 			headers: { "content-type": "application/json", "x-trace": "from-request", authorization: "Bearer other" },
@@ -313,8 +327,7 @@ describe("shared credential helpers", () => {
 	it("writes a bearer scheme through format and drops a caller-supplied x-api-key", async () => {
 		const { calls, base } = record();
 		const leased = createLeasedFetch(
-			{ lease: lease() },
-			createSecretTracker(),
+			creds(lease()),
 			"authorization",
 			base,
 			(secret) => `Bearer ${secret}`,
@@ -325,23 +338,5 @@ describe("shared credential helpers", () => {
 		expect(calls[0]!.redirect).toBe("error");
 	});
 
-	it("keeps no copy of a secret when the native redactor is supplied", () => {
-		const calls: string[] = [];
-		const tracker = createSecretTracker((text) => {
-			calls.push(text);
-			return "<native>";
-		});
-		tracker.note(SECRET);
-		expect(tracker.redact(`key ${SECRET}`)).toBe("<native>");
-		expect(calls).toEqual([`key ${SECRET}`]);
-		tracker.clear();
-	});
 
-	it("forgets every noted secret on clear", () => {
-		const tracker = createSecretTracker();
-		tracker.note(SECRET);
-		expect(tracker.redact(`key ${SECRET}`)).toBe("key [redacted]");
-		tracker.clear();
-		expect(tracker.redact(`key ${SECRET}`)).toBe(`key ${SECRET}`);
-	});
 });

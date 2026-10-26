@@ -46,7 +46,7 @@ import {
 	toGoogleThinkingLevel,
 	usesGoogleThinkingLevel,
 } from "./google-shared.ts";
-import { assertCredentialOptions, createSecretTracker, withLeasedSecret } from "../splyce-credentials.ts";
+import { assertCredentialOptions, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 export interface GoogleVertexOptions extends StreamOptions {
@@ -93,7 +93,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			timestamp: Date.now(),
 		};
 
-		const secrets = createSecretTracker(options?.credentials?.redact);
+		const redact = redactorOf(options ?? {});
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
@@ -123,7 +123,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			const googleStream = await retryGoogleRequest(
 				() =>
 					credentials
-						? withLeasedSecret(credentials, secrets, (secret) =>
+						? withLeasedSecret(credentials, (secret) =>
 								createClientWithApiKey(model, secret, options?.headers, options?.identity).models.generateContentStream(
 									params,
 								),
@@ -321,12 +321,9 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			// Splyce TD-20: an errored or aborted response never carries tool calls into dispatch or persistence.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = secrets.redact(formatProviderError(normalizeProviderError(error)));
+			output.errorMessage = redact(formatProviderError(normalizeProviderError(error)));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
-		} finally {
-			// No leased key outlives the request that used it.
-			secrets.clear();
 		}
 	})();
 
