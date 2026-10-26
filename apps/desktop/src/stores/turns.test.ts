@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type {
   EventKind,
@@ -87,69 +88,46 @@ const snapshot = (
     state,
   });
 
-function runW4Scenario(): SplyceEventEnvelope[] {
-  return [
-    started("run_w4_01", "turn_01"),
-    event(
-      2,
-      "turn.thought_delta",
-      {
-        runId: "run_w4_01",
-        delta: "Analyzing directory layout and package dependencies.",
-        turnId: "turn_01",
-      } as EventPayloads["turn.thought_delta"],
-      false,
+type GuiFixture = {
+  caseId: string;
+  eventSequence: { delayMs: number; event: SplyceEventEnvelope }[];
+  assertions: {
+    expectedState: { runStatus: string; visibleToolCards: number };
+  };
+};
+
+function guiFixture(file: string): GuiFixture {
+  return JSON.parse(
+    readFileSync(
+      new URL(`../../../../tests/fixtures/gui/${file}`, import.meta.url),
+      "utf8",
     ),
-    delta(
-      3,
-      "I will inspect the local repository structure.\n\n",
-      "run_w4_01",
-      "turn_01",
-    ),
-    event(4, "turn.tool_intent", {
-      runId: "run_w4_01",
-      actionId: "act_w4_scan",
-      capabilityId: "fs.read_tree",
-      target: "apps/desktop/src",
-      argsSummary: "depth: 2, filter: '*.svelte'",
-    }),
-    event(5, "turn.tool_outcome", {
-      runId: "run_w4_01",
-      actionId: "act_w4_scan",
-      status: "success",
-      outcomeRef: "ref_fs_tree_result",
-    }),
-    delta(
-      6,
-      "Scan completed successfully. Found 14 Svelte components.",
-      "run_w4_01",
-      "turn_01",
-    ),
-    event(7, "turn.completed", {
-      runId: "run_w4_01",
-      candidateSnapshotId: "snap_w4_clean",
-      finalRevision: "rev_w4_01",
-    }),
-  ];
+  ) as GuiFixture;
 }
 
 describe("FUI-W4 stream & backpressure semantics", () => {
   it("reconstructs the exact interleaved text, card and terminal state", () => {
-    const state = applyAll(createTurnsState(), runW4Scenario());
+    const fixture = guiFixture("fui-w4-stream-backpressure.json");
+    const state = applyAll(
+      createTurnsState(),
+      fixture.eventSequence.map((step) => step.event),
+    );
     const run = state.runs.run_w4_01;
 
     expect(run).toBeDefined();
-    expect(run.status).toBe("completed");
+    expect(run.status).toBe(fixture.assertions.expectedState.runStatus);
     expect(run.text).toBe(
       "I will inspect the local repository structure.\n\nScan completed successfully. Found 14 Svelte components.",
     );
     expect(run.thought).toBe(
       "Analyzing directory layout and package dependencies.",
     );
-    expect(run.actions).toHaveLength(1);
+    expect(run.actions).toHaveLength(
+      fixture.assertions.expectedState.visibleToolCards,
+    );
     expect(run.actions[0]).toMatchObject({
       actionId: "act_w4_scan",
-      capabilityId: "fs.read_tree",
+      capabilityId: "cap_fs_read_tree",
       status: "success",
       outcomeRef: "ref_fs_tree_result",
     });
@@ -206,28 +184,19 @@ describe("FUI-W4 stream & backpressure semantics", () => {
 
 describe("FUI-W5 approval race semantics", () => {
   it("closes a stale approval on cancel and refuses a late response", () => {
-    const state = applyAll(createTurnsState(), [
-      started("run_w5_race", "turn_01"),
-      event(2, "approval.requested", {
-        approvalRequestId: "apr_w5_exec",
-        runId: "run_w5_race",
-        actionId: "act_w5_exec",
-        capabilityId: "shell.execute",
-        targetScope: "scope_spec",
-        normalizedTarget: "F:/test/Splyce/scripts/deploy.sh",
-        riskRationale: "Deploy script execution.",
-        timeoutMs: 15000,
-      }),
-      event(3, "turn.canceled", { runId: "run_w5_race", cleanedUp: true }),
-    ]);
+    const fixture = guiFixture("fui-w5-approval-race.json");
+    const state = applyAll(
+      createTurnsState(),
+      fixture.eventSequence.map((step) => step.event),
+    );
     const run = state.runs.run_w5_race;
 
-    expect(run.status).toBe("canceled");
+    expect(run.status).toBe(fixture.assertions.expectedState.runStatus);
     expect(run.actions).toHaveLength(1);
     expect(run.actions[0].approval?.state).toBe("canceled");
     expect(run.actions[0].status).toBe("canceled");
     expect(canRespondToApproval(state, "act_w5_exec")).toBe(false);
-    expect(approvalRequestIdFor(state, "act_w5_exec")).toBe("apr_w5_exec");
+    expect(approvalRequestIdFor(state, "act_w5_exec")).toBe("app_req_w5_01");
     expect(run.actions[0].outcomeRef).toBeUndefined();
   });
 
