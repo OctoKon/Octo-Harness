@@ -12,6 +12,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -257,4 +258,91 @@ test("createSnapshot rejects empty directory", () => {
     (err: unknown) =>
       err instanceof SnapshotError && err.code === "EMPTY_SNAPSHOT",
   );
+});
+
+// Links: never followed. Skip a case only if the OS refuses to create the link.
+const mkLink = (
+  t: { skip: (m: string) => void },
+  target: string,
+  path: string,
+) => {
+  try {
+    symlinkSync(target, path, "junction");
+  } catch (error) {
+    t.skip(`OS refused to create link: ${(error as Error).message}`);
+    return false;
+  }
+  return true;
+};
+
+const outsideFixture = () => {
+  const base = freshDir();
+  const root = join(base, "root");
+  const outside = join(base, "outside");
+  mkdirSync(root);
+  mkdirSync(outside);
+  writeFileSync(join(outside, "secret.txt"), "outside bytes");
+  writeFileSync(join(root, "a.ts"), "export const a = 1;");
+  return { root, outside };
+};
+
+test("a junction to a directory outside the root is a link; outside content is not hashed", (t) => {
+  const { root, outside } = outsideFixture();
+  if (!mkLink(t, outside, join(root, "escape"))) return;
+  const snap = createSnapshot(root);
+  const all = [...snap.manifest.tracked, ...snap.manifest.untracked];
+  assert.deepEqual(
+    all.map((e) => e.path),
+    ["a.ts"],
+  );
+  assert.equal(snap.manifest.links?.length, 1);
+  assert.equal(snap.manifest.links?.[0]?.path, "escape");
+  // outside content changing is not a change to the snapshot
+  writeFileSync(join(outside, "secret.txt"), "changed");
+  assert.doesNotThrow(() => verifyStale(snap, root));
+});
+
+test("a link cycle terminates and is recorded as a link", (t) => {
+  const { root } = outsideFixture();
+  mkdirSync(join(root, "d"));
+  if (!mkLink(t, root, join(root, "d", "loop"))) return;
+  const snap = createSnapshot(root);
+  assert.deepEqual(
+    snap.manifest.links?.map((l) => l.path),
+    ["d/loop"],
+  );
+  assert.doesNotThrow(() => verifyStale(snap, root));
+});
+
+test("a link inside the root is recorded, not descended into", (t) => {
+  const { root } = outsideFixture();
+  mkdirSync(join(root, "real"));
+  writeFileSync(join(root, "real", "x.ts"), "x");
+  if (!mkLink(t, join(root, "real"), join(root, "alias"))) return;
+  const snap = createSnapshot(root);
+  const paths = snap.manifest.tracked.map((e) => e.path).sort();
+  assert.deepEqual(paths, ["a.ts", "real/x.ts"]);
+  assert.deepEqual(
+    snap.manifest.links?.map((l) => l.path),
+    ["alias"],
+  );
+});
+
+test("verifyStale: retargeting, adding or removing a link after capture is stale", (t) => {
+  const { root, outside } = outsideFixture();
+  const other = join(root, "..", "other");
+  mkdirSync(other);
+  if (!mkLink(t, outside, join(root, "escape"))) return;
+  const snap = createSnapshot(root);
+  const stale = (err: unknown) =>
+    err instanceof SnapshotError && err.code === "STALE_RELEVANT_BYTES";
+
+  rmSync(join(root, "escape"), { recursive: true });
+  assert.throws(() => verifyStale(snap, root), stale); // removed
+  symlinkSync(other, join(root, "escape"), "junction");
+  assert.throws(() => verifyStale(snap, root), stale); // retargeted
+  rmSync(join(root, "escape"), { recursive: true });
+  symlinkSync(outside, join(root, "escape"), "junction");
+  symlinkSync(other, join(root, "extra"), "junction");
+  assert.throws(() => verifyStale(snap, root), stale); // added
 });

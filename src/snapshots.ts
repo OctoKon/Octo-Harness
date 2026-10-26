@@ -13,9 +13,10 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   mkdirSync,
   readdirSync,
+  lstatSync,
   readFileSync,
+  readlinkSync,
   renameSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -37,9 +38,17 @@ export interface SnapshotEntry {
   sha256: string;
 }
 
+/** A symlink/junction: recorded by target string, never followed or hashed. */
+export interface SnapshotLink {
+  path: string;
+  target: string;
+}
+
 export interface SnapshotManifest {
   tracked: SnapshotEntry[];
   untracked: SnapshotEntry[];
+  /** Absent in manifests persisted before link handling; treated as []. */
+  links?: SnapshotLink[];
   excluded: string[];
 }
 
@@ -108,6 +117,9 @@ export class Snapshot {
       ),
       untracked: Object.freeze(
         manifest.untracked.map((e) => Object.freeze({ ...e })),
+      ),
+      links: Object.freeze(
+        (manifest.links ?? []).map((l) => Object.freeze({ ...l })),
       ),
       excluded: Object.freeze([...manifest.excluded]),
     }) as SnapshotManifest;
@@ -279,8 +291,14 @@ function isExcluded(relPath: string, patterns: string[]): boolean {
   return false;
 }
 
-function listFiles(dir: string): string[] {
-  const out: string[] = [];
+/**
+ * Walk `dir` without ever following a link: lstat every entry; a symlink or
+ * junction is recorded by its target string and not descended into or hashed,
+ * so nothing outside the root (and no link cycle) can enter the manifest.
+ */
+function scan(dir: string): { files: string[]; links: SnapshotLink[] } {
+  const files: string[] = [];
+  const links: SnapshotLink[] = [];
   const walk = (base: string, prefix: string) => {
     let entries: string[];
     try {
@@ -291,16 +309,19 @@ function listFiles(dir: string): string[] {
     for (const name of entries) {
       if (name === ".git") continue;
       const full = join(base, name);
-      const st = statSync(full);
-      if (st.isDirectory()) {
-        walk(full, prefix ? `${prefix}/${name}` : name);
+      const rel = prefix ? `${prefix}/${name}` : name;
+      const st = lstatSync(full);
+      if (st.isSymbolicLink()) {
+        links.push({ path: rel, target: readlinkSync(full) });
+      } else if (st.isDirectory()) {
+        walk(full, rel);
       } else if (st.isFile()) {
-        out.push(prefix ? `${prefix}/${name}` : name);
+        files.push(rel);
       }
     }
   };
   walk(dir, "");
-  return out;
+  return { files, links };
 }
 
 function gitTrackedSet(dir: string): Set<string> | null {
@@ -329,7 +350,9 @@ export function createSnapshot(
   options?: SnapshotOptions,
 ): Snapshot {
   const exclude = options?.exclude ?? [];
-  const files = listFiles(dir);
+  const scanned = scan(dir);
+  const files = scanned.files;
+  const links = scanned.links.filter((l) => !isExcluded(l.path, exclude));
   const trackedSet = gitTrackedSet(dir);
   const untrackedSet = gitUntrackedSet(dir);
 
@@ -352,7 +375,7 @@ export function createSnapshot(
     }
   }
 
-  if (tracked.length === 0 && untracked.length === 0) {
+  if (tracked.length + untracked.length + links.length === 0) {
     throw new SnapshotError(
       "EMPTY_SNAPSHOT",
       "directory has no snapshot entries",
@@ -362,6 +385,7 @@ export function createSnapshot(
   return new Snapshot({
     tracked,
     untracked,
+    links,
     excluded: exclude,
   });
 }
@@ -389,11 +413,29 @@ export function verifyStale(snapshot: Snapshot, dir: string): void {
   }
   // Also check that no new relevant files appeared.
   const exclude = manifest.excluded;
-  const currentFiles = listFiles(dir).filter((f) => !isExcluded(f, exclude));
+  const current = scan(dir);
+  const currentFiles = current.files.filter((f) => !isExcluded(f, exclude));
   const known = new Set(allEntries.map((e) => e.path));
   for (const f of currentFiles) {
     if (!known.has(f)) {
       throw new SnapshotError("STALE_RELEVANT_BYTES", `new relevant file ${f}`);
+    }
+  }
+  // A link added, removed or retargeted since capture is a change.
+  const before = new Map((manifest.links ?? []).map((l) => [l.path, l.target]));
+  const now = new Map(
+    current.links
+      .filter((l) => !isExcluded(l.path, exclude))
+      .map((l) => [l.path, l.target]),
+  );
+  for (const [path, target] of now) {
+    if (before.get(path) !== target) {
+      throw new SnapshotError("STALE_RELEVANT_BYTES", `link changed ${path}`);
+    }
+  }
+  for (const path of before.keys()) {
+    if (!now.has(path)) {
+      throw new SnapshotError("STALE_RELEVANT_BYTES", `link removed ${path}`);
     }
   }
 }
