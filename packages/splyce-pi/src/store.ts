@@ -201,70 +201,72 @@ export class Store {
       db.exec("PRAGMA synchronous = FULL;");
       db.exec("PRAGMA foreign_keys = ON;");
       db.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)};`);
-      // Schema creation, layout stamping and shape validation are one
-      // transaction: an interrupted initialization leaves no layout row, so a
-      // later open fails closed instead of accepting a half-built schema.
+      // Initialization is one transaction with fail-closed semantics: an
+      // existing store stamped version 1 is validated, never healed; a fresh
+      // file has the schema created and stamped atomically.
       db.exec("BEGIN IMMEDIATE;");
       db.exec(
         "CREATE TABLE IF NOT EXISTS store_meta (" +
           "key TEXT PRIMARY KEY, value TEXT NOT NULL)",
       );
-      db.exec(
-        "CREATE TABLE IF NOT EXISTS records (" +
-          "seq INTEGER PRIMARY KEY AUTOINCREMENT, " +
-          "kind TEXT NOT NULL, " +
-          "record_id TEXT NOT NULL UNIQUE, " +
-          "schema_version INTEGER NOT NULL, " +
-          "scope_id TEXT NOT NULL, " +
-          "created_at TEXT NOT NULL, " +
-          "payload TEXT NOT NULL)",
-      );
-      db.exec(
-        "CREATE INDEX IF NOT EXISTS records_scope_seq " +
-          "ON records (scope_id, seq)",
-      );
-      db.exec(
-        "CREATE TABLE IF NOT EXISTS deletions (" +
-          "record_id TEXT PRIMARY KEY, " +
-          "generation INTEGER NOT NULL, " +
-          "deleted_at TEXT NOT NULL)",
-      );
-      db.exec(
-        "CREATE TABLE IF NOT EXISTS workspace_ownership (" +
-          "workspace_id TEXT PRIMARY KEY, " +
-          "owner_session_id TEXT NOT NULL, " +
-          "epoch INTEGER NOT NULL, " +
-          "acquired_at TEXT NOT NULL, " +
-          "renewed_at TEXT NOT NULL)",
-      );
       const row = db
         .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
         .get() as { value: string } | undefined;
       if (row === undefined) {
+        db.exec(
+          "CREATE TABLE IF NOT EXISTS records (" +
+            "seq INTEGER PRIMARY KEY AUTOINCREMENT, " +
+            "kind TEXT NOT NULL, " +
+            "record_id TEXT NOT NULL UNIQUE, " +
+            "schema_version INTEGER NOT NULL, " +
+            "scope_id TEXT NOT NULL, " +
+            "created_at TEXT NOT NULL, " +
+            "payload TEXT NOT NULL)",
+        );
+        db.exec(
+          "CREATE INDEX IF NOT EXISTS records_scope_seq " +
+            "ON records (scope_id, seq)",
+        );
+        db.exec(
+          "CREATE TABLE IF NOT EXISTS deletions (" +
+            "record_id TEXT PRIMARY KEY, " +
+            "generation INTEGER NOT NULL, " +
+            "deleted_at TEXT NOT NULL)",
+        );
+        db.exec(
+          "CREATE TABLE IF NOT EXISTS workspace_ownership (" +
+            "workspace_id TEXT PRIMARY KEY, " +
+            "owner_session_id TEXT NOT NULL, " +
+            "epoch INTEGER NOT NULL, " +
+            "acquired_at TEXT NOT NULL, " +
+            "renewed_at TEXT NOT NULL)",
+        );
         db.prepare(
           "INSERT INTO store_meta (key, value) VALUES ('layout_version', ?)",
         ).run(String(LAYOUT_VERSION));
-      } else if (row.value !== String(LAYOUT_VERSION)) {
-        throw new StoreError(
-          "STORE_LAYOUT",
-          `store layout version ${row.value} is not supported (expected ${String(LAYOUT_VERSION)})`,
-        );
-      }
-      // A store stamped version 1 must carry the expected tables, or the
-      // initialization was interrupted — fail closed, never heal silently.
-      const required: Array<[string, readonly string[]]> = [
-        ["records", RECORD_COLUMNS],
-        ["deletions", DELETION_COLUMNS],
-        ["workspace_ownership", OWNERSHIP_COLUMNS],
-      ];
-      for (const [table, columns] of required) {
-        const present = Store.tableColumns(db, table);
-        const missing = columns.filter((column) => !present.has(column));
-        if (missing.length > 0)
+      } else {
+        if (row.value !== String(LAYOUT_VERSION)) {
           throw new StoreError(
             "STORE_LAYOUT",
-            `store claims layout ${row?.value ?? String(LAYOUT_VERSION)} but table ${table} lacks columns: ${missing.join(", ")}`,
+            `store layout version ${row.value} is not supported (expected ${String(LAYOUT_VERSION)})`,
           );
+        }
+        // A store stamped version 1 must carry the expected tables with the
+        // expected columns; anything else fails closed — never heal silently.
+        const required: Array<[string, readonly string[]]> = [
+          ["records", RECORD_COLUMNS],
+          ["deletions", DELETION_COLUMNS],
+          ["workspace_ownership", OWNERSHIP_COLUMNS],
+        ];
+        for (const [table, columns] of required) {
+          const present = Store.tableColumns(db, table);
+          const missing = columns.filter((column) => !present.has(column));
+          if (missing.length > 0)
+            throw new StoreError(
+              "STORE_LAYOUT",
+              `store claims layout ${row.value} but table ${table} lacks columns: ${missing.join(", ")}`,
+            );
+        }
       }
       db.exec("COMMIT;");
       return new Store(path, db, busyTimeoutMs, maxInlineBytes);
@@ -682,7 +684,11 @@ export class Store {
           "OWNERSHIP_STALE_EPOCH",
           `workspace ${workspaceId} is at epoch ${String(row.epoch)}, caller presented ${String(expectedEpoch)}`,
         );
-      const epoch = expectedEpoch + 1;
+      // Renewals allocate from the global epoch too: the next epoch is never
+      // lower than the global counter, so a stale epoch can never revalidate
+      // after releases/renewals of other workspaces.
+      const epoch =
+        Math.max(this.metaGet("ownership_epoch"), Number(row.epoch)) + 1;
       this.db
         .prepare(
           "UPDATE workspace_ownership SET epoch = ?, renewed_at = ? WHERE workspace_id = ?",

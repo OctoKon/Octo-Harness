@@ -2,26 +2,28 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-// TD-09/TD-15 integration runner: J0_store_contract (store) and the TD-15
-// receipts cases. Usage: node scripts/run-store.mjs [--case J0_store_contract
-// | --case C1_reconnect_cursor]. Root npm wiring is TD-11's.
+// TD-09/TD-15 integration runner. One file per named case so a case can never
+// pass with zero matched tests: J0_store_contract runs the whole store suite
+// (all assertions, no name filtering); C1_reconnect_cursor runs the receipts
+// suite. Root npm wiring is TD-11's (serial handoff per itachi).
 
 const args = process.argv.slice(2);
-let namePattern = "S1|S2|S3|S4|S5|S6|S7|S8|rollback|ownership|receipt";
-if (args.length > 0) {
-  if (args.length !== 2 || args[0] !== "--case") {
-    console.error(
-      "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor]",
-    );
-    process.exit(2);
-  }
-  if (args[1] === "J0_store_contract")
-    namePattern = "S1|S2|S3|S4|S5|S6|S7|S8|rollback|ownership";
-  else if (args[1] === "C1_reconnect_cursor") namePattern = "receipt";
+let files;
+if (args.length === 0) {
+  files = ["tests/integration/store.ts", "tests/integration/receipts.ts"];
+} else if (args.length === 2 && args[0] === "--case") {
+  if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
+  else if (args[1] === "C1_reconnect_cursor")
+    files = ["tests/integration/receipts.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
+} else {
+  console.error(
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor]",
+  );
+  process.exit(2);
 }
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -32,13 +34,7 @@ for (const command of [
     "-p",
     "packages/splyce-pi/tsconfig.json",
   ],
-  [
-    "--test",
-    `--test-name-pattern=${namePattern}`,
-    "--test-timeout=120000",
-    "tests/integration/store.ts",
-    "tests/integration/receipts.ts",
-  ],
+  ["--test", "--test-timeout=120000", ...files],
 ]) {
   const result = spawnSync(process.execPath, command, {
     cwd: root,

@@ -439,6 +439,71 @@ test("durable canonical-workspace ownership: single writer, CAS epoch", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("stale ownership epochs can never revalidate across workspaces", () => {
+  const dir = freshDir();
+  const store = Store.open(join(dir, "store.db"));
+  const w1 = "C:\\workspaces\\one";
+  const w2 = "C:\\workspaces\\two";
+
+  const a1 = store.acquireWorkspace(w1, "s-a"); // epoch 1
+  const b1 = store.acquireWorkspace(w2, "s-b"); // epoch 2
+  assert.equal(a1.epoch, 1);
+  assert.equal(b1.epoch, 2);
+
+  // b renews -> 3, releases; a renews from epoch 1 -> must be 4 (global), so
+  // b's stale epoch 3 can never revalidate on re-acquire (gets 5).
+  const b3 = store.renewWorkspace(w2, "s-b", 2);
+  assert.equal(b3.epoch, 3);
+  store.releaseWorkspace(w2, "s-b", 3);
+  const a4 = store.renewWorkspace(w1, "s-a", 1);
+  assert.equal(a4.epoch, 4);
+  const b5 = store.acquireWorkspace(w2, "s-b");
+  assert.equal(b5.epoch, 5);
+  assert.throws(
+    () => store.renewWorkspace(w2, "s-b", 3),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "OWNERSHIP_STALE_EPOCH",
+  );
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a stamped v1 store with missing tables fails closed, never healed", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  // Build a database that claims layout_version 1 but has no store tables
+  // (interrupted initialization) — open must refuse it, not create them.
+  const raw = new DatabaseSync(path, { timeout: 5000 });
+  raw.exec(
+    "CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+  );
+  raw
+    .prepare(
+      "INSERT INTO store_meta (key, value) VALUES ('layout_version', '1')",
+    )
+    .run();
+  raw.close();
+
+  assert.throws(
+    () => Store.open(path),
+    (error: unknown) =>
+      error instanceof StoreError &&
+      error.code === "STORE_LAYOUT" &&
+      typeof error.message === "string" &&
+      error.message.includes("records"),
+  );
+  // The refused store stays untouched: no healing happened.
+  const verify = new DatabaseSync(path, { readOnly: true });
+  const tables = (
+    verify
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all() as Array<{ name: string }>
+  ).map((r) => r.name);
+  verify.close();
+  assert.ok(!tables.includes("records"));
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("S8 export and import: ids, ordering and schemaVersion survive", () => {
   for (let i = 0; i < trials; i += 1) {
     const dir = freshDir();
