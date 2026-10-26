@@ -16,6 +16,7 @@ import {
   selectionState,
   setupView,
   totalBytes,
+  unavailableModuleSnapshot,
   type InstallPlan,
   type ModuleSnapshot,
 } from "./modules";
@@ -466,6 +467,43 @@ describe("operation updates drive the Setup progression", () => {
     expect(view.canCancel.enabled).toBe(false);
     expect(view.canRetry.enabled).toBe(false);
     expect(view.canRetry.reason).toContain("Engine process exited.");
+  });
+});
+
+describe("shell placeholder snapshot", () => {
+  it("claims nothing when no setup or module service is connected", () => {
+    const snapshot = unavailableModuleSnapshot(
+      "No setup or module service is connected.",
+    );
+    expect(snapshot.engine).toBe("unavailable");
+    expect(snapshot.catalog.state).toBe("unavailable");
+    expect(snapshot.entries).toEqual([]);
+    expect(snapshot.installed).toEqual([]);
+    expect(snapshot.plan).toBeNull();
+    expect(snapshot.operation).toBeNull();
+    expect(snapshot.ambientConfigRefs).toEqual([]);
+    expect(snapshot.generation.state).toBe("unconfigured");
+
+    const setup = setupView(snapshot);
+    expect(setup.catalogLabel).toBe("Catalog unavailable");
+    expect(setup.catalogUnavailableReason).toContain(
+      "No setup or module service is connected.",
+    );
+    expect(setup.generationLabel).toBe("Generation unconfigured");
+    expect(
+      confirmInstallState({
+        engine: snapshot.engine,
+        engineReason: snapshot.engineReason,
+        plan: snapshot.plan,
+        selected: [],
+        executionGranted: false,
+      }).enabled,
+    ).toBe(false);
+
+    const modules = modulesView(snapshot);
+    expect(modules.rows).toEqual([]);
+    expect(modules.add.enabled).toBe(false);
+    expect(modules.emptyLabel).toContain("base is complete");
   });
 });
 
