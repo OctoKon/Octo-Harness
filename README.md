@@ -1,11 +1,13 @@
-<picture>
-  <source media="(prefers-color-scheme: dark) and (max-width: 640px)" srcset="assets/brand/hero-mobile-dark.svg">
-  <source media="(max-width: 640px)" srcset="assets/brand/hero-mobile-light.svg">
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/hero-dark.svg">
-  <img src="assets/brand/hero-light.svg" alt="Splyce — separate strands, one coherent agent harness" width="100%">
-</picture>
-
-# Splyce
+<p align="center">
+  <picture>
+    <!-- White Logo for Dark Mode users -->
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/spylce-white.svg">
+    <!-- Black Logo for Light Mode users -->
+    <source media="(prefers-color-scheme: light)" srcset="./assets/brand/slyce-black.svg">
+    <!-- Default fallback logo -->
+    <img alt="Spylce Logo" src="./assets/brand/slyce-black.svg" width="200">
+  </picture>
+</p>
 
 A research-led foundation for a Windows desktop coding-agent application: capable models, useful memory, and changes backed by evidence.
 
