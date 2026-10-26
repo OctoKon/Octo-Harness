@@ -89,11 +89,12 @@ async function getTauriInvoke(): Promise<
   return isTauriRuntime() ? invokeNative : null;
 }
 
-function handleLifecycle(event: EngineLifecycleEvent): void {
-  if (event.protocolVersion !== PROTOCOL_VERSION) return;
-  if (event.kind !== "engine_exited") return;
+function handleLifecycle(event: EngineLifecycleEvent): boolean {
+  if (event.protocolVersion !== PROTOCOL_VERSION) return false;
+  if (event.kind !== "engine_exited") return false;
   notifyState("disconnected");
   for (const dispose of [...activeSubscriptions.values()]) dispose();
+  return true;
 }
 
 /**
@@ -119,7 +120,10 @@ export async function handshake(): Promise<Handshake> {
   }
 
   const lifecycle = new Channel<EngineLifecycleEvent>();
-  lifecycle.onmessage = handleLifecycle;
+  let exited = false;
+  lifecycle.onmessage = (event) => {
+    exited = handleLifecycle(event) || exited;
+  };
 
   try {
     const raw = await invokeTauri("handshake", {
@@ -128,16 +132,14 @@ export async function handshake(): Promise<Handshake> {
       onLifecycle: lifecycle,
     });
     const verified = validateHandshake(raw);
-    lastHandshake = verified;
-    if (verified.readiness.state === "ready") {
-      notifyState("ready");
-    } else {
-      notifyState("unavailable");
+    if (!exited) {
+      lastHandshake = verified;
+      notifyState(verified.readiness.state);
     }
     return verified;
   } catch (err) {
     lifecycle.onmessage = () => {};
-    notifyState("error");
+    if (!exited) notifyState("error");
     throw err;
   }
 }
