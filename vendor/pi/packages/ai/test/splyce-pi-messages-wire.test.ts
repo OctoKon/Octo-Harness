@@ -184,4 +184,32 @@ describe("TD-23 Pi-native: revoked lease at error time", () => {
 		expect(result.stopReason).toBe("error");
 		expect(JSON.stringify(result)).not.toContain(SECRET);
 	});
+
+	it("a redactor that only knows the secret inside the lease never runs outside it: revoked lease -> generic terminal, no diagnostic", async () => {
+		let uses = 0;
+		let inside = false;
+		const result = await streamPi(model, context() as never, {
+			fetch: serve(() => new Response(`denied for ${SECRET}`, { status: 401 })),
+			credentials: {
+				lease: {
+					use: async <T>(consume: (s: string) => T | Promise<T>) => {
+						uses += 1;
+						if (uses > 1) throw new Error("lease revoked");
+						inside = true;
+						try {
+							return await consume(SECRET);
+						} finally {
+							inside = false;
+						}
+					},
+				},
+				// native-style redactor: it can only mask the secret while a lease is active, else it returns raw text.
+				redact: (t) => (inside ? t.split(SECRET).join("[REDACTED]") : t),
+			},
+		}).result();
+		expect(result.stopReason).toBe("error");
+		expect(JSON.stringify(result)).not.toContain(SECRET);
+		expect(result.errorMessage).toBe("Provider credential is no longer available");
+		expect(JSON.stringify(result)).not.toContain("pi_messages_response_failure");
+	});
 });

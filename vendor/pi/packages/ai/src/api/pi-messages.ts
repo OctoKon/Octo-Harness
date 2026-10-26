@@ -13,7 +13,7 @@ import {
 	assertCredentialOptions,
 	createLeasedFetch,
 	redactEventWithLease,
-	redactorOf,
+	redactWithLease,
 	type SplyceCredentials,
 } from "../splyce-credentials.ts";
 import type {
@@ -353,33 +353,12 @@ function parsePiMessagesEvent(raw: string): PiMessagesEvent | undefined {
 	return data && data !== "[DONE]" ? (JSON.parse(data) as PiMessagesEvent) : undefined;
 }
 
-const REDACTION_FAILED = "[redaction failed]";
-
-function safeRedact(redact: (text: string) => string, text: string): string {
-	try {
-		return redact(text);
-	} catch {
-		return REDACTION_FAILED;
-	}
-}
-
-/** Redacts every string key and value before anything is serialized, so a secret with quotes or control characters cannot hide behind JSON escaping. */
-function redactLeaves(value: unknown, redact: (text: string) => string, depth = 0): unknown {
-	if (typeof value === "string") return redact(value);
-	if (depth > 16 || value === null || typeof value !== "object") return value;
-	if (Array.isArray(value)) return value.map((item) => redactLeaves(item, redact, depth + 1));
-	const out: Record<string, unknown> = {};
-	for (const [key, item] of Object.entries(value)) out[redact(key)] = redactLeaves(item, redact, depth + 1);
-	return out;
-}
-
 async function createErrorEvent(
 	model: Model<"pi-messages">,
 	error: unknown,
 	aborted: boolean,
 	credentials?: SplyceCredentials,
 ): Promise<AssistantMessageEvent> {
-	const redact = redactorOf({ credentials });
 	const reason = aborted ? "aborted" : "error";
 	const assistantMessage: AssistantMessage = {
 		role: "assistant",
@@ -389,7 +368,9 @@ async function createErrorEvent(
 		model: model.id,
 		usage: createEmptyUsage(),
 		stopReason: reason,
-		errorMessage: safeRedact(redact, error instanceof Error ? error.message : String(error)),
+		// A native redactor knows the secret only inside the lease: redact there, and if the lease is gone the message
+		// degrades to a generic one rather than risking raw provider text.
+		errorMessage: await redactWithLease(credentials, error instanceof Error ? error.message : String(error)),
 		timestamp: Date.now(),
 	};
 
@@ -400,19 +381,16 @@ async function createErrorEvent(
 			error.diagnosticDetails,
 		);
 		// The diagnostic embeds the error and the response body. The shared lease-scoped sanitizer redacts every string
-		// key and value before serialization; if the lease is revoked or the redactor fails, the same local walk runs,
-		// and a second failure drops the diagnostic only, never the terminal event and never unredacted bytes.
-		let safe: unknown;
+		// key and value before serialization. If the lease is revoked or the redactor fails the diagnostic is dropped:
+		// the terminal event is still delivered and no unredacted byte is ever kept.
 		try {
-			safe = await redactEventWithLease(credentials, diagnostic);
+			appendAssistantMessageDiagnostic(
+				assistantMessage,
+				(await redactEventWithLease(credentials, diagnostic)) as typeof diagnostic,
+			);
 		} catch {
-			try {
-				safe = redactLeaves(diagnostic, redact);
-			} catch {
-				safe = undefined;
-			}
+			// generic terminal only
 		}
-		if (safe !== undefined) appendAssistantMessageDiagnostic(assistantMessage, safe as typeof diagnostic);
 	}
 
 	return { type: "error", reason, error: assistantMessage };
