@@ -898,9 +898,11 @@ export function createTurnStreamTransport(
       }
     }
 
-    channel.acceptedSeq = isSnapshot && "payload" in accepted
-      ? ((accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ?? 0)
-      : Math.max(channel.acceptedSeq, accepted.seq);
+    channel.acceptedSeq =
+      isSnapshot && "payload" in accepted
+        ? ((accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ??
+          0)
+        : Math.max(channel.acceptedSeq, accepted.seq);
 
     if (
       channel.transientFrames > TRANSPORT_LIMITS.rendererQueueFrames ||

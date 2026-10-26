@@ -238,7 +238,9 @@ describe("TurnStream component", () => {
     expect(
       document.querySelector('[data-testid="approval-allow-button"]'),
     ).toBeNull();
-    expect(document.body.textContent).not.toContain("Approval controls are not available");
+    expect(document.body.textContent).not.toContain(
+      "Approval controls are not available",
+    );
   });
 
   it("keeps partial text visible on cancel and announces the stop", () => {
