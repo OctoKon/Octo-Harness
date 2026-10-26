@@ -76,3 +76,13 @@ gates before publishing a new candidate.
 Pi's exact `undici` pin to 8.12.3, which includes the fix for
 [GHSA-xjj6-f33q-929c](https://github.com/nodejs/undici/security/advisories/GHSA-xjj6-f33q-929c).
 Regenerate and verify both npm lockfiles after applying it.
+
+## Pinned model data hydration
+
+`0005-hydrate-pinned-model-catalog.patch` applies after patch 0003. It adds a
+build-only `--hydrate-pinned` mode that fetches the existing
+`nix/model-catalog.json` revision, verifies its content hash, and runs Pi's
+existing hydrator without changing the pin. The Windows staging gate uses this
+mode before its offline build; `tests/bootstrap/hydrate-pinned-model-data.test.mjs`
+checks successful hydration, unavailable revisions, hash mismatches and pin
+preservation (#77).

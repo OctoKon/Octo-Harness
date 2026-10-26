@@ -14,6 +14,10 @@
     "./session-map": {
       "types": "./dist/session-map.d.ts",
       "import": "./dist/session-map.js"
+    },
+    "./provider-admission": {
+      "types": "./dist/provider-admission.d.ts",
+      "import": "./dist/provider-admission.js"
     }
   },
   "files": [

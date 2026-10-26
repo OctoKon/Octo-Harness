@@ -1,6 +1,7 @@
 use crate::process::EngineChild;
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -45,49 +46,188 @@ struct Inner {
     closed: bool,
 }
 
+struct Subscription {
+    scope_id: String,
+    events: Channel<Value>,
+    lifecycle: Channel<Value>,
+}
+
+#[derive(Default)]
+struct Subscriptions(HashMap<String, Subscription>);
+
+impl Subscriptions {
+    fn install(
+        &mut self,
+        session_id: &str,
+        after_seq: u64,
+        acknowledged: &Value,
+        events: Channel<Value>,
+        lifecycle: Channel<Value>,
+    ) -> Result<(), BridgeError> {
+        if acknowledged
+            .as_object()
+            .is_none_or(|fields| fields.len() != 3)
+            || acknowledged["sessionId"] != session_id
+            || acknowledged["afterSeq"] != after_seq
+            || !opaque(&acknowledged["scopeId"])
+        {
+            return Err(BridgeError::engine());
+        }
+        self.0.insert(
+            session_id.to_owned(),
+            Subscription {
+                scope_id: acknowledged["scopeId"].as_str().unwrap().to_owned(),
+                events,
+                lifecycle,
+            },
+        );
+        Ok(())
+    }
+
+    fn forward(&mut self, event: Value) -> Result<(), BridgeError> {
+        let session_id = event["sessionId"]
+            .as_str()
+            .ok_or_else(BridgeError::engine)?
+            .to_owned();
+        let Some(subscription) = self.0.get(&session_id) else {
+            // A replaced/closed renderer has no recipient; durable recovery uses replay.
+            return Ok(());
+        };
+        // DesktopBridge validates payload references and shapes in the native host;
+        // this transport leg additionally binds its envelope to the authorized ACK.
+        let spec: Value = serde_json::from_str(PROTOCOL).map_err(|_| BridgeError::engine())?;
+        let transient = matches!(
+            event["kind"].as_str(),
+            Some("turn.stream_delta" | "turn.thought_delta")
+        );
+        if event["protocolVersion"] != 1
+            || event["schemaVersion"] != 1
+            || event["scopeId"] != subscription.scope_id
+            || !opaque(&event["eventId"])
+            || !opaque(&event["recordId"])
+            || !event["seq"]
+                .as_u64()
+                .is_some_and(|seq| seq > 0 && seq <= 9_007_199_254_740_991)
+            || event["durable"] != !transient
+            || !matches_rule(&event["kind"], &spec["eventKinds"])
+            || !matches_rule(&event["createdAt"], &json!("text"))
+            || !matches_rule(&event["sourceIds"], &json!("refs"))
+            || event.get("payload").is_some() == event.get("payloadArtifactId").is_some()
+            || event.as_object().is_none_or(|fields| {
+                fields.keys().any(|field| {
+                    ![
+                        "schemaVersion",
+                        "protocolVersion",
+                        "recordId",
+                        "eventId",
+                        "createdAt",
+                        "sourceIds",
+                        "scopeId",
+                        "sessionId",
+                        "seq",
+                        "durable",
+                        "kind",
+                        "payload",
+                        "payloadArtifactId",
+                    ]
+                    .contains(&field.as_str())
+                })
+            })
+            || event.get("payloadArtifactId").is_some_and(|id| !opaque(id))
+            || event.get("payload").is_some_and(|payload| {
+                !payload.is_object()
+                    || serde_json::to_vec(payload).map_or(true, |bytes| {
+                        bytes.len() as u64
+                            > spec["transportLimits"]["maxInlineBytes"]
+                                .as_u64()
+                                .unwrap_or(0)
+                    })
+            })
+        {
+            return Err(BridgeError::engine());
+        }
+        if subscription.events.send(event).is_err() {
+            self.0.remove(&session_id);
+        }
+        Ok(())
+    }
+
+    fn close(&mut self, lifecycle: &Value) {
+        for (_, subscription) in self.0.drain() {
+            let _ = subscription.lifecycle.send(lifecycle.clone());
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct BridgeState {
     inner: Arc<Mutex<Inner>>,
+    subscriptions: Arc<Mutex<Subscriptions>>,
     next_id: Arc<AtomicU64>,
 }
 
 impl BridgeState {
     pub fn start(directory: &Path, digest: &str) -> Result<Self, crate::process::EngineError> {
         let child = EngineChild::spawn(directory, digest)?;
+        let events = child.events();
         let state = Self {
             inner: Arc::new(Mutex::new(Inner {
                 child: Some(child),
                 lifecycle: None,
                 closed: false,
             })),
+            subscriptions: Arc::new(Mutex::new(Subscriptions::default())),
             next_id: Arc::new(AtomicU64::new(1)),
         };
         let observer = state.clone();
         std::thread::spawn(move || {
+            let mut delivery_failed = false;
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(100));
+                let mut delivered = false;
+                if !delivery_failed {
+                    delivery_failed = events
+                        .drain()
+                        .map_err(|_| BridgeError::engine())
+                        .and_then(|events| {
+                            delivered = !events.is_empty();
+                            let mut subscriptions = observer
+                                .subscriptions
+                                .lock()
+                                .map_err(|_| BridgeError::engine())?;
+                            for event in events {
+                                subscriptions.forward(event)?;
+                            }
+                            Ok(())
+                        })
+                        .is_err();
+                }
                 let Ok(mut inner) = observer.inner.try_lock() else {
                     continue;
                 };
                 if inner.closed {
                     break;
                 }
-                if inner
+                let exited = inner
                     .child
                     .as_ref()
-                    .is_some_and(|child| !child.is_running())
-                {
-                    let clean = inner
+                    .is_some_and(|child| !child.is_running());
+                if exited && delivered && !delivery_failed {
+                    // Reap descendants now, then deliver every already-buffered batch
+                    // before closing renderer channels and announcing the exit.
+                    if inner
                         .child
                         .as_mut()
-                        .is_some_and(|child| child.stop().is_ok());
-                    if let Some(channel) = inner.lifecycle.take() {
-                        let _ = channel.send(json!({"protocolVersion":1,"kind":"engine_exited","expected":false,"exitCode":null,"cleanupComplete":clean}));
+                        .is_some_and(|child| child.stop().is_ok())
+                    {
+                        continue;
                     }
-                    if clean {
-                        inner.child = None;
-                    }
+                    delivery_failed = true;
+                }
+                if delivery_failed || !delivered && exited {
                     inner.closed = true;
+                    drop(inner);
+                    let _ = observer.finish(false);
                     break;
                 }
             }
@@ -96,11 +236,26 @@ impl BridgeState {
     }
 
     fn call(&self, method: &str, params: Value) -> Result<Value, BridgeError> {
+        self.call_with_response(method, params, |_| true)
+    }
+
+    fn call_with_response(
+        &self,
+        method: &str,
+        params: Value,
+        accept_response: impl FnOnce(&Value) -> bool,
+    ) -> Result<Value, BridgeError> {
         let mut inner = self.inner.try_lock().map_err(|_| BridgeError::denied())?;
+        if inner.closed {
+            return Err(BridgeError::engine());
+        }
         let id = format!("native-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
         let child = inner.child.as_mut().ok_or_else(BridgeError::engine)?;
         let reply = child
-            .request(&json!({"id":id,"method":method,"params":params}))
+            .request_with_response(
+                &json!({"id":id,"method":method,"params":params}),
+                accept_response,
+            )
             .map_err(|_| BridgeError::engine())?;
         let object = reply.as_object().ok_or_else(BridgeError::engine)?;
         if object.len() != 3 || reply["id"] != id {
@@ -113,20 +268,71 @@ impl BridgeState {
         }
     }
 
+    pub(crate) fn subscribe_channel(
+        &self,
+        session_id: String,
+        after_seq: u64,
+        on_event: Channel<Value>,
+        on_lifecycle: Channel<Value>,
+    ) -> Result<Value, BridgeError> {
+        if !opaque(&json!(session_id)) || after_seq > 9_007_199_254_740_991 {
+            return Err(BridgeError::denied());
+        }
+        // Resume the reader after installation, without holding delivery locks
+        // during the host round trip or accepting renderer-supplied scope.
+        let subscriptions = self.subscriptions.clone();
+        self.call_with_response(
+            "subscribe",
+            json!({"sessionId":session_id,"afterSeq":after_seq}),
+            move |reply| {
+                if reply.as_object().is_none_or(|fields| fields.len() != 3) {
+                    return false;
+                }
+                if reply["ok"] == false {
+                    return reply.get("error").is_some();
+                }
+                reply["ok"] == true
+                    && subscriptions.lock().is_ok_and(|mut subscriptions| {
+                        subscriptions
+                            .install(
+                                &session_id,
+                                after_seq,
+                                &reply["value"],
+                                on_event,
+                                on_lifecycle,
+                            )
+                            .is_ok()
+                    })
+            },
+        )
+    }
+
     pub fn stop(&self) -> Result<(), BridgeError> {
+        self.finish(true)
+    }
+
+    fn finish(&self, expected: bool) -> Result<(), BridgeError> {
         let mut inner = self.inner.lock().map_err(|_| BridgeError::engine())?;
-        inner
+        let cleanup = inner
             .child
             .as_mut()
             .map(EngineChild::stop)
             .transpose()
-            .map_err(|_| BridgeError::engine())?;
-        inner.child = None;
-        inner.closed = true;
-        if let Some(channel) = inner.lifecycle.take() {
-            let _ = channel.send(json!({"protocolVersion":1,"kind":"engine_exited","expected":true,"exitCode":null,"cleanupComplete":true}));
+            .map_err(|_| BridgeError::engine());
+        if cleanup.is_ok() {
+            inner.child = None;
         }
-        Ok(())
+        inner.closed = true;
+        let mut subscriptions = self
+            .subscriptions
+            .lock()
+            .map_err(|_| BridgeError::engine())?;
+        let lifecycle = json!({"protocolVersion":1,"kind":"engine_exited","expected":expected,"exitCode":null,"cleanupComplete":cleanup.is_ok()});
+        subscriptions.close(&lifecycle);
+        if let Some(channel) = inner.lifecycle.take() {
+            let _ = channel.send(lifecycle);
+        }
+        cleanup.map(|_| ())
     }
 }
 
@@ -316,19 +522,7 @@ pub async fn subscribe(
     on_lifecycle: Channel<Value>,
 ) -> Result<Value, BridgeError> {
     caller(&window)?;
-    if !opaque(&json!(session_id)) || after_seq > 9_007_199_254_740_991 {
-        return Err(BridgeError::denied());
-    }
-    state
-        .inner
-        .try_lock()
-        .map_err(|_| BridgeError::denied())?
-        .lifecycle = Some(on_lifecycle);
-    drop(on_event);
-    state.call(
-        "subscribe",
-        json!({"sessionId":session_id,"afterSeq":after_seq}),
-    )
+    state.subscribe_channel(session_id, after_seq, on_event, on_lifecycle)
 }
 
 #[tauri::command]
@@ -340,6 +534,101 @@ pub async fn dialog_select_workspace(window: WebviewWindow) -> Result<Value, Bri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn recording_channel() -> (Channel<Value>, Arc<Mutex<Vec<Value>>>) {
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let sink = received.clone();
+        let channel = Channel::new(move |body| {
+            let tauri::ipc::InvokeResponseBody::Json(body) = body else {
+                panic!("Expected JSON native channel delivery");
+            };
+            sink.lock()
+                .unwrap()
+                .push(serde_json::from_str(&body).unwrap());
+            Ok(())
+        });
+        (channel, received)
+    }
+
+    fn event() -> Value {
+        json!({"schemaVersion":1,"protocolVersion":1,"recordId":"record1","eventId":"event1","createdAt":"2026-10-26T00:00:00.000Z","sourceIds":[],"sessionId":"s1","scopeId":"w1","seq":1,"durable":false,"kind":"turn.stream_delta","payload":{"runId":"r1","delta":"hello"}})
+    }
+
+    #[test]
+    fn native_channel_requires_exact_authorized_subscription_ack() {
+        let mut subscriptions = Subscriptions::default();
+        for ack in [
+            json!({"sessionId":"s2","scopeId":"w1","afterSeq":0}),
+            json!({"sessionId":"s1","scopeId":"w1","afterSeq":1}),
+            json!({"sessionId":"s1","afterSeq":0}),
+        ] {
+            assert!(
+                subscriptions
+                    .install("s1", 0, &ack, recording_channel().0, recording_channel().0)
+                    .is_err()
+            );
+            assert!(subscriptions.0.is_empty());
+        }
+        let (events, received) = recording_channel();
+        assert!(
+            subscriptions
+                .install(
+                    "s1",
+                    0,
+                    &json!({"sessionId":"s1","scopeId":"w1","afterSeq":0}),
+                    events,
+                    recording_channel().0
+                )
+                .is_ok()
+        );
+        assert!(subscriptions.forward(event()).is_ok());
+        assert_eq!(received.lock().unwrap().as_slice(), &[event()]);
+        let mut wrong_context = event();
+        wrong_context["scopeId"] = json!("w2");
+        assert!(subscriptions.forward(wrong_context).is_err());
+        assert_eq!(received.lock().unwrap().len(), 1);
+        for field in ["createdAt", "sourceIds"] {
+            let mut incomplete = event();
+            incomplete.as_object_mut().unwrap().remove(field);
+            assert!(subscriptions.forward(incomplete).is_err());
+        }
+        let mut unknown_kind = event();
+        unknown_kind["kind"] = json!("unknown.event");
+        assert!(subscriptions.forward(unknown_kind).is_err());
+        let mut wrong_durability = event();
+        wrong_durability["durable"] = json!(true);
+        assert!(subscriptions.forward(wrong_durability).is_err());
+        assert_eq!(received.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn replacing_and_closing_native_channels_releases_old_recipients() {
+        let mut subscriptions = Subscriptions::default();
+        let ack = json!({"sessionId":"s1","scopeId":"w1","afterSeq":0});
+        let (old_events, old_received) = recording_channel();
+        assert!(
+            subscriptions
+                .install("s1", 0, &ack, old_events, recording_channel().0)
+                .is_ok()
+        );
+        let (events, received) = recording_channel();
+        let (lifecycle, lifecycle_received) = recording_channel();
+        assert!(
+            subscriptions
+                .install("s1", 0, &ack, events, lifecycle)
+                .is_ok()
+        );
+        assert!(subscriptions.forward(event()).is_ok());
+        assert!(old_received.lock().unwrap().is_empty());
+        assert_eq!(received.lock().unwrap().len(), 1);
+        let exited = json!({"protocolVersion":1,"kind":"engine_exited","expected":false,"exitCode":null,"cleanupComplete":true});
+        subscriptions.close(&exited);
+        subscriptions.close(&exited);
+        assert!(subscriptions.0.is_empty());
+        assert_eq!(lifecycle_received.lock().unwrap().as_slice(), &[exited]);
+        assert!(subscriptions.forward(event()).is_ok());
+        assert_eq!(received.lock().unwrap().len(), 1);
+    }
 
     #[test]
     fn shared_operations_reject_payload_authority_changes() {
