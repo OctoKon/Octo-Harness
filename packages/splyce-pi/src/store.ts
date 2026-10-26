@@ -703,16 +703,29 @@ export class Store {
       throw error instanceof StoreError ? error : mapSqliteError(error);
     }
 
-    // Swap with the original preserved until the staged store reopens; any
-    // failure reverts to the preserved original so acknowledged state is
-    // never destroyed.
+    // Swap with the original preserved until the staged store reopens. The
+    // recovery path below never deletes the live path unless the original
+    // bytes were successfully preserved first (phase-tracked), and every
+    // collision fails closed BEFORE the live store is closed.
+    if (existsSync(original))
+      throw new StoreError(
+        "STORE_RESTORE_COLLISION",
+        `recovery path ${original} is occupied; refusing to start the swap`,
+      );
     this.close();
+    let reopened: Store | undefined;
+    let originalPreserved = false;
+    let swapped = false;
     try {
       for (const suffix of ["-wal", "-shm"])
         if (existsSync(this.path + suffix)) rmSync(this.path + suffix);
-      if (existsSync(this.path)) renameSync(this.path, original);
+      if (existsSync(this.path)) {
+        renameSync(this.path, original);
+        originalPreserved = true;
+      }
       renameSync(staging, this.path);
-      const reopened = Store.open(this.path, {
+      swapped = true;
+      reopened = Store.open(this.path, {
         busyTimeoutMs: this.busyTimeoutMs,
         maxInlineBytes: this.maxInlineBytes,
       });
@@ -720,20 +733,35 @@ export class Store {
       this.closed = false;
     } catch (error) {
       try {
-        if (existsSync(this.path)) rmSync(this.path, { force: true });
-        if (existsSync(original)) renameSync(original, this.path);
-        const recovered = Store.open(this.path, {
+        if (reopened !== undefined) reopened.close();
+      } catch {
+        // recovery below owns the reportable failure
+      }
+      let recovered = false;
+      try {
+        // Only remove the live path when it holds the failed staged copy AND
+        // the original bytes are safely preserved.
+        if (swapped && originalPreserved) rmSync(this.path, { force: true });
+        if (originalPreserved && !existsSync(this.path))
+          renameSync(original, this.path);
+        const recoveredStore = Store.open(this.path, {
           busyTimeoutMs: this.busyTimeoutMs,
           maxInlineBytes: this.maxInlineBytes,
         });
-        this.db = recovered.db;
+        this.db = recoveredStore.db;
         this.closed = false;
+        recovered = true;
       } catch (recoveryError) {
         throw new StoreError(
           "STORE_RESTORE_FAILED",
           `restore failed (${error instanceof Error ? error.message : String(error)}) and live recovery also failed (${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)})`,
         );
       }
+      if (!recovered)
+        throw new StoreError(
+          "STORE_RESTORE_FAILED",
+          `restore failed and live state is uncertain (${error instanceof Error ? error.message : String(error)})`,
+        );
       throw error instanceof StoreError ? error : mapSqliteError(error);
     }
     try {

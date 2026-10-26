@@ -768,3 +768,36 @@ test("malformed epoch metadata fails closed everywhere", () => {
   tampered.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("first-swap rename failure preserves live bytes and keeps the handle usable", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const live = record("run");
+  store.append({ kind: "run", record: live }, caller);
+  const backupPath = join(dir, "backup.db");
+  store.backup(backupPath);
+  store.append({ kind: "run", record: record("run") }, caller);
+
+  // A directory occupies the recovery path: the live->original rename can
+  // never succeed, so restore must fail closed BEFORE closing the live
+  // handle and must never delete or move the live file.
+  mkdirSync(`${path}.restore-original`);
+  assert.throws(
+    () => store.restore(backupPath),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "STORE_RESTORE_COLLISION",
+  );
+  // The live store is untouched and still fully usable on the same handle.
+  assert.equal(store.cursor(), 2);
+  assert.ok(store.get(live.recordId as string));
+  store.append({ kind: "run", record: record("run") }, caller);
+  assert.equal(store.cursor(), 3);
+  store.close();
+
+  // From a fresh connection the acknowledged data is all still there.
+  const verify = Store.open(path);
+  assert.equal(verify.cursor(), 3);
+  verify.close();
+  rmSync(dir, { recursive: true, force: true });
+});
