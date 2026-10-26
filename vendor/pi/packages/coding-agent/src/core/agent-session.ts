@@ -748,6 +748,7 @@ export class AgentSession {
 					});
 				}
 				return runToolCall(toolCall, {
+					parentToolCallId: parentId,
 					tools: this._getCallableTools(),
 					assistantMessage,
 					context: { messages: this.agent.state.messages, tools: this.agent.state.tools },

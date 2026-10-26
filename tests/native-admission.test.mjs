@@ -159,6 +159,7 @@ async function fixture(t) {
     policy,
     permit,
     tool,
+    unbind,
     call,
     options,
     setActive(value) {
@@ -212,6 +213,203 @@ test("native Pi tool effect follows durable decision/intent and precedes durable
     1,
     "replaying a completed or unresolved intent never repeats the effect",
   );
+});
+
+test("native preparation denies changed validated arguments before extension hooks", async (t) => {
+  const f = await fixture(t);
+  let hooks = 0;
+  await assert.rejects(
+    runToolCall(
+      { ...f.call, arguments: { text: "different" } },
+      {
+        ...f.options,
+        beforeToolCall: async () => {
+          hooks++;
+          await writeFile(f.canary, "hook");
+        },
+      },
+    ),
+    { code: "ARGUMENTS_CHANGED" },
+  );
+  assert.equal(
+    await readFile(f.canary, "utf8"),
+    "unchanged",
+    "native preparation must precede extension effects",
+  );
+  assert.equal(hooks, 0);
+  assert.equal(f.executions, 0);
+});
+
+test("missing native preparation fails closed before argument callbacks or hooks", async (t) => {
+  const f = await fixture(t);
+  f.unbind();
+  let callbacks = 0;
+  f.tool.prepareArguments = (args) => {
+    callbacks++;
+    return args;
+  };
+  const unbind = bindSplyceToolAdmission(f.tool, {
+    check: f.policy.check.bind(f.policy),
+    execute: f.policy.execute.bind(f.policy),
+  });
+  t.after(unbind);
+  await assert.rejects(
+    runToolCall(f.call, {
+      ...f.options,
+      beforeToolCall: async () => {
+        callbacks++;
+      },
+    }),
+    { message: "SPLYCE_ADMISSION_PREPARE_REQUIRED" },
+  );
+  assert.equal(callbacks, 0);
+  assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+});
+
+test("native adapter prepares only schema-validated arguments then runs real policy", async (t) => {
+  const f = await fixture(t);
+  f.unbind();
+  const order = [];
+  const unbind = bindSplyceToolAdmission(f.tool, {
+    check(_id, name, signal) {
+      f.policy.check(f.permit.toolCallId, name, signal);
+    },
+    async prepare(id, name, args, parent, signal) {
+      order.push("prepare");
+      assert.deepEqual(args, { text: "changed" });
+      assert.notEqual(args, f.call.arguments);
+      f.policy.authorize({
+        ...f.permit,
+        toolCallId: id,
+        actionId: "dynamic-action",
+        idempotencyKey: "dynamic-effect",
+      });
+      await f.policy.prepare(id, name, args, parent, signal);
+      assert.equal(
+        f.store.list("w-demo").records.length,
+        1,
+        "preparation commits no intent or effect",
+      );
+    },
+    execute: f.policy.execute.bind(f.policy),
+  });
+  t.after(unbind);
+  const invalid = await runToolCall(
+    { ...f.call, id: "invalid", arguments: {} },
+    {
+      ...f.options,
+      beforeToolCall: async () => {
+        order.push("hook");
+      },
+    },
+  );
+  assert.equal(invalid.isError, true);
+  assert.deepEqual(order, []);
+  assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+  const result = await runToolCall(
+    { ...f.call, id: "dynamic" },
+    {
+      ...f.options,
+      beforeToolCall: async () => {
+        order.push("hook");
+      },
+    },
+  );
+  assert.equal(result.isError, false);
+  assert.deepEqual(order, ["prepare", "hook"]);
+  assert.deepEqual(f.dispatchHistory, ["approved", "running"]);
+  assert.equal(await readFile(f.canary, "utf8"), "changed");
+});
+
+test("cancellation before preparation reserves the call ID before extension hooks", async (t) => {
+  const f = await fixture(t);
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    runToolCall(f.call, { ...f.options, signal: controller.signal }),
+    { code: "CANCELED" },
+  );
+  let hooks = 0;
+  await assert.rejects(
+    runToolCall(f.call, {
+      ...f.options,
+      beforeToolCall: async () => {
+        hooks++;
+        await writeFile(f.canary, "hook-after-abort");
+      },
+    }),
+    { code: "ACTION_REQUIRES_RECONCILIATION" },
+  );
+  assert.equal(
+    await readFile(f.canary, "utf8"),
+    "unchanged",
+    "canceled call reservation must precede extension effects",
+  );
+  assert.equal(hooks, 0);
+  assert.equal(f.executions, 0);
+});
+
+for (const interruption of ["blocked", "aborted"]) {
+  test(`${interruption} preparation requires a fresh tool-call ID`, async (t) => {
+    const f = await fixture(t);
+    const controller = new AbortController();
+    const result = await runToolCall(f.call, {
+      ...f.options,
+      signal: controller.signal,
+      beforeToolCall: async () => {
+        if (interruption === "aborted") controller.abort();
+        return { block: true };
+      },
+    });
+    assert.equal(result.isError, true);
+    assert.equal(f.store.list("w-demo").records.length, 1);
+    await assert.rejects(runToolCall(f.call, f.options), {
+      code: "ACTION_REQUIRES_RECONCILIATION",
+    });
+    assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+    assert.equal(f.executions, 0);
+    f.policy.authorize({
+      ...f.permit,
+      toolCallId: "fresh",
+      actionId: "fresh-action",
+      idempotencyKey: "fresh-effect",
+    });
+    assert.equal(
+      (await runToolCall({ ...f.call, id: "fresh" }, f.options)).isError,
+      false,
+    );
+    assert.equal(await readFile(f.canary, "utf8"), "changed");
+  });
+}
+
+test("cancellation during native preparation reaches no extension hook or effect", async (t) => {
+  const f = await fixture(t);
+  f.unbind();
+  const controller = new AbortController();
+  const unbind = bindSplyceToolAdmission(f.tool, {
+    check: f.policy.check.bind(f.policy),
+    async prepare(...args) {
+      await f.policy.prepare(...args);
+      controller.abort();
+    },
+    execute: f.policy.execute.bind(f.policy),
+  });
+  t.after(unbind);
+  const result = await runToolCall(f.call, {
+    ...f.options,
+    signal: controller.signal,
+    beforeToolCall: async () => {
+      await writeFile(f.canary, "hook");
+    },
+  });
+  assert.equal(
+    await readFile(f.canary, "utf8"),
+    "unchanged",
+    "canceled native preparation must precede extension effects",
+  );
+  assert.equal(result.isError, true);
+  assert.equal(f.executions, 0);
+  assert.equal(f.store.list("w-demo").records.length, 1);
 });
 
 for (const change of [
@@ -299,9 +497,15 @@ test("terminal parent cannot authorize a nested action through its old intent", 
     idempotencyKey: "child-effect",
     parentActionId: "a1",
   });
-  await assert.rejects(runToolCall({ ...f.call, id: "child" }, f.options), {
-    code: "PARENT_NOT_RUNNING",
-  });
+  await assert.rejects(
+    runToolCall(
+      { ...f.call, id: "child" },
+      { ...f.options, parentToolCallId: f.call.id },
+    ),
+    {
+      code: "PARENT_NOT_RUNNING",
+    },
+  );
   assert.equal(await readFile(f.canary, "utf8"), "after-parent");
   assert.equal(f.executions, 1);
 });
@@ -338,6 +542,7 @@ test("real nested runner uses the same current native admission", async (t) => {
     toolCallId: "parent/1",
     actionId: "nested",
     idempotencyKey: "nested-effect",
+    parentActionId: "a1",
   });
   f.setActive({ grantIds: [] });
   const events = [];
@@ -347,8 +552,8 @@ test("real nested runner uses the same current native admission", async (t) => {
     emit: async (event) => {
       events.push(event.type);
     },
-    runToolCall: (call, _parent, signal, onUpdate) =>
-      runToolCall(call, { ...f.options, signal, onUpdate }),
+    runToolCall: (call, parentToolCallId, signal, onUpdate) =>
+      runToolCall(call, { ...f.options, parentToolCallId, signal, onUpdate }),
   });
   await assert.rejects(runner.execute("parent", f.tool.name, f.call.arguments));
   assert.equal(
@@ -359,6 +564,116 @@ test("real nested runner uses the same current native admission", async (t) => {
   assert.equal(f.executions, 0);
   assert.equal(events.includes("tool_execution_end"), false);
 });
+
+test("real nested execution joins the running native parent action", async (t) => {
+  const f = await fixture(t);
+  f.policy.authorize({
+    ...f.permit,
+    toolCallId: `${f.call.id}/1`,
+    actionId: "child-action",
+    idempotencyKey: "child-effect",
+    parentActionId: f.permit.actionId,
+  });
+  const runner = new NestedToolCallRunner({
+    getTools: () => [f.tool],
+    isSequential: () => false,
+    emit: async () => {},
+    runToolCall: (call, parentToolCallId, signal, onUpdate) =>
+      runToolCall(call, { ...f.options, parentToolCallId, signal, onUpdate }),
+  });
+  const write = f.tool.execute;
+  f.tool.execute = async (id, args) =>
+    id === f.call.id
+      ? (await runner.execute(id, f.tool.name, args)).result
+      : write(id, args);
+  const result = await runToolCall(f.call, f.options);
+  assert.equal(result.isError, false);
+  assert.equal(await readFile(f.canary, "utf8"), "changed");
+  const actions = f.store
+    .list("w-demo")
+    .records.filter(({ kind }) => kind === "action");
+  assert.deepEqual(
+    actions.map(({ record }) => [
+      record.actionId,
+      record.parentActionId,
+      record.state,
+    ]),
+    [
+      ["a1", null, "approved"],
+      ["a1", null, "running"],
+      ["child-action", "a1", "approved"],
+      ["child-action", "a1", "running"],
+      ["child-action", "a1", "completed"],
+      ["a1", null, "completed"],
+    ],
+  );
+});
+
+for (const mismatch of [
+  "missing",
+  "unknown",
+  "action",
+  "run",
+  "scope",
+  "workspace",
+  "epoch",
+  "root",
+]) {
+  test(`native preparation rejects ${mismatch} parent before extension hooks`, async (t) => {
+    const f = await fixture(t);
+    await runToolCall(f.call, f.options);
+    await writeFile(f.canary, "unchanged");
+    f.policy.authorize({
+      ...f.permit,
+      toolCallId: "child",
+      actionId: "child-action",
+      idempotencyKey: "child-effect",
+      parentActionId: mismatch === "root" ? null : f.permit.actionId,
+    });
+    if (!["missing", "unknown", "root"].includes(mismatch)) {
+      f.policy.authorize({
+        ...f.permit,
+        toolCallId: "foreign",
+        ...(mismatch === "action" ? { actionId: "foreign-action" } : {}),
+        ...(mismatch === "run" ? { runRecordId: "foreign-run" } : {}),
+        ...(mismatch === "scope" ? { targetScopeId: "foreign-scope" } : {}),
+        ownership: {
+          ...f.ownership,
+          ...(mismatch === "workspace"
+            ? { workspaceId: "foreign-workspace" }
+            : {}),
+          ...(mismatch === "epoch" ? { epoch: f.ownership.epoch + 1 } : {}),
+        },
+      });
+    }
+    let rejected;
+    try {
+      await runToolCall(
+        { ...f.call, id: "child" },
+        {
+          ...f.options,
+          ...(mismatch === "missing"
+            ? {}
+            : {
+                parentToolCallId: mismatch === "root" ? f.call.id : "foreign",
+              }),
+          beforeToolCall: async () => {
+            await writeFile(f.canary, "hook");
+          },
+        },
+      );
+    } catch (error) {
+      rejected = error;
+    }
+    assert.equal(
+      await readFile(f.canary, "utf8"),
+      "unchanged",
+      "invalid native parent must precede extension effects",
+    );
+    assert.equal(rejected?.code, "INVALID_PARENT");
+    assert.equal(f.executions, 1);
+  });
+}
 
 test("process death after durable intent reopens unresolved and never replays", async (t) => {
   const f = await fixture(t);
@@ -414,7 +729,7 @@ test("process death after durable intent reopens unresolved and never replays", 
   assert.equal(f.executions, 0);
 });
 
-test("removing the native authority or intent commit fails physical assertions", async (t) => {
+test("removing native preparation, cancellation reservation, authority or intent commit fails physical assertions", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "splyce-admission-mutation-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const loader = join(dir, "mutation.mjs");
@@ -423,11 +738,23 @@ test("removing the native authority or intent commit fails physical assertions",
     `import { registerHooks } from 'node:module';
 registerHooks({load(url, context, next) {
   const result = next(url, context);
+  if (process.env.SPLYCE_ADMISSION_MUTATION === 'preparation') {
+    if (!url.endsWith('/agent/dist/agent-loop.js')) return result;
+    const source = String(result.source);
+    const start = source.indexOf('    await requireSplyceToolAdmission(tool).prepare(');
+    const end = source.indexOf(');', start);
+    if (start < 0 || end < 0) throw new Error('preparation mutation target missing');
+    return {...result, source: source.slice(0, start) + source.slice(end + 2)};
+  }
   if (!url.endsWith('/splyce-pi/dist/policy.js')) return result;
   let source = String(result.source);
-  if (process.env.SPLYCE_ADMISSION_MUTATION === 'authority') {
+  if (process.env.SPLYCE_ADMISSION_MUTATION === 'reservation') {
+    const target = '    deny(permit, code) {\\n        this.prepared.add(permit.toolCallId);';
+    if (!source.includes(target)) throw new Error('reservation mutation target missing');
+    source = source.replace(target, '    deny(permit, code) {');
+  } else if (process.env.SPLYCE_ADMISSION_MUTATION === 'authority') {
     const start = source.indexOf('    check(toolCallId, toolName, signal) {');
-    const end = source.indexOf('    async execute(', start);
+    const end = source.indexOf('    async prepare(', start);
     if (start < 0 || end < 0) throw new Error('authority mutation target missing');
     source = source.slice(0, start) + '    check() {}\\n' + source.slice(end);
   } else {
@@ -450,6 +777,21 @@ registerHooks({load(url, context, next) {
       .map((key) => [key, process.env[key]]),
   );
   for (const [mutation, pattern, observation] of [
+    [
+      "preparation",
+      "native preparation denies changed validated arguments",
+      "native preparation must precede extension effects",
+    ],
+    [
+      "preparation",
+      "native preparation rejects missing parent",
+      "invalid native parent must precede extension effects",
+    ],
+    [
+      "reservation",
+      "cancellation before preparation reserves the call ID",
+      "canceled call reservation must precede extension effects",
+    ],
     [
       "authority",
       "native final dispatch rejects revoked",

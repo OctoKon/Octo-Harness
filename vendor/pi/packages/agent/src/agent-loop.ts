@@ -728,6 +728,7 @@ async function prepareToolCall(
 	config: ToolCallHooks,
 	signal: AbortSignal | undefined,
 	tools: readonly AgentTool<any>[] = currentContext.tools ?? [],
+	parentToolCallId?: string,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
 	const tool = tools.find((t) => t.name === toolCall.name);
 	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal);
@@ -739,9 +740,26 @@ async function prepareToolCall(
 		};
 	}
 
+	let validatedArgs: unknown;
 	try {
 		const preparedToolCall = prepareToolCallArguments(tool, toolCall);
-		const validatedArgs = validateToolArguments(tool, preparedToolCall);
+		validatedArgs = validateToolArguments(tool, preparedToolCall);
+	} catch (error) {
+		return {
+			kind: "immediate",
+			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			isError: true,
+		};
+	}
+	await requireSplyceToolAdmission(tool).prepare(toolCall.id, toolCall.name, validatedArgs, parentToolCallId, signal);
+	try {
+		if (signal?.aborted) {
+			return {
+				kind: "immediate",
+				result: createErrorToolResult("Operation aborted"),
+				isError: true,
+			};
+		}
 		if (config.beforeToolCall) {
 			const beforeResult = await config.beforeToolCall(
 				{
@@ -806,6 +824,8 @@ function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink):
 
 /** Options for {@link runToolCall}. */
 export interface RunToolCallOptions extends ToolCallHooks {
+	/** Native parent identity for a call issued by another tool. */
+	parentToolCallId?: string;
 	/** Tools the call resolves against. */
 	tools: readonly AgentTool<any>[];
 	/** Passed to the hooks as the message that issued the call. */
@@ -826,7 +846,15 @@ export interface RunToolCallOptions extends ToolCallHooks {
  */
 export async function runToolCall(toolCall: AgentToolCall, options: RunToolCallOptions): Promise<AgentToolCallOutcome> {
 	const { assistantMessage, context, signal } = options;
-	const preparation = await prepareToolCall(context, assistantMessage, toolCall, options, signal, options.tools);
+	const preparation = await prepareToolCall(
+		context,
+		assistantMessage,
+		toolCall,
+		options,
+		signal,
+		options.tools,
+		options.parentToolCallId,
+	);
 	if (preparation.kind === "immediate") {
 		return { toolCall, result: preparation.result, isError: preparation.isError };
 	}
