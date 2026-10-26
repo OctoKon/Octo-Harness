@@ -85,6 +85,7 @@ export class NativePolicy {
   private readonly caller: CallerContext;
   private readonly current: () => CurrentPolicy;
   private readonly permits = new Map<string, Readonly<ActionPermit>>();
+  private readonly prepared = new Set<string>();
 
   constructor(
     store: Store,
@@ -153,6 +154,50 @@ export class NativePolicy {
       owner.epoch !== permit.ownership.epoch
     )
       this.deny(permit, "STALE_OWNERSHIP");
+  }
+
+  async prepare(
+    toolCallId: string,
+    toolName: string,
+    validatedArgs: unknown,
+    parentToolCallId: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    this.check(toolCallId, toolName, signal);
+    const permit = this.permits.get(toolCallId)!;
+    if (this.prepared.has(toolCallId))
+      throw new AdmissionError("ACTION_REQUIRES_RECONCILIATION");
+    if (actionArgumentsDigest(validatedArgs) !== permit.argumentsDigest)
+      this.deny(permit, "ARGUMENTS_CHANGED");
+    const parent =
+      parentToolCallId === undefined
+        ? undefined
+        : this.permits.get(parentToolCallId);
+    if (
+      permit.parentActionId === null
+        ? parentToolCallId !== undefined
+        : !parent ||
+          parent.toolCallId === permit.toolCallId ||
+          parent.actionId !== permit.parentActionId ||
+          parent.runRecordId !== permit.runRecordId ||
+          parent.targetScopeId !== permit.targetScopeId ||
+          parent.ownership.workspaceId !== permit.ownership.workspaceId ||
+          parent.ownership.ownerSessionId !== permit.ownership.ownerSessionId ||
+          parent.ownership.epoch !== permit.ownership.epoch
+    )
+      this.deny(permit, "INVALID_PARENT");
+    if (parent) {
+      this.check(parent.toolCallId, parent.toolName, signal);
+      const latest = this.store
+        .list(permit.targetScopeId)
+        .records.findLast(
+          ({ kind, record }) =>
+            kind === "action" &&
+            (record as ActionRecord).actionId === parent.actionId,
+        )?.record as ActionRecord | undefined;
+      if (latest?.state !== "running") this.deny(permit, "PARENT_NOT_RUNNING");
+    }
+    this.prepared.add(toolCallId);
   }
 
   async execute<T extends { isError: boolean }>(
@@ -229,6 +274,7 @@ export class NativePolicy {
   }
 
   private deny(permit: ActionPermit, code: string): never {
+    this.prepared.add(permit.toolCallId);
     this.store.append(
       {
         kind: "action",

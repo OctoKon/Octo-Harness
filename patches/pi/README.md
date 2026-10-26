@@ -70,6 +70,30 @@ remain required. Trusted in-process code retains direct OS authority. Reapply
 all three patches on donor upgrades and rerun the physical and installed-app
 gates before publishing a new candidate.
 
+## Validated native tool preparation
+
+`0008-validated-tool-preparation.patch` extends the owned Pi 1.4.0 admission seam
+after the preceding patches. `prepareToolCall` validates arguments, awaits the
+required native `prepare` method, then invokes extension hooks. Native preparation
+errors reject; missing preparation and cancellation reach no hook or effect.
+`AgentSession._executeNestedToolCall` forwards the actual parent tool-call ID
+through `RunToolCallOptions`. Preparation commits no effect intent.
+
+The direct `NativePolicy` implementation checks an already authorized permit,
+validated argument digest and same-run/scope/workspace parent action. The parent
+must still be running. Prepared and denied IDs stay reserved, including cancellation
+before preparation; a fresh call ID is required. Execution retains its final current-authority,
+parent-state, durable intent and outcome checks. No grant minting or production
+readiness is enabled.
+
+`tests/native-admission.test.mjs` exercises schema/preparation/hook ordering,
+required preparation, provisional native authorization, nested ancestry,
+cancellation, revocation and actual SQLite failures with physical fixture bytes.
+Removing preparation must expose extension effects in the argument and parent
+negative cases. The default-unavailable entrypoint mutation fixture includes the
+new preparation method only when deliberately removing all admission fences.
+SDK/GUI activation and installed executor qualification remain unverified.
+
 ## Pi HTTP client update
 
 `0003-undici-8.12.3.patch` applies after the native admission patch. It updates
