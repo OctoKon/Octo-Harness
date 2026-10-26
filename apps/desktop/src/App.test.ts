@@ -102,6 +102,45 @@ describe("App wiring", () => {
     expect(q("[data-testid=usage-unavailable-note]")).not.toBeNull();
     expect(q("[data-testid=providers-view]")).toBeNull();
 
+    // Setup and Modules are mounted from the shell and stay honest with no service.
+    button("Setup").click();
+    flushSync();
+    expect(q("[data-testid=setup]")).not.toBeNull();
+    expect(q("[data-testid=engine-unavailable]")?.textContent).toContain(
+      "No setup or module service is connected.",
+    );
+    expect(q("[data-testid=generation]")?.textContent).toContain(
+      "Generation unconfigured",
+    );
+    // No engine means no install review or confirmation to offer.
+    expect(q("[data-testid=confirm-install]")).toBeNull();
+    // Continuing with the base is still valid and returns to the workbench.
+    button("Continue with base only").click();
+    flushSync();
+    expect(q("[data-testid=setup]")).toBeNull();
+    expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
+
+    // Skip setup must enter the workbench too, not leave a dead button.
+    button("Setup").click();
+    flushSync();
+    button("Skip setup").click();
+    flushSync();
+    expect(q("[data-testid=setup]")).toBeNull();
+    expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
+
+    button("Modules").click();
+    flushSync();
+    expect(q("[data-testid=modules]")).not.toBeNull();
+    expect(
+      q("[data-testid=modules-engine-unavailable]")?.textContent,
+    ).toContain("No setup or module service is connected.");
+    expect((q("[data-testid=add-module]") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (q("[data-testid=refresh-catalog]") as HTMLButtonElement).disabled,
+    ).toBe(true);
+
     button("Conversation").click();
     flushSync();
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
