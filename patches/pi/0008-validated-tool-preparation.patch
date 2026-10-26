@@ -1,5 +1,5 @@
 diff --git a/vendor/pi/packages/agent/src/agent-loop.ts b/vendor/pi/packages/agent/src/agent-loop.ts
-index bbcc817..c768050 100644
+index bbcc817..0397096 100644
 --- a/vendor/pi/packages/agent/src/agent-loop.ts
 +++ b/vendor/pi/packages/agent/src/agent-loop.ts
 @@ -728,9 +728,10 @@ async function prepareToolCall(
@@ -10,11 +10,11 @@ index bbcc817..c768050 100644
  ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
  	const tool = tools.find((t) => t.name === toolCall.name);
 -	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal);
-+	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal, "prepare");
++	requireSplyceToolAdmission(tool).reserve(toolCall.id, toolCall.name, signal);
  	if (!tool) {
  		return {
  			kind: "immediate",
-@@ -739,9 +740,26 @@ async function prepareToolCall(
+@@ -739,9 +740,33 @@ async function prepareToolCall(
  		};
  	}
  
@@ -24,13 +24,20 @@ index bbcc817..c768050 100644
 -		const validatedArgs = validateToolArguments(tool, preparedToolCall);
 +		validatedArgs = validateToolArguments(tool, preparedToolCall);
 +	} catch (error) {
++		requireSplyceToolAdmission(tool).discard(toolCall.id, signal?.aborted ? "canceled" : "denied");
 +		return {
 +			kind: "immediate",
 +			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 +			isError: true,
 +		};
 +	}
-+	await requireSplyceToolAdmission(tool).prepare(toolCall.id, toolCall.name, validatedArgs, parentToolCallId, signal);
++	try {
++		await requireSplyceToolAdmission(tool).prepare(toolCall.id, toolCall.name, validatedArgs, parentToolCallId, signal);
++	} catch (error) {
++		requireSplyceToolAdmission(tool).discard(toolCall.id, signal?.aborted ? "canceled" : "denied");
++		throw error;
++	}
++	let hooksCompleted = false;
 +	try {
 +		if (signal?.aborted) {
 +			return {
@@ -42,7 +49,37 @@ index bbcc817..c768050 100644
  		if (config.beforeToolCall) {
  			const beforeResult = await config.beforeToolCall(
  				{
-@@ -806,6 +824,8 @@ function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink):
+@@ -778,19 +803,23 @@ async function prepareToolCall(
+ 				isError: true,
+ 			};
+ 		}
+-		return {
+-			kind: "prepared",
+-			toolCall,
+-			tool,
+-			args: validatedArgs,
+-		};
++		hooksCompleted = true;
+ 	} catch (error) {
+ 		return {
+ 			kind: "immediate",
+ 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+ 			isError: true,
+ 		};
++	} finally {
++		if (!hooksCompleted) requireSplyceToolAdmission(tool).discard(toolCall.id, signal?.aborted ? "canceled" : "denied");
+ 	}
++	requireSplyceToolAdmission(tool).finish(toolCall.id, toolCall.name, validatedArgs, signal);
++	return {
++		kind: "prepared",
++		toolCall,
++		tool,
++		args: validatedArgs,
++	};
+ }
+ 
+ function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink): ToolUpdateSink {
+@@ -806,6 +835,8 @@ function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink):
  
  /** Options for {@link runToolCall}. */
  export interface RunToolCallOptions extends ToolCallHooks {
@@ -51,7 +88,7 @@ index bbcc817..c768050 100644
  	/** Tools the call resolves against. */
  	tools: readonly AgentTool<any>[];
  	/** Passed to the hooks as the message that issued the call. */
-@@ -826,7 +846,15 @@ export interface RunToolCallOptions extends ToolCallHooks {
+@@ -826,7 +857,15 @@ export interface RunToolCallOptions extends ToolCallHooks {
   */
  export async function runToolCall(toolCall: AgentToolCall, options: RunToolCallOptions): Promise<AgentToolCallOutcome> {
  	const { assistantMessage, context, signal } = options;
@@ -69,15 +106,16 @@ index bbcc817..c768050 100644
  		return { toolCall, result: preparation.result, isError: preparation.isError };
  	}
 diff --git a/vendor/pi/packages/agent/src/splyce-admission.ts b/vendor/pi/packages/agent/src/splyce-admission.ts
-index 5da656d..71ff318 100644
+index 5da656d..aa760e4 100644
 --- a/vendor/pi/packages/agent/src/splyce-admission.ts
 +++ b/vendor/pi/packages/agent/src/splyce-admission.ts
-@@ -2,7 +2,14 @@ import { assertSplyceReady } from "./splyce-readiness.ts";
+@@ -2,7 +2,17 @@ import { assertSplyceReady } from "./splyce-readiness.ts";
  
  /** Host bindings are object identities, never model arguments or tool annotations. */
  export interface SplyceToolAdmission {
 -	check(toolCallId: string, toolName: string, signal: AbortSignal | undefined): void;
 +	check(toolCallId: string, toolName: string, signal: AbortSignal | undefined, phase?: "prepare"): void;
++	reserve(toolCallId: string, toolName: string, signal: AbortSignal | undefined): void;
 +	prepare(
 +		toolCallId: string,
 +		toolName: string,
@@ -85,14 +123,19 @@ index 5da656d..71ff318 100644
 +		parentToolCallId: string | undefined,
 +		signal: AbortSignal | undefined,
 +	): Promise<void>;
++	finish(toolCallId: string, toolName: string, args: unknown, signal: AbortSignal | undefined): void;
++	discard(toolCallId: string, reason: "canceled" | "denied"): void;
  	execute<T extends { isError: boolean }>(
  		toolCallId: string,
  		toolName: string,
-@@ -23,5 +30,6 @@ export function bindSplyceToolAdmission(tool: object, admission: SplyceToolAdmis
+@@ -23,5 +33,9 @@ export function bindSplyceToolAdmission(tool: object, admission: SplyceToolAdmis
  export function requireSplyceToolAdmission(tool: object | undefined): SplyceToolAdmission {
  	const admission = tool && admissions.get(tool);
  	if (!admission) assertSplyceReady();
 +	if (typeof admission!.prepare !== "function") throw new Error("SPLYCE_ADMISSION_PREPARE_REQUIRED");
++	if (typeof admission!.reserve !== "function") throw new Error("SPLYCE_ADMISSION_RESERVE_REQUIRED");
++	if (typeof admission!.finish !== "function") throw new Error("SPLYCE_ADMISSION_FINISH_REQUIRED");
++	if (typeof admission!.discard !== "function") throw new Error("SPLYCE_ADMISSION_DISCARD_REQUIRED");
  	return admission!;
  }
 diff --git a/vendor/pi/packages/coding-agent/src/core/agent-session.ts b/vendor/pi/packages/coding-agent/src/core/agent-session.ts

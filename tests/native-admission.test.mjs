@@ -185,7 +185,7 @@ test("native Pi tool effect follows durable decision/intent and precedes durable
   assert.equal(await readFile(f.canary, "utf8"), "changed");
   assert.deepEqual(
     f.dispatchHistory,
-    ["approved", "running"],
+    ["proposed", "approved", "running"],
     "physical effect requires independently readable durable decision and intent",
   );
   const reopen = Store.open(f.path);
@@ -196,6 +196,7 @@ test("native Pi tool effect follows durable decision/intent and precedes durable
         .records.filter(({ kind }) => kind !== "run")
         .map(({ kind, record }) => [kind, record.state ?? record.effectState]),
       [
+        ["action", "proposed"],
         ["action", "approved"],
         ["action", "running"],
         ["outcome", "observed-success"],
@@ -254,6 +255,8 @@ test("missing native preparation fails closed before argument callbacks or hooks
   };
   const unbind = bindSplyceToolAdmission(f.tool, {
     check: f.policy.check.bind(f.policy),
+    finish: f.policy.finish.bind(f.policy),
+    discard: f.policy.discard.bind(f.policy),
     execute: f.policy.execute.bind(f.policy),
   });
   t.after(unbind);
@@ -278,23 +281,28 @@ test("native adapter prepares only schema-validated arguments then runs real pol
     check(_id, name, signal) {
       f.policy.check(f.permit.toolCallId, name, signal);
     },
+    reserve(id, name, signal) {
+      f.policy.authorize({
+        ...f.permit,
+        toolCallId: id,
+        actionId: `action-${id}`,
+        idempotencyKey: `effect-${id}`,
+      });
+      f.policy.reserve(id, name, signal);
+    },
     async prepare(id, name, args, parent, signal) {
       order.push("prepare");
       assert.deepEqual(args, { text: "changed" });
       assert.notEqual(args, f.call.arguments);
-      f.policy.authorize({
-        ...f.permit,
-        toolCallId: id,
-        actionId: "dynamic-action",
-        idempotencyKey: "dynamic-effect",
-      });
       await f.policy.prepare(id, name, args, parent, signal);
       assert.equal(
-        f.store.list("w-demo").records.length,
-        1,
+        f.store.list("w-demo").records.at(-1).record.state,
+        "proposed",
         "preparation commits no intent or effect",
       );
     },
+    finish: f.policy.finish.bind(f.policy),
+    discard: f.policy.discard.bind(f.policy),
     execute: f.policy.execute.bind(f.policy),
   });
   t.after(unbind);
@@ -321,7 +329,13 @@ test("native adapter prepares only schema-validated arguments then runs real pol
   );
   assert.equal(result.isError, false);
   assert.deepEqual(order, ["prepare", "hook"]);
-  assert.deepEqual(f.dispatchHistory, ["approved", "running"]);
+  assert.deepEqual(f.dispatchHistory, [
+    "proposed",
+    "denied",
+    "proposed",
+    "approved",
+    "running",
+  ]);
   assert.equal(await readFile(f.canary, "utf8"), "changed");
 });
 
@@ -366,7 +380,13 @@ for (const interruption of ["blocked", "aborted"]) {
       },
     });
     assert.equal(result.isError, true);
-    assert.equal(f.store.list("w-demo").records.length, 1);
+    assert.deepEqual(
+      f.store
+        .list("w-demo")
+        .records.slice(1)
+        .map(({ record }) => record.state),
+      ["proposed", interruption === "aborted" ? "canceled" : "denied"],
+    );
     await assert.rejects(runToolCall(f.call, f.options), {
       code: "ACTION_REQUIRES_RECONCILIATION",
     });
@@ -392,10 +412,13 @@ test("cancellation during native preparation reaches no extension hook or effect
   const controller = new AbortController();
   const unbind = bindSplyceToolAdmission(f.tool, {
     check: f.policy.check.bind(f.policy),
+    reserve: f.policy.reserve.bind(f.policy),
     async prepare(...args) {
       await f.policy.prepare(...args);
       controller.abort();
     },
+    finish: f.policy.finish.bind(f.policy),
+    discard: f.policy.discard.bind(f.policy),
     execute: f.policy.execute.bind(f.policy),
   });
   t.after(unbind);
@@ -413,7 +436,13 @@ test("cancellation during native preparation reaches no extension hook or effect
   );
   assert.equal(result.isError, true);
   assert.equal(f.executions, 0);
-  assert.equal(f.store.list("w-demo").records.length, 1);
+  assert.deepEqual(
+    f.store
+      .list("w-demo")
+      .records.slice(1)
+      .map(({ record }) => record.state),
+    ["proposed", "canceled"],
+  );
 });
 
 for (const change of [
@@ -457,7 +486,7 @@ for (const change of [
 test("actual pre-effect SQLite commit failure blocks physical dispatch", async (t) => {
   const f = await fixture(t);
   f.store.db.exec(
-    "CREATE TRIGGER refuse_intent BEFORE INSERT ON records WHEN NEW.kind = 'action' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+    "CREATE TRIGGER refuse_intent BEFORE INSERT ON records WHEN NEW.kind = 'action' AND json_extract(NEW.payload, '$.state') = 'running' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
   );
   await assert.rejects(runToolCall(f.call, f.options));
   assert.equal(
@@ -469,8 +498,8 @@ test("actual pre-effect SQLite commit failure blocks physical dispatch", async (
   assert.equal(f.completions, 0);
   assert.equal(
     f.store.list("w-demo").records.length,
-    1,
-    "failed batch leaves no partial decision",
+    2,
+    "failed batch leaves only the proposal",
   );
 });
 
@@ -531,7 +560,7 @@ test("post-effect SQLite failure exposes no completion and cannot replay", async
       .list("w-demo")
       .records.filter(({ kind }) => kind === "action")
       .map(({ record }) => record.state),
-    ["approved", "running"],
+    ["proposed", "approved", "running"],
   );
   await assert.rejects(runToolCall(f.call, f.options), {
     code: "ACTION_REQUIRES_RECONCILIATION",
@@ -603,8 +632,10 @@ test("real nested execution joins the running native parent action", async (t) =
       record.state,
     ]),
     [
+      ["a1", null, "proposed"],
       ["a1", null, "approved"],
       ["a1", null, "running"],
+      ["child-action", "a1", "proposed"],
       ["child-action", "a1", "approved"],
       ["child-action", "a1", "running"],
       ["child-action", "a1", "completed"],
@@ -717,7 +748,7 @@ test("process death after durable intent reopens unresolved and never replays", 
         .list("w-demo")
         .records.filter(({ kind }) => kind === "action")
         .map(({ record }) => record.state),
-      ["approved", "running"],
+      ["proposed", "approved", "running"],
     );
     assert.equal(
       reopened.list("w-demo").records.some(({ kind }) => kind === "outcome"),
@@ -750,13 +781,30 @@ registerHooks({load(url, context, next) {
     if (start < 0 || end < 0) throw new Error('preparation mutation target missing');
     return {...result, source: source.slice(0, start) + (process.env.SPLYCE_ADMISSION_MUTATION === 'preparation-child' ? '    if (toolCall.id !== \"child\") ' + source.slice(start, end + 2) : '') + source.slice(end + 2)};
   }
-  if (!url.endsWith('/splyce-pi/dist/policy.js')) return result;
+  if (process.env.SPLYCE_ADMISSION_MUTATION === 'reservation-fence' && url.endsWith('/splyce-pi/dist/store.js')) {
+    const source = String(result.source);
+    const start = source.indexOf('            if (expectedActionReservation !== undefined) {');
+    const end = source.indexOf('            const seqs = [];', start);
+    if (start < 0 || end < 0) throw new Error('reservation fence mutation target missing');
+    return {...result, source: source.slice(0, start) + source.slice(end)};
+  }
+  if (process.env.SPLYCE_ADMISSION_MUTATION === 'reservation-fence' || !url.endsWith('/splyce-pi/dist/policy.js')) return result;
   let source = String(result.source);
   if (process.env.SPLYCE_ADMISSION_MUTATION === 'reservation') {
     const start = source.indexOf('        if (phase === "prepare"');
     const end = source.indexOf('        if (signal?.aborted)', start);
     if (start < 0 || end < 0) throw new Error('reservation mutation target missing');
     source = source.slice(0, start) + source.slice(end);
+    const fence = 'this.store.appendBatch([{ kind: "action", record: proposal }], this.caller, {';
+    const pos = source.indexOf(fence);
+    const close = source.indexOf('            }, {', pos);
+    if (pos < 0 || close < 0) throw new Error('reservation fence missing');
+    source = source.slice(0, pos) + source.slice(pos, pos + fence.length - 1) + 'undefined' + source.slice(close + 13);
+  } else if (process.env.SPLYCE_ADMISSION_MUTATION === 'discard') {
+    const start = source.indexOf('    discard(toolCallId, reason) {');
+    const end = source.indexOf('    async execute(', start);
+    if (start < 0 || end < 0) throw new Error('discard mutation target missing');
+    source = source.slice(0, start) + '    discard() {}\\n' + source.slice(end);
   } else if (process.env.SPLYCE_ADMISSION_MUTATION === 'execution') {
     const target = '        if (!preparedDigest)\\n            throw new AdmissionError("PREPARATION_REQUIRED");';
     if (!source.includes(target)) throw new Error('execution mutation target missing');
@@ -764,11 +812,11 @@ registerHooks({load(url, context, next) {
     source = source.replace('preparedDigest !== permit.argumentsDigest', 'false');
   } else if (process.env.SPLYCE_ADMISSION_MUTATION === 'authority') {
     const start = source.indexOf('    check(toolCallId, toolName, signal, phase) {');
-    const end = source.indexOf('    async prepare(', start);
+    const end = source.indexOf('    reserve(', start);
     if (start < 0 || end < 0) throw new Error('authority mutation target missing');
     source = source.slice(0, start) + '    check() {}\\n' + source.slice(end);
   } else {
-    const start = source.indexOf('this.store.appendBatch(');
+    const start = source.indexOf('this.store.appendBatch(', source.indexOf('    async execute('));
     if (start < 0) throw new Error('intent mutation target missing');
     let depth = 1, end = start + 'this.store.appendBatch('.length;
     for (; depth && end < source.length; end++) {
@@ -803,9 +851,19 @@ registerHooks({load(url, context, next) {
       "canceled argument callback must preserve physical bytes",
     ],
     [
+      "discard",
+      "blocked or failed hooks never leave an executable native preparation",
+      "unfinished hook must prevent physical effect",
+    ],
+    [
       "execution",
       "direct execution requires native preparation",
       "unprepared dispatch must preserve physical bytes",
+    ],
+    [
+      "reservation-fence",
+      "changed reservation cannot dispatch after hook",
+      "changed reservation must prevent physical effect",
     ],
     [
       "authority",
@@ -844,6 +902,7 @@ registerHooks({load(url, context, next) {
 });
 test("reserved IDs and unprepared execution cannot reach physical callbacks", async (t) => {
   const f = await fixture(t);
+  f.policy.reserve(f.call.id, f.call.name, undefined);
   await f.policy.prepare(
     f.call.id,
     f.call.name,
@@ -948,6 +1007,7 @@ test("canceled ID cannot run argument preparation and fresh ID recovers", async 
 
 test("direct execution requires native preparation", async (t) => {
   const f = await fixture(t);
+  f.policy.reserve(f.call.id, f.call.name, undefined);
   let error;
   try {
     await f.policy.execute(
@@ -969,4 +1029,287 @@ test("direct execution requires native preparation", async (t) => {
     "unprepared dispatch must preserve physical bytes",
   );
   assert.equal(error?.code, "PREPARATION_REQUIRED");
+});
+
+test("blocked or failed hooks never leave an executable native preparation", async (t) => {
+  for (const mode of ["blocked", "failed", "canceled"]) {
+    const f = await fixture(t);
+    const controller = new AbortController();
+    const result = await runToolCall(f.call, {
+      ...f.options,
+      signal: controller.signal,
+      beforeToolCall: () => {
+        if (mode === "failed") throw new Error("fixture");
+        if (mode === "canceled") controller.abort();
+        if (mode === "blocked") return { block: true };
+      },
+    });
+    assert.equal(result.isError, true);
+    let error;
+    try {
+      f.policy.finish(f.call.id, f.call.name, f.call.arguments, undefined);
+      await f.policy.execute(
+        f.call.id,
+        f.call.name,
+        f.call.arguments,
+        async () => {
+          await writeFile(f.canary, "effect");
+          return { isError: false };
+        },
+        undefined,
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    assert.equal(
+      await readFile(f.canary, "utf8"),
+      "unchanged",
+      "unfinished hook must prevent physical effect",
+    );
+    assert.equal(error?.code, "PREPARATION_REQUIRED");
+  }
+});
+
+test("another policy cannot reuse an in-flight identity before argument callbacks", async (t) => {
+  const f = await fixture(t);
+  const secondStore = Store.open(f.path);
+  const other = new NativePolicy(secondStore, f.caller, () => ({
+    ...f.caller,
+    grantIds: ["grant1"],
+    planMode: false,
+  }));
+  other.authorize(f.permit);
+  const tool = {
+    ...f.tool,
+    prepareArguments(args) {
+      writeFileSync(f.canary, "callback");
+      return args;
+    },
+  };
+  const unbind = bindSplyceToolAdmission(tool, other);
+  let release;
+  let reached;
+  const entered = new Promise((resolve) => {
+    reached = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const first = runToolCall(f.call, {
+    ...f.options,
+    beforeToolCall: async () => {
+      reached();
+      await gate;
+      return { block: true };
+    },
+  });
+  try {
+    await entered;
+    await assert.rejects(runToolCall(f.call, { ...f.options, tools: [tool] }), {
+      code: "ACTION_REQUIRES_RECONCILIATION",
+    });
+    assert.equal(
+      await readFile(f.canary, "utf8"),
+      "unchanged",
+      "shared reservation must precede argument callbacks",
+    );
+  } finally {
+    release();
+    await first;
+    unbind();
+    secondStore.close();
+  }
+});
+
+test("changed reservation cannot dispatch after hook", async (t) => {
+  const f = await fixture(t);
+  const second = Store.open(f.path);
+  try {
+    let error;
+    let outcome;
+    try {
+      outcome = await runToolCall(f.call, {
+        ...f.options,
+        beforeToolCall: async () => {
+          const proposal = second
+            .list("w-demo")
+            .records.find(
+              ({ kind, record }) =>
+                kind === "action" && record.state === "proposed",
+            ).record;
+          second.append(
+            {
+              kind: "action",
+              record: {
+                ...proposal,
+                recordId: "competing-terminal",
+                state: "canceled",
+              },
+            },
+            f.caller,
+          );
+        },
+      });
+    } catch (caught) {
+      error = caught;
+    }
+    assert.equal(
+      await readFile(f.canary, "utf8"),
+      "unchanged",
+      "changed reservation must prevent physical effect",
+    );
+    assert.equal(
+      error?.code,
+      "ACTION_REQUIRES_RECONCILIATION",
+      JSON.stringify(outcome),
+    );
+  } finally {
+    second.close();
+  }
+});
+
+test("reservation commit failure prevents argument callbacks", async (t) => {
+  const f = await fixture(t);
+  f.store.db.exec(
+    "CREATE TRIGGER refuse_proposal BEFORE INSERT ON records WHEN NEW.kind = 'action' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+  );
+  f.tool.prepareArguments = (args) => {
+    writeFileSync(f.canary, "callback");
+    return args;
+  };
+  await assert.rejects(runToolCall(f.call, f.options));
+  assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+});
+
+for (const terminal of ["proposed", "canceled"]) {
+  test(`reopened ${terminal} reservation refuses callbacks`, async (t) => {
+    const f = await fixture(t);
+    if (terminal === "proposed")
+      f.policy.reserve(f.call.id, f.call.name, undefined);
+    else {
+      const controller = new AbortController();
+      await runToolCall(f.call, {
+        ...f.options,
+        signal: controller.signal,
+        beforeToolCall: () => {
+          controller.abort();
+        },
+      });
+    }
+    f.unbind();
+    const second = Store.open(f.path);
+    try {
+      const policy = new NativePolicy(second, f.caller, () => ({
+        ...f.caller,
+        grantIds: ["grant1"],
+        planMode: false,
+      }));
+      policy.authorize(f.permit);
+      const unbind = bindSplyceToolAdmission(f.tool, policy);
+      try {
+        f.tool.prepareArguments = (args) => {
+          writeFileSync(f.canary, "callback");
+          return args;
+        };
+        await assert.rejects(runToolCall(f.call, f.options), {
+          code: "ACTION_REQUIRES_RECONCILIATION",
+        });
+        assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+      } finally {
+        unbind();
+      }
+    } finally {
+      second.close();
+    }
+  });
+}
+
+test("terminal reservation write failure remains conservatively fenced", async (t) => {
+  const f = await fixture(t);
+  f.store.db.exec(
+    "CREATE TRIGGER refuse_terminal BEFORE INSERT ON records WHEN NEW.kind = 'action' AND json_extract(NEW.payload, '$.state') = 'denied' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
+  );
+  await assert.rejects(
+    runToolCall(f.call, {
+      ...f.options,
+      beforeToolCall: () => ({ block: true }),
+    }),
+  );
+  assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+  const reopened = Store.open(f.path);
+  try {
+    const policy = new NativePolicy(reopened, f.caller, () => ({
+      ...f.caller,
+      grantIds: ["grant1"],
+      planMode: false,
+    }));
+    policy.authorize(f.permit);
+    assert.throws(() => policy.reserve(f.call.id, f.call.name, undefined), {
+      code: "ACTION_REQUIRES_RECONCILIATION",
+    });
+  } finally {
+    reopened.close();
+  }
+});
+
+test("process death after proposal leaves durable replay fence", async (t) => {
+  const f = await fixture(t);
+  const child = spawn(
+    process.execPath,
+    [
+      fileURLToPath(new URL("./native-admission-child.mjs", import.meta.url)),
+      f.dir,
+      JSON.stringify(f.permit),
+      "proposal",
+    ],
+    { stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true },
+  );
+  const exit = new Promise((resolve) => child.once("exit", resolve));
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+  });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("proposal child timeout")),
+      15000,
+    );
+    child.once("message", (message) => {
+      clearTimeout(timer);
+      message === "proposal-ready"
+        ? resolve()
+        : reject(new Error("unexpected child message"));
+    });
+    child.once("exit", () => {
+      clearTimeout(timer);
+      reject(new Error("proposal child exited before marker"));
+    });
+  });
+  assert.equal(
+    await readFile(join(f.dir, "proposal-ready"), "utf8"),
+    "durable",
+  );
+  assert.equal(child.kill("SIGKILL"), true);
+  await exit;
+  const reopened = Store.open(f.path);
+  try {
+    assert.deepEqual(
+      reopened
+        .list("w-demo")
+        .records.filter(({ kind }) => kind === "action")
+        .map(({ record }) => record.state),
+      ["proposed"],
+    );
+    const policy = new NativePolicy(reopened, f.caller, () => ({
+      ...f.caller,
+      grantIds: ["grant1"],
+      planMode: false,
+    }));
+    policy.authorize(f.permit);
+    assert.throws(() => policy.reserve(f.call.id, f.call.name, undefined), {
+      code: "ACTION_REQUIRES_RECONCILIATION",
+    });
+    assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+  } finally {
+    reopened.close();
+  }
 });

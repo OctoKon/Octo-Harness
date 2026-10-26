@@ -72,27 +72,27 @@ gates before publishing a new candidate.
 
 ## Validated native tool preparation
 
-`0008-validated-tool-preparation.patch` extends the owned Pi 1.4.0 admission seam
-after the preceding patches. `prepareToolCall` validates arguments, awaits the
-required native `prepare` method, then invokes extension hooks. Native preparation
-errors reject; reserved and durable action identities are refused before argument callbacks. Missing preparation and cancellation reach no hook or effect.
-`AgentSession._executeNestedToolCall` forwards the actual parent tool-call ID
-through `RunToolCallOptions`. Preparation commits no effect intent.
+`0008-validated-tool-preparation.patch` extends the owned Pi 1.4.0 admission seam.
+Before argument callbacks, the native host atomically reserves the action identity
+as a durable proposed record. Pi validates arguments, awaits native qualification,
+then runs extension hooks. Failed or canceled preparation records a terminal state;
+a failed terminal write leaves the proposal fenced. A matching local preparation
+becomes executable only after successful hooks, and is consumed at dispatch.
+Execution atomically checks the original proposed reservation before appending the
+decision and intent. A reopened or competing policy cannot reuse the identity.
 
-The direct `NativePolicy` implementation checks an already authorized permit,
-validated argument digest and same-run/scope/workspace parent action. The parent
-must still be running. Prepared and denied IDs stay reserved, including cancellation
-before preparation; a fresh call ID is required. Execution retains its final current-authority,
-parent-state, durable intent and outcome checks, and consumes a matching native preparation before execution. No grant minting or production
-readiness is enabled.
+`AgentSession._executeNestedToolCall` forwards the actual parent tool-call ID.
+The direct `NativePolicy` checks current grant, ownership, validated digest and
+same-run/scope/workspace parent action. The parent must still be running. Native
+errors reject; no grant minting or production readiness is enabled.
 
-`tests/native-admission.test.mjs` exercises schema/preparation/hook ordering,
-required preparation, provisional native authorization, nested ancestry,
-cancellation, revocation and actual SQLite failures with physical fixture bytes.
-Removing preparation must expose extension effects in the argument and parent
-negative cases. The default-unavailable entrypoint mutation fixture includes the
-new preparation method only when deliberately removing all admission fences.
-SDK/GUI activation and installed executor qualification remain unverified.
+`tests/native-admission.test.mjs` exercises the loaded Pi tool path, reservation
+and hook ordering, dynamic qualification, competing store handles, durable recovery,
+nested ancestry, cancellation, revocation and actual SQLite failures with physical
+fixture bytes. Guard-removal checks cover reservation, preparation, completion,
+authority, intent and the atomic reservation precondition. SDK/GUI activation,
+installed executor qualification and containment of trusted in-process callbacks
+remain unverified.
 
 ## Pi HTTP client update
 

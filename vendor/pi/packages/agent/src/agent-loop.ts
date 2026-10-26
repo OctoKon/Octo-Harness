@@ -731,7 +731,7 @@ async function prepareToolCall(
 	parentToolCallId?: string,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
 	const tool = tools.find((t) => t.name === toolCall.name);
-	requireSplyceToolAdmission(tool).check(toolCall.id, toolCall.name, signal, "prepare");
+	requireSplyceToolAdmission(tool).reserve(toolCall.id, toolCall.name, signal);
 	if (!tool) {
 		return {
 			kind: "immediate",
@@ -745,13 +745,20 @@ async function prepareToolCall(
 		const preparedToolCall = prepareToolCallArguments(tool, toolCall);
 		validatedArgs = validateToolArguments(tool, preparedToolCall);
 	} catch (error) {
+		requireSplyceToolAdmission(tool).discard(toolCall.id, signal?.aborted ? "canceled" : "denied");
 		return {
 			kind: "immediate",
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,
 		};
 	}
-	await requireSplyceToolAdmission(tool).prepare(toolCall.id, toolCall.name, validatedArgs, parentToolCallId, signal);
+	try {
+		await requireSplyceToolAdmission(tool).prepare(toolCall.id, toolCall.name, validatedArgs, parentToolCallId, signal);
+	} catch (error) {
+		requireSplyceToolAdmission(tool).discard(toolCall.id, signal?.aborted ? "canceled" : "denied");
+		throw error;
+	}
+	let hooksCompleted = false;
 	try {
 		if (signal?.aborted) {
 			return {
@@ -796,19 +803,23 @@ async function prepareToolCall(
 				isError: true,
 			};
 		}
-		return {
-			kind: "prepared",
-			toolCall,
-			tool,
-			args: validatedArgs,
-		};
+		hooksCompleted = true;
 	} catch (error) {
 		return {
 			kind: "immediate",
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,
 		};
+	} finally {
+		if (!hooksCompleted) requireSplyceToolAdmission(tool).discard(toolCall.id, signal?.aborted ? "canceled" : "denied");
 	}
+	requireSplyceToolAdmission(tool).finish(toolCall.id, toolCall.name, validatedArgs, signal);
+	return {
+		kind: "prepared",
+		toolCall,
+		tool,
+		args: validatedArgs,
+	};
 }
 
 function emitToolExecutionUpdate(toolCall: AgentToolCall, emit: AgentEventSink): ToolUpdateSink {

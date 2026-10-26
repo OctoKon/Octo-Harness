@@ -86,7 +86,9 @@ export class NativePolicy {
   private readonly current: () => CurrentPolicy;
   private readonly permits = new Map<string, Readonly<ActionPermit>>();
   private readonly prepared = new Set<string>();
+  private readonly pending = new Map<string, string>();
   private readonly ready = new Map<string, string>();
+  private readonly reservations = new Map<string, ActionRecord>();
 
   constructor(
     store: Store,
@@ -172,6 +174,37 @@ export class NativePolicy {
       this.deny(permit, "STALE_OWNERSHIP");
   }
 
+  reserve(
+    toolCallId: string,
+    toolName: string,
+    signal: AbortSignal | undefined,
+  ): void {
+    this.check(toolCallId, toolName, signal, "prepare");
+    const permit = this.permits.get(toolCallId)!;
+    const proposal = this.action(permit, "proposed");
+    try {
+      this.store.appendBatch(
+        [{ kind: "action", record: proposal }],
+        this.caller,
+        {
+          scopeId: permit.targetScopeId,
+          actionId: permit.actionId,
+          idempotencyKey: permit.idempotencyKey,
+        },
+        {
+          workspaceId: permit.ownership.workspaceId,
+          epoch: permit.ownership.epoch,
+        },
+      );
+    } catch (error) {
+      if (error instanceof StoreError && error.code === "ACTION_ALREADY_EXISTS")
+        throw new AdmissionError("ACTION_REQUIRES_RECONCILIATION");
+      throw error;
+    }
+    this.prepared.add(toolCallId);
+    this.reservations.set(toolCallId, proposal);
+  }
+
   async prepare(
     toolCallId: string,
     toolName: string,
@@ -179,10 +212,14 @@ export class NativePolicy {
     parentToolCallId: string | undefined,
     signal: AbortSignal | undefined,
   ): Promise<void> {
-    this.check(toolCallId, toolName, signal, "prepare");
+    this.check(toolCallId, toolName, signal);
     const permit = this.permits.get(toolCallId)!;
-    if (this.prepared.has(toolCallId))
-      throw new AdmissionError("ACTION_REQUIRES_RECONCILIATION");
+    if (
+      !this.reservations.has(toolCallId) ||
+      this.pending.has(toolCallId) ||
+      this.ready.has(toolCallId)
+    )
+      throw new AdmissionError("PREPARATION_REQUIRED");
     if (actionArgumentsDigest(validatedArgs) !== permit.argumentsDigest)
       this.deny(permit, "ARGUMENTS_CHANGED");
     const parent =
@@ -213,8 +250,38 @@ export class NativePolicy {
         )?.record as ActionRecord | undefined;
       if (latest?.state !== "running") this.deny(permit, "PARENT_NOT_RUNNING");
     }
-    this.prepared.add(toolCallId);
-    this.ready.set(toolCallId, actionArgumentsDigest(validatedArgs));
+    this.pending.set(toolCallId, actionArgumentsDigest(validatedArgs));
+  }
+
+  finish(
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    signal: AbortSignal | undefined,
+  ): void {
+    this.check(toolCallId, toolName, signal);
+    const permit = this.permits.get(toolCallId)!;
+    const digest = this.pending.get(toolCallId);
+    this.pending.delete(toolCallId);
+    if (!digest) throw new AdmissionError("PREPARATION_REQUIRED");
+    if (digest !== actionArgumentsDigest(args))
+      this.deny(permit, "ARGUMENTS_CHANGED");
+    this.ready.set(toolCallId, digest);
+  }
+
+  discard(toolCallId: string, reason: "canceled" | "denied"): void {
+    this.pending.delete(toolCallId);
+    this.ready.delete(toolCallId);
+    const proposal = this.reservations.get(toolCallId);
+    this.reservations.delete(toolCallId);
+    if (proposal)
+      this.store.append(
+        {
+          kind: "action",
+          record: { ...proposal, recordId: randomUUID(), state: reason },
+        },
+        this.caller,
+      );
   }
 
   async execute<T extends { isError: boolean }>(
@@ -237,16 +304,10 @@ export class NativePolicy {
     )
       this.deny(permit, "ARGUMENTS_CHANGED");
     const admittedArgs = freezeJson(JSON.parse(serialized) as JsonValue);
+    const proposal = this.reservations.get(toolCallId);
+    if (!proposal) throw new AdmissionError("PREPARATION_REQUIRED");
+    this.reservations.delete(toolCallId);
     const history = this.store.list(permit.targetScopeId).records;
-    if (
-      history.some(
-        ({ kind, record }) =>
-          kind === "action" &&
-          ((record as ActionRecord).idempotencyKey === permit.idempotencyKey ||
-            (record as ActionRecord).actionId === permit.actionId),
-      )
-    )
-      throw new AdmissionError("ACTION_REQUIRES_RECONCILIATION");
     if (permit.parentActionId !== null) {
       const parent = history.findLast(
         ({ kind, record }) =>
@@ -266,18 +327,24 @@ export class NativePolicy {
           },
         ],
         this.caller,
-        {
-          scopeId: permit.targetScopeId,
-          idempotencyKey: permit.idempotencyKey,
-          actionId: permit.actionId,
-        },
+        undefined,
         {
           workspaceId: permit.ownership.workspaceId,
           epoch: permit.ownership.epoch,
         },
+        undefined,
+        {
+          scopeId: permit.targetScopeId,
+          idempotencyKey: permit.idempotencyKey,
+          actionId: permit.actionId,
+          recordId: proposal.recordId,
+        },
       );
     } catch (error) {
-      if (error instanceof StoreError && error.code === "ACTION_ALREADY_EXISTS")
+      if (
+        error instanceof StoreError &&
+        error.code === "ACTION_RESERVATION_CHANGED"
+      )
         throw new AdmissionError("ACTION_REQUIRES_RECONCILIATION");
       throw error;
     }
@@ -296,7 +363,9 @@ export class NativePolicy {
 
   private deny(permit: ActionPermit, code: string): never {
     this.prepared.add(permit.toolCallId);
+    this.pending.delete(permit.toolCallId);
     this.ready.delete(permit.toolCallId);
+    this.reservations.delete(permit.toolCallId);
     this.store.append(
       {
         kind: "action",
