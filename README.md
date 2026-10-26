@@ -11,13 +11,16 @@
 
 <h1 align="center">Splyce<h1>
 
-A research-led foundation for a Windows desktop coding-agent application: capable models, useful memory, and changes backed by evidence.
+<div align="center">
+  A research-led foundation for a Windows desktop coding-agent application: capable models, useful memory, and changes backed by evidence.
+
 
 [Research](research/README.md) · [Master plan](MASTER-PLAN.md) · [Delivery plan](research/docs/design/team-delivery-plan.md) · [Contributing](CONTRIBUTING.md)
 
 [![Documentation quality](https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml/badge.svg?branch=main)](https://github.com/OctoKon/Splyce/actions/workflows/documentation-quality.yml)
 [![CodeQL](https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/OctoKon/Splyce/actions/workflows/codeql.yml)
-
+<div>
+  
 ## The direction
 
 Windows V1 is a desktop GUI: Tauri 2/Rust shell, Svelte 5 with strict TypeScript and Vite 8, and a deeply integrated Pi-derived TypeScript core on packaged Node 24 LTS. The base stays barebones; setup fetches only selected pinned Git packages, while Monaco, LSP, RAG, memory, and model assets remain optional. Local and cloud inference use explicit per-role profiles; custom local or Git plugins stay user-controlled.
