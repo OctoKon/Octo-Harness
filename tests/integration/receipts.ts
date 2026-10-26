@@ -71,18 +71,20 @@ test("receipt ordering: one atomic chain, failed pre-effect write prevents dispa
   assert.equal(reopeStore.get("rec-r2").seq, acks.seqs[1]);
   reopeStore.close();
 
-  // A failing member rolls the whole chain back and acknowledges nothing.
+  // A member that passes validation but fails at insert (duplicate recordId)
+  // rolls back the already-inserted rec-r3 and acknowledges nothing.
   const before = receipts.durableCursor("w-demo");
   assert.throws(() =>
     receipts.commitStages(
       [
         { kind: "run", record: record("rec-r3") },
-        { kind: "run", record: "not-a-record" },
+        { kind: "run", record: record("rec-r1") },
       ],
       caller,
     ),
   );
   assert.equal(receipts.durableCursor("w-demo"), before);
+  assert.throws(() => store.get("rec-r3"));
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -183,6 +185,22 @@ test("replay is session-scoped: s1 never receives s2 records in one scope", () =
     forS2.records.map((r) => (r.record as { recordId: string }).recordId),
     [two.recordId],
   );
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("resync cursors are keyed by scope and session, not scope alone", () => {
+  const dir = freshDir();
+  const { store, receipts } = openReceipts(dir);
+  const s2 = { ...caller, sessionId: "s2" };
+  receipts.commitStages([{ kind: "run", record: record("rec-k1") }], caller);
+  receipts.commitStages([{ kind: "run", record: record("rec-k2") }], s2);
+  // s2 resyncs first at the higher seq; s1's first resync must still be
+  // pending, at its own (lower) session cursor.
+  const r2 = receipts.requestResync("w-demo", "s2");
+  const r1 = receipts.requestResync("w-demo", caller.sessionId);
+  assert.ok(r1.fromSeq < r2.fromSeq);
+  assert.equal(r1.fromSeq, store.sessionCursor("w-demo", caller.sessionId));
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });

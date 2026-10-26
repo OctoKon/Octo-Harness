@@ -35,7 +35,7 @@ export interface ResyncEvent {
 
 export class Receipts {
   private readonly store: Store;
-  /** Durable cursor at the moment of the last accepted resync (per scope). */
+  /** Durable cursor at the moment of the last accepted resync (per scope+session). */
   private readonly lastResyncCursor = new Map<string, number>();
 
   constructor(store: Store) {
@@ -113,13 +113,14 @@ export class Receipts {
    */
   requestResync(scopeId: string, sessionId: string): ResyncEvent {
     const cursor = this.store.sessionCursor(scopeId, sessionId);
-    const last = this.lastResyncCursor.get(scopeId);
+    const key = JSON.stringify([scopeId, sessionId]);
+    const last = this.lastResyncCursor.get(key);
     if (last !== undefined && cursor <= last)
       throw new ReceiptsError(
         "RESYNC_NOT_PENDING",
         `no durable progress since the resync at cursor ${String(last)}`,
       );
-    this.lastResyncCursor.set(scopeId, cursor);
+    this.lastResyncCursor.set(key, cursor);
     return { kind: "stream.resync", fromSeq: cursor };
   }
 

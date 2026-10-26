@@ -424,3 +424,37 @@ test("the transient coalescing state is bounded and released after drain", () =>
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("the frozen maxInlineBytes ceiling holds even when base and options are larger", () => {
+  const dir = freshDir();
+  const store = Store.open(join(dir, "store.db"));
+  const loose = TRANSPORT_LIMIT_OPTIONS.maxInlineBytes * 3;
+  const bridge = new DesktopBridge(
+    {
+      scopeId: "w-demo",
+      sessionId: "s1",
+      configRevision: "cfg1",
+      profileRevision: "profile1",
+      policyRevision: "policy1",
+      lastDurableSeq: 0,
+      maxInlineBytes: loose,
+      resolveReference: () => true,
+    },
+    new Receipts(store),
+    { maxInlineBytes: loose },
+  );
+  assert.throws(
+    () =>
+      bridge.submit(
+        event("turn.started", {
+          runId: "r1",
+          turnId: "t1",
+          blob: "x".repeat(TRANSPORT_LIMIT_OPTIONS.maxInlineBytes + 1024),
+        }),
+      ),
+    (error: unknown) =>
+      error instanceof BridgeError && error.code === "CONTRACT_FRAME_TOO_LARGE",
+  );
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
