@@ -118,6 +118,9 @@ test("C6: transient highwater survives reopen and replay preserves exact durable
     [1, 2],
   );
   assert.equal(fixture.store.eventCursor("w-demo", "s1"), 1);
+  assert.equal(fixture.store.eventHighwater("w-demo", "s1"), 2);
+  assert.equal(fixture.reopen().eventHighwater("w-demo", "s1"), 2);
+  assert.equal(fixture.store.eventHighwater("w-demo", "s2"), 0);
   const next = fixture.reopen().commitEvents([], [draft("three")], caller);
   assert.equal(next.events[0]?.seq, 3);
   assert.equal(
