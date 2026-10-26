@@ -129,9 +129,9 @@ describe("App wiring", () => {
     expect(
       q("[data-testid=modules-engine-unavailable]")?.textContent,
     ).toContain("No setup or module service is connected.");
-    expect(
-      (q("[data-testid=add-module]") as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((q("[data-testid=add-module]") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     expect(
       (q("[data-testid=refresh-catalog]") as HTMLButtonElement).disabled,
     ).toBe(true);
