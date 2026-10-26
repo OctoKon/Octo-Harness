@@ -9,22 +9,15 @@
 import {
   PROTOCOL_VERSION,
   CONTRACT_VERSION,
+  TRANSPORT_LIMITS,
   type ContractContext,
   type SplyceEvent,
   validateEvent,
 } from "./contracts.js";
 import { Receipts } from "./receipts.js";
 
-/** v2 transport limits (accepted proposal); replaced by TRANSPORT_LIMITS. */
-export const TRANSPORT_LIMIT_OPTIONS = {
-  maxInlineBytes: 65536,
-  maxEncodedFrameBytes: 262144,
-  pendingQueueMaxFrames: 1024,
-  pendingQueueMaxBytes: 8388608,
-  transientCoalesceWindowMs: 16,
-  rendererMaxFrames: 256,
-  rendererMaxBytes: 4194304,
-} as const;
+/** Renderer transport limits, bound to the frozen shared constants. */
+export const TRANSPORT_LIMIT_OPTIONS = TRANSPORT_LIMITS;
 
 export type TransportLimitOptions = Partial<typeof TRANSPORT_LIMIT_OPTIONS>;
 

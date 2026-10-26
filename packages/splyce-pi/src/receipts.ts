@@ -7,6 +7,7 @@ import {
   type ContractContext,
   type RecordKind,
   type RecordByKind,
+  TRANSPORT_LIMITS,
   validateCursor,
 } from "./contracts.js";
 import {
@@ -75,7 +76,7 @@ export class Receipts {
       profileRevision: caller.profileRevision,
       policyRevision: caller.policyRevision,
       lastDurableSeq: this.store.cursor(),
-      maxInlineBytes: 65536,
+      maxInlineBytes: TRANSPORT_LIMITS.maxInlineBytes,
       resolveReference: caller.resolveReference ?? (() => false),
     };
     let cursor: number;
