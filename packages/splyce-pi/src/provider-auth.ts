@@ -30,6 +30,13 @@ export interface CredentialRequest {
   readonly egressPolicyRef: string;
   /** The admitted C2 action this resolution belongs to. */
   readonly actionId: string;
+  /**
+   * Cancellation of the owning action. Abort before or during resolution makes
+   * `resolve` reject with CREDENTIAL_REVOKED; a result that arrives after abort
+   * is discarded by the resolver (never cached, never returned late), and any
+   * lease already handed out is revoked.
+   */
+  readonly signal?: AbortSignal;
 }
 
 export const CREDENTIAL_ERROR_CODES = [
@@ -50,7 +57,10 @@ export class CredentialError extends Error {
   }
 }
 
-/** Scoped access to one secret. The value is only visible inside `use`. */
+/**
+ * Scoped access to one secret. The value is only visible inside `use`.
+ * A lease is bound to the request's AbortSignal: aborting it revokes the lease.
+ */
 export interface SecretLease {
   use<T>(consume: (secret: string) => T | Promise<T>): Promise<T>;
   /** After revoke (or cancel) `use` throws CREDENTIAL_REVOKED and nothing is cached. */
