@@ -14,12 +14,16 @@
   interface Props {
     initial: ModuleSnapshot;
     onConfirmInstall?: (request: {
+      requestId: string;
       planId: string;
       enableRequested: boolean;
       executionGranted: boolean;
     }) => void;
     onCancelOperation?: (operationId: string) => void;
-    onRetryOperation?: (operationId: string) => void;
+    onRetryOperation?: (
+      operationId: string,
+      request: { requestId: string },
+    ) => void;
     onEnterWorkbench?: () => void;
   }
 

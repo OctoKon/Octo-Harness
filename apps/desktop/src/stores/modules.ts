@@ -106,6 +106,22 @@ export type OperationKind =
 
 export interface ModuleOperation {
   readonly operationId: string;
+  /**
+   * The renderer-generated request identity this operation answers.
+   *
+   * The renderer mints one `requestId` per submitted request (install or retry)
+   * and sends it with that request. Every operation update for that request must
+   * echo the same `requestId`; that echo is the only evidence that an operation
+   * belongs to this request. `operationId` alone cannot correlate anything: two
+   * unrelated operations of the same kind can be indistinguishable.
+   *
+   * Seam: the frozen v1 contract has no setup/module request envelope yet, so a
+   * future engine adapter must carry the request's `requestId` through to the
+   * presentation snapshot. Until it echoes one, no operation can be admitted and
+   * the screen keeps waiting for the engine. The renderer never fabricates the
+   * echo or a success.
+   */
+  readonly requestId: string;
   readonly kind: OperationKind;
   readonly packageId: string | null;
   readonly stage: "accepted" | "started" | "progress" | "outcome";

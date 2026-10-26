@@ -216,6 +216,9 @@ export function d6Operation(
 ): ModuleOperation {
   return {
     operationId: "op-d6-install",
+    // A fixture request identity. Correlation tests override this with the
+    // requestId the component actually submitted; the engine must echo that.
+    requestId: "req-d6-install",
     kind: "install",
     packageId: "fixture-a",
     stage: "accepted",
@@ -284,6 +287,7 @@ export const w10Modules: ModuleSnapshot = {
   },
   operation: {
     operationId: "op-w10-uninstall-a",
+    requestId: "req-w10-uninstall-a",
     kind: "uninstall",
     packageId: "fixture-a",
     stage: "outcome",

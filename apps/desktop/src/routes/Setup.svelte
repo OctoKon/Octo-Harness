@@ -29,13 +29,24 @@
     onSkip?: () => void;
     onRefreshCatalog?: () => void;
     onReview?: (selected: readonly string[]) => void;
+    /**
+     * Submits the reviewed install. `requestId` is generated here, once per
+     * submission, and is the only identity that may correlate the engine's
+     * operation back to this request: the engine must echo it on every update
+     * for that operation.
+     */
     onConfirmInstall?: (request: {
+      requestId: string;
       planId: string;
       enableRequested: boolean;
       executionGranted: boolean;
     }) => void;
     onCancelOperation?: (operationId: string) => void;
-    onRetryOperation?: (operationId: string) => void;
+    /** A retry is a new request, so it carries a fresh `requestId` too. */
+    onRetryOperation?: (
+      operationId: string,
+      request: { requestId: string },
+    ) => void;
     onOpenModules?: () => void;
     onConfigureProvider?: () => void;
     onEnterWorkbench?: () => void;
@@ -62,16 +73,28 @@
   let enableAfterInstall = $state(false);
   let executionGranted = $state(false);
   let lastPlanId: string | null = null;
-  // The request awaiting an engine operation. It records the reviewed plan and
-  // the operation identity that already existed when the request was sent, so a
-  // pre-existing or unrelated snapshot operation can never be mistaken for this
-  // request's acceptance.
+  // The request awaiting an engine operation. It records the request identity
+  // this renderer minted for the submission and the reviewed plan, so only an
+  // operation the engine echoes that identity on can be mistaken for this
+  // request's acceptance. An unrelated or pre-existing operation never matches:
+  // request ids are unique per submission.
   let pendingOperation = $state<{
-    readonly correlationId: number;
+    readonly requestId: string;
     readonly planId: string | null;
-    readonly baselineOperationId: string | null;
   } | null>(null);
-  let submissionSeq = 0;
+  let requestSeq = 0;
+
+  /**
+   * Mints a request identity that is unique per submission. It is sent with the
+   * request and must be echoed by the engine on that request's operations.
+   */
+  function newRequestId(): string {
+    requestSeq += 1;
+    const random = globalThis.crypto?.randomUUID?.();
+    return random
+      ? `setup-request-${random}`
+      : `setup-request-${Date.now().toString(36)}-${requestSeq}`;
+  }
   // The one engine operation this screen may show, and its last seen value so a
   // replacement by an unrelated operation cannot blank or hijack the outcome.
   let admittedOperationId = $state<string | null>(
@@ -152,19 +175,20 @@
     pendingOperation = null;
   });
 
-  // Authoritative, correlated progression only: the engine's operation identity
-  // and stage drive reviewing -> operating -> outcome/recovering, and only an
-  // operation that did not already exist when this request was submitted can
-  // accept it. A pre-existing/unrelated operation is ignored and the review
-  // keeps waiting. Submitting or clicking never advances this state.
+  // Authoritative, correlated progression only: the engine's echoed request
+  // identity and the operation stage drive reviewing -> operating ->
+  // outcome/recovering. Only an operation that carries the requestId this
+  // renderer minted for the submission can accept it; an unrelated or
+  // pre-existing operation (even one of the same kind and target) is ignored and
+  // the review keeps waiting. Submitting or clicking never advances this state.
   $effect(() => {
     const current = snapshot.operation;
     const planId = snapshot.plan?.planId ?? null;
 
-    // Acceptance of a pending request/retry: a NEW operation identity, and for
-    // an install the reviewed plan must still be the current one.
+    // Acceptance of a pending request/retry: the engine echoed this request's
+    // identity, and for an install the reviewed plan must still be current.
     const pending = pendingOperation;
-    if (pending && current && current.operationId !== pending.baselineOperationId) {
+    if (pending && current && current.requestId === pending.requestId) {
       if (step !== "reviewing" || planId === pending.planId) {
         admittedOperationId = current.operationId;
         lastAdmittedOperation = current;
@@ -275,18 +299,16 @@
   function install() {
     const plan = snapshot.plan;
     if (!confirm.enabled || !plan || pendingOperation) return;
+    const requestId = newRequestId();
     onConfirmInstall({
+      requestId,
       planId: plan.planId,
       enableRequested: enableAfterInstall,
       executionGranted,
     });
-    // Record the reviewed plan and the operation that already existed, then wait.
-    // The screen advances when the engine reports a DIFFERENT operation id.
-    pendingOperation = {
-      correlationId: ++submissionSeq,
-      planId: plan.planId,
-      baselineOperationId: snapshot.operation?.operationId ?? null,
-    };
+    // Record the request identity and the reviewed plan, then wait. The screen
+    // advances only when the engine reports an operation echoing this requestId.
+    pendingOperation = { requestId, planId: plan.planId };
   }
 
   function cancelOperation() {
@@ -298,13 +320,11 @@
   function retryOperation() {
     const current = shownOperation;
     if (!current || !operation?.canRetry.enabled || pendingOperation) return;
-    onRetryOperation(current.operationId);
-    // A retry is a new request too: only a new operation identity accepts it.
-    pendingOperation = {
-      correlationId: ++submissionSeq,
-      planId: snapshot.plan?.planId ?? null,
-      baselineOperationId: current.operationId,
-    };
+    const requestId = newRequestId();
+    onRetryOperation(current.operationId, { requestId });
+    // A retry is a new request too: only an operation echoing this requestId
+    // accepts it.
+    pendingOperation = { requestId, planId: snapshot.plan?.planId ?? null };
   }
 
   function done() {
@@ -654,10 +674,14 @@
         {/if}
         {#if pendingOperation}
           <p role="status" class="reason" data-testid="awaiting-operation">
-            Request submitted. Waiting for the engine to accept this request and
-            report its operation identity; an operation that was already in the
-            snapshot before submission is not evidence for this request. Nothing
-            is shown as installed until its durable outcome.
+            Request submitted. Waiting for the engine to echo this request's
+            identity and report its operation; an operation that was already in
+            the snapshot before submission, or one that does not carry this
+            request's identity, is not evidence for this request. Nothing is
+            shown as installed until its durable outcome. Request
+            <code data-testid="awaiting-request-id"
+              >{pendingOperation.requestId}</code
+            >.
           </p>
         {/if}
       {/if}

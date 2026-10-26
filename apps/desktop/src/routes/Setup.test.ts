@@ -85,6 +85,15 @@ async function selectAndReview(...packageIds: string[]): Promise<void> {
   flushSync();
 }
 
+/** The requestId the component minted for the most recent install submission. */
+function submittedRequestId(
+  onConfirmInstall: ReturnType<typeof vi.fn>,
+): string {
+  const call = onConfirmInstall.mock.calls.at(-1);
+  if (!call) throw new Error("no install request was submitted");
+  return (call[0] as { requestId: string }).requestId;
+}
+
 describe("TD-29 Setup.svelte", () => {
   it("D1: opens base-first, honest about generation, and never preselects", async () => {
     const onBaseOnly = vi.fn();
@@ -205,11 +214,23 @@ describe("TD-29 Setup.svelte", () => {
     flushSync();
 
     expect(onConfirmInstall).toHaveBeenCalledTimes(1);
-    expect(onConfirmInstall).toHaveBeenCalledWith({
+    const request = onConfirmInstall.mock.calls[0]![0] as {
+      requestId: string;
+      planId: string;
+      enableRequested: boolean;
+      executionGranted: boolean;
+    };
+    expect(request).toMatchObject({
       planId: "plan-d6-current",
       enableRequested: false,
       executionGranted: true,
     });
+    // The renderer mints the correlation identity, and the screen shows the
+    // exact identity it sent so the engine can echo it.
+    expect(request.requestId).toMatch(/^setup-request-/);
+    expect(byTestId("awaiting-request-id").textContent?.trim()).toBe(
+      request.requestId,
+    );
   });
 
   it("D6: advances reviewing -> operating -> outcome only from authoritative operation updates", async () => {
@@ -233,15 +254,18 @@ describe("TD-29 Setup.svelte", () => {
     expect(byTestId("awaiting-operation").textContent).toContain(
       "Waiting for the engine",
     );
+    const requestId = submittedRequestId(onConfirmInstall);
+    expect(byTestId("awaiting-request-id").textContent?.trim()).toBe(requestId);
     expect((byTestId("confirm-install") as HTMLButtonElement).disabled).toBe(
       true,
     );
     expect(maybeTestId("setup-operation")).toBeNull();
 
-    // Engine acceptance carries the operation identity and leaves reviewing.
+    // Engine acceptance echoes the request identity and leaves reviewing.
     await push(
       live,
       d6OperationSnapshot({
+        requestId,
         stage: "accepted",
         message: "Accepted the reviewed plan for staging.",
       }),
@@ -260,6 +284,7 @@ describe("TD-29 Setup.svelte", () => {
     await push(
       live,
       d6OperationSnapshot({
+        requestId,
         stage: "progress",
         message: "Fetching the reviewed closure.",
         progress: { state: "unknown", transferredBytes: 4096 },
@@ -275,6 +300,7 @@ describe("TD-29 Setup.svelte", () => {
     await push(
       live,
       d6OperationSnapshot({
+        requestId,
         stage: "outcome",
         outcome: "failed",
         message: "Staging validation failed.",
@@ -296,6 +322,7 @@ describe("TD-29 Setup.svelte", () => {
     await push(
       live,
       d6OperationSnapshot({
+        requestId,
         stage: "outcome",
         outcome: "uncertain",
         message: "Commit was lost; reconciliation required.",
@@ -309,21 +336,31 @@ describe("TD-29 Setup.svelte", () => {
   });
 
   it("D6: engine loss during an operation leaves recovery, never success", async () => {
-    const live = await renderLive({ initial: d6Reviewing });
+    const onConfirmInstall = vi.fn();
+    const live = await renderLive({ initial: d6Reviewing, onConfirmInstall });
     await selectAndReview("fixture-a", "fixture-b");
     (byTestId("execution-grant") as HTMLInputElement).click();
     flushSync();
     byTestId("confirm-install").click();
     flushSync();
+    const requestId = submittedRequestId(onConfirmInstall);
 
     await push(
       live,
-      d6OperationSnapshot({ stage: "started", message: "Staging started." }),
+      d6OperationSnapshot({
+        requestId,
+        stage: "started",
+        message: "Staging started.",
+      }),
     );
     expect(byTestId("setup").dataset.step).toBe("operating");
 
     await push(live, {
-      ...d6OperationSnapshot({ stage: "started", message: "Staging started." }),
+      ...d6OperationSnapshot({
+        requestId,
+        stage: "started",
+        message: "Staging started.",
+      }),
       engine: "unavailable",
       engineReason: "Engine process exited.",
     });
@@ -356,14 +393,17 @@ describe("TD-29 Setup.svelte", () => {
     expect(maybeTestId("operation-outcome")).toBeNull();
   });
 
-  it("D6: correlation accepts only a new operation identity, not the pre-existing one", async () => {
+  it("D6: correlation accepts only an operation echoing the submitted request identity", async () => {
+    const onConfirmInstall = vi.fn();
     const live = await renderLive({
       initial: d6OperationSnapshot({
         operationId: "previous-install",
+        requestId: "req-previous-install",
         stage: "outcome",
         outcome: "installed",
         message: "Previous install finished.",
       }),
+      onConfirmInstall,
     });
     await selectAndReview("fixture-a", "fixture-b");
     (byTestId("execution-grant") as HTMLInputElement).click();
@@ -372,6 +412,7 @@ describe("TD-29 Setup.svelte", () => {
     flushSync();
     await tick();
     flushSync();
+    const requestId = submittedRequestId(onConfirmInstall);
 
     // The old operation is still the only one the engine reported.
     expect(byTestId("setup").dataset.step).toBe("reviewing");
@@ -379,11 +420,103 @@ describe("TD-29 Setup.svelte", () => {
       "not evidence for this request",
     );
 
-    // A genuinely new operation id, while the reviewed plan is current, is
-    // this request's acceptance.
-    await push(live, d6OperationSnapshot({ stage: "accepted" }));
+    // The engine echoing this request's identity, while the reviewed plan is
+    // current, is this request's acceptance.
+    await push(live, d6OperationSnapshot({ requestId, stage: "accepted" }));
     expect(byTestId("setup").dataset.step).toBe("operating");
     expect(byTestId("setup-operation").textContent).toContain("op-d6-install");
+  });
+
+  it("unrelated new operation cannot accept pending install", async () => {
+    const onConfirmInstall = vi.fn();
+    const live = await renderLive({ initial: d6Reviewing, onConfirmInstall });
+    await selectAndReview("fixture-a", "fixture-b");
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+    byTestId("confirm-install").click();
+    flushSync();
+    await tick();
+    flushSync();
+    expect(byTestId("setup").dataset.step).toBe("reviewing");
+    await push(
+      live,
+      d6OperationSnapshot({
+        operationId: "unrelated-uninstall",
+        kind: "uninstall",
+        packageId: "unrelated-module",
+        stage: "outcome",
+        outcome: "uninstalled",
+        message: "A different module was removed.",
+      }),
+    );
+    expect(onConfirmInstall).toHaveBeenCalledTimes(1);
+    expect(byTestId("setup").dataset.step).toBe("reviewing");
+    expect(maybeTestId("operation-outcome")).toBeNull();
+  });
+
+  it("same-kind unrelated operation cannot accept pending install", async () => {
+    const onConfirmInstall = vi.fn();
+    const live = await renderLive({ initial: d6Reviewing, onConfirmInstall });
+    await selectAndReview("fixture-a", "fixture-b");
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+    byTestId("confirm-install").click();
+    flushSync();
+    await tick();
+    flushSync();
+
+    // Same kind, same target, different request: operation ids and kinds are
+    // not correlation, so this must not advance or display.
+    await push(
+      live,
+      d6OperationSnapshot({
+        operationId: "op-other-install",
+        requestId: "req-someone-else",
+        kind: "install",
+        packageId: "fixture-a",
+        stage: "accepted",
+        message: "A different install request was accepted.",
+      }),
+    );
+    expect(byTestId("setup").dataset.step).toBe("reviewing");
+    expect(maybeTestId("setup-operation")).toBeNull();
+    expect(maybeTestId("operation-outcome")).toBeNull();
+  });
+
+  it("an operation echoing the submitted request identity advances to operating and outcome", async () => {
+    const onConfirmInstall = vi.fn();
+    const live = await renderLive({ initial: d6Reviewing, onConfirmInstall });
+    await selectAndReview("fixture-a", "fixture-b");
+    (byTestId("execution-grant") as HTMLInputElement).click();
+    flushSync();
+    byTestId("confirm-install").click();
+    flushSync();
+    await tick();
+    flushSync();
+    const requestId = submittedRequestId(onConfirmInstall);
+
+    await push(
+      live,
+      d6OperationSnapshot({
+        requestId,
+        stage: "accepted",
+        message: "Accepted the reviewed plan.",
+      }),
+    );
+    expect(byTestId("setup").dataset.step).toBe("operating");
+    expect(byTestId("setup-operation").textContent).toContain("op-d6-install");
+
+    await push(
+      live,
+      d6OperationSnapshot({
+        requestId,
+        stage: "outcome",
+        outcome: "installed",
+        message: "Installed the reviewed closure.",
+      }),
+    );
+    expect(byTestId("setup").dataset.step).toBe("outcome");
+    expect(byTestId("operation-outcome").textContent).toContain("Installed");
   });
 
   it("D6: keeps confirmation disabled for a stale plan", async () => {

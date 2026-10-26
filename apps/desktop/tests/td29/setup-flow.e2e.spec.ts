@@ -138,16 +138,25 @@ test.describe("TD-29 D6_optional_install_remove", () => {
     await expect(page.getByTestId("confirm-install")).toBeEnabled();
     await page.getByTestId("confirm-install").click();
 
-    expect(await lastCall(page)).toEqual({
-      name: "onConfirmInstall",
-      args: [
-        {
-          planId: "plan-d6-current",
-          enableRequested: false,
-          executionGranted: true,
-        },
-      ],
+    const submission = await lastCall(page);
+    expect(submission?.name).toBe("onConfirmInstall");
+    const payload = submission?.args[0] as {
+      requestId: string;
+      planId: string;
+      enableRequested: boolean;
+      executionGranted: boolean;
+    };
+    expect(payload).toMatchObject({
+      planId: "plan-d6-current",
+      enableRequested: false,
+      executionGranted: true,
     });
+    // The renderer mints the correlation identity and shows the same one while
+    // it waits for the engine to echo it.
+    expect(payload.requestId).toMatch(/^setup-request-/);
+    await expect(page.getByTestId("awaiting-request-id")).toHaveText(
+      payload.requestId,
+    );
   });
 
   test("keeps confirmation disabled for a stale plan", async ({ page }) => {
