@@ -197,6 +197,21 @@ test("cancellation differs from success and keeps the editor text", () => {
   }
 });
 
+test("a rewind confirmed after the engine went away is refused", () => {
+  const confirming = apply(ready(), { type: "begin", kind: "rewind" });
+  const s = reduceSessionAction(
+    confirming,
+    { type: "confirm" },
+    {
+      ...ready(),
+      engine: { status: "unavailable", reason: "The engine was lost." },
+    },
+  );
+  assert.equal(s.phase, "confirming");
+  assert.equal(s.request, null);
+  assert.equal(s.blocked, "The engine was lost.");
+});
+
 test("another action cannot start on top of a rewind confirmation", () => {
   const context = ready();
   const confirming = apply(context, { type: "begin", kind: "rewind" });
