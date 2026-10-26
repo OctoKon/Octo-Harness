@@ -6,8 +6,8 @@
     handshake,
     onEvent,
     subscribe,
-    type Unsubscribe,
   } from "./stores/engine";
+  import { bindSelection, type BindingStatus } from "./stores/session-selection";
   import {
     createTurnStreamTransport,
     createTurnsState,
@@ -16,8 +16,8 @@
 
   let status = $state("disconnected");
   let turns = $state.raw<TurnsState>(createTurnsState());
-  let sessionDispose: Unsubscribe | null = null;
-  let subscribedSessionId: string | null = null;
+  let subscription = $state<BindingStatus>({ state: "idle" });
+  let retry = $state<() => void>(() => {});
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
@@ -26,52 +26,35 @@
     // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
   }
 
-  async function subscribeActiveSession(
-    sessionId: string | undefined,
-    afterSeq: number,
-  ) {
-    if (!sessionId || subscribedSessionId === sessionId) return;
-    sessionDispose?.();
-    sessionDispose = null;
-    try {
-      sessionDispose = await subscribe(sessionId, afterSeq);
-      subscribedSessionId = sessionId;
-    } catch {
-      // The stream stays paused/stale; no session context is invented here.
-    }
-  }
-
-  function recover(fromSeq: number, sessionId: string) {
-    subscribedSessionId = null;
-    void subscribeActiveSession(sessionId, fromSeq);
-  }
-
   onMount(() => {
+    // The workbench selects the session (session-selection store); none is derived from events.
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
-        void subscribeActiveSession(next.sessionId, next.lastDurableSeq);
       },
-      onResync: recover,
+      onResync: (fromSeq, sessionId) => {
+        void binding.resubscribe(sessionId, fromSeq);
+      },
     });
+    const binding = bindSelection(transport, subscribe);
     const unsubState = connectionState.subscribe((val) => {
       status = val;
     });
+    const unsubBinding = binding.status.subscribe((next) => {
+      subscription = next;
+    });
+    retry = () => void binding.retry();
     const unsubEvents = onEvent((event) => transport.enqueue(event));
 
-    handshake()
-      .then(() =>
-        subscribeActiveSession(turns.sessionId, turns.lastDurableSeq),
-      )
-      .catch(() => {
-        // Handshake rejection leaves status in 'unavailable' or 'error'
-      });
+    handshake().catch(() => {
+      // Handshake rejection leaves status in 'unavailable' or 'error'
+    });
 
     return () => {
       unsubState();
       unsubEvents();
-      sessionDispose?.();
-      subscribedSessionId = null;
+      unsubBinding();
+      binding.dispose();
       transport.dispose();
     };
   });
@@ -86,6 +69,13 @@
       </span>
     </div>
   </header>
+
+  {#if subscription.state === "failed"}
+    <div class="subscribe-error" role="alert" data-testid="subscribe-error">
+      <span>Could not subscribe to the session: {subscription.error}</span>
+      <button type="button" onclick={retry}>Retry</button>
+    </div>
+  {/if}
 
   <div class="app-content" class:conversation={currentRun !== undefined}>
     {#if currentRun}
@@ -157,6 +147,15 @@
   .status-badge.unavailable {
     background: #fee2e2;
     color: #991b1b;
+  }
+  .subscribe-error {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 20px;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.875rem;
   }
   .app-content {
     flex: 1;

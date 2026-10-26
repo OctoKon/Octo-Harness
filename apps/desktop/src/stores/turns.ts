@@ -597,6 +597,7 @@ export interface TurnStreamTransport {
   flush(): TurnsState;
   current(sessionId?: string): TurnsState;
   follow(sessionId: string, scopeId: string): void;
+  unfollow(sessionId: string): void;
   rejectedCount(): number;
   dispose(): void;
 }
@@ -1001,6 +1002,17 @@ export function createTurnStreamTransport(
     follow(sessionId: string, scopeId: string) {
       followed.set(sessionId, scopeId);
       selectedSessionId ??= sessionId;
+    },
+    unfollow(sessionId: string) {
+      const key = keyOf(sessionId);
+      const channel = key ? channels.get(key) : undefined;
+      if (channel) clearQueue(channel);
+      if (key) channels.delete(key);
+      followed.delete(sessionId);
+      if (selectedSessionId === sessionId) {
+        selectedSessionId = undefined;
+        options.onState?.(options.state ?? fallbackState);
+      }
     },
     rejectedCount: () => rejected,
     current: (sessionId?: string) => {
