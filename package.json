@@ -19,8 +19,8 @@
   "scripts": {
     "prepare:runtime": "powershell -NoProfile -NonInteractive -File scripts/prepare-node-runtime.ps1",
     "build:contracts": "tsc -p packages/splyce-pi/tsconfig.json",
-    "build:pi": "npm run build --workspace=@earendil-works/pi-telemetry && npm run build --workspace=@earendil-works/pi-tui && npm run build --workspace=@earendil-works/pi-codemode && npm run build --workspace=@earendil-works/pi-mcp && npm run build --workspace=@earendil-works/pi-ai && npm run build --workspace=@earendil-works/pi-agent-core && npm run build --workspace=@earendil-works/pi-coding-agent",
-    "build:engine": "npm run prepare:runtime && npm run build:contracts && npm run build:pi && node scripts/build-engine.mjs",
+    "build:pi": "npm run build --workspace=@earendil-works/pi-telemetry && npm run build --workspace=@earendil-works/pi-tui && npm run build --workspace=@earendil-works/pi-codemode && npm run build --workspace=@earendil-works/pi-mcp && npm run build:offline --workspace=@earendil-works/pi-ai && npm run build --workspace=@earendil-works/pi-agent-core && npm run build --workspace=@earendil-works/pi-coding-agent",
+    "build:engine": "npm run prepare:runtime && npm run build:contracts && node scripts/generate-bridge-protocol.mjs && npm run build:pi && node scripts/build-engine.mjs",
     "build:desktop": "npm run build:engine && node scripts/build-tauri.mjs",
     "test:contracts": "node scripts/run-contracts.mjs",
     "test:engine-frames": "node --test tests/engine-frames.test.mjs",
