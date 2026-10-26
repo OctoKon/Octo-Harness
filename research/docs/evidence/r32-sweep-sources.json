@@ -1,0 +1,1339 @@
+[
+  {
+    "id": "R32-gemini-antigravity",
+    "tool": "Gemini CLI / Antigravity CLI",
+    "url": "https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/",
+    "title": "An important update: Transitioning Gemini CLI to Antigravity CLI",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Published 2026-05-19: Gemini CLI transitions to the Go-based Antigravity CLI, which shares a harness with the Antigravity 2.0 desktop app.",
+      "Individual and free users must move before Gemini CLI stops serving their requests on 2026-06-18; enterprise access continues."
+    ],
+    "verification": "primary-documentation",
+    "notes": "The post does not state Antigravity CLI's license or source availability; Gemini CLI itself remains Apache-2.0 source."
+  },
+  {
+    "id": "R32-forgecode",
+    "tool": "ForgeCode",
+    "url": "https://github.com/antinomyhq/forgecode",
+    "title": "ForgeCode README",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Apache-2.0 terminal agent with built-in read-only research (sage), plan-writing (muse, writes to plans/) and implementation (forge) agents.",
+      "Per-turn loop budgets: max_requests_per_turn and max_tool_failure_per_turn.",
+      "Semantic indexing is opt-in through :sync, but its default index server is the hosted api.forgecode.dev and receives file content unless FORGE_WORKSPACE_SERVER_URL is overridden."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Repository pushed 2026-10-25. Terminal-Bench scores are self-reported and not used as evidence."
+  },
+  {
+    "id": "R32-terminus-kira",
+    "tool": "Terminus-KIRA",
+    "url": "https://github.com/krafton-ai/kira",
+    "title": "Terminus-KIRA README",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Apache-2.0 Terminal-Bench harness that appends an echo marker after each command and advances as soon as the marker appears instead of waiting the full timeout.",
+      "Summarizes history and retries on context-window overflow."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Last push 2026-05-29. Benchmark figures are unverified."
+  },
+  {
+    "id": "R32-anthropic-caching",
+    "tool": "Anthropic prompt caching",
+    "url": "https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching",
+    "title": "Prompt caching",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Cache prefixes follow tools, system, then messages; a tool-definition change invalidates every cached level.",
+      "Cache reads cost 0.1x base input; 5-minute writes 1.25x and 1-hour writes 2x."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Read 2026-10-26; prices and limits change and must be rechecked per provider cell."
+  },
+  {
+    "id": "R32-openai-caching",
+    "tool": "OpenAI prompt caching",
+    "url": "https://developers.openai.com/api/docs/guides/prompt-caching",
+    "title": "Prompt caching guide",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Caching is automatic; changes to model, tools (including order), reasoning effort or output format, compaction and edits of earlier turns break cache reuse.",
+      "prompt_cache_key partitions cache routing; cache entries are not guaranteed to persist."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Read 2026-10-26."
+  },
+  {
+    "id": "R32-gemini-caching",
+    "tool": "Gemini context caching",
+    "url": "https://ai.google.dev/gemini-api/docs/caching",
+    "title": "Context caching",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Implicit caching is enabled for Gemini 2.5 and later; explicit caching is unavailable on newer models and in the Interactions API."
+    ],
+    "verification": "primary-documentation",
+    "notes": "TTL and discount were not stated on the page read 2026-10-26."
+  },
+  {
+    "id": "R32-anthropic-tool-search",
+    "tool": "Anthropic advanced tool use",
+    "url": "https://www.anthropic.com/engineering/advanced-tool-use",
+    "title": "Introducing advanced tool use",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Tool search reduced a large tool library's upfront context from about 55K to about 8.7K tokens, an 85% reduction.",
+      "Internal MCP evaluations improved from 49% to 74% for Opus 4 and from 79.5% to 88.1% for Opus 4.5.",
+      "Programmatic tool calling cut average tokens on complex research tasks from 43,588 to 27,297."
+    ],
+    "verification": "vendor-engineering-post",
+    "notes": "Vendor-internal evaluation; not independently reproduced."
+  },
+  {
+    "id": "R32-context-rot",
+    "tool": "Chroma context rot",
+    "url": "https://www.trychroma.com/research/context-rot",
+    "title": "Context Rot",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Across 18 models, performance grows less reliable as input length increases, even on simple tasks.",
+      "On LongMemEval, focused inputs outperform the full ~113K-token input across tested models."
+    ],
+    "verification": "vendor-research-report",
+    "notes": "Vendor research report, 2025-07."
+  },
+  {
+    "id": "R32-anthropic-context-eng",
+    "tool": "Anthropic context engineering",
+    "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents",
+    "title": "Effective context engineering for AI agents",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Compaction preserves decisions and unresolved issues and drops redundant tool output; clearing old tool results is the safest first step.",
+      "Sub-agents return condensed summaries to the coordinating agent."
+    ],
+    "verification": "vendor-engineering-post",
+    "notes": "Engineering guidance without controlled numbers."
+  },
+  {
+    "id": "R32-openai-compaction",
+    "tool": "OpenAI compaction",
+    "url": "https://developers.openai.com/api/docs/guides/compaction",
+    "title": "Compaction guide",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Server-side compaction produces an encrypted, opaque compaction item; a standalone compact endpoint also exists."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Read 2026-10-26."
+  },
+  {
+    "id": "R32-spotlighting",
+    "tool": "Spotlighting",
+    "url": "https://arxiv.org/abs/2403.14720",
+    "title": "Defending Against Indirect Prompt Injection Attacks With Spotlighting",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Spotlighting reduced indirect prompt-injection attack success from greater than 50% to below 2% on GPT-family models with minimal task impact."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Heuristic defense evaluated on GPT-family models; not a security boundary."
+  },
+  {
+    "id": "R32-camel",
+    "tool": "CaMeL",
+    "url": "https://arxiv.org/abs/2503.18813",
+    "title": "Defeating Prompt Injections by Design",
+    "accessed": "2026-10-26",
+    "claims": [
+      "CaMeL solved 77% of AgentDojo tasks with provable security versus 84% for an undefended system."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Preprint v2, 2025-06-24."
+  },
+  {
+    "id": "R32-agentdojo",
+    "tool": "AgentDojo",
+    "url": "https://arxiv.org/abs/2406.13352",
+    "title": "AgentDojo",
+    "accessed": "2026-10-26",
+    "claims": [
+      "AgentDojo contains 97 realistic tasks and 629 security test cases; it contains no coding tasks."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Benchmark paper."
+  },
+  {
+    "id": "R32-dgm",
+    "tool": "Darwin Godel Machine",
+    "url": "https://sakana.ai/dgm/",
+    "title": "The Darwin Godel Machine",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The DGM faked a log claiming unit tests had run and passed when they had not.",
+      "It removed markers used by its hallucination-detection reward function despite explicit instructions not to."
+    ],
+    "verification": "lab-report",
+    "notes": "Lab report linked to arXiv 2505.22954."
+  },
+  {
+    "id": "R32-swebench-contamination",
+    "tool": "SWE-bench Verified contamination",
+    "url": "https://arxiv.org/abs/2506.12286",
+    "title": "The SWE-Bench Illusion",
+    "accessed": "2026-10-26",
+    "claims": [
+      "State-of-the-art models identify buggy file paths from issue text alone up to 76% on SWE-bench Verified versus up to 53% on other repositories.",
+      "Consecutive 5-gram reproduction reaches 35% on SWE-bench Verified/Full versus up to 18% on other benchmarks."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Indicates possible memorization; not proof."
+  },
+  {
+    "id": "R32-swebench-pro",
+    "tool": "SWE-bench Pro",
+    "url": "https://arxiv.org/abs/2509.16941",
+    "title": "SWE-Bench Pro",
+    "accessed": "2026-10-26",
+    "claims": [
+      "SWE-bench Pro contains 1,865 problems from 41 actively maintained repositories with public, held-out and commercial partitions."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Preprint v2, 2025-11-14."
+  },
+  {
+    "id": "R32-swebench-live",
+    "tool": "SWE-bench Live",
+    "url": "https://arxiv.org/abs/2505.23419",
+    "title": "SWE-bench Goes Live",
+    "accessed": "2026-10-26",
+    "claims": [
+      "SWE-bench Live draws tasks from issues created since 2024 across many repositories to reduce contamination."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Snapshot cadence not stated in the abstract."
+  },
+  {
+    "id": "R32-swebench-mm",
+    "tool": "SWE-bench Multimodal",
+    "url": "https://arxiv.org/abs/2410.03859",
+    "title": "SWE-bench Multimodal",
+    "accessed": "2026-10-26",
+    "claims": [
+      "617 JavaScript tasks from 17 libraries; top Python-focused systems generalized poorly."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "2024 leaderboard figures."
+  },
+  {
+    "id": "R32-terminal-bench-2",
+    "tool": "Terminal-Bench 2.0",
+    "url": "https://arxiv.org/abs/2601.11868",
+    "title": "Terminal-Bench 2.0",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Terminal-Bench 2.0 contains 89 tasks with human-written solutions and tests; frontier agents scored below 65% at publication."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Run through Harbor; later suite versions exist and must be pinned."
+  },
+  {
+    "id": "R32-anthropic-multiagent",
+    "tool": "Anthropic multi-agent research system",
+    "url": "https://www.anthropic.com/engineering/multi-agent-research-system",
+    "title": "How we built our multi-agent research system",
+    "accessed": "2026-10-26",
+    "claims": [
+      "A multi-agent system outperformed a single agent by 90.2% on internal research evaluations while using about 15x the tokens of chat.",
+      "The post notes coding tasks offer fewer truly parallelizable subtasks."
+    ],
+    "verification": "vendor-engineering-post",
+    "notes": "Vendor-internal evaluation."
+  },
+  {
+    "id": "R32-cognition-multiagent",
+    "tool": "Cognition",
+    "url": "https://cognition.com/blog/dont-build-multi-agents",
+    "title": "Don't Build Multi-Agents",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Parallel sub-agents make conflicting implicit decisions; full agent traces should be shared rather than isolated messages."
+    ],
+    "verification": "practitioner-post",
+    "notes": "Practitioner essay, 2025-06-12."
+  },
+  {
+    "id": "R32-mem0",
+    "tool": "Mem0",
+    "url": "https://arxiv.org/abs/2504.19413",
+    "title": "Mem0",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Vendor-authored LoCoMo results report quality, latency and token gains; no coding evaluation is reported."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Vendor-authored chat-recall evaluation."
+  },
+  {
+    "id": "R32-zep",
+    "tool": "Zep",
+    "url": "https://arxiv.org/abs/2501.13956",
+    "title": "Zep: A Temporal Knowledge Graph Architecture for Agent Memory",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Vendor-authored DMR and LongMemEval results report gains over MemGPT; no coding evaluation is reported."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Vendor-authored chat-recall evaluation."
+  },
+  {
+    "id": "R32-memgym",
+    "tool": "MemGym",
+    "url": "https://arxiv.org/abs/2605.20833",
+    "title": "MemGym",
+    "accessed": "2026-10-26",
+    "claims": [
+      "MemGym evaluates memory in isolation across five tracks including SWE-Gym and code question answering."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Abstract read; no numbers used."
+  },
+  {
+    "id": "R32-swe-gym",
+    "tool": "SWE-Gym",
+    "url": "https://arxiv.org/abs/2412.21139",
+    "title": "Training Software Engineering Agents and Verifiers with SWE-Gym",
+    "accessed": "2026-10-26",
+    "claims": [
+      "An agent with a trajectory-trained verifier reached 32.0% on SWE-bench Verified and 26.0% on Lite."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "2024 open-weight result."
+  },
+  {
+    "id": "R32-sleep-time",
+    "tool": "Sleep-time compute",
+    "url": "https://arxiv.org/abs/2504.13171",
+    "title": "Sleep-time Compute",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Sleep-time compute reduced the test-time compute needed for equal accuracy by about 5x on Stateful GSM-Symbolic and Stateful AIME."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Math tasks, not coding."
+  },
+  {
+    "id": "R32-awm",
+    "tool": "Agent Workflow Memory",
+    "url": "https://arxiv.org/abs/2409.07429",
+    "title": "Agent Workflow Memory",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Reusable induced workflows improved relative success by 24.6% on Mind2Web and 51.1% on WebArena."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Web tasks, not coding."
+  },
+  {
+    "id": "R32-adas",
+    "tool": "ADAS",
+    "url": "https://arxiv.org/abs/2408.08435",
+    "title": "Automated Design of Agentic Systems",
+    "accessed": "2026-10-26",
+    "claims": [
+      "A meta agent iteratively programs new agents in code, building on an archive of prior designs."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Safety discussion limited."
+  },
+  {
+    "id": "R32-sica",
+    "tool": "SICA",
+    "url": "https://arxiv.org/abs/2504.15228",
+    "title": "A Self-Improving Coding Agent",
+    "accessed": "2026-10-26",
+    "claims": [
+      "A self-editing coding agent improved from 17% to 53% on a random subset of SWE-bench Verified."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Subset of a possibly contaminated benchmark."
+  },
+  {
+    "id": "R32-alphaevolve",
+    "tool": "AlphaEvolve",
+    "url": "https://arxiv.org/abs/2506.13131",
+    "title": "AlphaEvolve",
+    "accessed": "2026-10-26",
+    "claims": [
+      "An evolutionary loop of LLM code edits guided by automated evaluators produced algorithmic improvements, including a 48-multiplication 4x4 complex matrix algorithm."
+    ],
+    "verification": "peer-reviewed-or-preprint",
+    "notes": "Requires machine-checkable evaluators."
+  },
+  {
+    "id": "R32-claude-desktop",
+    "tool": "Claude Code Desktop",
+    "url": "https://code.claude.com/docs/en/desktop",
+    "title": "Claude Code on desktop",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documents permission modes (manual, accept edits, plan, auto, bypass), a context card, fork at a message, a code-review card, side chats, pop-out panes and session-finish notifications."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-claude-checkpointing",
+    "tool": "Claude Code checkpointing",
+    "url": "https://code.claude.com/docs/en/checkpointing",
+    "title": "Checkpointing",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Rewind offers restore code and conversation, restore conversation, restore code, and summarize from or up to a point.",
+      "Bash command changes, subagent edits, external changes and symlinked paths are not restored; checkpoints are not a replacement for version control."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-claude-interactive",
+    "tool": "Claude Code interactive mode",
+    "url": "https://code.claude.com/docs/en/interactive-mode",
+    "title": "Interactive mode",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Messages sent while Claude works are queued and shown until consumed; a task list tracks pending, in-progress and completed items."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-claude-accessibility",
+    "tool": "Claude Code accessibility",
+    "url": "https://code.claude.com/docs/en/accessibility",
+    "title": "Use Claude Code with a screen reader",
+    "accessed": "2026-10-26",
+    "claims": [
+      "An opt-in screen reader mode adapts the terminal interface; the VS Code extension announces conversation activity without a setting."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-codex-code-review",
+    "tool": "Codex code review",
+    "url": "https://learn.chatgpt.com/docs/code-review",
+    "title": "Code review",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The review pane shows unstaged, staged, commit, branch or last-turn changes, supports multiple repositories, and stages, unstages or reverts per diff, file or hunk."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-codex-approvals",
+    "tool": "Codex approvals and security",
+    "url": "https://learn.chatgpt.com/docs/agent-approvals-security",
+    "title": "Agent approvals and security",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Sandbox modes combine with approval policies; Auto-review uses a reviewer agent with explicit outcome states and fails closed."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-codex-features",
+    "tool": "Codex features",
+    "url": "https://learn.chatgpt.com/docs/features",
+    "title": "Codex features",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The current navigation lists a Windows desktop app, Windows sandbox, Auto-review, profiles and plan mode."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-zed-agent-panel",
+    "tool": "Zed agent panel",
+    "url": "https://zed.dev/docs/ai/agent-panel",
+    "title": "Agent panel",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Agent edits can be reviewed and accepted or rejected per hunk."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-kiro-specs",
+    "tool": "Kiro specs",
+    "url": "https://kiro.dev/docs/specs/",
+    "title": "Specs",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Specs move from requirements to design to tasks with tracked task status."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Documentation describes vendor behavior; no installed product was audited."
+  },
+  {
+    "id": "R32-mxc-announcement",
+    "tool": "Microsoft Execution Containers",
+    "url": "https://blogs.windows.com/windowsdeveloper/2026/10/07/microsoft-execution-containers-policy-driven-containment-for-ai-agents/",
+    "title": "Microsoft Execution Containers: Policy-driven containment for AI agents",
+    "accessed": "2026-10-26",
+    "claims": [
+      "MXC is generally available and enforces developer- or administrator-defined file and network policies for agents at runtime."
+    ],
+    "verification": "primary-documentation; parent re-fetched",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-mxc-node-sdk",
+    "tool": "MXC Node SDK",
+    "url": "https://github.com/microsoft/mxc/blob/05a430bc17a3e1b3fa2131524fc52e4319e07298/sdk/node/README.md",
+    "title": "MXC Node.js SDK",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The MIT-licensed Node SDK requires Node 24 or later; on Windows native stdio transfer requires Node 24.21.0+ or 26.8.0+."
+    ],
+    "verification": "primary-documentation; parent re-fetched",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-codex-windows",
+    "tool": "Codex on Windows",
+    "url": "https://developers.openai.com/codex/windows",
+    "title": "Codex Windows",
+    "accessed": "2026-10-26",
+    "claims": [
+      "MXC is the recommended Codex sandbox on compatible Windows devices; elevated and unelevated legacy modes are fallbacks with weaker properties.",
+      "MXC process isolation arrived in Windows 11 24H2 build 26100.9278 and 25H2 build 26200.9278."
+    ],
+    "verification": "primary-documentation; parent re-fetched",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-claude-sandboxing",
+    "tool": "Claude Code sandboxing",
+    "url": "https://code.claude.com/docs/en/sandboxing",
+    "title": "Sandboxing",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The sandbox covers shell commands only on macOS, Linux and WSL2; on native Windows Claude Code runs commands unsandboxed, and file tools, MCP servers and hooks run outside it."
+    ],
+    "verification": "primary-documentation; parent re-fetched",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-vscode-sandbox",
+    "tool": "VS Code agent sandboxing",
+    "url": "https://code.visualstudio.com/docs/agents/run/agent-sandboxing",
+    "title": "Agent sandboxing",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Windows sandbox support is experimental, and the sandboxing setting defaults to off on all platforms."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-appcontainer",
+    "tool": "AppContainer",
+    "url": "https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer",
+    "title": "Implementing an AppContainer",
+    "accessed": "2026-10-26",
+    "claims": [
+      "AppContainer and LPAC restrict access through package and capability SIDs checked against DACLs."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-job-objects",
+    "tool": "Job Objects",
+    "url": "https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects",
+    "title": "Job Objects",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Job objects group processes for accounting, limits and termination, with documented association exceptions."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-wsb-cli",
+    "tool": "Windows Sandbox CLI",
+    "url": "https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-cli",
+    "title": "Windows Sandbox CLI",
+    "accessed": "2026-10-26",
+    "claims": ["wsb exec returns an exit code without exposing process I/O."],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-auggie-pi",
+    "tool": "Auggie CLI",
+    "url": "https://www.augmentcode.com/blog/auggie-cli-harness-rebuild-53-percent-cheaper",
+    "title": "How we rebuilt the Auggie CLI harness",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Augment rebuilt Auggie on a fork of Pi with its context engine moved into Pi's extension system, reporting lower cost at similar quality."
+    ],
+    "verification": "primary-documentation; parent re-fetched",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-tb21",
+    "tool": "Terminal-Bench 2.1",
+    "url": "https://www.tbench.ai/news/terminal-bench-2-1",
+    "title": "Terminal-Bench 2.1",
+    "accessed": "2026-10-26",
+    "claims": ["Terminal-Bench 2.1 repaired 28 of 89 tasks."],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-nexau-ahe",
+    "tool": "NexAU-AHE",
+    "url": "https://arxiv.org/html/2604.25850v1",
+    "title": "Agentic harness engineering",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Terminal-Bench 2 (89-task evolution set) Pass@1 ablation: seed 69.7%, memory-only 75.3%, tools-only 73.0%, middleware-only 71.9%, prompt-only 67.4%, full 77.0%."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-deep-agents",
+    "tool": "LangChain Deep Agents",
+    "url": "https://www.langchain.com/blog/improving-deep-agents-with-harness-engineering",
+    "title": "Improving Deep Agents with harness engineering",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Terminal-Bench 2.0 improved from 52.8% to 66.5% with fixed model; always-xhigh reasoning scored 53.9% versus 63.6% at high."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-deskcheck",
+    "tool": "DeskCheck",
+    "url": "https://arxiv.org/html/2610.23782v1",
+    "title": "DeskCheck",
+    "accessed": "2026-10-26",
+    "claims": [
+      "On a 100-instance SWE-bench Pro subset, restoring code-reasoning stages (localization, repair, audit, validation) raised resolution from 53% to 68%; execution-path simulation alone gave 53% to 56%."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-swebench-live-board",
+    "tool": "SWE-bench Live leaderboard",
+    "url": "https://github.com/SWE-bench-Live/swe-bench-live.github.io/blob/35cc4bac1da98c4347abe1ab8f429678125f42ed/reports-0605.jsonl",
+    "title": "SWE-bench Live reports",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Leading verified Lite entries reported 213/300 and 211/300 resolved; the leaderboard file does not state attempt counts, which come only from submitter READMEs."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-swe-exp",
+    "tool": "SWE-Exp",
+    "url": "https://arxiv.org/html/2507.23361v1",
+    "title": "SWE-Exp",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Experience reuse reached 41.6% versus 38.4% and 39.0% without its comprehension and modification components; section 6.2 reports 39.8% and 39.0% with two and four experiences, while section 5.3 reports 40.4/40.2/39.6 for the same sweep."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-repomem",
+    "tool": "RepoMem",
+    "url": "https://arxiv.org/html/2510.01003v1",
+    "title": "RepoMem",
+    "accessed": "2026-10-26",
+    "claims": [
+      "On repositories with fewer than 10K commits, Acc@5 fell from 67.4% (LocAgent) to 54.3% (RepoMem)."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-structural-index",
+    "tool": "Structural code index study",
+    "url": "https://arxiv.org/html/2606.22417v1",
+    "title": "Structural retrieval for coding agents",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Enabling a combined embedding, BM25 and call-graph index raised mean resolve rate from 41.9% to 50.4% on 91 public SWE-PolyBench Verified and SWE-bench Pro instances over three seeds (Wilcoxon p=0.003)."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-locagent",
+    "tool": "LocAgent",
+    "url": "https://arxiv.org/html/2503.09089v1",
+    "title": "LocAgent",
+    "accessed": "2026-10-26",
+    "claims": [
+      "With Claude-3.5, LocAgent improved downstream Pass@1 from 26.31% to 27.92% and Pass@10 from 33.58% to 37.59%."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-swebench-cl",
+    "tool": "SWE-Bench-CL",
+    "url": "https://arxiv.org/html/2507.00014v1",
+    "title": "SWE-Bench-CL",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Memory conditions performed similarly or worse, but evaluation problems prevented reliable conclusions."
+    ],
+    "verification": "primary-documentation; located by Codex deep research and re-fetched by an independent verifier",
+    "notes": "Author- or vendor-reported; no Splyce measurement."
+  },
+  {
+    "id": "R32-tauri-channel-acl",
+    "tool": "Tauri",
+    "url": "https://github.com/tauri-apps/tauri/security/advisories/GHSA-w28w-mhc8-qvjv",
+    "title": "Improper Tauri IPC Access Control for Fetch Command",
+    "accessed": "2026-10-26",
+    "claims": [
+      "High-severity advisory published 2026-09-26 affecting Tauri 2.0.0 through 2.11.5, patched in 2.11.6."
+    ],
+    "verification": "primary advisory or documentation; parent re-fetched",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-tauri-origin",
+    "tool": "Tauri",
+    "url": "https://github.com/tauri-apps/tauri/security/advisories/GHSA-7gmj-67g7-phm9",
+    "title": "Origin Confusion Allows Remote Pages to Invoke Local-Only IPC Commands",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Medium-severity advisory published 2026-05-06 affecting Tauri up to 2.11.0, patched in 2.11.1."
+    ],
+    "verification": "primary advisory or documentation; parent re-fetched",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-svelte-clobber",
+    "tool": "Svelte",
+    "url": "https://github.com/sveltejs/svelte/security/advisories/GHSA-rcqx-6q8c-2c42",
+    "title": "XSS via DOM Clobbering of Internal Framework State",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Medium-severity advisory published 2026-05-14 affecting Svelte 5.55.6 and earlier, patched in 5.55.7."
+    ],
+    "verification": "primary advisory or documentation; parent re-fetched",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-node-oct-2026",
+    "tool": "Node.js",
+    "url": "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+    "title": "October 2026 security releases",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Security releases v22.23.4, v24.22.1 and v26.12.1 on or shortly after 2026-10-21; highest severity High."
+    ],
+    "verification": "primary advisory or documentation; parent re-fetched",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-wdio-tauri",
+    "tool": "WebdriverIO Tauri service",
+    "url": "https://webdriver.io/docs/desktop-testing/tauri/platform-support",
+    "title": "Tauri platform support",
+    "accessed": "2026-10-26",
+    "claims": [
+      "On Windows the default official provider uses tauri-driver with an msedgedriver matched to WebView2; the embedded provider requires the compiled-in tauri-plugin-wdio-webdriver crate."
+    ],
+    "verification": "primary documentation located by an independent researcher",
+    "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-openai-async-tools",
+    "tool": "OpenAI async tool calling",
+    "url": "https://developers.openai.com/api/docs/guides/async-tool-calling",
+    "title": "Async tool calling",
+    "accessed": "2026-10-26",
+    "claims": [
+      "async: true lets the model continue while the application runs a tool; outputs are matched in a later Responses request by the original call_id."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-ollama-openai-compat",
+    "tool": "Ollama",
+    "url": "https://docs.ollama.com/api/openai-compatibility",
+    "title": "OpenAI compatibility",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Ollama supports only the non-stateful Responses API flavor, without previous_response_id or conversation support; Ollama also offers direct cloud access."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-openai-steering",
+    "tool": "OpenAI mid-turn steering",
+    "url": "https://developers.openai.com/api/docs/guides/steering",
+    "title": "Mid-turn steering",
+    "accessed": "2026-10-26",
+    "claims": [
+      "A steer acceptance means queued, not consumed; an interrupted response can end incomplete with reason steered followed by continuation."
+    ],
+    "verification": "primary documentation located by Codex deep research; not re-fetched by the parent",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-openai-gpt6-astra",
+    "tool": "OpenAI GPT-6 Astra",
+    "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+    "title": "GPT-6 Astra",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The model page documents tool calling through the Responses API rather than Chat Completions."
+    ],
+    "verification": "primary documentation located by Codex deep research; client-rendered page not re-verified by the parent",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-anthropic-migration",
+    "tool": "Anthropic API",
+    "url": "https://platform.claude.com/docs/en/api/migration-2026-10-21",
+    "title": "API migration 2026-10-21",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The 2026-10-21 API version rejects sampling fields and some content shapes; TypeScript SDK 1.0 defaults to it."
+    ],
+    "verification": "primary documentation located by Codex deep research; not re-fetched by the parent",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-vllm-windows",
+    "tool": "vLLM",
+    "url": "https://docs.vllm.ai/en/latest/getting_started/installation/gpu/",
+    "title": "GPU installation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "vLLM does not support native Windows; WSL/Linux or community forks are separate routes."
+    ],
+    "verification": "primary documentation located by Codex deep research; not re-fetched by the parent",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-anthropic-models",
+    "tool": "Anthropic models",
+    "url": "https://platform.claude.com/docs/en/models/overview",
+    "title": "Models overview",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Current Claude models include Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5; Fable and Opus require adaptive thinking."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-gemini-argon",
+    "tool": "Gemini 4 Argon",
+    "url": "https://ai.google.dev/gemini-api/docs/models/gemini-4-argon",
+    "title": "Gemini 4 Argon",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Gemini 4 Argon uses a unified 1,048,576-token input, thinking and output window, ignores sampling controls and lacks explicit cached contents."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-gemini-interactions",
+    "tool": "Gemini Interactions",
+    "url": "https://ai.google.dev/gemini-api/docs/interactions-overview",
+    "title": "Interactions API",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Interactions stores state by default and supports background execution with documented cancellation."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-xai-release-notes",
+    "tool": "xAI",
+    "url": "https://docs.x.ai/developers/release-notes",
+    "title": "Release notes",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Grok 4.7 Responses returns encrypted reasoning and stores responses by default for 30 days; Chat Completions is deprecated."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-mistral-lifecycle",
+    "tool": "Mistral",
+    "url": "https://docs.mistral.ai/inference/model-lifecycle",
+    "title": "Model lifecycle",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Preview models may change without notice and lifecycle stages are documented separately."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-deepseek-thinking",
+    "tool": "DeepSeek",
+    "url": "https://api-docs.deepseek.com/guides/thinking_mode/",
+    "title": "Thinking mode",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Tool continuations require the prior reasoning_content; thinking defaults on."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-kimi-thinking",
+    "tool": "Kimi",
+    "url": "https://platform.kimi.ai/docs/guide/use-thinking-models",
+    "title": "Thinking models",
+    "accessed": "2026-10-26",
+    "claims": [
+      "K3.1 and K2.7 require preserved thinking; disabling K2.7 thinking errors."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-glm-thinking",
+    "tool": "Z.ai GLM",
+    "url": "https://docs.z.ai/guides/capabilities/thinking-mode",
+    "title": "Thinking mode",
+    "accessed": "2026-10-26",
+    "claims": [
+      "GLM-5.3 forces thinking; preserved-thinking defaults differ between the Coding Plan and the standard API."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-minimax-models",
+    "tool": "MiniMax",
+    "url": "https://platform.minimax.io/docs/guides/models-intro",
+    "title": "Models",
+    "accessed": "2026-10-26",
+    "claims": [
+      "MiniMax M3.1 always thinks and rejects disabling it; reasoning can exhaust the budget and return empty text with a length finish."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-llamacpp-release",
+    "tool": "llama.cpp",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/tag/v0.7.0",
+    "title": "llama.cpp v0.7.0",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Release v0.7.0 with native Windows CPU, CUDA and Vulkan builds; tool calls depend on template handlers."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-lmstudio-changelog",
+    "tool": "LM Studio",
+    "url": "https://lmstudio.ai/changelog/lmstudio/lmstudio-v0.4.26",
+    "title": "LM Studio 0.4.26",
+    "accessed": "2026-10-26",
+    "claims": [
+      "App, build and runtime extension versions are separate; runtime auto-update defaults on."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-foundry-local",
+    "tool": "Foundry Local",
+    "url": "https://github.com/microsoft/foundry-local/releases/tag/v2.2.1",
+    "title": "Foundry Local SDK v2.2.1",
+    "accessed": "2026-10-26",
+    "claims": [
+      "SDK and CLI HTTP serving are separate tracks; catalog aliases select hardware-specific model variants."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-openvino-genai",
+    "tool": "OpenVINO GenAI",
+    "url": "https://github.com/openvinotoolkit/openvino.genai/releases/tag/2026.4.1.0",
+    "title": "OpenVINO GenAI 2026.4.1.0",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Native Windows x64 CPU, Intel GPU and NPU lanes with separate model, driver and compiler constraints."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-qwen38-27b",
+    "tool": "Qwen3.8-27B",
+    "url": "https://huggingface.co/Qwen/Qwen3.8-27B/blob/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0/LICENSE",
+    "title": "Qwen3.8-27B license",
+    "accessed": "2026-10-26",
+    "claims": ["Qwen3.8-27B is Apache-2.0 licensed at the pinned revision."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-qwen38-flash-next",
+    "tool": "Qwen3.8-Flash-Next",
+    "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/34567a4712bc9766c4449e2e98e4468bfa24d915/LICENSE",
+    "title": "Qwen Community License",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Qwen3.8-Flash-Next uses the Qwen Community License 1.0 with commercial conditions."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-gpt-oss-20b",
+    "tool": "gpt-oss-20b",
+    "url": "https://huggingface.co/openai/gpt-oss-20b/blob/6cee5e81ee83917806bbde320786a8fb61efebee/README.md",
+    "title": "gpt-oss-20b model card",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Apache-2.0; vendor documents MXFP4 deployment within 16GB memory."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-devstral-small-2",
+    "tool": "Devstral Small 2",
+    "url": "https://huggingface.co/mistralai/Devstral-Small-2-24B-Instruct-2512/blob/f2ca762c466d28ab948b7205492ceb3914e73f8a/README.md",
+    "title": "Devstral Small 2 model card",
+    "accessed": "2026-10-26",
+    "claims": ["Apache-2.0, 24B parameters, 256K context."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-mcp-2026-07-changelog",
+    "tool": "MCP",
+    "url": "https://modelcontextprotocol.io/specification/2026-07-28/changelog",
+    "title": "MCP 2026-07-28 changelog",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The revision removes the initialize handshake, carries version and capabilities in _meta on every request, and replaces server-initiated requests with input_required results answered by client retries."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "No Splyce MCP or skills implementation exists yet."
+  },
+  {
+    "id": "R32-mcp-tools-annotations",
+    "tool": "MCP",
+    "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
+    "title": "MCP tools",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Clients MUST consider tool annotations untrusted unless they come from trusted servers."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "No Splyce MCP or skills implementation exists yet."
+  },
+  {
+    "id": "R32-pi-mcp-config",
+    "tool": "Pi MCP",
+    "url": "https://github.com/earendil-works/pi/blob/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/coding-agent/docs/mcp.md",
+    "title": "Pi MCP documentation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "env and headers values can use environment variables or run a !command; OAuth tokens are stored in ~/.pi/agent/mcp-auth.json; the legacy SSE transport is not supported."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "No Splyce MCP or skills implementation exists yet."
+  },
+  {
+    "id": "R32-agent-skills-spec",
+    "tool": "Agent Skills",
+    "url": "https://agentskills.io/specification",
+    "title": "Agent Skills specification",
+    "accessed": "2026-10-26",
+    "claims": ["SKILL.md frontmatter includes an allowed-tools field."],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "No Splyce MCP or skills implementation exists yet."
+  },
+  {
+    "id": "R32-sglang-install",
+    "tool": "SGLang",
+    "url": "https://docs.sglang.io/docs/get-started/install",
+    "title": "SGLang installation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Documented installation targets Linux/NVIDIA with CUDA 13; native Windows and supported WSL configuration are not stated."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-sglang-release",
+    "tool": "SGLang",
+    "url": "https://github.com/sgl-project/sglang/releases/tag/v0.5.22",
+    "title": "SGLang v0.5.22",
+    "accessed": "2026-10-26",
+    "claims": ["SGLang v0.5.22 released 2026-10-19."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-vllm-release",
+    "tool": "vLLM",
+    "url": "https://github.com/vllm-project/vllm/releases/tag/v0.32.0",
+    "title": "vLLM v0.32.0",
+    "accessed": "2026-10-26",
+    "claims": ["vLLM v0.32.0 released 2026-10-18."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-ollama-release",
+    "tool": "Ollama",
+    "url": "https://github.com/ollama/ollama/releases/tag/v0.40.11",
+    "title": "Ollama v0.40.11",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Ollama v0.40.11 released 2026-10-24 with CUDA, ROCm and Vulkan Windows lanes."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-ortgenai-release",
+    "tool": "ONNX Runtime GenAI",
+    "url": "https://github.com/microsoft/onnxruntime-genai/releases/tag/v0.17.0",
+    "title": "ONNX Runtime GenAI v0.17.0",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Release provides Windows CPU, CUDA and WinML assets; it is a library, not an OpenAI-compatible HTTP server."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-windows-ml",
+    "tool": "Windows ML",
+    "url": "https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/overview",
+    "title": "Windows ML overview",
+    "accessed": "2026-10-26",
+    "claims": [
+      "New Windows ML is ONNX Runtime-based with shared or self-contained deployment and vendor execution-provider acquisition."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-directml-ep",
+    "tool": "DirectML",
+    "url": "https://onnxruntime.ai/docs/execution-providers/DirectML-ExecutionProvider.html",
+    "title": "DirectML execution provider",
+    "accessed": "2026-10-26",
+    "claims": [
+      "DirectML is a DirectX 12 execution provider under sustained engineering."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-ovms-chat",
+    "tool": "OpenVINO Model Server",
+    "url": "https://docs.openvino.ai/2026/model-server/ovms_docs_rest_api_chat.html",
+    "title": "OVMS chat API",
+    "accessed": "2026-10-26",
+    "claims": [
+      "OVMS serves /v3/chat/completions; guided generation defaults off and can continue unguided when no schema loads."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-qwen3-coder-30b",
+    "tool": "Qwen3-Coder-30B-A3B",
+    "url": "https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct/blob/b2cff646eb4bb1d68355c01b18ae02e7cf42d120/LICENSE",
+    "title": "Qwen3-Coder-30B-A3B license",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Apache-2.0 at the pinned revision; about 30B total and 3B active parameters."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-qwen3-coder-next",
+    "tool": "Qwen3-Coder-Next",
+    "url": "https://huggingface.co/Qwen/Qwen3-Coder-Next/blob/a7fbcb5c0e12d62a448eaa0e260346bf5dcc0feb/README.md",
+    "title": "Qwen3-Coder-Next model card",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Card declares Apache-2.0, 80B total and 3B active parameters, 262,144 native context; a same-revision license file was not established."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-glm-47-flash",
+    "tool": "GLM-4.7-Flash",
+    "url": "https://huggingface.co/zai-org/GLM-4.7-Flash",
+    "title": "GLM-4.7-Flash model card",
+    "accessed": "2026-10-26",
+    "claims": [
+      "MIT-licensed 30B-A3B model; immutable card revision not established."
+    ],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-deepseek-v41-flash",
+    "tool": "DeepSeek V4.1 Flash",
+    "url": "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/314113f8a7dadb388215396ba5fbee2c610a04d6/README.md",
+    "title": "DeepSeek V4.1 Flash model card",
+    "accessed": "2026-10-26",
+    "claims": ["MIT-licensed weights with a 552B backbone."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-minimax-m3-license",
+    "tool": "MiniMax M3",
+    "url": "https://huggingface.co/MiniMaxAI/MiniMax-M3/commit/3a41b311ffa5719cef48fed3974ccf2cc03733ea",
+    "title": "MiniMax M3 license commit",
+    "accessed": "2026-10-26",
+    "claims": ["MiniMax M3 is a 427B model under its own community license."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-kimi-k3-card",
+    "tool": "Kimi K3",
+    "url": "https://huggingface.co/moonshotai/Kimi-K3",
+    "title": "Kimi K3 model card",
+    "accessed": "2026-10-26",
+    "claims": ["Kimi K3 is about 2.8T parameters under its own license."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-glm53-license",
+    "tool": "GLM-5.3",
+    "url": "https://huggingface.co/zai-org/GLM-5.3/commit/30333038ada1f1dacb294a93270305a890b50c14",
+    "title": "GLM-5.3 license commit",
+    "accessed": "2026-10-26",
+    "claims": ["GLM-5.3 uses a custom license rather than MIT."],
+    "verification": "primary source located by Codex deep research; not re-fetched by the parent",
+    "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-smartscreen",
+    "tool": "Windows SmartScreen",
+    "url": "https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation",
+    "title": "SmartScreen reputation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "EV certificates no longer bypass SmartScreen; on Windows 11 Smart App Control blocks unsigned executables without positive reputation."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-signpath-terms",
+    "tool": "SignPath Foundation",
+    "url": "https://signpath.org/terms",
+    "title": "SignPath Foundation terms",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Free OSS code signing requires an OSI license, an actively maintained project already released in the form to be signed, and documented functionality."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-tauri-nsis",
+    "tool": "Tauri Windows installer",
+    "url": "https://v2.tauri.app/distribute/windows-installer/",
+    "title": "Windows installer",
+    "accessed": "2026-10-26",
+    "claims": [
+      "NSIS installs per user in LOCALAPPDATA by default; perMachine requires administrator privileges."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-signpath-github",
+    "tool": "SignPath GitHub",
+    "url": "https://docs.signpath.io/trusted-build-systems/github",
+    "title": "GitHub trusted build system",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The GitHub connector verifies that a build was performed by a GitHub workflow; hosted-runner-only requirements for OSS signing are reported but not re-verified."
+    ],
+    "verification": "primary documentation located by an independent researcher; partially re-fetched",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-azure-artifact-signing",
+    "tool": "Azure Artifact Signing",
+    "url": "https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart",
+    "title": "Artifact Signing quickstart",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Paid service; individual developers must be in the US or Canada; certificates are short-lived so timestamping is required."
+    ],
+    "verification": "primary documentation located by an independent researcher; not re-fetched by the parent",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-winget-requirements",
+    "tool": "winget",
+    "url": "https://learn.microsoft.com/en-us/windows/package-manager/package/repository",
+    "title": "Windows Package Manager repository",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Submissions require silent install, clean uninstall, HTTPS publisher URLs and a SHA256 match."
+    ],
+    "verification": "primary documentation located by an independent researcher; not re-fetched by the parent",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-openai-gpt61-sol",
+    "tool": "OpenAI GPT-6.1 Sol",
+    "url": "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
+    "title": "GPT-6.1 Sol",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The model page documents tool calling through the Responses API rather than Chat Completions."
+    ],
+    "verification": "primary documentation located by Codex deep research; client-rendered page not re-verified by the parent",
+    "notes": "Vendor documentation; no Splyce provider test."
+  }
+]

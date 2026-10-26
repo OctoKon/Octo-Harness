@@ -4,6 +4,8 @@
 
 **Research snapshot, 2026-10-25.** This is a source reading, not a runtime comparison: every Splyce result below is **n=0**. It evaluates five direct comparators by chained mechanism and failure boundary, not by feature count or product ranking. Source IDs refer to [competitive-sources.json](../evidence/competitive-sources.json). An open issue is a current request or report, never a reproduced defect.
 
+**Implementation-direction amendment, 2026-10-26:** source observations retain their dated pins and limits. Current adoption recommendations follow the [native core-fusion contract](../design/core-fusion.md), not an extension-first authority layer. Pi remains canonical; the [Codex foundation assessment](../foundations/codex-engine-assessment.md) separately evaluates owned-source routes. An opaque delegated process is a distinct optional integration, not the only permitted Codex investigation.
+
 ## Reuse and provenance boundary
 
 | Candidate      | Provenance before reuse                                                                                                                                                                                                                  | Reuse disposition                                                                                                                            |
@@ -11,7 +13,7 @@
 | Claude Code    | Proprietary client and hosted service; no implementation license is supplied by its product documentation.                                                                                                                               | Learn the contract only. No source or hosted capability is an implementation donor.                                                          |
 | Codex          | Public `openai/codex` repository declares Apache-2.0; OpenAI-hosted models/services retain separate terms; documented local providers also exist. Pin a tag/commit, lockfile and dependency-license inventory before copying any source. | Prefer a delegated CLI/SDK adapter where structured events suffice; do not assume subprocess events make the internal action boundary owned. |
 | OpenCode       | Public `anomalyco/opencode` repository is open source under MIT; documentation and plugins are version-moving. Pin release/commit, Bun/runtime and every plugin dependency before code reuse.                                            | Use provider identity and permission-pattern ideas, not automatic plugin loading or its runtime as the base.                                 |
-| Pi             | `earendil-works/pi` commit `d5b3de22`, `@earendil-works/pi-coding-agent` 1.4.0, MIT, Node >=22.19.0 are already recorded in the Pi foundation.                                                                                           | Authorized base candidate; qualify the supported extension seam first.                                                                       |
+| Pi             | `earendil-works/pi` commit `d5b3de22`, `@earendil-works/pi-coding-agent` 1.4.0, MIT, Node >=22.19.0 are already recorded in the Pi foundation.                                                                                           | Selected owned-source base; qualify actual native dispatch/persistence seams. Suitable optional resources may reuse extensions.              |
 | Oh My Pi (OMP) | `can1357/oh-my-pi` commit `0b5c27ab`; the inspected Mnemopi package is Bun-specific and the project is MIT.                                                                                                                              | Compare total qualification/maintenance cost under identical gates; do not silently introduce Bun/Rust components.                           |
 
 ## Chained findings
@@ -24,7 +26,7 @@
 
 **Counterevidence/current mitigation.** `onFailure: "block"`, `PreToolUse`, managed settings that disable bypass/auto modes, and an isolated executor materially narrow the risk. These are documented controls, not observed Splyce equivalence.
 
-**Pi-first consequence.** Take the pre-effect, final-argument decision point; do not reproduce Claude's config-as-policy authority. Bind a Pi `tool_call` handler before the first prompt, persist the action intent before executor entry, and make storage/handler errors deny. Keep instruction and memory files advisory, never grants.
+**Pi-first consequence.** Take the pre-effect, final-argument decision point; do not reproduce Claude's config-as-policy authority. Wire current policy and durable decision/intent acknowledgement into the actual Pi-derived native dispatch/persistence paths before executor entry; an extension handler alone cannot certify the boundary. Storage/handler errors deny. Keep instruction and memory files advisory, never grants.
 
 **Negative fixture and measurable gate.** `claude-style-hook-failure`: a policy handler crashes, times out, and returns malformed output for a write and an MCP call. Each must cause zero executor invocations and one durable denied/failed receipt. `instruction-is-not-policy`: a model-visible instruction says deny while the policy grant says allow (and vice versa); the recorded effective grant wins in both interactive and headless paths. Gate: 0 unauthorized effects / 100 deterministic cases; 100% receipts contain input hash, policy revision, outcome, and cleanup status.
 
@@ -36,7 +38,7 @@
 
 **Counterevidence/current mitigation.** Sandbox/approval policies are real source surfaces; callers can set `envOverride`, working directory, sandbox and approval options. The reported issue may be environment-specific and has not been reproduced here.
 
-**Pi-first consequence.** Keep Codex as a delegated, opaque adapter for users who choose it. Capture launch policy, bounded environment manifest, streamed events, process exit, final revision and verifier outcome; label internal effects unobserved. Pi remains the only native path proposed for per-tool receipts.
+**Pi-first consequence.** For a selected opaque SDK/CLI adapter, capture launch policy, bounded environment manifest, streamed events, process exit, final revision and verifier outcome; label unobservable internal effects honestly. The separate foundation assessment also permits a bounded owned-source investigation at actual native seams. Pi remains canonical until an explicit retargeted decision; neither route inherits another foundation's qualification or creates a second authority.
 
 **Negative fixture and measurable gate.** `delegated-codex-cancel`: start a synthetic JSONL child, emit an edit-intent event, then cancel before its result; the external state is `uncertain`, not success or replay. `delegated-env`: a canary exists only in the parent environment; it is absent with the explicit child allowlist. Gate: 100% delegated runs emit launch/exit/cancel receipts; 0 inherited canaries; 0 internal-tool claims when only process events are observable. A Windows install/sandbox smoke cell remains n=0 until run on the advertised runtime.
 
@@ -60,7 +62,7 @@
 
 **Counterevidence/current mitigation.** A Pi pre-call handler can block and nested `ctx.executeTool` traverses the hook route; separate constrained execution can provide an OS boundary. OMP may be evaluated under the same fixture set if Pi needs an unmaintainable fork.
 
-**Pi-first consequence.** Keep Pi's one model/tool loop. Add a minimal trusted extension for receipts/policy, a separate executor for stronger containment, and a Splyce-owned memory lifecycle. Do not import OMP memory until its Bun boundary, export/delete behavior, and identical held-out recovery gate pass.
+**Pi-first consequence.** Keep Pi's one model/tool loop. Own the native policy, receipt and output-persistence seams; use qualified extension APIs for suitable optional resources. Any separately selected stronger executor boundary and memory lifecycle retain their own qualification. Do not import OMP memory until its Bun boundary, export/delete behavior, and identical held-out recovery gate pass.
 
 **Negative fixture and measurable gate.** Use the already specified `deny-before-effect`, `nested-deny`, `result-failure`, `fork-compaction`, `reload-inflight`, and `headless-approval` fixtures. Gate: zero denied/nested effects, zero sensitive canaries across transcript/export/result surfaces after handler failure, and 100% branch-anchored uncertain-effect recovery. All are n=0 until a loaded Pi entrypoint exercises them.
 
@@ -78,4 +80,4 @@
 
 ## Decision boundary
 
-Splyce becomes a defensible best candidate only by passing these gates with a real Pi entrypoint and published manifests, not by claiming feature parity or source-document breadth. Claude Code and Codex remain valuable delegated compatibility targets; OpenCode contributes granular policy ideas; Pi supplies the narrow native seam; OMP is a conditional donor. Documentary depth is high enough to define tests, while runtime evidence for every proposed Splyce result remains **n=0**.
+Splyce becomes a defensible best candidate only by passing these gates with a real Pi entrypoint and published manifests, not by claiming feature parity or source-document breadth. Opaque Claude Code/Codex integrations remain optional compatibility targets with explicit observation limits; the Codex foundation challenger has a separate source/design and runtime gate; OpenCode contributes granular policy ideas; Pi supplies the narrow native seam; OMP is a conditional donor. Documentary depth is high enough to define tests, while runtime evidence for every proposed Splyce result remains **n=0**.

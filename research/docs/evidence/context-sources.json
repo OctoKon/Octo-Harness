@@ -250,5 +250,17 @@
     ],
     "verification": "primary-documentation",
     "notes": "Prove scope filtering and deletion behavior before adoption."
+  },
+  {
+    "id": "CX-lsp-close",
+    "tool": "Language Server Protocol 3.18 document lifecycle",
+    "url": "https://raw.githubusercontent.com/microsoft/language-server-protocol/gh-pages/_specifications/lsp/3.18/textDocument/didClose.md",
+    "title": "DidCloseTextDocument Notification",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Closing changes document-content ownership; server request fulfillment is independent of whether the document is open or closed."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Official specification fragment fetched after the rendered specification exposed navigation only. The Splyce requirement for server-specific retained-copy purge is a design consequence, not an erasure guarantee supplied by didClose. No server run."
   }
 ]

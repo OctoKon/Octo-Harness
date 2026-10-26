@@ -11,5 +11,8 @@
     "markdownlint-cli2": "0.24.0",
     "prettier": "3.9.10"
   },
+  "overrides": {
+    "katex": "0.18.11"
+  },
   "license": "AGPL-3.0-only"
 }

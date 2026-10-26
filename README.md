@@ -25,10 +25,12 @@ Windows V1 is a desktop GUI: Tauri 2/Rust shell, Svelte 5 with strict TypeScript
 | Models  | Multiple local/cloud providers and profiles, explicit egress, live switches, and no silent fallback.    |
 | Modules | Selected Git-pinned packages; optional Monaco, LSP, memory, retrieval, tools, and custom local plugins. |
 
+The [frontend research](research/docs/frontend/README.md) develops an original Codex-led workbench with complementary Claude interaction patterns. The [Codex engine assessment](research/docs/foundations/codex-engine-assessment.md) separately evaluates its open Rust engine; the current Pi implementation contract remains until that decision is qualified.
+
 ## Where it stands
 
 This repository contains public-source research, a Windows desktop implementation plan, and documentation tooling. **The GUI and runtime are not built yet.** Performance and support claims remain hypotheses until measured.
 
-Start with the [research index](research/README.md) for comparisons and sources, or the [master plan](MASTER-PLAN.md) for the build sequence and acceptance gates. Contributions should connect a mechanism to a source and a testable outcome.
+Start with the [research index](research/README.md) for comparisons and sources, or the [master plan](MASTER-PLAN.md) for the build sequence and acceptance gates. Contributions should connect a mechanism to a source and a testable outcome. The [composition contract](research/docs/design/core-fusion.md#composition-acceptance) requires the selected mechanisms to work together, with shared ownership and evidence for recommended combinations.
 
 [Contribution guide](CONTRIBUTING.md) · [Security reporting](SECURITY.md) · [AGPL-3.0-only](LICENSE) · [Discussions](https://github.com/OctoKon/Splyce/discussions)

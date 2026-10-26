@@ -21,6 +21,11 @@ FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})", re.MULTILINE)
 REFERENCE_LINK = re.compile(r"(?<!!)\[([^\]]+)\]\[([^\]]*)\]")
 REFERENCE_DEFINITION = re.compile(r"^\s{0,3}\[([^\]]+)\]:\s*(\S+)", re.MULTILINE)
 HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$", re.MULTILINE)
+TASK_PLAN = Path("research/docs/design/team-delivery-plan.md")
+TASK_ROW = re.compile(r"^\| TD-(\d+) /", re.MULTILINE)
+TASK_REF = re.compile(r"TD-(\d+)(?:[–-](?:TD-)?(\d+))?")
+NAMED_CASE = re.compile(r"`([A-Z][0-9A-Z]*_[a-z0-9_]+)`")
+CASE_SECTION = "### Named case ownership"
 
 
 def without_fences(markdown: str) -> str:
@@ -187,6 +192,71 @@ def check_evidence(path: Path, root: Path = REPO_ROOT, seen_ids: dict[str, str] 
     return errors
 
 
+def task_refs(text: str) -> set[int]:
+    refs: set[int] = set()
+    for first, last in TASK_REF.findall(text):
+        refs.update(range(int(first), int(last or first) + 1))
+    return refs
+
+
+def check_task_plan(root: Path, markdown_files: set[Path]) -> list[str]:
+    """Check task IDs, dependency references/cycles and one owner per named case."""
+    plan_path = root / TASK_PLAN
+    if not plan_path.is_file():
+        return []
+    plan = plan_path.read_text(encoding="utf-8")
+    errors: list[str] = []
+    dependencies: dict[int, set[int]] = {}
+    for line in plan.splitlines():
+        match = TASK_ROW.match(line)
+        if not match:
+            continue
+        task = int(match.group(1))
+        cells = [cell.strip() for cell in line.split("|")[1:-1]]
+        if task in dependencies:
+            errors.append(f"{TASK_PLAN}: duplicate task row TD-{task:02d}")
+        dependencies[task] = set() if len(cells) < 3 or cells[2] == "None" else task_refs(cells[2])
+    for task, deps in sorted(dependencies.items()):
+        errors.extend(f"{TASK_PLAN}: TD-{task:02d} depends on unknown TD-{dep:02d}" for dep in sorted(deps - dependencies.keys()))
+
+    state: dict[int, int] = {}
+
+    def visit(task: int, path: list[int]) -> None:
+        state[task] = 1
+        for dep in sorted(dependencies.get(task, set()) & dependencies.keys()):
+            if state.get(dep) == 1:
+                cycle = path[path.index(dep) :] + [dep]
+                errors.append(f"{TASK_PLAN}: dependency cycle {' -> '.join(f'TD-{t:02d}' for t in cycle)}")
+            elif not state.get(dep):
+                visit(dep, path + [dep])
+        state[task] = 2
+
+    for task in sorted(dependencies):
+        if not state.get(task):
+            visit(task, [task])
+
+    start = plan.find(CASE_SECTION)
+    end = plan.find("\n#", start + len(CASE_SECTION)) if start >= 0 else -1
+    section = plan[start : end if end >= 0 else len(plan)] if start >= 0 else ""
+    # A case is defined by any mention outside the ownership table; the table itself only assigns owners.
+    defined: set[str] = set()
+    for path in markdown_files:
+        if path.is_relative_to((root / "research/docs").resolve()) or path == (root / "MASTER-PLAN.md").resolve():
+            text = path.read_text(encoding="utf-8")
+            if path == plan_path.resolve() and section:
+                text = text.replace(section, "")
+            defined.update(NAMED_CASE.findall(text))
+    owned = NAMED_CASE.findall(section)
+    for case in sorted(defined):
+        count = owned.count(case)
+        if count != 1:
+            errors.append(f"{TASK_PLAN}: named case {case} has {count} owner rows; expected exactly 1")
+    errors.extend(f"{TASK_PLAN}: owned case {case} has no definition outside the ownership table" for case in sorted(set(owned) - defined))
+    owners = {int(task) for task in re.findall(r"^\| TD-(\d+) +\|", section, re.MULTILINE)}
+    errors.extend(f"{TASK_PLAN}: ownership row names unknown task TD-{task:02d}" for task in sorted(owners - dependencies.keys()))
+    return errors
+
+
 def main(root: Path = REPO_ROOT) -> int:
     root = root.resolve()
     markdown_files = {path.resolve() for path in root.glob("*.md")}
@@ -199,6 +269,7 @@ def main(root: Path = REPO_ROOT) -> int:
     errors = [error for path in sorted(markdown_files) for error in check_markdown(path, root)]
     seen_ids: dict[str, str] = {}
     errors.extend(error for path in sorted(evidence_files) for error in check_evidence(path, root, seen_ids))
+    errors.extend(check_task_plan(root, markdown_files))
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

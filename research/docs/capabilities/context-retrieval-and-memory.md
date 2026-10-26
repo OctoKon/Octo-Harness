@@ -79,3 +79,7 @@ MCP servers, skills and plugins can expose tools, search endpoints and repositor
 | Sourcegraph Cody/code search | Adjacent code-intelligence product            | Exact current API/retention terms not retrieved; queue only       | <https://sourcegraph.com/>                                 |
 
 This is not exhaustive. Unretrieved or weakly evidenced candidates stay out of the core design: no “graph memory,” vector store, or plugin is a default dependency without the acceptance tests above.
+
+## Selected LSP retention handoff
+
+The [official didClose fragment, CX-lsp-close](https://raw.githubusercontent.com/microsoft/language-server-protocol/gh-pages/_specifications/lsp/3.18/textDocument/didClose.md) separates document-content ownership from whether the server can fulfill requests. **Splyce design consequence:** closing a document cannot itself certify erasure. Selected TD-44 servers join TD-79's host inventory/deletion epoch for buffers, pending replies, diagnostics/symbol caches, logs and persistent indexes. Qualify actual controlled-copy invalidation/purge or owned teardown/restart; prevent stale responses from entering context/memory. Shared external services with unresolved cleanup keep scoped deletion incomplete. `M2_lsp_source_delete` tests query, disable/restart and restore after deletion without requiring LSP in the base. This is a proposed gate, not measured server behavior.

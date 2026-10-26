@@ -118,5 +118,89 @@
     ],
     "verification": "primary-documentation",
     "notes": "Current repository identity is Kortix Suna."
+  },
+  {
+    "id": "LN-11",
+    "tool": "Open Interpreter current Rust lineage",
+    "url": "https://github.com/openinterpreter/openinterpreter/blob/ac1fcc8fe57aba51fcc3c79afd57a0883237fe87/README.md",
+    "title": "Open Interpreter README at immutable revision",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Identifies the current project as a Rust Codex fork distinct from the community-maintained Python lineage.",
+      "Documents named model-specific harnesses, ACP and a Codex exec/SDK binary-override path."
+    ],
+    "verification": "pinned-primary-source-read",
+    "notes": "Source/document claims only. SDK exec compatibility is not proof of native admission, App Server compatibility, sandbox qualification or measured performance; the linked harness guide was unavailable to the fetch tool."
+  },
+  {
+    "id": "LN-12",
+    "tool": "Open Interpreter current license",
+    "url": "https://github.com/openinterpreter/openinterpreter/blob/ac1fcc8fe57aba51fcc3c79afd57a0883237fe87/LICENSE",
+    "title": "Open Interpreter pinned LICENSE",
+    "accessed": "2026-10-26",
+    "claims": ["The inspected current source carries Apache-2.0 terms."],
+    "verification": "pinned-primary-source-read",
+    "notes": "Preserve NOTICE and audit actual dependency/source closure; this license observation does not cover legacy Python projects, proprietary donor assets or an installed distributor."
+  },
+  {
+    "id": "LN-13",
+    "tool": "Open Interpreter provider wire variants",
+    "url": "https://github.com/openinterpreter/openinterpreter/blob/ac1fcc8fe57aba51fcc3c79afd57a0883237fe87/codex-rs/model-provider-info/src/lib.rs",
+    "title": "Open Interpreter pinned provider registry",
+    "accessed": "2026-10-26",
+    "claims": [
+      "WireApi explicitly declares and deserializes Responses, Chat and Messages variants."
+    ],
+    "verification": "pinned-primary-source-read",
+    "notes": "Unlike the separately pinned upstream Codex enum, this fork admits three declared variants. Enum coverage is not actual API/model conformance; Gemini-native protocol parity is not inferred."
+  },
+  {
+    "id": "LN-14",
+    "tool": "Open Interpreter provider versus harness boundaries",
+    "url": "https://www.openinterpreter.com/docs/terminal/providers",
+    "title": "Open Interpreter Model Providers",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Distinguishes provider endpoint/auth/wire protocol, model ID and agent-facing harness behavior.",
+      "Documents Google AI Studio through an OpenAI-compatible Chat Completions endpoint, rather than establishing native Gemini protocol support."
+    ],
+    "verification": "primary-documentation-fetched",
+    "notes": "Moving official guide fetched 2026-10-26. Model counts, provider catalog membership and automatic harness defaults can change; no credentials, generators or models were executed."
+  },
+  {
+    "id": "LN-15",
+    "tool": "Interpreter Workstation runtime ownership",
+    "url": "https://github.com/openinterpreter/interpreter-workstation/blob/f48f94b2e95e1178925b69fa57d5ec649dd996f5/README.md",
+    "title": "Interpreter Workstation pinned README",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Assigns runtime/providers/App Server protocol to Open Interpreter and client shell to Workstation.",
+      "Describes local/remote backend routes, shared runtime home and checksummed per-release OIX runtime selection."
+    ],
+    "verification": "pinned-primary-source-read",
+    "notes": "Advertised local/account-optional and authenticated remote behavior remains untested. Ambient shared configuration/plugin behavior requires separate Splyce admission; no installed Windows proof or footprint result."
+  },
+  {
+    "id": "LN-16",
+    "tool": "Interpreter Workstation client/runtime manifest",
+    "url": "https://github.com/openinterpreter/interpreter-workstation/blob/f48f94b2e95e1178925b69fa57d5ec649dd996f5/package.json",
+    "title": "Interpreter Workstation pinned package manifest",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Declares Electron/React/Vite client dependencies, Node engine and Bun-related headless/sidecar scripts.",
+      "Lists Windows smoke and Playwright E2E scripts."
+    ],
+    "verification": "pinned-primary-source-read",
+    "notes": "Script availability is not execution or passing artifact evidence. Runtime/asset closure, memory, accessibility and test-versus-release parity remain unqualified; no automatic change to Splyce Tauri/Svelte stack."
+  },
+  {
+    "id": "LN-17",
+    "tool": "Interpreter Workstation license",
+    "url": "https://github.com/openinterpreter/interpreter-workstation/blob/f48f94b2e95e1178925b69fa57d5ec649dd996f5/LICENSE",
+    "title": "Interpreter Workstation pinned LICENSE",
+    "accessed": "2026-10-26",
+    "claims": ["The inspected Workstation source carries Apache-2.0 terms."],
+    "verification": "pinned-primary-source-read",
+    "notes": "Component/dependency/submodule notices and actual distributed assets require independent inventory; no blanket source or artwork entitlement."
   }
 ]

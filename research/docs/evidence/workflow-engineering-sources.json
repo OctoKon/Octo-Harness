@@ -70,5 +70,41 @@
     ],
     "verification": "primary-documentation",
     "notes": "Selected public primary source fetched; Splyce workflow recommendations remain unmeasured proposals."
+  },
+  {
+    "id": "WE-07",
+    "tool": "NIST combinatorial testing",
+    "url": "https://csrc.nist.gov/projects/automated-combinatorial-testing-for-software/faqs",
+    "title": "NIST combinatorial testing FAQs",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Covering arrays exercise t-way parameter/value interactions; pairwise coverage alone does not guarantee detection of higher-order faults."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Primary page fetched. Proposed Splyce coverage method only; no generated suite, runtime exercise, product-benefit result or universal-correctness claim."
+  },
+  {
+    "id": "WE-08",
+    "tool": "NIST combinatorial testing",
+    "url": "https://csrc.nist.gov/Projects/automated-combinatorial-testing-for-software/combinatorial-methods-in-testing/event-sequence-testing",
+    "title": "NIST event sequence testing",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Ordered event combinations extend interaction coverage to cases whose behavior depends on event order."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Primary page fetched. Proposed Splyce coverage method only; no generated suite, runtime exercise, product-benefit result or universal-correctness claim."
+  },
+  {
+    "id": "WE-09",
+    "tool": "NIST combinatorial testing",
+    "url": "https://csrc.nist.gov/pubs/ir/7878/final",
+    "title": "NIST IR 7878: Combinatorial Coverage Measurement",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Interaction coverage can be measured for an existing test suite, not only one generated as a covering array."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Primary page fetched. Proposed Splyce coverage method only; no generated suite, runtime exercise, product-benefit result or universal-correctness claim."
   }
 ]
