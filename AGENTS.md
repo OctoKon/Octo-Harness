@@ -52,6 +52,7 @@ Skills live in `.skills/<name>/SKILL.md` and are loaded by reading the file. Pon
 
 Many agents work in parallel through agent-mesh. These rules keep their work from overlapping or getting lost.
 
+- **Start from the latest code.** Before starting any work and before every push, run `git fetch origin` and merge `origin/staging` into your branch (or branch fresh from it). `staging` already contains everything on `main`, so this covers both.
 - **Check before you start.** Run `mesh hive pull` and read `commons/status.md` (the ownership board), then `mesh task list`, `mesh who` and `mesh search TD-xx`. If the task, its files or a lease belongs to another agent, do not start: ask that agent or the lead.
 - **Claim, then work.** Open or find the GitHub issue, claim the mesh task (earliest claim wins), comment `Claimed by <user>/<agent>, branch <branch>` on the issue, keep `mesh doing` current and lease files before editing.
 - **Open pull requests come first.** Before new work, help land open PRs: review an exact head and comment a verdict, or fix a failing check.
