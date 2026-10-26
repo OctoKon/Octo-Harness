@@ -86,14 +86,19 @@ stateDiagram-v2
 
 ## 3. Typed IPC command schema (Renderer $\rightarrow$ Engine)
 
-All commands sent from the Svelte client pass through Tauri's validated command layer (`invoke("splyce_command", { payload })`).
+All commands sent from the Svelte client pass through Tauri's validated command boundary using a strict command allowlist:
+
+- `invoke("handshake", { protocolVersion: number })`
+- `invoke("send", { op: string, payload: unknown })`
+- `invoke("cancel", { sessionId: string, reason?: string })`
+- `invoke("subscribe", { sessionId: string, afterSeq?: number })`
+- `invoke("dialog_select_workspace", {})` (returns a scoped grant token, not raw renderer path authority)
 
 ```typescript
 export type SplyceCommand =
   | { op: "session.start"; payload: SessionStartPayload }
   | { op: "session.prompt"; payload: SessionPromptPayload }
   | { op: "session.steer"; payload: SessionSteerPayload }
-  | { op: "session.cancel"; payload: SessionCancelPayload }
   | { op: "session.fork"; payload: SessionForkPayload }
   | { op: "approval.respond"; payload: ApprovalResponsePayload }
   | { op: "workspace.select"; payload: WorkspaceSelectPayload }
@@ -103,7 +108,7 @@ export type SplyceCommand =
   | { op: "engine.restart"; payload: Record<string, never> };
 
 export interface SessionStartPayload {
-  workspaceId: string;
+  workspaceRef: string; // Scoped native dialog grant token
   piSessionId?: string;
   initialPrompt?: string;
   profileId: string;
@@ -122,11 +127,6 @@ export interface SessionSteerPayload {
   instruction: string;
 }
 
-export interface SessionCancelPayload {
-  sessionId: string;
-  reason?: string;
-}
-
 export interface SessionForkPayload {
   sourceSessionId: string;
   forkFromEntryId: string;
@@ -134,13 +134,16 @@ export interface SessionForkPayload {
 }
 
 export interface ApprovalResponsePayload {
+  requestId: string; // Single-use unique approval request token
+  runId: string;
   actionId: string;
+  revisionHash: string; // Bound revision hash preventing stale grant expansion
   decision: "allow" | "deny";
-  rememberDecision?: boolean;
 }
 
 export interface WorkspaceSelectPayload {
-  path: string;
+  workspaceRef: string; // Scoped native dialog folder token, not arbitrary renderer path
+  displayName: string;
 }
 
 export interface SetProfilePayload {
@@ -163,20 +166,28 @@ export interface LeaseReleasePayload {
 
 ## 4. Typed engine event schema (Engine $\rightarrow$ Renderer)
 
-The engine streams ordered, sequence-numbered events to the client. The client tracks the event sequence number (`seq`) to guarantee in-order delivery and detect dropped messages.
+The engine streams ordered, sequence-numbered events to the client. The client tracks the monotonic event sequence number (`seq`), deduplicates replays via `eventId`, and distinguishes durable records from coalescible transient deltas via `durability`.
 
 ```typescript
 export interface SplyceEventEnvelope {
   seq: number;
+  eventId: string; // Monotonic UUIDv7 or stable ID for deduplication
   ts: number; // Unix timestamp in ms
   sessionId: string;
+  durability: "durable" | "transient"; // Durable: guaranteed across reconnects; Transient: coalescible display deltas
+  cursor?: number; // Monotonic durable sequence acknowledged by client
   event: SplyceEngineEvent;
 }
 
 export type SplyceEngineEvent =
   | { kind: "turn.started"; runId: string; turnId: string }
-  | { kind: "turn.stream_delta"; runId: string; delta: string }
-  | { kind: "turn.thought_delta"; runId: string; delta: string }
+  | { kind: "turn.stream_delta"; runId: string; turnId?: string; delta: string }
+  | {
+      kind: "turn.thought_delta";
+      runId: string;
+      turnId?: string;
+      delta: string;
+    }
   | {
       kind: "turn.tool_intent";
       runId: string;
@@ -203,12 +214,21 @@ export type SplyceEngineEvent =
   | { kind: "turn.canceled"; runId: string; cleanedUp: boolean }
   | {
       kind: "approval.requested";
+      runId?: string;
       actionId: string;
       capabilityId: string;
       targetScope: string;
       normalizedTarget: string;
       riskRationale: string;
       timeoutMs?: number;
+    }
+  | {
+      kind: "run.reconnect_snapshot";
+      runId: string;
+      lastDurableSeq: number;
+      turnId?: string;
+      activeActionIds: string[];
+      state: "ready" | "busy" | "waiting_approval" | "stopped";
     }
   | {
       kind: "session.tree_updated";

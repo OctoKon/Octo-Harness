@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "caseId": "FUI-W3",
+  "title": "Windows accessibility",
+  "targetTask": "TD-73",
+  "description": "Keyboard-only traversal via Tab, Ctrl+1..4, Narrator screen reader role verification, and high-contrast focus rings without keyboard traps.",
+  "preconditions": {
+    "windowMode": "normal",
+    "dpiScale": 1.25,
+    "contrastMode": true,
+    "reducedMotion": false,
+    "engineStatus": "ready"
+  },
+  "eventSequence": [
+    {
+      "delayMs": 0,
+      "event": {
+        "seq": 1,
+        "eventId": "evt_01W3_01",
+        "ts": 1729930050000,
+        "sessionId": "ses_test_a11y",
+        "durability": "durable",
+        "event": {
+          "kind": "turn.started",
+          "runId": "run_w3_a11y",
+          "turnId": "turn_01"
+        }
+      }
+    },
+    {
+      "delayMs": 10,
+      "event": {
+        "seq": 2,
+        "eventId": "evt_01W3_02",
+        "ts": 1729930050010,
+        "sessionId": "ses_test_a11y",
+        "durability": "durable",
+        "event": {
+          "kind": "approval.requested",
+          "runId": "run_w3_a11y",
+          "actionId": "act_w3_del",
+          "capabilityId": "fs.delete_file",
+          "targetScope": "temp/cache.tmp",
+          "normalizedTarget": "F:/test/Splyce/temp/cache.tmp",
+          "riskRationale": "Deleting cached test artifacts.",
+          "timeoutMs": 30000
+        }
+      }
+    }
+  ],
+  "userActions": [
+    {
+      "step": 1,
+      "action": "shortcut",
+      "targetSelector": "body",
+      "payload": "Tab"
+    },
+    {
+      "step": 2,
+      "action": "shortcut",
+      "targetSelector": "body",
+      "payload": "Enter"
+    }
+  ],
+  "assertions": {
+    "expectedState": {
+      "focusLockedToModal": true,
+      "activeModalId": "act_w3_del"
+    },
+    "expectedDispatches": [
+      {
+        "op": "approval.respond",
+        "payloadMatch": {
+          "actionId": "act_w3_del",
+          "decision": "allow"
+        }
+      }
+    ],
+    "accessibilityQueries": [
+      {
+        "role": "dialog",
+        "name": "High-Risk Approval Required",
+        "expectedState": "focused"
+      },
+      {
+        "role": "button",
+        "name": "Allow",
+        "expectedState": "focusable"
+      },
+      {
+        "role": "button",
+        "name": "Deny",
+        "expectedState": "focusable"
+      }
+    ],
+    "guardRemovalCheck": {
+      "action": "remove_focus_trap",
+      "mustFailWith": "ERR_MODAL_FOCUS_LEAK"
+    }
+  }
+}
