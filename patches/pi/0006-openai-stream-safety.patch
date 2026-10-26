@@ -28,33 +28,47 @@ index 5165e1c..50cc10d 100644
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
  			stream.push({ type: "error", reason: output.stopReason, error: output });
 diff --git a/vendor/pi/packages/ai/src/api/openai-completions.ts b/vendor/pi/packages/ai/src/api/openai-completions.ts
-index 0e5b606..e7a770a 100644
+index 0e5b606..e50d3b8 100644
 --- a/vendor/pi/packages/ai/src/api/openai-completions.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-completions.ts
-@@ -12,6 +12,7 @@ import type {
+@@ -12,6 +12,12 @@ import type {
  	ChatCompletionToolMessageParam,
  } from "openai/resources/chat/completions.js";
  import { calculateCost, clampThinkingLevel } from "../models.ts";
-+import { assertCredentialOptions, createLeasedFetch, redactorOf } from "../splyce-credentials.ts";
++import {
++	assertCredentialOptions,
++	createLeasedFetch,
++	redactWithLease,
++	type SplyceCredentials,
++} from "../splyce-credentials.ts";
  import type {
  	AssistantMessage,
  	CacheRetention,
-@@ -344,7 +345,13 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -337,6 +343,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+ 		// `reasoning_details` are replay metadata, not user-visible stream deltas.
+ 		// Keep them in memory during streaming and serialize once when the block is finalized.
+ 		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
++		let credentials: SplyceCredentials | undefined;
+ 		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
+ 			if (streamedReasoningDetails !== undefined) {
+ 				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
+@@ -344,7 +351,14 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  		};
  
  		try {
 -			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 +			assertCredentialOptions(options ?? {});
-+			const apiKey = options?.credentials
++			credentials = options?.credentials;
++			const apiKey = credentials
 +				? "splyce-leased"
 +				: getClientApiKey(model.provider, options?.apiKey, options?.headers);
-+			const fetch = options?.credentials
-+				? createLeasedFetch(options.credentials, "authorization", options.fetch, (secret) => `Bearer ${secret}`)
++			const fetch = credentials
++				? createLeasedFetch(credentials, "authorization", options?.fetch, (secret) => `Bearer ${secret}`)
 +				: options?.fetch;
  			const compat = getCompat(model);
  			const grammarToolInputProperties = createGrammarToolInputProperties(
  				getDeclaredTools(normalizedContext.messages),
-@@ -358,7 +365,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -358,7 +372,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  				apiKey,
  				options?.headers,
  				options?.identity,
@@ -63,7 +77,7 @@ index 0e5b606..e7a770a 100644
  				cacheSessionId,
  				compat,
  			);
-@@ -692,6 +699,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -692,21 +706,25 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  			stream.push({ type: "done", reason: output.stopReason, message: output });
  			stream.end();
  		} catch (error) {
@@ -72,15 +86,27 @@ index 0e5b606..e7a770a 100644
  			for (const block of output.content) {
  				if (block.type === "thinking") {
  					applyStreamedReasoningDetails(block);
-@@ -707,6 +716,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
- 			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
- 				output.errorMessage += `\n${rawMetadata}`;
+ 				}
  			}
-+			output.errorMessage = redactorOf(options ?? {})(output.errorMessage);
+ 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+-			output.errorMessage = formatProviderError(normalizeProviderError(error));
++			delete output.errorMessage;
++			let errorMessage = formatProviderError(normalizeProviderError(error));
+ 			// Some providers via OpenRouter give additional information in this field.
+ 			// normalizeProviderError already stringifies the parsed body (error.error)
+ 			// into errorMessage, so only append the raw metadata when it is not already
+ 			// present to avoid double-printing it.
+ 			const rawMetadata = (error as any)?.error?.metadata?.raw;
+-			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
+-				output.errorMessage += `\n${rawMetadata}`;
++			if (rawMetadata && !errorMessage.includes(String(rawMetadata))) {
++				errorMessage += `\n${rawMetadata}`;
+ 			}
++			output.errorMessage = await redactWithLease(credentials, errorMessage);
  			stream.push({ type: "error", reason: output.stopReason, error: output });
  			stream.end();
  		}
-@@ -720,7 +730,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
+@@ -720,7 +738,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
  	context: TranscriptContext,
  	options?: SimpleStreamOptions,
  ): AssistantMessageEventStream => {
@@ -90,18 +116,24 @@ index 0e5b606..e7a770a 100644
  	const base = {
  		...buildBaseOptions(model, context, options, options?.apiKey),
 diff --git a/vendor/pi/packages/ai/src/api/openai-responses.ts b/vendor/pi/packages/ai/src/api/openai-responses.ts
-index c29e6ad..cda66b6 100644
+index c29e6ad..e448f58 100644
 --- a/vendor/pi/packages/ai/src/api/openai-responses.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-responses.ts
-@@ -1,6 +1,7 @@
+@@ -1,6 +1,13 @@
  import OpenAI from "openai";
  import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
  import { clampThinkingLevel } from "../models.ts";
-+import { assertCredentialOptions, createLeasedFetch, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
++import {
++	assertCredentialOptions,
++	createLeasedFetch,
++	redactWithLease,
++	type SplyceCredentials,
++	withLeasedSecret,
++} from "../splyce-credentials.ts";
  import type {
  	Api,
  	AssistantMessage,
-@@ -109,12 +110,13 @@ function getConfigurationUpdateEffort(
+@@ -109,12 +116,13 @@ function getConfigurationUpdateEffort(
  	model: Model<"openai-responses">,
  	options: OpenAIResponsesOptions | undefined,
  	compat: Required<OpenAIResponsesCompat>,
@@ -116,11 +148,12 @@ index c29e6ad..cda66b6 100644
  	) {
  		return undefined;
  	}
-@@ -162,14 +164,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -162,14 +170,13 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  	// Start async processing
  	(async () => {
  		const compat = getCompat(model);
 -		const configurationUpdateEffort = getConfigurationUpdateEffort(model, options, compat);
++		let credentials: SplyceCredentials | undefined;
  		const output: AssistantMessage = {
  			role: "assistant",
  			content: [],
@@ -131,27 +164,28 @@ index c29e6ad..cda66b6 100644
  			usage: {
  				input: 0,
  				output: 0,
-@@ -184,7 +184,18 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -184,7 +191,19 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  
  		try {
  			// Create OpenAI client
 -			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 +			assertCredentialOptions(options ?? {});
-+			const chatGPTSignIn = options?.credentials
-+				? await withLeasedSecret(options.credentials, (secret) => isChatGPTSignIn(model, secret))
++			credentials = options?.credentials;
++			const chatGPTSignIn = credentials
++				? await withLeasedSecret(credentials, (secret) => isChatGPTSignIn(model, secret))
 +				: isChatGPTSignIn(model, options?.apiKey);
 +			const configurationUpdateEffort = getConfigurationUpdateEffort(model, options, compat, chatGPTSignIn);
 +			if (configurationUpdateEffort !== undefined) output.providerThinkingLevel = configurationUpdateEffort;
-+			const apiKey = options?.credentials
++			const apiKey = credentials
 +				? "splyce-leased"
 +				: getClientApiKey(model.provider, options?.apiKey, options?.headers);
-+			const fetch = options?.credentials
-+				? createLeasedFetch(options.credentials, "authorization", options.fetch, (secret) => `Bearer ${secret}`)
++			const fetch = credentials
++				? createLeasedFetch(credentials, "authorization", options?.fetch, (secret) => `Bearer ${secret}`)
 +				: options?.fetch;
  			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
  			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
  			const grammarToolInputProperties = createGrammarToolInputProperties(
-@@ -197,7 +208,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -197,7 +216,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  				apiKey,
  				options?.headers,
  				options?.identity,
@@ -160,7 +194,7 @@ index c29e6ad..cda66b6 100644
  				cacheSessionId,
  			);
  			let params = buildParams(
-@@ -207,6 +218,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -207,6 +226,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  				compat,
  				grammarToolInputProperties,
  				configurationUpdateEffort,
@@ -168,24 +202,35 @@ index c29e6ad..cda66b6 100644
  			);
  			const nextParams = await options?.onPayload?.(params, model);
  			if (nextParams !== undefined) {
-@@ -249,6 +261,8 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -249,20 +269,22 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  			stream.push({ type: "done", reason: output.stopReason, message: output });
  			stream.end();
  		} catch (error) {
 +			// Failed or cancelled output must not expose executable tool calls.
 +			output.content = output.content.filter((block) => block.type !== "toolCall");
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
- 			const errorMessage = formatProviderError(
+-			const errorMessage = formatProviderError(
++			delete output.errorMessage;
++			let errorMessage = formatProviderError(
  				normalizeProviderError(error),
-@@ -263,6 +277,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
- 			} else {
- 				output.errorMessage = errorMessage;
+ 				`${model.provider === "openai" ? "OpenAI" : model.provider} API error`,
+ 			);
+ 			// Sign in with ChatGPT shares the subscription's usage limit with other apps.
+ 			// On ChatGPT Business plans, the workspace admin also sets a per-user limit.
+ 			if (errorMessage.includes("subscription_sharing_usage_limit_exceeded")) {
+-				output.errorMessage = `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`;
++				errorMessage = `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`;
+ 			} else if (errorMessage.includes("subscription_sharing_workplace_individual_usage_limit_exceeded")) {
+-				output.errorMessage = `${errorMessage}\n${CHATGPT_WORKSPACE_LIMIT_HINT}`;
+-			} else {
+-				output.errorMessage = errorMessage;
++				errorMessage = `${errorMessage}\n${CHATGPT_WORKSPACE_LIMIT_HINT}`;
  			}
-+			output.errorMessage = redactorOf(options ?? {})(output.errorMessage);
++			output.errorMessage = await redactWithLease(credentials, errorMessage);
  			stream.push({ type: "error", reason: output.stopReason, error: output });
  			stream.end();
  		}
-@@ -276,7 +291,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
+@@ -276,7 +298,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
  	context: TranscriptContext,
  	options?: SimpleStreamOptions,
  ): AssistantMessageEventStream => {
@@ -194,7 +239,7 @@ index c29e6ad..cda66b6 100644
  
  	const base = {
  		...buildBaseOptions(model, context, options, options?.apiKey),
-@@ -343,6 +358,7 @@ function buildParams(
+@@ -343,6 +365,7 @@ function buildParams(
  	compat: Required<OpenAIResponsesCompat>,
  	grammarToolInputProperties: ReadonlyMap<string, string>,
  	configurationUpdateEffort: string | undefined,
@@ -202,7 +247,7 @@ index c29e6ad..cda66b6 100644
  ) {
  	const transcriptTools = resolveTranscriptTools(context.messages, getResponsesToolSupport(compat));
  	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
-@@ -359,7 +375,7 @@ function buildParams(
+@@ -359,7 +382,7 @@ function buildParams(
  
  	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
  	// Sign in with ChatGPT rejects these request fields.
@@ -211,26 +256,72 @@ index c29e6ad..cda66b6 100644
  	const params: ResponseCreateParamsStreaming = {
  		model: model.id,
  		input: messages,
+diff --git a/vendor/pi/packages/ai/src/models.ts b/vendor/pi/packages/ai/src/models.ts
+index 339bbe7..bd396ea 100644
+--- a/vendor/pi/packages/ai/src/models.ts
++++ b/vendor/pi/packages/ai/src/models.ts
+@@ -20,7 +20,7 @@ import type {
+ 	ProviderAuth,
+ } from "./auth/types.ts";
+ import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
+-import { assertCredentialsSupported, type SplyceCredentials } from "./splyce-credentials.ts";
++import type { SplyceCredentials } from "./splyce-credentials.ts";
+ import { observeModelRequest } from "./telemetry.ts";
+ import type {
+ 	AnyModel,
+@@ -62,6 +62,7 @@ import {
+ 	assertChatModel,
+ 	assertClassifierInputSupported,
+ 	assertClassifierModel,
++	assertCredentialsSupported,
+ 	assertImageModel,
+ 	classifierErrorResult,
+ 	getModelType,
 diff --git a/vendor/pi/packages/ai/src/splyce-credentials.ts b/vendor/pi/packages/ai/src/splyce-credentials.ts
-index fe674e3..798f775 100644
+index fe674e3..d6c8d70 100644
 --- a/vendor/pi/packages/ai/src/splyce-credentials.ts
 +++ b/vendor/pi/packages/ai/src/splyce-credentials.ts
-@@ -26,6 +26,8 @@ export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
- 	"anthropic-messages",
- 	"google-generative-ai",
- 	"google-vertex",
-+	"openai-completions",
-+	"openai-responses",
- ]);
+@@ -18,30 +18,24 @@ export interface SplyceCredentials {
+ 	readonly redact: (text: string) => string;
+ }
  
- export function assertCredentialsSupported(
-@@ -41,7 +43,8 @@ const identity = (text: string): string => text;
+-/**
+- * APIs whose adapters honour `credentials`. Any other API must refuse the option rather than ignore it: ignoring it
+- * would let the adapter fall back to an ambient key. The owner of each adapter adds its API here when it is bound.
+- */
+-export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
+-	"anthropic-messages",
+-	"google-generative-ai",
+-	"google-vertex",
+-]);
+-
+-export function assertCredentialsSupported(
+-	api: string,
+-	options: { credentials?: SplyceCredentials | undefined } | undefined,
+-): void {
+-	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
+-		throw new Error(`credentials are not supported for api ${api} yet`);
+-	}
+-}
++export { assertCredentialsSupported, CREDENTIAL_APIS } from "./utils/model-operations.ts";
+ 
+ const identity = (text: string): string => text;
  
  /** The redactor to apply to error text: the native one when credentials are in use, otherwise nothing is leased. */
  export function redactorOf(options: { credentials?: SplyceCredentials | undefined }): (text: string) => string {
 -	return options.credentials?.redact ?? identity;
 +	const redact = options.credentials?.redact;
 +	return typeof redact === "function" ? redact : identity;
++}
++
++/** Sanitize inside a live lease; a revoked lease cannot safely expose the provider's error text. */
++export async function redactWithLease(credentials: SplyceCredentials | undefined, text: string): Promise<string> {
++	if (!credentials) return text;
++	try {
++		return await credentials.lease.use(() => credentials.redact(text));
++	} catch {
++		return "Provider credential is no longer available";
++	}
  }
  
  /**
@@ -251,6 +342,81 @@ index d5616ca..e9b43c2 100644
  import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
  import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
  import type { ClientIdentity } from "./utils/identity.ts";
+diff --git a/vendor/pi/packages/ai/src/utils/model-operations.ts b/vendor/pi/packages/ai/src/utils/model-operations.ts
+index b23e061..5848774 100644
+--- a/vendor/pi/packages/ai/src/utils/model-operations.ts
++++ b/vendor/pi/packages/ai/src/utils/model-operations.ts
+@@ -1,3 +1,4 @@
++import type { SplyceCredentials } from "../splyce-credentials.ts";
+ import type {
+ 	AnyModel,
+ 	Api,
+@@ -14,6 +15,24 @@ import type {
+ } from "../types.ts";
+ import { ModelsError } from "./models-error.ts";
+ 
++/** Only adapters bound to native credentials may bypass ordinary provider auth. */
++export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
++	"anthropic-messages",
++	"google-generative-ai",
++	"google-vertex",
++	"openai-completions",
++	"openai-responses",
++]);
++
++export function assertCredentialsSupported(
++	api: string,
++	options: { credentials?: SplyceCredentials | undefined } | undefined,
++): void {
++	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
++		throw new Error(`credentials are not supported for api ${api} yet`);
++	}
++}
++
+ /** The type of a model. Models without `type` are chat models. */
+ export function getModelType(model: AnyModel): ModelType {
+ 	return model.type ?? "chat";
+diff --git a/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts b/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
+index 2344257..456eabc 100644
+--- a/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
++++ b/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
+@@ -4,7 +4,8 @@ import type Anthropic from "@anthropic-ai/sdk";
+ import { Type } from "typebox";
+ import { describe, expect, it } from "vitest";
+ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+-import type { Api, Context, Model } from "../src/types.ts";
++import type { Model } from "../src/types.ts";
++import { normalizeContext } from "../src/utils/transcript.ts";
+ 
+ type Ev = { event: string; data: unknown };
+ const sse = (events: Ev[]) =>
+@@ -38,7 +39,7 @@ const delta = (stop_reason: string, usage: Record<string, number>): Ev => ({
+ });
+ const msgStop: Ev = { event: "message_stop", data: { type: "message_stop" } };
+ 
+-const model = {
++const model: Model<"anthropic-messages"> = {
+ 	id: "claude-haiku-4-5",
+ 	name: "Claude Haiku 4.5",
+ 	api: "anthropic-messages",
+@@ -49,11 +50,12 @@ const model = {
+ 	cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+ 	contextWindow: 200000,
+ 	maxTokens: 64000,
+-} as unknown as Model<Api>;
+-const context = (): Context => ({
+-	messages: [{ role: "user", content: "go", timestamp: 1 }],
+-	tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
+-});
++};
++const context = () =>
++	normalizeContext({
++		messages: [{ role: "user", content: "go", timestamp: 1 }],
++		tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
++	});
+ const run = async (events: Ev[]) => {
+ 	const s = streamAnthropic(model, context(), { client: client(sse(events)) });
+ 	const types: string[] = [];
 diff --git a/vendor/pi/packages/ai/test/splyce-credentials-routing.test.ts b/vendor/pi/packages/ai/test/splyce-credentials-routing.test.ts
 index 28877e9..7d1fe6f 100644
 --- a/vendor/pi/packages/ai/test/splyce-credentials-routing.test.ts
@@ -264,6 +430,122 @@ index 28877e9..7d1fe6f 100644
  
  	it("compat.stream throws before any adapter or SDK runs", () => {
  		expect(() => stream(unsupported(), context, { credentials })).toThrow(/not supported/);
+diff --git a/vendor/pi/packages/ai/test/splyce-credentials.test.ts b/vendor/pi/packages/ai/test/splyce-credentials.test.ts
+index f5011a8..f3bb22c 100644
+--- a/vendor/pi/packages/ai/test/splyce-credentials.test.ts
++++ b/vendor/pi/packages/ai/test/splyce-credentials.test.ts
+@@ -79,24 +79,24 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+ import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
+ import { stream as streamVertex } from "../src/api/google-vertex.ts";
+ import { createLeasedFetch } from "../src/splyce-credentials.ts";
+-import type { Api, Context, Model } from "../src/types.ts";
++import type { Api, Model } from "../src/types.ts";
++import { normalizeContext } from "../src/utils/transcript.ts";
+ 
+ const SECRET = "sk-test-secret-0123456789";
+ const nativeRedact = (text: string) => text.split(SECRET).join("[redacted]");
+-const model = (provider: string, api: string, id: string, baseUrl: string) =>
+-	({
+-		id,
+-		name: id,
+-		api,
+-		provider,
+-		baseUrl,
+-		reasoning: false,
+-		input: ["text"],
+-		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+-		contextWindow: 100000,
+-		maxTokens: 8000,
+-	}) as unknown as Model<Api>;
+-const context = (): Context => ({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
++const model = <TApi extends Api>(provider: string, api: TApi, id: string, baseUrl: string): Model<TApi> => ({
++	id,
++	name: id,
++	api,
++	provider,
++	baseUrl,
++	reasoning: false,
++	input: ["text"],
++	cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
++	contextWindow: 100000,
++	maxTokens: 8000,
++});
++const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+ const lease = (secret = SECRET) => ({
+ 	use: async <T>(consume: (s: string) => T | Promise<T>) => consume(secret),
+ });
+diff --git a/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts b/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts
+index 82351a7..5660449 100644
+--- a/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts
++++ b/vendor/pi/packages/ai/test/splyce-google-stream-safety.test.ts
+@@ -39,28 +39,29 @@ import { Type } from "typebox";
+ import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
+ import { convertMessages } from "../src/api/google-shared.ts";
+ import { stream as streamVertex } from "../src/api/google-vertex.ts";
+-import type { Api, AssistantMessage, Context, Model } from "../src/types.ts";
++import type { Api, AssistantMessage, Model } from "../src/types.ts";
++import { normalizeContext } from "../src/utils/transcript.ts";
+ 
+-const model = (provider: string, api: string, id: string) =>
+-	({
+-		id,
+-		name: id,
+-		api,
+-		provider,
+-		baseUrl: "https://example.invalid",
+-		reasoning: true,
+-		input: ["text"],
+-		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+-		contextWindow: 100000,
+-		maxTokens: 8000,
+-	}) as unknown as Model<Api>;
++const model = <TApi extends Api>(provider: string, api: TApi, id: string): Model<TApi> => ({
++	id,
++	name: id,
++	api,
++	provider,
++	baseUrl: "https://example.invalid",
++	reasoning: true,
++	input: ["text"],
++	cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
++	contextWindow: 100000,
++	maxTokens: 8000,
++});
+ const gemini = model("google", "google-generative-ai", "gemini-3-flash-preview");
+ const vertex = model("google-vertex", "google-vertex", "gemini-3-flash-preview");
+ 
+-const context = (): Context => ({
+-	messages: [{ role: "user", content: "go", timestamp: 1 }],
+-	tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
+-});
++const context = () =>
++	normalizeContext({
++		messages: [{ role: "user", content: "go", timestamp: 1 }],
++		tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
++	});
+ const call = (extra: Record<string, unknown> = {}) => ({
+ 	functionCall: { id: "fc_1", name: "read", args: { path: "/workspace/a.txt" } },
+ 	...extra,
+@@ -83,11 +84,14 @@ describe("TD-20 Google families under the shared core contract", () => {
+ 		const original = toolCalls(result.content)[0] as unknown as { thoughtSignature?: string };
+ 		expect(original.thoughtSignature).toBe("c2lnbmF0dXJlLTE=");
+ 
+-		const replay = (target: Model<Api>) =>
+-			convertMessages(target as Model<"google-generative-ai">, {
+-				...context(),
+-				messages: [...context().messages, result as AssistantMessage],
+-			});
++		const replay = (target: Model<"google-generative-ai">) =>
++			convertMessages(
++				target,
++				normalizeContext({
++					...context(),
++					messages: [...context().messages, result as AssistantMessage],
++				}),
++			);
+ 		const sameModel = JSON.stringify(replay(gemini));
+ 		expect(sameModel).toContain("c2lnbmF0dXJlLTE=");
+ 		const otherModel = JSON.stringify(replay(model("google", "google-generative-ai", "gemini-2.5-flash")));
 diff --git a/vendor/pi/packages/ai/test/splyce-openai-credentials.test.ts b/vendor/pi/packages/ai/test/splyce-openai-credentials.test.ts
 new file mode 100644
 index 0000000..6e087a6
@@ -566,6 +848,127 @@ index 0000000..6e087a6
 +	expect(state.uses).toBe(0);
 +	expect(sends).toBe(0);
 +});
+diff --git a/vendor/pi/packages/ai/test/splyce-openai-native-resolver.test.ts b/vendor/pi/packages/ai/test/splyce-openai-native-resolver.test.ts
+new file mode 100644
+index 0000000..b4d5baf
+--- /dev/null
++++ b/vendor/pi/packages/ai/test/splyce-openai-native-resolver.test.ts
+@@ -0,0 +1,115 @@
++// Splyce #70: actual credential resolver + actual OpenAI SDK. Only the remote service is a fixture.
++// These cases do not qualify native egress admission, receipts or the packaged app.
++import { describe, expect, it } from "vitest";
++import {
++	type CredentialBinding,
++	NativeCredentialResolver,
++} from "../../../../../packages/splyce-pi/src/credential-resolver.ts";
++import { stream as chat } from "../src/api/openai-completions.ts";
++import { stream as responses } from "../src/api/openai-responses.ts";
++import type { SplyceCredentials } from "../src/splyce-credentials.ts";
++import type { Api, Model, StreamOptions } from "../src/types.ts";
++import { normalizeContext } from "../src/utils/transcript.ts";
++
++const SECRET = "sk-synthetic-native-resolver-fixture";
++const context = normalizeContext({ messages: [{ role: "user", content: "fixture", timestamp: 0 }] });
++function model<T extends Api>(api: T): Model<T> {
++	return {
++		api,
++		id: "fixture-model",
++		name: "Fixture",
++		provider: "openai",
++		baseUrl: "https://provider.invalid/v1",
++		reasoning: false,
++		input: ["text"],
++		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
++		contextWindow: 8192,
++		maxTokens: 1024,
++	};
++}
++const binding: CredentialBinding = {
++	providerConnectionId: "fixture-connection",
++	connectionRevision: "v1",
++	endpointRef: "fixture-endpoint",
++	egressPolicyRef: "fixture-policy",
++	source: { kind: "env", name: "FIXTURE_KEY" },
++};
++async function nativeCredentials() {
++	const resolver = new NativeCredentialResolver({ env: { FIXTURE_KEY: SECRET } });
++	resolver.register(binding);
++	const lease = await resolver.resolve({
++		providerConnectionId: binding.providerConnectionId,
++		connectionRevision: binding.connectionRevision,
++		endpointRef: binding.endpointRef,
++		egressPolicyRef: binding.egressPolicyRef,
++		actionId: "fixture-action",
++	});
++	return { resolver, lease, credentials: { lease, redact: resolver.redact } satisfies SplyceCredentials };
++}
++function successfulResponse(api: Api) {
++	const event =
++		api === "openai-completions"
++			? { id: "chat-fixture", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: "stop" }] }
++			: {
++					type: "response.completed",
++					response: {
++						id: "resp-fixture",
++						status: "completed",
++						usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
++					},
++				};
++	return new Response(`data: ${JSON.stringify(event)}\n\ndata: [DONE]\n\n`, {
++		headers: { "content-type": "text/event-stream" },
++	});
++}
++
++for (const [api, start] of [
++	["openai-completions", (options: StreamOptions) => chat(model("openai-completions"), context, options)],
++	["openai-responses", (options: StreamOptions) => responses(model("openai-responses"), context, options)],
++] as const) {
++	describe(`${api} with the real native resolver`, () => {
++		it("sends nothing when the connection revision changes after the lease was issued", async () => {
++			const { resolver, credentials } = await nativeCredentials();
++			resolver.register({ ...binding, connectionRevision: "v2" });
++			let sends = 0;
++			const result = await start({
++				credentials,
++				maxRetries: 0,
++				fetch: async () => {
++					sends++;
++					return successfulResponse(api);
++				},
++			}).result();
++			expect(sends).toBe(0);
++			expect(result.stopReason).toBe("error");
++		});
++		it("does not expose a revoked credential in a late stream error", async () => {
++			const { lease, credentials } = await nativeCredentials();
++			let sends = 0;
++			const result = await start({
++				credentials,
++				maxRetries: 0,
++				fetch: async () => {
++					sends++;
++					const body = new ReadableStream<Uint8Array>(
++						{
++							pull(controller) {
++								lease.revoke();
++								const error = { message: `fixture failure ${SECRET}`, code: "fixture_error" };
++								const event = api === "openai-completions" ? { error } : { type: "error", ...error };
++								controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`));
++								controller.close();
++							},
++						},
++						{ highWaterMark: 0 },
++					);
++					return new Response(body, { headers: { "content-type": "text/event-stream" } });
++				},
++			}).result();
++			expect(sends).toBe(1);
++			expect(result.stopReason).toBe("error");
++			expect(result.errorMessage).toBeTruthy();
++			expect(result.errorMessage).not.toContain(SECRET);
++		});
++	});
++}
 diff --git a/vendor/pi/packages/ai/test/splyce-openai-stream-safety.test.ts b/vendor/pi/packages/ai/test/splyce-openai-stream-safety.test.ts
 new file mode 100644
 index 0000000..5b7665c
@@ -856,3 +1259,48 @@ index 0000000..5b7665c
 +		expect(calls(result.content)).toHaveLength(1);
 +	});
 +});
+diff --git a/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts b/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
+index 6df2065..2a386e1 100644
+--- a/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
++++ b/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
+@@ -82,25 +82,25 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+ import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
+ import { stream as streamVertex } from "../src/api/google-vertex.ts";
+ import type { SplyceCredentials } from "../src/splyce-credentials.ts";
+-import type { Api, Context, Model } from "../src/types.ts";
++import type { Api, Model } from "../src/types.ts";
++import { normalizeContext } from "../src/utils/transcript.ts";
+ 
+ const SECRET = "e2e-secret-value-0123456789";
+ const ADMITTED = "endpoint-admitted";
+ 
+-const model = (provider: string, api: string, baseUrl: string) =>
+-	({
+-		id: "m-1",
+-		name: "m-1",
+-		api,
+-		provider,
+-		baseUrl,
+-		reasoning: false,
+-		input: ["text"],
+-		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+-		contextWindow: 100000,
+-		maxTokens: 8000,
+-	}) as unknown as Model<Api>;
+-const context = (): Context => ({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
++const model = <TApi extends Api>(provider: string, api: TApi, baseUrl: string): Model<TApi> => ({
++	id: "m-1",
++	name: "m-1",
++	api,
++	provider,
++	baseUrl,
++	reasoning: false,
++	input: ["text"],
++	cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
++	contextWindow: 100000,
++	maxTokens: 8000,
++});
++const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+ 
+ /** Interface-only upstream; this is the smallest faithful implementation: admit only the bound endpoint. */
+ const admission = (connectionId: string, revision: string) => ({

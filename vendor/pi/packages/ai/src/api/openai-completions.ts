@@ -12,7 +12,12 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
-import { assertCredentialOptions, createLeasedFetch, redactorOf } from "../splyce-credentials.ts";
+import {
+	assertCredentialOptions,
+	createLeasedFetch,
+	redactWithLease,
+	type SplyceCredentials,
+} from "../splyce-credentials.ts";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -338,6 +343,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 		// `reasoning_details` are replay metadata, not user-visible stream deltas.
 		// Keep them in memory during streaming and serialize once when the block is finalized.
 		let streamedReasoningDetails: OpenAIReasoningDetail[] | undefined;
+		let credentials: SplyceCredentials | undefined;
 		const applyStreamedReasoningDetails = (block: ThinkingContent): void => {
 			if (streamedReasoningDetails !== undefined) {
 				block.thinkingSignature = JSON.stringify(streamedReasoningDetails);
@@ -346,11 +352,12 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 
 		try {
 			assertCredentialOptions(options ?? {});
-			const apiKey = options?.credentials
+			credentials = options?.credentials;
+			const apiKey = credentials
 				? "splyce-leased"
 				: getClientApiKey(model.provider, options?.apiKey, options?.headers);
-			const fetch = options?.credentials
-				? createLeasedFetch(options.credentials, "authorization", options.fetch, (secret) => `Bearer ${secret}`)
+			const fetch = credentials
+				? createLeasedFetch(credentials, "authorization", options?.fetch, (secret) => `Bearer ${secret}`)
 				: options?.fetch;
 			const compat = getCompat(model);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
@@ -707,16 +714,17 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				}
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			delete output.errorMessage;
+			let errorMessage = formatProviderError(normalizeProviderError(error));
 			// Some providers via OpenRouter give additional information in this field.
 			// normalizeProviderError already stringifies the parsed body (error.error)
 			// into errorMessage, so only append the raw metadata when it is not already
 			// present to avoid double-printing it.
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
-			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
-				output.errorMessage += `\n${rawMetadata}`;
+			if (rawMetadata && !errorMessage.includes(String(rawMetadata))) {
+				errorMessage += `\n${rawMetadata}`;
 			}
-			output.errorMessage = redactorOf(options ?? {})(output.errorMessage);
+			output.errorMessage = await redactWithLease(credentials, errorMessage);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

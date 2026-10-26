@@ -39,28 +39,29 @@ import { Type } from "typebox";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
 import { convertMessages } from "../src/api/google-shared.ts";
 import { stream as streamVertex } from "../src/api/google-vertex.ts";
-import type { Api, AssistantMessage, Context, Model } from "../src/types.ts";
+import type { Api, AssistantMessage, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
-const model = (provider: string, api: string, id: string) =>
-	({
-		id,
-		name: id,
-		api,
-		provider,
-		baseUrl: "https://example.invalid",
-		reasoning: true,
-		input: ["text"],
-		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 100000,
-		maxTokens: 8000,
-	}) as unknown as Model<Api>;
+const model = <TApi extends Api>(provider: string, api: TApi, id: string): Model<TApi> => ({
+	id,
+	name: id,
+	api,
+	provider,
+	baseUrl: "https://example.invalid",
+	reasoning: true,
+	input: ["text"],
+	cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 100000,
+	maxTokens: 8000,
+});
 const gemini = model("google", "google-generative-ai", "gemini-3-flash-preview");
 const vertex = model("google-vertex", "google-vertex", "gemini-3-flash-preview");
 
-const context = (): Context => ({
-	messages: [{ role: "user", content: "go", timestamp: 1 }],
-	tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
-});
+const context = () =>
+	normalizeContext({
+		messages: [{ role: "user", content: "go", timestamp: 1 }],
+		tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
+	});
 const call = (extra: Record<string, unknown> = {}) => ({
 	functionCall: { id: "fc_1", name: "read", args: { path: "/workspace/a.txt" } },
 	...extra,
@@ -83,11 +84,14 @@ describe("TD-20 Google families under the shared core contract", () => {
 		const original = toolCalls(result.content)[0] as unknown as { thoughtSignature?: string };
 		expect(original.thoughtSignature).toBe("c2lnbmF0dXJlLTE=");
 
-		const replay = (target: Model<Api>) =>
-			convertMessages(target as Model<"google-generative-ai">, {
-				...context(),
-				messages: [...context().messages, result as AssistantMessage],
-			});
+		const replay = (target: Model<"google-generative-ai">) =>
+			convertMessages(
+				target,
+				normalizeContext({
+					...context(),
+					messages: [...context().messages, result as AssistantMessage],
+				}),
+			);
 		const sameModel = JSON.stringify(replay(gemini));
 		expect(sameModel).toContain("c2lnbmF0dXJlLTE=");
 		const otherModel = JSON.stringify(replay(model("google", "google-generative-ai", "gemini-2.5-flash")));

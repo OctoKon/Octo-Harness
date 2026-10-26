@@ -1,7 +1,13 @@
 import OpenAI from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
-import { assertCredentialOptions, createLeasedFetch, redactorOf, withLeasedSecret } from "../splyce-credentials.ts";
+import {
+	assertCredentialOptions,
+	createLeasedFetch,
+	redactWithLease,
+	type SplyceCredentials,
+	withLeasedSecret,
+} from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -164,6 +170,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 	// Start async processing
 	(async () => {
 		const compat = getCompat(model);
+		let credentials: SplyceCredentials | undefined;
 		const output: AssistantMessage = {
 			role: "assistant",
 			content: [],
@@ -185,16 +192,17 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 		try {
 			// Create OpenAI client
 			assertCredentialOptions(options ?? {});
-			const chatGPTSignIn = options?.credentials
-				? await withLeasedSecret(options.credentials, (secret) => isChatGPTSignIn(model, secret))
+			credentials = options?.credentials;
+			const chatGPTSignIn = credentials
+				? await withLeasedSecret(credentials, (secret) => isChatGPTSignIn(model, secret))
 				: isChatGPTSignIn(model, options?.apiKey);
 			const configurationUpdateEffort = getConfigurationUpdateEffort(model, options, compat, chatGPTSignIn);
 			if (configurationUpdateEffort !== undefined) output.providerThinkingLevel = configurationUpdateEffort;
-			const apiKey = options?.credentials
+			const apiKey = credentials
 				? "splyce-leased"
 				: getClientApiKey(model.provider, options?.apiKey, options?.headers);
-			const fetch = options?.credentials
-				? createLeasedFetch(options.credentials, "authorization", options.fetch, (secret) => `Bearer ${secret}`)
+			const fetch = credentials
+				? createLeasedFetch(credentials, "authorization", options?.fetch, (secret) => `Bearer ${secret}`)
 				: options?.fetch;
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
@@ -264,20 +272,19 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			// Failed or cancelled output must not expose executable tool calls.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			const errorMessage = formatProviderError(
+			delete output.errorMessage;
+			let errorMessage = formatProviderError(
 				normalizeProviderError(error),
 				`${model.provider === "openai" ? "OpenAI" : model.provider} API error`,
 			);
 			// Sign in with ChatGPT shares the subscription's usage limit with other apps.
 			// On ChatGPT Business plans, the workspace admin also sets a per-user limit.
 			if (errorMessage.includes("subscription_sharing_usage_limit_exceeded")) {
-				output.errorMessage = `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`;
+				errorMessage = `${errorMessage}\nCheck your ChatGPT usage: ${CHATGPT_USAGE_URL}`;
 			} else if (errorMessage.includes("subscription_sharing_workplace_individual_usage_limit_exceeded")) {
-				output.errorMessage = `${errorMessage}\n${CHATGPT_WORKSPACE_LIMIT_HINT}`;
-			} else {
-				output.errorMessage = errorMessage;
+				errorMessage = `${errorMessage}\n${CHATGPT_WORKSPACE_LIMIT_HINT}`;
 			}
-			output.errorMessage = redactorOf(options ?? {})(output.errorMessage);
+			output.errorMessage = await redactWithLease(credentials, errorMessage);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

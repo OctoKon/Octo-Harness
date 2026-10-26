@@ -5,6 +5,8 @@ Donor: Pi commit `d5b3de22d0e24a3e9c38a9410d3329b099717283`,
 `@earendil-works/pi-ai` 1.4.0. Preserve the donor MIT license.
 Apply `0006-openai-stream-safety.patch` from the Splyce root after the native
 bootstrap and patch 0004's shared credential routing handoff at `079a2bb`.
+The native resolver integration cases also require the reviewed TD-16 resolver
+at `febf67d`; native changes are consumed as a dependency, not bundled here.
 The initial stream-cleanup slice is checkpointed separately at `da0ae10`.
 
 The real `stream` implementations in `openai-completions.ts`,
@@ -49,7 +51,8 @@ through their direct, compatibility and Models stream/simple entrypoints. The
 actual OpenAI SDK talks to a deterministic fake service in the tests. Every HTTP
 send obtains a fresh lease use, replaces caller authentication with the leased
 bearer, refuses redirects and preserves the admitted endpoint. A revoked lease
-stops the next retry. Native redaction runs on terminal error text. Request
+stops the next retry. Native redaction runs inside a live lease on terminal error
+text; an unavailable lease produces a fixed safe message. Request
 classification for ChatGPT sign-in returns only a boolean from the lease scope;
 the token is not returned or cached in adapter options.
 
@@ -58,11 +61,22 @@ validation error also remains safe. The shared unsupported-API assertions stay
 in place, with their fixture using the still-unbound Codex API. Direct Codex
 credential options also fail closed until its transport binding is complete.
 
-The affected selected OpenAI and Splyce suites pass 362 tests; four live-provider
-cases skip without credentials. The current full vendor check is blocked by the
-shared credential routing's entry-graph budget and type errors, reported to its
-owners. Those checks must be fixed and rerun before any publication. The native
-host and actual-provider qualification remain unverified.
+Four new cases use the actual native resolver and OpenAI SDK with only the
+remote service replaced. They reject a connection revision changed after lease
+issuance and protect late stream errors after revocation for both APIs. Removing
+the terminal redaction lease guard fails both late-error cases; restoring the
+exact source passes the selected eight provider files, 120 cases with no skips.
+The native resolver's 27 cases and the integrated store/bridge/config/snapshot
+suite pass together, 94 cases. The request-port contract and its type fixture
+also pass, alongside 54 shared contract cases. These are local deterministic
+checks, not native egress or installed-provider qualification.
+
+The shared credential registry now lives in the already-reachable
+`utils/model-operations.ts`, with the original helper export preserved. This
+keeps the Models entrypoint within its existing import-graph budget. Shared test
+models use their concrete API type and normalized transcript contexts. The full
+vendor `npm run check` passes with TypeScript 7.0.2, original graph budgets and
+browser smoke checks. No dependency, threshold or assertion is relaxed.
 
 ## Integration still required
 

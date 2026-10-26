@@ -18,26 +18,7 @@ export interface SplyceCredentials {
 	readonly redact: (text: string) => string;
 }
 
-/**
- * APIs whose adapters honour `credentials`. Any other API must refuse the option rather than ignore it: ignoring it
- * would let the adapter fall back to an ambient key. The owner of each adapter adds its API here when it is bound.
- */
-export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
-	"anthropic-messages",
-	"google-generative-ai",
-	"google-vertex",
-	"openai-completions",
-	"openai-responses",
-]);
-
-export function assertCredentialsSupported(
-	api: string,
-	options: { credentials?: SplyceCredentials | undefined } | undefined,
-): void {
-	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
-		throw new Error(`credentials are not supported for api ${api} yet`);
-	}
-}
+export { assertCredentialsSupported, CREDENTIAL_APIS } from "./utils/model-operations.ts";
 
 const identity = (text: string): string => text;
 
@@ -45,6 +26,16 @@ const identity = (text: string): string => text;
 export function redactorOf(options: { credentials?: SplyceCredentials | undefined }): (text: string) => string {
 	const redact = options.credentials?.redact;
 	return typeof redact === "function" ? redact : identity;
+}
+
+/** Sanitize inside a live lease; a revoked lease cannot safely expose the provider's error text. */
+export async function redactWithLease(credentials: SplyceCredentials | undefined, text: string): Promise<string> {
+	if (!credentials) return text;
+	try {
+		return await credentials.lease.use(() => credentials.redact(text));
+	} catch {
+		return "Provider credential is no longer available";
+	}
 }
 
 /**
