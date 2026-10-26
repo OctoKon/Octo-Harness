@@ -16,6 +16,7 @@ if (args.length === 0) {
     "tests/integration/receipts.ts",
     "tests/integration/bridge.ts",
     "tests/integration/config.ts",
+    "tests/integration/events.ts",
   ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
@@ -25,13 +26,15 @@ if (args.length === 0) {
     files = ["tests/integration/bridge.ts"];
   else if (args[1] === "C4_config_transition")
     files = ["tests/integration/config.ts"];
+  else if (args[1] === "C6_event_ledger")
+    files = ["tests/integration/events.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C2_desktop_bridge | --case C4_config_transition]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C2_desktop_bridge | --case C4_config_transition | --case C6_event_ledger]",
   );
   process.exit(2);
 }

@@ -214,6 +214,27 @@ test("TD-01: record states, references and numeric bounds fail closed", () => {
   assert.deepEqual(validateRecord("run", records.run, context), records.run);
 });
 
+test("event ledger records validate nested envelopes and matching durable metadata", () => {
+  const original = records.event;
+  for (const patch of [
+    { seq: 0 },
+    { sessionId: "other" },
+    { recordId: "missing" },
+    { eventId: "different" },
+    { durable: false },
+    { payload: { state: "ready", activeWorkers: -1 } },
+    { sourceIds: ["missing"] },
+  ]) {
+    rejects(() =>
+      validateRecord(
+        "event",
+        { ...original, envelope: { ...original.envelope, ...patch } },
+        context,
+      ),
+    );
+  }
+});
+
 test("TD-01: optional record data cannot smuggle raw credentials or absolute paths", () => {
   for (const extra of [
     { apiKey: "fixture-secret" },

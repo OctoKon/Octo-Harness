@@ -142,6 +142,7 @@ export interface RecordMetadata {
 }
 
 export interface RecordBodies {
+  event: { envelope: SplyceEvent };
   run: {
     runId: string;
     piSessionId: string;
@@ -311,9 +312,11 @@ type Rule =
   | "uint"
   | "bool"
   | "limits"
+  | "eventEnvelope"
   | readonly string[];
 type Shape = { readonly [key: string]: Rule };
 export const RECORD_SCHEMAS = {
+  event: { envelope: "eventEnvelope" },
   run: {
     runId: "id",
     piSessionId: "ref",
@@ -613,6 +616,9 @@ export type SplyceEvent = {
   );
 }[EventKind];
 export type SplyceEventEnvelope = SplyceEvent;
+export type SplyceEventDraft = {
+  [K in EventKind]: Omit<Extract<SplyceEvent, { kind: K }>, "seq">;
+}[EventKind];
 const EVENT_SCHEMAS = {
   "turn.started": { runId: "ref", turnId: "ref" },
   "turn.stream_delta": { runId: "ref", delta: "delta" },
@@ -891,6 +897,12 @@ function rule(
     return;
   }
   switch (spec) {
+    case "eventEnvelope": {
+      const event = validateEvent(value, context);
+      requireThat(event.durable, "INVALID_SHAPE", "durable event");
+      reference(event.recordId, "recordId", context);
+      break;
+    }
     case "delta":
       requireThat(typeof value === "string", "INVALID_SHAPE", field);
       break;
@@ -995,6 +1007,18 @@ export function validateRecord<K extends RecordKind>(
   const record = object(value, "record");
   metadata(record, context);
   shape(record, RECORD_SCHEMAS[kind], {}, context, false);
+  if (kind === "event") {
+    const envelope = object(record.envelope, "envelope");
+    requireThat(
+      record.scopeId === envelope.scopeId &&
+        record.createdAt === envelope.createdAt &&
+        JSON.stringify(record.sourceIds) ===
+          JSON.stringify(envelope.sourceIds) &&
+        record.recordId === `event:${String(envelope.eventId)}`,
+      "INVALID_SHAPE",
+      "event record metadata",
+    );
+  }
   if (kind === "action")
     requireThat(
       record.targetScopeId === context.scopeId,
