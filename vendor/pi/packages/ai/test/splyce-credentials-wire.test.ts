@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
 import { getModel } from "../src/compat.ts";
-import type { SplyceCredentials } from "../src/splyce-credentials.ts";
+import { createLeasedFetch, type SplyceCredentials } from "../src/splyce-credentials.ts";
 import type { Context } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -76,6 +76,33 @@ const googleOk = (res: ServerResponse) => {
 
 const claude = (origin: string) => ({ ...getModel("anthropic", "claude-haiku-4-5"), baseUrl: origin });
 const gemini = (origin: string) => ({ ...getModel("google", "gemini-2.5-flash"), baseUrl: origin });
+
+describe("shared leased fetch on the wire", () => {
+	it.each(["Request", "init"])(
+		"strips alternate credential headers and placeholders from %s headers",
+		async (source) => {
+			const local = await listen((_req, res) => {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end("{}");
+			});
+			const authNames = ["authorization", "proxy-authorization", "x-api-key", "api-key", "x-goog-api-key", "cookie"];
+			const headers = { ...Object.fromEntries(authNames.map((name) => [name, "splyce-leased"])), "x-trace": "kept" };
+			const leased = createLeasedFetch(creds(), "authorization", globalThis.fetch, (secret) => `Bearer ${secret}`);
+			const response =
+				source === "Request"
+					? await leased(new Request(`${local.origin}/lease`, { headers }))
+					: await leased(`${local.origin}/lease`, { headers });
+			await response.text();
+			expect(local.seen).toHaveLength(1);
+			const sent = local.seen[0]!.headers;
+			expect(sent.authorization).toBe(`Bearer ${SECRET}`);
+			for (const name of authNames.filter((name) => name !== "authorization"))
+				expect(sent[name], name).toBeUndefined();
+			expect(sent["x-trace"]).toBe("kept");
+			expect(JSON.stringify(sent)).not.toContain("splyce-leased");
+		},
+	);
+});
 
 describe("Anthropic on the wire (real SDK)", () => {
 	it("sends exactly the leased key, with no other credential", async () => {

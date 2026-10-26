@@ -78,26 +78,25 @@ vi.mock("@google/genai", () => {
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
 import { stream as streamVertex } from "../src/api/google-vertex.ts";
-import { createLeasedFetch } from "../src/splyce-credentials.ts";
-import type { Api, Context, Model } from "../src/types.ts";
+import { assertCredentialOptions, createLeasedFetch, type SplyceCredentials } from "../src/splyce-credentials.ts";
+import type { Api, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const SECRET = "sk-test-secret-0123456789";
 const nativeRedact = (text: string) => text.split(SECRET).join("[redacted]");
-const model = <TApi extends Api>(provider: string, api: TApi, id: string, baseUrl: string): Model<TApi> =>
-	({
-		id,
-		name: id,
-		api,
-		provider,
-		baseUrl,
-		reasoning: false,
-		input: ["text"],
-		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 100000,
-		maxTokens: 8000,
-	}) as unknown as Model<TApi>;
-const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] } satisfies Context);
+const model = <TApi extends Api>(provider: string, api: TApi, id: string, baseUrl: string): Model<TApi> => ({
+	id,
+	name: id,
+	api,
+	provider,
+	baseUrl,
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 100000,
+	maxTokens: 8000,
+});
+const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
 const lease = (secret = SECRET) => ({
 	use: async <T>(consume: (s: string) => T | Promise<T>) => consume(secret),
 });
@@ -204,6 +203,23 @@ beforeEach(() => {
 });
 
 describe.each(families)("credentials option: $name", (family) => {
+	// #70/#73: malformed leases must fail before SDK construction or payload callbacks.
+	it.each([undefined, null, {}, { use: null }, { use: "not-a-function" }])(
+		"refuses malformed lease %j before SDK initialization",
+		async (invalidLease) => {
+			let payloads = 0;
+			const result = await family.run({
+				credentials: { lease: invalidLease, redact: nativeRedact },
+				onPayload: () => {
+					payloads++;
+				},
+			});
+			expect(result.stopReason).toBe("error");
+			expect(family.sdkCalls()).toHaveLength(0);
+			expect(wire.sent).toHaveLength(0);
+			expect(payloads).toBe(0);
+		},
+	);
 	it("delivers the leased secret and the admitted base URL", async () => {
 		const result = await family.run({ credentials: creds(lease()) });
 		expect(result.stopReason).not.toBe("error");
@@ -327,6 +343,15 @@ describe("Anthropic per-send enforcement", () => {
 });
 
 describe("shared credential helpers", () => {
+	it.each([undefined, null, {}, { use: null }, { use: "not-a-function" }])(
+		"requires a callable native lease before accepting credential options (%j)",
+		(invalidLease) => {
+			const credentials = { lease: invalidLease, redact: nativeRedact } as unknown as SplyceCredentials;
+			expect(() => assertCredentialOptions({ credentials })).toThrow(
+				"credentials require a native lease.use function",
+			);
+		},
+	);
 	const record = () => {
 		const calls: Array<{ input: unknown; headers: Headers; redirect: string | undefined }> = [];
 		const base = (async (input: unknown, init?: RequestInit) => {

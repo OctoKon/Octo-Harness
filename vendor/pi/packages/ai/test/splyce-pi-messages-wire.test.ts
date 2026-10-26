@@ -163,3 +163,25 @@ describe("TD-23 Pi-native: wire contract", () => {
 		expect(result.stopReason).toBe("error");
 	});
 });
+
+describe("TD-23 Pi-native: revoked lease at error time", () => {
+	it("still redacts the diagnostic and delivers the terminal event when the lease is revoked after the send", async () => {
+		let uses = 0;
+		const result = await streamPi(model, context() as never, {
+			fetch: serve(() => new Response(`denied for ${SECRET}`, { status: 401 })),
+			credentials: {
+				lease: {
+					use: async <T>(consume: (s: string) => T | Promise<T>) => {
+						uses += 1;
+						if (uses > 1) throw new Error("lease revoked");
+						return consume(SECRET);
+					},
+				},
+				redact: (t) => t.split(SECRET).join("[REDACTED]"),
+			},
+		}).result();
+		expect(uses).toBeGreaterThan(1);
+		expect(result.stopReason).toBe("error");
+		expect(JSON.stringify(result)).not.toContain(SECRET);
+	});
+});

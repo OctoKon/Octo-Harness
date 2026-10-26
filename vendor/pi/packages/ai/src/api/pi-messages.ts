@@ -9,7 +9,13 @@
  * models.json custom provider with `"api": "pi-messages"`.
  */
 
-import { assertCredentialOptions, createLeasedFetch, redactorOf } from "../splyce-credentials.ts";
+import {
+	assertCredentialOptions,
+	createLeasedFetch,
+	redactEventWithLease,
+	redactorOf,
+	type SplyceCredentials,
+} from "../splyce-credentials.ts";
 import type {
 	AssistantMessage,
 	AssistantMessageEvent,
@@ -367,12 +373,13 @@ function redactLeaves(value: unknown, redact: (text: string) => string, depth = 
 	return out;
 }
 
-function createErrorEvent(
+async function createErrorEvent(
 	model: Model<"pi-messages">,
 	error: unknown,
 	aborted: boolean,
-	redact: (text: string) => string = (text) => text,
-): AssistantMessageEvent {
+	credentials?: SplyceCredentials,
+): Promise<AssistantMessageEvent> {
+	const redact = redactorOf({ credentials });
 	const reason = aborted ? "aborted" : "error";
 	const assistantMessage: AssistantMessage = {
 		role: "assistant",
@@ -392,13 +399,20 @@ function createErrorEvent(
 			error,
 			error.diagnosticDetails,
 		);
-		// The diagnostic embeds the error and the response body: redact each string leaf before serialization. A
-		// redactor failure degrades to no diagnostic, never to a lost terminal event or an unredacted one.
+		// The diagnostic embeds the error and the response body. The shared lease-scoped sanitizer redacts every string
+		// key and value before serialization; if the lease is revoked or the redactor fails, the same local walk runs,
+		// and a second failure drops the diagnostic only, never the terminal event and never unredacted bytes.
+		let safe: unknown;
 		try {
-			appendAssistantMessageDiagnostic(assistantMessage, redactLeaves(diagnostic, redact) as typeof diagnostic);
+			safe = await redactEventWithLease(credentials, diagnostic);
 		} catch {
-			// the redacted errorMessage above still reaches the consumer
+			try {
+				safe = redactLeaves(diagnostic, redact);
+			} catch {
+				safe = undefined;
+			}
 		}
+		if (safe !== undefined) appendAssistantMessageDiagnostic(assistantMessage, safe as typeof diagnostic);
 	}
 
 	return { type: "error", reason, error: assistantMessage };
@@ -419,7 +433,6 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 ): AssistantMessageEventStream => {
 	const eventStream = new AssistantMessageEventStream();
 	const convertEvent = createEventConverter(model);
-	const redact = redactorOf(options ?? {});
 
 	void (async () => {
 		try {
@@ -492,7 +505,9 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 
 			throw new Error(`${model.provider} stream ended without a terminal event`);
 		} catch (error) {
-			eventStream.push(createErrorEvent(model, error, options?.signal?.aborted ?? false, redact));
+			eventStream.push(
+				await createErrorEvent(model, error, options?.signal?.aborted ?? false, options?.credentials),
+			);
 		}
 	})();
 
