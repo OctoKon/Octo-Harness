@@ -623,6 +623,35 @@ export class Store {
           );
         }
       }
+      if (expectedConfigRevision !== undefined) {
+        // An accepted revision is never reused within a scope (including the
+        // initial one): otherwise cfg-0 -> cfg-1 -> cfg-0 recreates the state a
+        // stale writer expects and its compare-and-set would succeed (ABA).
+        for (const [kind, record] of prepared) {
+          if (kind !== "configurationTransition") continue;
+          const transition = record as RecordByKind["configurationTransition"];
+          if (transition.state !== "applied") continue;
+          const taken =
+            transition.acceptedConfigRevision === INITIAL_CONFIG_REVISION ||
+            this.db
+              .prepare(
+                "SELECT 1 FROM records WHERE scope_id = ? AND kind = 'configurationTransition' " +
+                  "AND json_extract(payload, '$.state') = 'applied' " +
+                  "AND json_extract(payload, '$.acceptedConfigRevision') = ? LIMIT 1",
+              )
+              .get(
+                expectedConfigRevision.scopeId,
+                transition.acceptedConfigRevision,
+              ) !== undefined;
+          if (taken) {
+            this.db.exec("ROLLBACK;");
+            throw new StoreError(
+              "CONFIG_REVISION_REUSED",
+              `configuration revision ${JSON.stringify(transition.acceptedConfigRevision)} was already accepted in scope ${JSON.stringify(expectedConfigRevision.scopeId)}; nothing appended`,
+            );
+          }
+        }
+      }
       if (expectedAbsentActionKey !== undefined) {
         const { scopeId, idempotencyKey, actionId } = expectedAbsentActionKey;
         const existing = this.db

@@ -204,3 +204,30 @@ test("an unreadable (future-schema) configuration row fails closed, never adopte
   reopened.store.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("a reused revision is rejected, so a stale writer cannot ABA past the CAS", () => {
+  const dir = freshDir();
+  const { store, config } = open(dir);
+  config.apply(change("c1", "cfg-0", "cfg-1"), caller);
+  // Returning to the initial revision would recreate the state a stale writer expects.
+  const reused = (error: unknown) =>
+    error instanceof StoreError && error.code === "CONFIG_REVISION_REUSED";
+  assert.throws(
+    () => config.apply(change("c2", "cfg-1", INITIAL_CONFIG_REVISION), caller),
+    reused,
+  );
+  config.apply(change("c3", "cfg-1", "cfg-2"), caller);
+  // Going back to a previously accepted revision is rejected too.
+  assert.throws(
+    () => config.apply(change("c4", "cfg-2", "cfg-1"), caller),
+    reused,
+  );
+  assert.equal(config.effectiveRevision("w-demo"), "cfg-2");
+  // A writer that still holds cfg-0 stays stale.
+  assert.throws(
+    () => config.apply(change("c5", "cfg-0", "cfg-9"), caller),
+    staleError,
+  );
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
