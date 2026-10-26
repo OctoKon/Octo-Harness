@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, tick, unmount } from "svelte";
 import type { MemoryObservationRecord } from "@splyce/pi/contracts";
+import { reactiveProps } from "./reactive-props.svelte";
 import MemoryList from "./MemoryList.svelte";
 import type { MemoryEntry, MemoryStatus } from "../../stores/memory-view";
 
@@ -88,20 +89,91 @@ describe("MemoryList", () => {
     expect(onForget).toHaveBeenCalledWith("m1");
   });
 
-  it("never claims deletion complete; shows pending until the engine says so", async () => {
+  it("never claims deletion complete; only engine purge-pending shows pending", async () => {
     render([entry("m1")]);
     button("Forget").click();
     flushSync();
     button("Forget memory").click();
     await tick();
     flushSync();
-    expect(q('[data-testid="memory-purge"]')!.textContent).toContain(
-      "Waiting for the engine",
-    );
+    expect(q('[data-testid="memory-purge"]')).toBeNull();
     expect(document.body.textContent).not.toMatch(/deleted\.|forgotten\./i);
     expect(
       document.querySelectorAll('[data-testid="memory-item"]').length,
     ).toBe(1);
+  });
+
+  it("purge state survives remount because it comes from the engine record", () => {
+    render([entry("m1", { state: "purge-pending" })]);
+    unmount(cmp!);
+    document.body.innerHTML = "";
+    render([entry("m1", { state: "purge-pending" })]);
+    expect(q('[data-testid="memory-purge"]')!.textContent).toContain(
+      "Purge pending",
+    );
+  });
+
+  it("double-confirm calls onForget once while pending", async () => {
+    let release!: () => void;
+    const onForget = vi.fn(() => new Promise<void>((r) => (release = r)));
+    render([entry("m1")], onForget);
+    button("Forget").click();
+    flushSync();
+    const confirm = button("Forget memory");
+    confirm.click();
+    confirm.click();
+    flushSync();
+    expect(onForget).toHaveBeenCalledTimes(1);
+    expect((button("Forget memory") as HTMLButtonElement).disabled).toBe(true);
+    release();
+    await tick();
+  });
+
+  it("restores focus to the item's Forget button after cancel and after failure", async () => {
+    render(
+      [entry("m1")],
+      vi.fn(async () => {
+        throw new Error("x");
+      }),
+    );
+    button("Forget").click();
+    flushSync();
+    button("Cancel").click();
+    await tick();
+    flushSync();
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(button("Forget"));
+    button("Forget").click();
+    flushSync();
+    button("Forget memory").click();
+    await tick();
+    await tick();
+    flushSync();
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(button("Forget"));
+  });
+
+  it("moves focus to the list when the forgotten item is gone", async () => {
+    const onForget = vi.fn(async () => {});
+    const props = reactiveProps({
+      entries: [entry("m1")],
+      onForget,
+      status: "on" as MemoryStatus,
+    });
+    cmp = mount(MemoryList, { target: document.body, props });
+    flushSync();
+    button("Forget").click();
+    flushSync();
+    button("Forget memory").click();
+    props.entries = [];
+    await tick();
+    await tick();
+    flushSync();
+    await tick();
+    await tick();
+    expect(document.activeElement).toBe(q('[data-testid="memory-list"]'));
   });
 
   it("engine purge-pending differs from active", () => {
@@ -111,11 +183,11 @@ describe("MemoryList", () => {
     );
   });
 
-  it("a failed forget is reported and keeps the item forgettable", async () => {
+  it("a failed forget shows fixed copy, never the raw error, and stays forgettable", async () => {
     render(
       [entry("m1")],
       vi.fn(async () => {
-        throw new Error("engine offline");
+        throw new Error("C:\secret\path token=abc at stack");
       }),
     );
     button("Forget").click();
@@ -124,11 +196,13 @@ describe("MemoryList", () => {
     await tick();
     await tick();
     flushSync();
-    expect(q('[role="alert"]')!.textContent).toContain("engine offline");
+    const t = q('[role="alert"]')!.textContent!;
+    expect(t).toContain("Forget failed");
+    expect(t).not.toMatch(/secret|token|stack/);
     expect(button("Forget")).toBeTruthy();
   });
 
-  it("forget buttons have accessible names and the dialog focuses Cancel first", () => {
+  it("forget buttons have accessible names and the dialog focuses Cancel first", async () => {
     render([entry("m1")]);
     expect(button("Forget").getAttribute("aria-label")).toBe(
       "Forget: claim m1",
@@ -138,6 +212,8 @@ describe("MemoryList", () => {
     expect(q('[role="alertdialog"]')!.getAttribute("aria-label")).toBe(
       "Confirm forget",
     );
+    await tick();
+    await tick();
     expect(document.activeElement).toBe(button("Cancel"));
   });
 });

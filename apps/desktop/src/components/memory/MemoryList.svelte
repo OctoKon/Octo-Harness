@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     emptyMessage,
     localityLabel,
@@ -17,26 +18,46 @@
   } = $props();
 
   let confirming = $state<string | null>(null);
-  let requested = $state<Record<string, true>>({});
-  let errors = $state<Record<string, string>>({});
+  let inflight = $state<string | null>(null);
+  let failed = $state<Record<string, true>>({});
+  let listEl: HTMLElement;
+
+  async function restoreFocus(id: string): Promise<void> {
+    await tick();
+    const target = [...listEl.querySelectorAll<HTMLElement>("[data-forget]")].find(
+      (el) => el.dataset.forget === id,
+    );
+    (target ?? listEl).focus();
+  }
+
+  function cancel(id: string): void {
+    confirming = null;
+    void restoreFocus(id);
+  }
 
   async function confirm(id: string): Promise<void> {
+    if (inflight !== null) return;
+    inflight = id;
+    const { [id]: _drop, ...rest } = failed;
+    failed = rest;
     try {
       await onForget(id);
-      requested = { ...requested, [id]: true };
-      const { [id]: _drop, ...rest } = errors;
-      errors = rest;
-    } catch (e) {
-      errors = {
-        ...errors,
-        [id]: e instanceof Error ? e.message : String(e),
-      };
+    } catch {
+      // Fixed copy only: the raw error may carry paths or secrets.
+      failed = { ...failed, [id]: true };
     }
+    inflight = null;
     confirming = null;
+    void restoreFocus(id);
   }
 </script>
 
-<section aria-labelledby="memory-title" data-testid="memory-list">
+<section
+  bind:this={listEl}
+  tabindex="-1"
+  aria-labelledby="memory-title"
+  data-testid="memory-list"
+>
   <h3 id="memory-title">Memory</h3>
 
   {#if status !== "on" || entries.length === 0}
@@ -58,26 +79,29 @@
             <dd data-testid="memory-locality">{localityLabel(e.locality)}</dd>
           </dl>
 
-          {#if e.state === "purge-pending" || requested[id]}
+          {#if e.state === "purge-pending"}
             <p role="status" data-testid="memory-purge">
-              {e.state === "purge-pending"
-                ? "Purge pending. Not yet confirmed deleted by the engine."
-                : "Forget requested. Waiting for the engine to confirm."}
+              Purge pending. Not yet confirmed deleted by the engine.
             </p>
           {:else if confirming === id}
             <div role="alertdialog" aria-label="Confirm forget" data-testid="memory-confirm">
               <p>Forget this memory? This cannot be undone.</p>
               <!-- svelte-ignore a11y_autofocus -->
-              <button type="button" autofocus onclick={() => (confirming = null)}>
+              <button type="button" autofocus onclick={() => cancel(id)}>
                 Cancel
               </button>
-              <button type="button" onclick={() => confirm(id)}>
+              <button
+                type="button"
+                disabled={inflight !== null}
+                onclick={() => confirm(id)}
+              >
                 Forget memory
               </button>
             </div>
           {:else}
             <button
               type="button"
+              data-forget={id}
               aria-label={`Forget: ${e.claim ?? id}`}
               onclick={() => (confirming = id)}
             >
@@ -85,8 +109,10 @@
             </button>
           {/if}
 
-          {#if errors[id]}
-            <p role="alert">Forget failed: {errors[id]}</p>
+          {#if failed[id]}
+            <p role="alert">
+              Forget failed. The memory is still stored. Try again.
+            </p>
           {/if}
         </li>
       {/each}
