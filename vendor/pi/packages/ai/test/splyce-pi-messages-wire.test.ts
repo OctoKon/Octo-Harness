@@ -212,4 +212,34 @@ describe("TD-23 Pi-native: revoked lease at error time", () => {
 		expect(result.errorMessage).toBe("Provider credential is no longer available");
 		expect(JSON.stringify(result)).not.toContain("pi_messages_response_failure");
 	});
+
+	it("observers see redacted response headers and provider events while the lease is active", async () => {
+		const headers: Record<string, string>[] = [];
+		const events: string[] = [];
+		const leaky = sse([
+			start,
+			{ type: "text_start", contentIndex: 0, note: `echo ${SECRET}`, [`k-${SECRET}`]: 1 },
+			done("stop"),
+		]);
+		leaky.headers.set("x-echo", SECRET);
+		await streamPi(
+			model,
+			context() as never,
+			{
+				fetch: serve(() => leaky),
+				credentials: creds(),
+				onResponse: async (response: { headers: Record<string, string> }) => {
+					headers.push(response.headers);
+				},
+				onProviderStreamEvent: async (event: unknown) => {
+					events.push(JSON.stringify(event));
+				},
+			} as never,
+		).result();
+		expect(headers.length).toBe(1);
+		expect(JSON.stringify(headers)).not.toContain(SECRET);
+		expect(events.length).toBeGreaterThan(0);
+		expect(events.join("")).not.toContain(SECRET);
+		expect(events.join("")).toContain("[REDACTED]");
+	});
 });

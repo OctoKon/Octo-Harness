@@ -10,6 +10,7 @@ import { calculateCost, clampThinkingLevel } from "../models.ts";
 import {
 	assertCredentialOptions,
 	assertSafeLeasedGooglePayload,
+	redactEventWithLease,
 	redactWithLease,
 	withLeasedSecret,
 } from "../splyce-credentials.ts";
@@ -145,7 +146,10 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
-				await options?.onProviderStreamEvent?.(chunk, model);
+				await options?.onProviderStreamEvent?.(
+					(await redactEventWithLease(options?.credentials, chunk)) as typeof chunk,
+					model,
+				);
 				// Vertex uses the same @google/genai GenerateContentResponse type as Gemini.
 				// responseId is documented there as an output-only identifier for each response.
 				output.responseId ||= chunk.responseId;

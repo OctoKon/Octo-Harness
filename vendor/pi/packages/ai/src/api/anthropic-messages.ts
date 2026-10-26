@@ -18,7 +18,13 @@ import {
 	ANTHROPIC_WORKSPACE_ID_ENV,
 } from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
-import { assertCredentialOptions, createLeasedFetch, redactWithLease } from "../splyce-credentials.ts";
+import {
+	assertCredentialOptions,
+	createLeasedFetch,
+	redactEventWithLease,
+	redactResponseWithLease,
+	redactWithLease,
+} from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -707,7 +713,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					});
 				}
 			}
-			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			await options?.onResponse?.(
+				await redactResponseWithLease(options?.credentials, {
+					status: response.status,
+					headers: headersToRecord(response.headers),
+				}),
+				model,
+			);
 			stream.push({ type: "start", partial: output });
 
 			// Stream state per Anthropic block index, kept off the content blocks so it never reaches partials.
@@ -718,7 +730,10 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			};
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
-				await options?.onProviderStreamEvent?.(event, model);
+				await options?.onProviderStreamEvent?.(
+					(await redactEventWithLease(options?.credentials, event)) as typeof event,
+					model,
+				);
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					const transformations = event.message.input_transformations;

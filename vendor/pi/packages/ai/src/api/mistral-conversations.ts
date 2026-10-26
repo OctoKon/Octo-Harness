@@ -1,5 +1,11 @@
 import { calculateCost, clampThinkingLevel } from "../models.ts";
-import { assertCredentialOptions, createLeasedFetch, redactWithLease } from "../splyce-credentials.ts";
+import {
+	assertCredentialOptions,
+	createLeasedFetch,
+	redactEventWithLease,
+	redactResponseWithLease,
+	redactWithLease,
+} from "../splyce-credentials.ts";
 import type {
 	AssistantMessage,
 	Message,
@@ -167,7 +173,18 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			}
 			const mistralStream = await requestMistralStream(model, payload, apiKey, requestOptions);
 			stream.push({ type: "start", partial: output });
-			await consumeChatStream(model, output, stream, mistralStream, options?.onProviderStreamEvent);
+			await consumeChatStream(
+				model,
+				output,
+				stream,
+				mistralStream,
+				options?.onProviderStreamEvent &&
+					(async (chunk, m) =>
+						options.onProviderStreamEvent?.(
+							(await redactEventWithLease(options.credentials, chunk)) as typeof chunk,
+							m,
+						)),
+			);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -336,7 +353,13 @@ async function requestMistralStream(
 		combinedSignal.cleanup();
 	}
 
-	await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+	await options?.onResponse?.(
+		await redactResponseWithLease(options?.credentials, {
+			status: response.status,
+			headers: headersToRecord(response.headers),
+		}),
+		model,
+	);
 
 	if (!response.ok) {
 		const body = await response.text();

@@ -13,6 +13,7 @@ import {
 	assertCredentialOptions,
 	createLeasedFetch,
 	redactEventWithLease,
+	redactResponseWithLease,
 	redactWithLease,
 	type SplyceCredentials,
 } from "../splyce-credentials.ts";
@@ -462,7 +463,13 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 				signal: options?.signal,
 			});
 
-			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			await options?.onResponse?.(
+				await redactResponseWithLease(options?.credentials, {
+					status: response.status,
+					headers: headersToRecord(response.headers),
+				}),
+				model,
+			);
 
 			if (!response.ok) {
 				const body = await response.text();
@@ -473,7 +480,10 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 			}
 
 			for await (const piEvent of readPiMessagesEvents(response.body)) {
-				await options?.onProviderStreamEvent?.(piEvent, model);
+				await options?.onProviderStreamEvent?.(
+					(await redactEventWithLease(options?.credentials, piEvent)) as typeof piEvent,
+					model,
+				);
 				const event = convertEvent(piEvent);
 				eventStream.push(event);
 				if (event.type === "done" || event.type === "error") {
