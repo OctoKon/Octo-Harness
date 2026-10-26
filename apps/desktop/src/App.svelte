@@ -7,6 +7,9 @@
   import Shell from "./components/shell/Shell.svelte";
   import UsageView from "./components/usage/UsageView.svelte";
   import Providers from "./routes/Providers.svelte";
+  import Setup from "./routes/Setup.svelte";
+  import Modules from "./routes/Modules.svelte";
+  import { unavailableModuleSnapshot } from "./stores/modules";
   import {
     connectionState,
     handshake,
@@ -35,12 +38,20 @@
     type TurnsState,
   } from "./stores/turns";
 
-  type View = "conversation" | "providers" | "usage";
+  type View = "conversation" | "setup" | "modules" | "providers" | "usage";
   const VIEWS: readonly (readonly [View, string])[] = [
     ["conversation", "Conversation"],
+    ["setup", "Setup"],
+    ["modules", "Modules"],
     ["providers", "Providers"],
     ["usage", "Usage"],
   ];
+
+  // No setup/module service is connected: the screens stay honest and disabled
+  // instead of implying a catalog, plan or installation.
+  const moduleSnapshot = unavailableModuleSnapshot(
+    "No setup or module service is connected.",
+  );
 
   // Snapshot seam: the only thing allowed to complete a session load. Readiness proves nothing about sessions.
   let {
@@ -187,6 +198,18 @@
       <Providers connections={[]} families={[]} onAddCustom={() => {}} />
       <p role="status">Provider connections are unavailable: no profile service is connected.</p>
     </fieldset>
+  {:else if view === "setup"}
+    <Setup
+      snapshot={moduleSnapshot}
+      onEnterWorkbench={() => (view = "conversation")}
+      onOpenModules={() => (view = "modules")}
+      onConfigureProvider={() => (view = "providers")}
+    />
+  {:else if view === "modules"}
+    <Modules
+      snapshot={moduleSnapshot}
+      onConfigureProvider={() => (view = "providers")}
+    />
   {:else if view === "usage"}
     <UsageView usage={null} />
     <p role="status" data-testid="usage-unavailable-note">Usage unavailable - no engine usage report.</p>
