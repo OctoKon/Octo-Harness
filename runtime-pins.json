@@ -26,6 +26,7 @@
     "vitePluginSvelte": "7.3.1",
     "typescript": "7.0.2"
   },
+  "buildToolsInventory": "scripts/build-tool-inventory.json",
   "webview2": {
     "distribution": "evergreen",
     "minimum": "155.0.4283.45",
