@@ -72,6 +72,7 @@ jobs:
         shell: pwsh
         run: ./tests/bootstrap/prepare-release-drivers.ps1
       - name: Run release and embedded desktop gates
+        id: release-gates
         run: |
           # Once defined, the release gate always runs; path detection only decides whether a missing script is an error.
           if node -e "process.exit(require('./package.json').scripts?.['test:release-gate'] ? 0 : 1)"; then
@@ -84,6 +85,38 @@ jobs:
             exit 1
           fi
           echo "Runtime E2E N/A: no test:release-gate script and no runtime source under apps/, packages/ or vendor/." >> "$GITHUB_STEP_SUMMARY"
+      - name: Compare fresh-profile baseline and GPU diagnostic after failure
+        if: failure() && steps.release-gates.outcome == 'failure'
+        shell: pwsh
+        run: |
+          # Both diagnostic runs keep the same app, drivers, assertions and 20-second budget.
+          # The primary gate above remains failed regardless of these results.
+          $smokeRoot = Join-Path $env:GITHUB_WORKSPACE 'apps/desktop/src-tauri/target/bootstrap-smoke'
+          $diagnosticRoot = Join-Path $env:GITHUB_WORKSPACE 'apps/desktop/src-tauri/target/smoke-comparison'
+          foreach ($variant in @('baseline', 'disable-gpu')) {
+            $env:WEBVIEW2_USER_DATA_FOLDER = Join-Path $env:RUNNER_TEMP ("splyce-smoke-" + [guid]::NewGuid())
+            $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = if ($variant -eq 'disable-gpu') { '--disable-gpu' } else { '' }
+            $before = @(Get-ChildItem -LiteralPath $smokeRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object Name)
+            & ./apps/desktop/src-tauri/resources/engine/node.exe tests/bootstrap/release-smoke.mjs
+            $smokeExit = $LASTEXITCODE
+            $created = @(Get-ChildItem -LiteralPath $smokeRoot -Directory | Where-Object Name -NotIn $before)
+            if ($created.Count -ne 1) { throw 'Expected exactly one diagnostic smoke directory' }
+            $destination = Join-Path $diagnosticRoot $variant
+            New-Item -ItemType Directory -Path $destination -Force | Out-Null
+            foreach ($name in @('result.json', 'driver.log')) {
+              Copy-Item -LiteralPath (Join-Path $created[0].FullName "diagnostics/$name") -Destination $destination
+            }
+            "Diagnostic $variant exit=$smokeExit (does not change the primary gate)" >> $env:GITHUB_STEP_SUMMARY
+          }
+          exit 0
+      - name: Retain sanitized profile and GPU comparison
+        if: failure() && steps.release-gates.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-smoke-comparison-${{ github.sha }}
+          path: apps/desktop/src-tauri/target/smoke-comparison/*/*
+          if-no-files-found: warn
+          retention-days: 3
       - name: Retain sanitized release-smoke failure diagnostics
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

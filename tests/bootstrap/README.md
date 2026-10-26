@@ -81,6 +81,14 @@ The release runner checks driver archive and executable hashes before execution
 and records the app hash and runtime version. No tool downloads occur inside a
 smoke run.
 
+After a failed CI release gate, two diagnostic smoke runs compare a new WebView2
+user-data folder with no additional browser arguments against another new folder
+with only `--disable-gpu`. Both use the same app and driver closure, capabilities,
+assertions and 20-second request budget. The `release-smoke-comparison` artifact
+labels each run and contains only the existing sanitized result and driver log.
+These runs do not change the primary failure or establish final acceptance; a
+passing fresh-profile baseline would also leave GPU causality unresolved.
+
 Self-check the fail-closed readiness assertions:
 
 ```powershell
