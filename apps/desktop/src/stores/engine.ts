@@ -92,7 +92,7 @@ async function getTauriInvoke(): Promise<
 function handleLifecycle(event: EngineLifecycleEvent): void {
   if (event.protocolVersion !== PROTOCOL_VERSION) return;
   if (event.kind !== "engine_exited") return;
-  notifyState("unavailable");
+  notifyState("disconnected");
   for (const dispose of [...activeSubscriptions.values()]) dispose();
 }
 

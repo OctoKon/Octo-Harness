@@ -1,28 +1,44 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import type { Handshake } from "@splyce/pi/contracts";
   import { connectionState, handshake } from "./stores/engine";
 
   let status = $state("disconnected");
+  let readiness = $state<Handshake["readiness"] | null>(null);
+  let engineWasReady = $state(false);
+  let stopped = $derived(engineWasReady && status === "disconnected");
 
   onMount(() => {
     const unsub = connectionState.subscribe((val) => {
       status = val;
+      if (val === "ready") engineWasReady = true;
     });
 
-    handshake().catch(() => {
-      // Handshake rejection leaves status in 'unavailable' or 'error'
-    });
+    handshake()
+      .then((verified) => {
+        readiness = verified.readiness;
+      })
+      .catch(() => {
+        // Handshake rejection leaves status in 'unavailable' or 'error'
+      });
 
     return unsub;
   });
 </script>
 
-<main class="app-shell" data-testid="app-shell">
+<main
+  class="app-shell"
+  data-testid="app-shell"
+  data-connection-state={status}
+  data-readiness-policy={readiness ? readiness.policy : "unknown"}
+  data-readiness-store={readiness ? readiness.store : "unknown"}
+  data-readiness-receipts={readiness ? readiness.receipts : "unknown"}
+>
   <header class="app-header">
     <div class="brand">
       <h1>Splyce</h1>
       <span class="status-badge" class:ready={status === "ready"} class:unavailable={status !== "ready"}>
-        {status}
+        {stopped ? "engine stopped" : status}
       </span>
     </div>
   </header>
@@ -34,10 +50,11 @@
       </div>
     {:else}
       <div class="unavailable-view" data-testid="unavailable-banner">
-        <h2>Engine Unavailable</h2>
+        <h2>{stopped ? "Engine stopped" : "Engine Unavailable"}</h2>
         <p>
-          Backend native services (policy, durable store, and receipts) are currently initializing or unavailable.
-          Release qualification requires all three subsystems verified before task execution.
+          {stopped
+            ? "The native engine exited. Restart the app to reconnect; the last transcript may be incomplete."
+            : "Backend native services (policy, durable store, and receipts) are currently initializing or unavailable. Release qualification requires all three subsystems verified before task execution."}
         </p>
       </div>
     {/if}
