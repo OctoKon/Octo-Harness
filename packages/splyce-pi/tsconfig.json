@@ -20,6 +20,7 @@
     "src/store.ts",
     "src/receipts.ts",
     "src/recovery.ts",
+    "src/recovery-applier.ts",
     "src/config.ts",
     "src/desktop-bridge.ts",
     "src/node-sqlite.d.ts"
