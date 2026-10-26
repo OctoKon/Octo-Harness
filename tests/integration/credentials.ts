@@ -583,3 +583,71 @@ test("R3: errors raised during a use are redacted, including their causes", asyn
   assert.ok(!text.includes(ENV_SECRET), text);
   assert.equal(err.message, "upstream rejected [REDACTED]");
 });
+
+const deepChain = (s: string) => {
+  let e = new Error(`level 0 ${s}`);
+  for (let i = 1; i <= 12; i += 1)
+    e = new Error(`level ${String(i)}`, { cause: e });
+  return e;
+};
+const useErrors: Record<string, (s: string) => unknown> = {
+  "AggregateError with the secret in .errors": (s) =>
+    new AggregateError([new Error(s)], "many failed"),
+  "a non-Error object cause": (s) => new Error("bad", { cause: { token: s } }),
+  "an SDK-style headers property": (s) =>
+    Object.assign(new Error("401"), {
+      headers: { authorization: `Bearer ${s}` },
+    }),
+  "a 13-deep cause chain": deepChain,
+  "a throwing toString": (s) => ({
+    toString() {
+      throw new Error(s);
+    },
+  }),
+  "a throwing message getter": (s) =>
+    Object.defineProperty(new Error("safe"), "message", {
+      get() {
+        throw new Error(s);
+      },
+    }),
+  "a Proxy that throws on every access": (s) =>
+    new Proxy(
+      {},
+      new Proxy(
+        {},
+        {
+          get: () => () => {
+            throw new Error(s);
+          },
+        },
+      ),
+    ),
+};
+for (const [name, make] of Object.entries(useErrors))
+  test(`R3: a use error with ${name} becomes a fresh CredentialError that never carries the secret`, async () => {
+    const resolver = new NativeCredentialResolver({
+      env: { TD16_KEY: ENV_SECRET },
+    });
+    resolver.register(binding({ kind: "env", name: "TD16_KEY" }));
+    const lease = await resolver.resolve(request());
+    const err = await lease
+      .use((s) => {
+        throw make(s);
+      })
+      .catch((e: unknown) => e);
+    lease.revoke(); // the redactor no longer knows the secret
+    for (const text of [
+      inspect(err, { depth: 20, showHidden: true }),
+      JSON.stringify(err),
+      JSON.stringify(
+        Object.getOwnPropertyNames(err).map((k) => [
+          k,
+          String((err as Record<string, unknown>)[k]),
+        ]),
+      ),
+    ])
+      assert.ok(!text.includes(ENV_SECRET), text);
+    assert.ok(err instanceof CredentialError);
+    assert.equal(err.code, "CREDENTIAL_UNAVAILABLE");
+    assert.equal(err.cause, undefined);
+  });
