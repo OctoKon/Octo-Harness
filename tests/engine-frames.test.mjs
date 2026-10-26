@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { TRANSPORT_LIMITS } from "@splyce/pi/contracts";
 import {
   encodeFrame,
   readFrames,
@@ -40,8 +41,12 @@ test("native engine frames survive fragmented Unicode and adjacent messages", as
 });
 
 test("native frame limit includes header and rejects before oversized payload allocation", async () => {
+  assert.equal(MAX_FRAME_BYTES, TRANSPORT_LIMITS.maxEncodedFrameBytes);
+  assert.equal(MAX_FRAME_BYTES, 262144);
   const value = "x".repeat(MAX_FRAME_BYTES - 6);
-  assert.equal(encodeFrame(value).length, MAX_FRAME_BYTES);
+  const frame = encodeFrame(value);
+  assert.equal(frame.length, MAX_FRAME_BYTES);
+  assert.equal(frame.readUInt32BE(), MAX_FRAME_BYTES - 4);
   assert.deepEqual(await decode([encodeFrame(value)]), [value]);
   assert.throws(() => encodeFrame(value + "x"), FrameError);
   for (const length of [0, MAX_FRAME_BYTES - 3, 0xffffffff]) {

@@ -6,6 +6,7 @@ import {
   PROTOCOL_VERSION,
   PI_REVISION,
   FOUNDATION,
+  TRANSPORT_LIMITS,
   BRIDGE_PROTOCOL_JSON,
   ContractError,
   validateRecord,
@@ -23,6 +24,25 @@ const fixture = (name) =>
     ),
   );
 const records = fixture("records");
+test("transport defaults are exact, immutable and shared with the native build spec", () => {
+  assert.deepEqual(TRANSPORT_LIMITS, {
+    maxInlineBytes: 65536,
+    maxEncodedFrameBytes: 262144,
+    pendingQueueMaxFrames: 1024,
+    pendingQueueMaxBytes: 8388608,
+    transientCoalesceWindowMs: 16,
+    rendererMaxFrames: 256,
+    rendererMaxBytes: 4194304,
+  });
+  assert.equal(Object.isFrozen(TRANSPORT_LIMITS), true);
+  assert.throws(() => {
+    TRANSPORT_LIMITS.maxEncodedFrameBytes = 1;
+  }, TypeError);
+  assert.deepEqual(
+    JSON.parse(BRIDGE_PROTOCOL_JSON).transportLimits,
+    TRANSPORT_LIMITS,
+  );
+});
 test("TD-01: native build spec comes from the shared operation definitions", () => {
   const spec = JSON.parse(BRIDGE_PROTOCOL_JSON);
   assert.equal(spec.protocolVersion, 1);
@@ -455,6 +475,31 @@ test("TD-01: bounded inline events use UTF-8 bytes and accept exact boundary", (
   rejects(() =>
     validateEvent(input, { ...context, maxInlineBytes: byteLength - 1 }),
   );
+});
+
+test("shared inline default accepts 65536 UTF-8 payload bytes and rejects one extra", () => {
+  const payload = { runId: "r1", delta: "😀" };
+  const padding =
+    TRANSPORT_LIMITS.maxInlineBytes -
+    Buffer.byteLength(JSON.stringify(payload), "utf8");
+  payload.delta += "x".repeat(padding);
+  const input = event({ kind: "turn.stream_delta", durable: false, payload });
+  const bounded = {
+    ...context,
+    maxInlineBytes: TRANSPORT_LIMITS.maxInlineBytes,
+  };
+  assert.equal(Buffer.byteLength(JSON.stringify(payload), "utf8"), 65536);
+  assert.deepEqual(validateEvent(input, bounded), input);
+  assert.throws(
+    () =>
+      validateEvent(
+        { ...input, payload: { ...payload, delta: payload.delta + "x" } },
+        bounded,
+      ),
+    (error) =>
+      error instanceof ContractError && error.code === "FRAME_TOO_LARGE",
+  );
+  assert.deepEqual(validateEvent(input, bounded), input);
 });
 
 test("TD-01: frozen handshake accepts unavailable but requires all readiness guards", () => {

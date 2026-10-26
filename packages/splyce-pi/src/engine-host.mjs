@@ -6,10 +6,11 @@ import {
   PROTOCOL_VERSION,
   PI_REVISION,
   FOUNDATION,
+  TRANSPORT_LIMITS,
   validateHandshake,
 } from "@splyce/pi/contracts";
 
-export const MAX_FRAME_BYTES = 256 * 1024;
+export const MAX_FRAME_BYTES = TRANSPORT_LIMITS.maxEncodedFrameBytes;
 
 export class FrameError extends Error {
   constructor() {
