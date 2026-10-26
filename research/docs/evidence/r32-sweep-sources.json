@@ -765,5 +765,77 @@
     ],
     "verification": "primary documentation located by an independent researcher",
     "notes": "Version floors recorded for TD-11; no Splyce build exists yet."
+  },
+  {
+    "id": "R32-openai-async-tools",
+    "tool": "OpenAI async tool calling",
+    "url": "https://developers.openai.com/api/docs/guides/async-tool-calling",
+    "title": "Async tool calling",
+    "accessed": "2026-10-26",
+    "claims": [
+      "async: true lets the model continue while the application runs a tool; outputs are matched in a later Responses request by the original call_id."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-ollama-openai-compat",
+    "tool": "Ollama",
+    "url": "https://docs.ollama.com/api/openai-compatibility",
+    "title": "OpenAI compatibility",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Ollama supports only the non-stateful Responses API flavor, without previous_response_id or conversation support; Ollama also offers direct cloud access."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-openai-steering",
+    "tool": "OpenAI mid-turn steering",
+    "url": "https://developers.openai.com/api/docs/guides/steering",
+    "title": "Mid-turn steering",
+    "accessed": "2026-10-26",
+    "claims": [
+      "A steer acceptance means queued, not consumed; an interrupted response can end incomplete with reason steered followed by continuation."
+    ],
+    "verification": "primary documentation located by Codex deep research; not re-fetched by the parent",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-openai-gpt6-astra",
+    "tool": "OpenAI GPT-6 Astra",
+    "url": "https://developers.openai.com/api/docs/models/gpt-6-astra",
+    "title": "GPT-6 Astra",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The model page documents tool calling through the Responses API rather than Chat Completions."
+    ],
+    "verification": "primary documentation located by Codex deep research; client-rendered page not re-verified by the parent",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-anthropic-migration",
+    "tool": "Anthropic API",
+    "url": "https://platform.claude.com/docs/en/api/migration-2026-10-21",
+    "title": "API migration 2026-10-21",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The 2026-10-21 API version rejects sampling fields and some content shapes; TypeScript SDK 1.0 defaults to it."
+    ],
+    "verification": "primary documentation located by Codex deep research; not re-fetched by the parent",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
+  },
+  {
+    "id": "R32-vllm-windows",
+    "tool": "vLLM",
+    "url": "https://docs.vllm.ai/en/latest/getting_started/installation/gpu/",
+    "title": "GPU installation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "vLLM does not support native Windows; WSL/Linux or community forks are separate routes."
+    ],
+    "verification": "primary documentation located by Codex deep research; not re-fetched by the parent",
+    "notes": "Vendor documentation; no Splyce provider or installed runtime test."
   }
 ]

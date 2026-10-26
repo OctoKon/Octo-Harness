@@ -1,5 +1,7 @@
 # Provider API conformance and acceptance matrix
 
+**2026-10 refresh:** current model lifecycle, model × operation restrictions, forced-thinking replay, async tools, steering and Windows local-runtime status are recorded in the [model landscape](model-landscape-2026-10.md); where it conflicts with an older row here, the refresh applies until that row is re-qualified.
+
 **Reviewed 2026-10-25. Documentation/source observations only; provider calls, end-to-end tests and installed-adapter measurements n=0.** Splyce supports explicitly selected local **and** cloud inference while application execution, sessions, policy and authoritative state remain local. Cloud dispatch needs per-role endpoint/data-class permission. Barebones setup installs no optional adapter, SDK or model automatically; qualify actual Pi packaging before promising selective dependency removal. [Provider/profile/session design](../design/providers-profiles-and-sessions.md), [pinned Pi audit](../foundations/pi-provider-session-contracts.md), [PST ledger](../evidence/pi-provider-session-sources.json) and [PAPI-01–PAPI-12](../evidence/provider-api-sources.json).
 
 Here “completions” means **Chat Completions**. Pi's `openai-completions` invokes `chat.completions.create`; it does not establish support for legacy text `/completions`. Compatibility declarations, matching JSON fields and a model appearing in a picker do not qualify an actual provider/operation.
