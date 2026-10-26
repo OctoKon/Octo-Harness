@@ -523,15 +523,6 @@ const COMMAND_OPTIONAL: Partial<Record<CommandOp, Shape>> = {
 export const COMMAND_OPS = Object.freeze(
   Object.keys(COMMAND_SCHEMAS) as CommandOp[],
 );
-export const BRIDGE_PROTOCOL_JSON = JSON.stringify({
-  schemaVersion: CONTRACT_VERSION,
-  protocolVersion: PROTOCOL_VERSION,
-  piRevision: PI_REVISION,
-  foundation: FOUNDATION,
-  transportLimits: TRANSPORT_LIMITS,
-  commands: COMMAND_SCHEMAS,
-  optional: COMMAND_OPTIONAL,
-});
 
 export const ERROR_CODES = [
   "POLICY_DENIED",
@@ -697,14 +688,6 @@ export interface Handshake {
     store: boolean;
     receipts: boolean;
   };
-}
-
-export interface NativeLifecycleEvent {
-  protocolVersion: typeof PROTOCOL_VERSION;
-  kind: "engine_exited";
-  expected: boolean;
-  exitCode: number | null;
-  cleanupComplete: boolean;
 }
 
 function requireThat(
