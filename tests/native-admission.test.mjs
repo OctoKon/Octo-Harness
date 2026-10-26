@@ -805,6 +805,12 @@ registerHooks({load(url, context, next) {
     const end = source.indexOf('    async execute(', start);
     if (start < 0 || end < 0) throw new Error('discard mutation target missing');
     source = source.slice(0, start) + '    discard() {}\\n' + source.slice(end);
+  } else if (process.env.SPLYCE_ADMISSION_MUTATION === 'cancel-terminal') {
+    const start = source.indexOf('    discard(toolCallId, reason) {');
+    const target = '        if (proposal)';
+    const pos = source.indexOf(target, start);
+    if (start < 0 || pos < 0) throw new Error('cancel terminal mutation target missing');
+    source = source.slice(0, pos) + source.slice(pos).replace(target, '        if (proposal && reason !== "canceled")');
   } else if (process.env.SPLYCE_ADMISSION_MUTATION === 'execution') {
     const target = '        if (!preparedDigest)\\n            throw new AdmissionError("PREPARATION_REQUIRED");';
     if (!source.includes(target)) throw new Error('execution mutation target missing');
@@ -854,6 +860,11 @@ registerHooks({load(url, context, next) {
       "discard",
       "blocked or failed hooks never leave an executable native preparation",
       "unfinished hook must prevent physical effect",
+    ],
+    [
+      "cancel-terminal",
+      "reopened canceled reservation refuses callbacks",
+      "canceled terminal must be durable before reopen",
     ],
     [
       "execution",
@@ -1170,15 +1181,36 @@ test("changed reservation cannot dispatch after hook", async (t) => {
 
 test("reservation commit failure prevents argument callbacks", async (t) => {
   const f = await fixture(t);
+  let callbacks = 0;
   f.store.db.exec(
     "CREATE TRIGGER refuse_proposal BEFORE INSERT ON records WHEN NEW.kind = 'action' BEGIN SELECT RAISE(ABORT, 'fixture'); END;",
   );
   f.tool.prepareArguments = (args) => {
+    callbacks++;
     writeFileSync(f.canary, "callback");
     return args;
   };
-  await assert.rejects(runToolCall(f.call, f.options));
+  await assert.rejects(runToolCall(f.call, f.options), {
+    name: "StoreError",
+    code: "STORE_SQLITE_ERROR",
+    message: "fixture",
+  });
   assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+  assert.equal(f.executions, 0);
+  assert.equal(callbacks, 0);
+  assert.deepEqual(
+    f.store.list("w-demo").records.filter(({ kind }) => kind === "action"),
+    [],
+  );
+  const reopened = Store.open(f.path);
+  try {
+    assert.deepEqual(
+      reopened.list("w-demo").records.filter(({ kind }) => kind === "action"),
+      [],
+    );
+  } finally {
+    reopened.close();
+  }
 });
 
 for (const terminal of ["proposed", "canceled"]) {
@@ -1196,9 +1228,29 @@ for (const terminal of ["proposed", "canceled"]) {
         },
       });
     }
+    const expectedStates =
+      terminal === "canceled" ? ["proposed", "canceled"] : ["proposed"];
+    assert.deepEqual(
+      f.store
+        .list("w-demo")
+        .records.filter(({ kind }) => kind === "action")
+        .map(({ record }) => record.state),
+      expectedStates,
+      terminal === "canceled"
+        ? "canceled terminal must be durable before reopen"
+        : "proposal must be durable before reopen",
+    );
     f.unbind();
     const second = Store.open(f.path);
     try {
+      assert.deepEqual(
+        second
+          .list("w-demo")
+          .records.filter(({ kind }) => kind === "action")
+          .map(({ record }) => record.state),
+        expectedStates,
+        "durable history must survive reopen",
+      );
       const policy = new NativePolicy(second, f.caller, () => ({
         ...f.caller,
         grantIds: ["grant1"],
@@ -1215,6 +1267,25 @@ for (const terminal of ["proposed", "canceled"]) {
           code: "ACTION_REQUIRES_RECONCILIATION",
         });
         assert.equal(await readFile(f.canary, "utf8"), "unchanged");
+        assert.deepEqual(
+          second
+            .list("w-demo")
+            .records.filter(({ kind }) => kind === "action")
+            .map(({ record }) => record.state),
+          expectedStates,
+        );
+        policy.authorize({
+          ...f.permit,
+          toolCallId: "fresh-reopened",
+          actionId: "fresh-reopened-action",
+          idempotencyKey: "fresh-reopened-effect",
+        });
+        assert.equal(
+          (await runToolCall({ ...f.call, id: "fresh-reopened" }, f.options))
+            .isError,
+          false,
+        );
+        assert.equal(await readFile(f.canary, "utf8"), "changed");
       } finally {
         unbind();
       }
