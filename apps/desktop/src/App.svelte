@@ -89,17 +89,18 @@
       </div>
     {:else}
       <div class="unavailable-view" data-testid="unavailable-banner">
-        <h2>Engine Unavailable</h2>
-        <p>
-          Backend native services (policy, durable store, and receipts) are currently initializing or unavailable.
-          Release qualification requires all three subsystems verified before task execution.
-        </p>
+        <h2>Engine unavailable</h2>
+        <p>Required engine services are unavailable. Task execution is disabled.</p>
       </div>
     {/if}
   </div>
 </main>
 
 <style>
+  :global(html),
+  :global(body) {
+    margin: 0;
+  }
   .app-shell {
     display: flex;
     flex-direction: column;
