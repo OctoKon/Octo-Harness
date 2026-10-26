@@ -692,6 +692,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			// Failed or cancelled output must not expose executable tool calls.
+			output.content = output.content.filter((block) => block.type !== "toolCall");
 			for (const block of output.content) {
 				if (block.type === "thinking") {
 					applyStreamedReasoningDetails(block);
