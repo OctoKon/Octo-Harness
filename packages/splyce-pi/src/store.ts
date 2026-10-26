@@ -22,6 +22,26 @@ import {
 
 const LAYOUT_VERSION = 1 as const;
 
+const RECORD_COLUMNS = [
+  "seq",
+  "kind",
+  "record_id",
+  "schema_version",
+  "scope_id",
+  "created_at",
+  "payload",
+] as const;
+
+const DELETION_COLUMNS = ["record_id", "generation", "deleted_at"] as const;
+
+const OWNERSHIP_COLUMNS = [
+  "workspace_id",
+  "owner_session_id",
+  "epoch",
+  "acquired_at",
+  "renewed_at",
+] as const;
+
 export class StoreError extends Error {
   readonly code: string;
   readonly errcode: number | undefined;
@@ -78,11 +98,19 @@ export interface AppendBatchResult {
   seqs: number[];
 }
 
+/** Durable canonical-workspace ownership: single writer per workspace. */
+export interface WorkspaceOwnership {
+  workspaceId: string;
+  ownerSessionId: string;
+  epoch: number;
+}
+
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 /** Discriminates a SQLite failure by its result code, not the JS error class. */
 function mapSqliteError(error: unknown): StoreError {
+  if (error instanceof StoreError) return error;
   if (isRecordObject(error) && typeof error.errcode === "number") {
     const errcode = error.errcode;
     if (errcode === 26)
@@ -147,7 +175,15 @@ export class Store {
     this.maxInlineBytes = maxInlineBytes;
   }
 
-  /** Opens (or creates) the store and fails closed on an unknown layout. */
+  private static tableColumns(db: DatabaseSync, table: string): Set<string> {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+      name: string;
+    }>;
+    return new Set(rows.map((row) => row.name));
+  }
+
+  /** Opens (or creates) the store; initialization is one atomic transaction
+   * and an existing store must match the expected shape or we fail closed. */
   static open(path: string, options: StoreOptions = {}): Store {
     const busyTimeoutMs = options.busyTimeoutMs ?? 5000;
     const maxInlineBytes = options.maxInlineBytes ?? 65536;
@@ -165,9 +201,41 @@ export class Store {
       db.exec("PRAGMA synchronous = FULL;");
       db.exec("PRAGMA foreign_keys = ON;");
       db.exec(`PRAGMA busy_timeout = ${String(busyTimeoutMs)};`);
+      // Schema creation, layout stamping and shape validation are one
+      // transaction: an interrupted initialization leaves no layout row, so a
+      // later open fails closed instead of accepting a half-built schema.
+      db.exec("BEGIN IMMEDIATE;");
       db.exec(
         "CREATE TABLE IF NOT EXISTS store_meta (" +
           "key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+      );
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS records (" +
+          "seq INTEGER PRIMARY KEY AUTOINCREMENT, " +
+          "kind TEXT NOT NULL, " +
+          "record_id TEXT NOT NULL UNIQUE, " +
+          "schema_version INTEGER NOT NULL, " +
+          "scope_id TEXT NOT NULL, " +
+          "created_at TEXT NOT NULL, " +
+          "payload TEXT NOT NULL)",
+      );
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS records_scope_seq " +
+          "ON records (scope_id, seq)",
+      );
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS deletions (" +
+          "record_id TEXT PRIMARY KEY, " +
+          "generation INTEGER NOT NULL, " +
+          "deleted_at TEXT NOT NULL)",
+      );
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS workspace_ownership (" +
+          "workspace_id TEXT PRIMARY KEY, " +
+          "owner_session_id TEXT NOT NULL, " +
+          "epoch INTEGER NOT NULL, " +
+          "acquired_at TEXT NOT NULL, " +
+          "renewed_at TEXT NOT NULL)",
       );
       const row = db
         .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
@@ -176,15 +244,36 @@ export class Store {
         db.prepare(
           "INSERT INTO store_meta (key, value) VALUES ('layout_version', ?)",
         ).run(String(LAYOUT_VERSION));
-        Store.createSchema(db);
       } else if (row.value !== String(LAYOUT_VERSION)) {
         throw new StoreError(
           "STORE_LAYOUT",
           `store layout version ${row.value} is not supported (expected ${String(LAYOUT_VERSION)})`,
         );
       }
+      // A store stamped version 1 must carry the expected tables, or the
+      // initialization was interrupted — fail closed, never heal silently.
+      const required: Array<[string, readonly string[]]> = [
+        ["records", RECORD_COLUMNS],
+        ["deletions", DELETION_COLUMNS],
+        ["workspace_ownership", OWNERSHIP_COLUMNS],
+      ];
+      for (const [table, columns] of required) {
+        const present = Store.tableColumns(db, table);
+        const missing = columns.filter((column) => !present.has(column));
+        if (missing.length > 0)
+          throw new StoreError(
+            "STORE_LAYOUT",
+            `store claims layout ${row?.value ?? String(LAYOUT_VERSION)} but table ${table} lacks columns: ${missing.join(", ")}`,
+          );
+      }
+      db.exec("COMMIT;");
       return new Store(path, db, busyTimeoutMs, maxInlineBytes);
     } catch (error) {
+      try {
+        if (db.isTransaction) db.exec("ROLLBACK;");
+      } catch {
+        // the original failure is the reportable one
+      }
       try {
         db.close();
       } catch {
@@ -192,29 +281,6 @@ export class Store {
       }
       throw error instanceof StoreError ? error : mapSqliteError(error);
     }
-  }
-
-  private static createSchema(db: DatabaseSync): void {
-    db.exec(
-      "CREATE TABLE IF NOT EXISTS records (" +
-        "seq INTEGER PRIMARY KEY AUTOINCREMENT, " +
-        "kind TEXT NOT NULL, " +
-        "record_id TEXT NOT NULL UNIQUE, " +
-        "schema_version INTEGER NOT NULL, " +
-        "scope_id TEXT NOT NULL, " +
-        "created_at TEXT NOT NULL, " +
-        "payload TEXT NOT NULL)",
-    );
-    db.exec(
-      "CREATE INDEX IF NOT EXISTS records_scope_seq " +
-        "ON records (scope_id, seq)",
-    );
-    db.exec(
-      "CREATE TABLE IF NOT EXISTS deletions (" +
-        "record_id TEXT PRIMARY KEY, " +
-        "generation INTEGER NOT NULL, " +
-        "deleted_at TEXT NOT NULL)",
-    );
   }
 
   private assertOpen(): void {
@@ -273,7 +339,7 @@ export class Store {
   /**
    * Validates against the frozen contract with the store's own durable cursor,
    * then commits. A returned success is durable; a thrown error acknowledges
-   * nothing.
+   * nothing and leaves the store rollable/reopenable.
    */
   append(input: AppendInput, caller: CallerContext): Appended {
     this.assertOpen();
@@ -302,8 +368,10 @@ export class Store {
 
   /**
    * Ordered, atomic receipt commits: every input is validated first, then all
-   * are committed in input order in one transaction. Any failure rolls the
-   * whole batch back — no partial receipt chain is ever acknowledged.
+   * are committed in input order in one transaction. Any failure — including a
+   * mid-batch constraint violation — rolls the whole batch back: the cursor
+   * observable from a fresh connection is unchanged and the next write
+   * succeeds on a clean handle.
    */
   appendBatch(
     inputs: readonly AppendInput[],
@@ -341,10 +409,19 @@ export class Store {
       this.db.exec("COMMIT;");
       return { seqs };
     } catch (error) {
+      let rollbackError: unknown;
       try {
-        if (this.db.isTransaction()) this.db.exec("ROLLBACK;");
-      } catch {
-        // fall through to the reportable error
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+      } catch (rollback) {
+        rollbackError = rollback;
+      }
+      if (rollbackError !== undefined) {
+        // A failed rollback is never silent: the store cannot guarantee
+        // durability state afterwards, so report both causes.
+        throw new StoreError(
+          "STORE_ROLLBACK_FAILED",
+          `batch failed (${error instanceof Error ? error.message : String(error)}) and rollback also failed (${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)})`,
+        );
       }
       throw mapSqliteError(error);
     }
@@ -408,30 +485,40 @@ export class Store {
     return { records, skippedUnknownSchema };
   }
 
+  private metaGet(key: string): number {
+    const row = this.db
+      .prepare("SELECT value FROM store_meta WHERE key = ?")
+      .get(key) as { value: string } | undefined;
+    return row === undefined ? 0 : Number(row.value);
+  }
+
   /**
-   * Records a deletion tombstone; the generation advances monotonically and is
-   * carried in backups so a stale restore is refused.
+   * Records a deletion tombstone under a globally monotonic deletion epoch
+   * persisted in `store_meta`. The epoch is what backups carry, so a restore
+   * that would drop any tombstone is refused.
    */
   noteDeletion(recordId: string): number {
     this.assertOpen();
     try {
       this.db.exec("BEGIN IMMEDIATE;");
-      const previous = this.db
-        .prepare("SELECT generation FROM deletions WHERE record_id = ?")
-        .get(recordId) as { generation: number | bigint } | undefined;
-      const generation =
-        (previous === undefined ? 0 : Number(previous.generation)) + 1;
+      const epoch = this.metaGet("deletion_epoch") + 1;
       this.db
         .prepare(
           "INSERT INTO deletions (record_id, generation, deleted_at) VALUES (?, ?, ?) " +
             "ON CONFLICT(record_id) DO UPDATE SET generation = excluded.generation, deleted_at = excluded.deleted_at",
         )
-        .run(recordId, generation, new Date().toISOString());
+        .run(recordId, epoch, new Date().toISOString());
+      this.db
+        .prepare(
+          "INSERT INTO store_meta (key, value) VALUES ('deletion_epoch', ?) " +
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .run(String(epoch));
       this.db.exec("COMMIT;");
-      return generation;
+      return epoch;
     } catch (error) {
       try {
-        if (this.db.isTransaction()) this.db.exec("ROLLBACK;");
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
       } catch {
         // fall through to the reportable error
       }
@@ -439,11 +526,17 @@ export class Store {
     }
   }
 
-  private deletionGeneration(db: DatabaseSync): number {
-    const row = db
-      .prepare("SELECT COALESCE(MAX(generation), 0) AS g FROM deletions")
-      .get() as { g: number | bigint };
-    return Number(row.g);
+  /** Highest deletion epoch recorded in a (backup) database file. */
+  static deletionEpochOf(dbPath: string): number {
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = db
+        .prepare("SELECT value FROM store_meta WHERE key = 'deletion_epoch'")
+        .get() as { value: string } | undefined;
+      return row === undefined ? 0 : Number(row.value);
+    } finally {
+      db.close();
+    }
   }
 
   /** Consistent backup through SQLite itself (`VACUUM INTO`), never a raw copy. */
@@ -456,28 +549,25 @@ export class Store {
     }
   }
 
-  /** Highest deletion generation recorded in a (backup) database file. */
-  static deletionGenerationOf(dbPath: string): number {
-    const db = new DatabaseSync(dbPath, { readOnly: true });
-    try {
-      return new Store("", db, 0, 0).deletionGeneration(db);
-    } finally {
-      db.close();
-    }
+  /** Highest deletion epoch recorded in this store's live database. */
+  deletionEpoch(): number {
+    this.assertOpen();
+    return this.metaGet("deletion_epoch");
   }
 
   /**
-   * Restores a backup. Refuses a stale restore: if any deletion generation has
-   * advanced past the snapshot, the quarantine ordering is preserved.
+   * Restores a backup. Refuses a stale restore: if the live deletion epoch has
+   * advanced past the snapshot's, any tombstone the snapshot lacks would be
+   * lost, so the quarantine ordering is preserved.
    */
   restore(backupPath: string): void {
     this.assertOpen();
-    const backupGeneration = Store.deletionGenerationOf(backupPath);
-    const liveGeneration = this.deletionGeneration(this.db);
-    if (backupGeneration < liveGeneration)
+    const backupEpoch = Store.deletionEpochOf(backupPath);
+    const liveEpoch = this.deletionEpoch();
+    if (backupEpoch < liveEpoch)
       throw new StoreError(
         "STALE_RESTORE",
-        `backup deletion generation ${String(backupGeneration)} is older than current ${String(liveGeneration)}`,
+        `backup deletion epoch ${String(backupEpoch)} is older than current ${String(liveEpoch)}`,
       );
     this.close();
     try {
@@ -493,6 +583,188 @@ export class Store {
       this.db = reopened.db;
       this.closed = false;
     }
+  }
+
+  /**
+   * Durable canonical-workspace ownership: at most one live writer per
+   * workspace, keyed by canonical workspace id rather than session. The write
+   * is a compare-and-set serialized by `BEGIN IMMEDIATE` and persisted in the
+   * same authoritative store as the receipts.
+   */
+  acquireWorkspace(workspaceId: string, sessionId: string): WorkspaceOwnership {
+    this.assertOpen();
+    try {
+      this.db.exec("BEGIN IMMEDIATE;");
+      const row = this.db
+        .prepare(
+          "SELECT owner_session_id, epoch FROM workspace_ownership WHERE workspace_id = ?",
+        )
+        .get(workspaceId) as
+        { owner_session_id: string; epoch: number | bigint } | undefined;
+      let ownership: WorkspaceOwnership;
+      if (row === undefined) {
+        // Epochs never repeat: the counter is globally monotonic in store_meta,
+        // so a released workspace is re-acquired at a strictly higher epoch.
+        const epoch = this.metaGet("ownership_epoch") + 1;
+        this.db
+          .prepare(
+            "INSERT INTO workspace_ownership (workspace_id, owner_session_id, epoch, acquired_at, renewed_at) " +
+              "VALUES (?, ?, ?, ?, ?)",
+          )
+          .run(
+            workspaceId,
+            sessionId,
+            epoch,
+            new Date().toISOString(),
+            new Date().toISOString(),
+          );
+        this.db
+          .prepare(
+            "INSERT INTO store_meta (key, value) VALUES ('ownership_epoch', ?) " +
+              "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          )
+          .run(String(epoch));
+        ownership = { workspaceId, ownerSessionId: sessionId, epoch };
+      } else if (row.owner_session_id === sessionId) {
+        ownership = {
+          workspaceId,
+          ownerSessionId: sessionId,
+          epoch: Number(row.epoch),
+        };
+      } else {
+        throw new StoreError(
+          "OWNERSHIP_CONFLICT",
+          `workspace ${workspaceId} is owned by session ${row.owner_session_id}`,
+        );
+      }
+      this.db.exec("COMMIT;");
+      return ownership;
+    } catch (error) {
+      try {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+      } catch {
+        // fall through to the reportable error
+      }
+      throw mapSqliteError(error);
+    }
+  }
+
+  /**
+   * Compare-and-set renewal: the epoch advances only when the caller is the
+   * current owner presenting the current epoch; anything else is refused.
+   */
+  renewWorkspace(
+    workspaceId: string,
+    sessionId: string,
+    expectedEpoch: number,
+  ): WorkspaceOwnership {
+    this.assertOpen();
+    try {
+      this.db.exec("BEGIN IMMEDIATE;");
+      const row = this.db
+        .prepare(
+          "SELECT owner_session_id, epoch FROM workspace_ownership WHERE workspace_id = ?",
+        )
+        .get(workspaceId) as
+        { owner_session_id: string; epoch: number | bigint } | undefined;
+      if (row === undefined)
+        throw new StoreError(
+          "OWNERSHIP_NOT_FOUND",
+          `workspace ${workspaceId} is not owned`,
+        );
+      if (row.owner_session_id !== sessionId)
+        throw new StoreError(
+          "OWNERSHIP_CONFLICT",
+          `workspace ${workspaceId} is owned by session ${row.owner_session_id}`,
+        );
+      if (Number(row.epoch) !== expectedEpoch)
+        throw new StoreError(
+          "OWNERSHIP_STALE_EPOCH",
+          `workspace ${workspaceId} is at epoch ${String(row.epoch)}, caller presented ${String(expectedEpoch)}`,
+        );
+      const epoch = expectedEpoch + 1;
+      this.db
+        .prepare(
+          "UPDATE workspace_ownership SET epoch = ?, renewed_at = ? WHERE workspace_id = ?",
+        )
+        .run(epoch, new Date().toISOString(), workspaceId);
+      this.db
+        .prepare(
+          "INSERT INTO store_meta (key, value) VALUES ('ownership_epoch', ?) " +
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .run(String(epoch));
+      this.db.exec("COMMIT;");
+      return { workspaceId, ownerSessionId: sessionId, epoch };
+    } catch (error) {
+      try {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+      } catch {
+        // fall through to the reportable error
+      }
+      throw mapSqliteError(error);
+    }
+  }
+
+  /** Releases ownership; only the current owner with the current epoch succeeds. */
+  releaseWorkspace(
+    workspaceId: string,
+    sessionId: string,
+    expectedEpoch: number,
+  ): void {
+    this.assertOpen();
+    try {
+      this.db.exec("BEGIN IMMEDIATE;");
+      const row = this.db
+        .prepare(
+          "SELECT owner_session_id, epoch FROM workspace_ownership WHERE workspace_id = ?",
+        )
+        .get(workspaceId) as
+        { owner_session_id: string; epoch: number | bigint } | undefined;
+      if (row === undefined)
+        throw new StoreError(
+          "OWNERSHIP_NOT_FOUND",
+          `workspace ${workspaceId} is not owned`,
+        );
+      if (row.owner_session_id !== sessionId)
+        throw new StoreError(
+          "OWNERSHIP_CONFLICT",
+          `workspace ${workspaceId} is owned by session ${row.owner_session_id}`,
+        );
+      if (Number(row.epoch) !== expectedEpoch)
+        throw new StoreError(
+          "OWNERSHIP_STALE_EPOCH",
+          `workspace ${workspaceId} is at epoch ${String(row.epoch)}, caller presented ${String(expectedEpoch)}`,
+        );
+      this.db
+        .prepare("DELETE FROM workspace_ownership WHERE workspace_id = ?")
+        .run(workspaceId);
+      this.db.exec("COMMIT;");
+    } catch (error) {
+      try {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+      } catch {
+        // fall through to the reportable error
+      }
+      throw mapSqliteError(error);
+    }
+  }
+
+  /** Current ownership row for a workspace, or undefined when unowned. */
+  workspaceOwner(workspaceId: string): WorkspaceOwnership | undefined {
+    this.assertOpen();
+    const row = this.db
+      .prepare(
+        "SELECT owner_session_id, epoch FROM workspace_ownership WHERE workspace_id = ?",
+      )
+      .get(workspaceId) as
+      { owner_session_id: string; epoch: number | bigint } | undefined;
+    if (row === undefined) return undefined;
+    return {
+      workspaceId,
+      ownerSessionId: row.owner_session_id,
+      epoch: Number(row.epoch),
+    };
   }
 
   /** S8 export: one JSON line per record, `{seq, kind, record}`. */

@@ -228,12 +228,12 @@ test("S4 corrupt or truncated file fails closed", () => {
       "utf8",
     );
     const reopened = Store.open(join(dir2, "copy.db"));
-    const { records } = reopened.list("w-demo");
-    assert.ok([0, 1].includes(records.length));
-    for (const r of records) {
-      assert.equal(r.seq, appended.seq);
-      assert.equal(r.record.recordId, input.recordId);
-    }
+    // No partial read and no invented data: exactly the acknowledged record.
+    const { records, skippedUnknownSchema } = reopened.list("w-demo");
+    assert.equal(skippedUnknownSchema, 0);
+    assert.equal(records.length, 1);
+    assert.equal(records[0]?.seq, appended.seq);
+    assert.equal(records[0]?.record.recordId, input.recordId);
     reopened.close();
     rmSync(dir, { recursive: true, force: true });
     rmSync(dir2, { recursive: true, force: true });
@@ -283,20 +283,29 @@ test("S6 second writer: one commits, the other gets a busy error; no lost update
     const child = spawnChild("busy-hold", dir);
     waitFor(join(dir, "held.json"));
 
-    // Zero-ish timeout: the parent's second write must fail explicitly.
-    const contender = Store.open(path, { busyTimeoutMs: 200 });
-    assert.throws(
-      () => contender.append({ kind: "run", record: record("run") }, caller),
-      (error: unknown) =>
-        error instanceof StoreError && error.code === "STORE_BUSY",
-    );
-    contender.close();
+    // Zero-ish timeout: the parent's second write must fail explicitly — the
+    // busy error surfaces at open (migration is a write transaction) or at
+    // append; either way it is explicit, before any acknowledgement.
+    let contender: Store | undefined;
+    let refused = false;
+    try {
+      contender = Store.open(path, { busyTimeoutMs: 200 });
+      assert.throws(
+        () => contender?.append({ kind: "run", record: record("run") }, caller),
+        (error: unknown) =>
+          error instanceof StoreError && error.code === "STORE_BUSY",
+      );
+    } catch (error) {
+      refused = error instanceof StoreError && error.code === "STORE_BUSY";
+      if (!refused) throw error;
+    } finally {
+      // Always release the holder, even when the assertion above fails.
+      writeFileSync(join(dir, "release.json"), "{}", "utf8");
+      contender?.close();
+    }
+    assert.ok(refused, "second writer must be refused with STORE_BUSY");
 
-    // Release the holder; its commit lands; nothing is lost or interleaved.
-    // The child writes a completion trace just before exiting — waiting on
-    // that file (not the process-exit event, which a blocked loop can never
-    // observe) keeps this synchronous and bounded.
-    writeFileSync(join(dir, "release.json"), "{}", "utf8");
+    // The holder commits; nothing is lost or interleaved.
     waitFor(join(dir, "child-trace-committed.json"));
     store.close();
     const reopened = Store.open(path);
@@ -307,42 +316,127 @@ test("S6 second writer: one commits, the other gets a busy error; no lost update
   console.log(`S6 n=${String(trials)} pass`);
 });
 
-test("S7 backup and restore with deletion-generation guard", () => {
+test("S7 backup and restore with deletion-epoch guard", () => {
   for (let i = 0; i < trials; i += 1) {
     const dir = freshDir();
     const path = join(dir, "store.db");
     const store = Store.open(path);
     const a = record("run");
+    const b = record("run");
     store.append({ kind: "run", record: a }, caller);
+    store.append({ kind: "run", record: b }, caller);
+
+    // Delete A, snapshot; then delete B: the snapshot's deletion epoch (1) is
+    // behind the live epoch (2), so restoring it would lose B's tombstone.
+    store.noteDeletion(a.recordId as string);
     const backupPath = join(dir, "backup.db");
     store.backup(backupPath);
-
-    const b = record("run");
-    store.append({ kind: "run", record: b }, caller);
-    store.noteDeletion(a.recordId as string);
-
-    // A backup older than the current deletion generation is refused.
+    store.noteDeletion(b.recordId as string);
     assert.throws(
       () => store.restore(backupPath),
       (error: unknown) =>
         error instanceof StoreError && error.code === "STALE_RESTORE",
     );
-    // A backup at the current generation restores cleanly (b postdates it).
+
+    // A current-epoch snapshot restores cleanly, and the restore is
+    // observable: post-snapshot record `c` is gone afterwards.
     const freshBackup = join(dir, "backup2.db");
     store.backup(freshBackup);
+    const c = record("run");
+    store.append({ kind: "run", record: c }, caller);
     store.close();
 
     const reopened = Store.open(path);
     reopened.restore(freshBackup);
-    // The restored state matches the snapshot exactly (a and b were both
-    // committed before the snapshot; the tombstone on `a` is carried too).
     assert.ok(reopened.get(a.recordId as string));
     assert.ok(reopened.get(b.recordId as string));
-    assert.equal(Store.deletionGenerationOf(path), 1);
+    assert.throws(() => reopened.get(c.recordId as string), StoreError);
+    assert.equal(Store.deletionEpochOf(path), 2);
     reopened.close();
     rmSync(dir, { recursive: true, force: true });
   }
   console.log(`S7 n=${String(trials)} pass`);
+});
+
+test("batch rollback: duplicate mid-batch leaves nothing acknowledged and the handle clean", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const dup = record("run");
+  assert.throws(() =>
+    store.appendBatch(
+      [
+        { kind: "run", record: dup },
+        { kind: "run", record: dup }, // same record_id: UNIQUE violation mid-batch
+      ],
+      caller,
+    ),
+  );
+  // The same handle rolls back cleanly and the next write succeeds.
+  const next = store.append({ kind: "run", record: record("run") }, caller);
+  assert.equal(next.seq, 1);
+  store.close();
+
+  // From a fresh connection: exactly the post-rollback acknowledged write.
+  const verify = Store.open(path);
+  assert.equal(verify.cursor(), 1);
+  const { records } = verify.list("w-demo");
+  assert.equal(records.length, 1);
+  verify.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("durable canonical-workspace ownership: single writer, CAS epoch", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const ws = "C:\\workspaces\\demo"; // canonical workspace id
+
+  // First writer wins; epoch starts at 1.
+  const a = store.acquireWorkspace(ws, "session-a");
+  assert.equal(a.ownerSessionId, "session-a");
+  assert.equal(a.epoch, 1);
+
+  // A second session cannot acquire a live workspace.
+  assert.throws(
+    () => store.acquireWorkspace(ws, "session-b"),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "OWNERSHIP_CONFLICT",
+  );
+
+  // Renewal is a CAS on the epoch: stale epochs are refused.
+  const renewed = store.renewWorkspace(ws, "session-a", 1);
+  assert.equal(renewed.epoch, 2);
+  assert.throws(
+    () => store.renewWorkspace(ws, "session-a", 1),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "OWNERSHIP_STALE_EPOCH",
+  );
+  assert.throws(
+    () => store.renewWorkspace(ws, "session-b", 2),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "OWNERSHIP_CONFLICT",
+  );
+
+  // Release requires the current epoch; afterwards another session acquires.
+  assert.throws(
+    () => store.releaseWorkspace(ws, "session-a", 1),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "OWNERSHIP_STALE_EPOCH",
+  );
+  store.releaseWorkspace(ws, "session-a", 2);
+  assert.equal(store.workspaceOwner(ws), undefined);
+  const b = store.acquireWorkspace(ws, "session-b");
+  assert.equal(b.epoch, 3); // epochs never repeat
+
+  // Ownership survives reopen: it is durable state, not memory.
+  store.close();
+  const reopened = Store.open(path);
+  const owner = reopened.workspaceOwner(ws);
+  assert.equal(owner?.ownerSessionId, "session-b");
+  assert.equal(owner?.epoch, 3);
+  reopened.close();
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("S8 export and import: ids, ordering and schemaVersion survive", () => {
