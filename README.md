@@ -1,11 +1,12 @@
+
 <p align="center">
   <picture>
-    <!-- Displays the white logo when the user has dark mode active -->
-    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/splyce-white.svg">
-    <!-- Displays the black logo when the user has light mode active, or as a default override -->
-    <source media="(prefers-color-scheme: light)" srcset="assets/brand/splyce-black.svg">
-    <!-- Fallback image element required for rendering -->
-    <img alt="Splyce Logo" src="assets/brand/splyce-black.svg" width="200" />
+    <!-- White Logo for Dark Mode users -->
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/spylce-white.svg">
+    <!-- Black Logo for Light Mode users -->
+    <source media="(prefers-color-scheme: light)" srcset="./assets/brand/slyce-black.svg">
+    <!-- Default fallback logo -->
+    <img alt="Spylce Logo" src="./assets/brand/slyce-black.svg" width="200">
   </picture>
 </p>
 
