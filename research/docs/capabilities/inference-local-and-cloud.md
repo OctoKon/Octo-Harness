@@ -1,5 +1,7 @@
 # Inference: local, cloud, and mixed deployment
 
+**2026-10 refresh:** current model lifecycle, model × operation restrictions, forced-thinking replay, async tools, steering and Windows local-runtime status are recorded in the [model landscape](model-landscape-2026-10.md); where it conflicts with an older row here, the refresh applies until that row is re-qualified.
+
 **Active product scope:** Splyce keeps agent execution and stored state local. Each inference role may use a local runtime or an explicitly authorized cloud API profile with recorded endpoint, model/revision, and egress scope; it never silently switches provider or falls back. Hosted memory and executors below remain comparative research, not product dependencies. The base install carries no optional model payload. [Current master plan](../../../MASTER-PLAN.md).
 
 **Research date:** 2026-10-25. **Evidence state:** documentation and source review only. No model was downloaded, server installed, credential used, or benchmark run. All performance decisions remain planned measurements (**n=0**).
