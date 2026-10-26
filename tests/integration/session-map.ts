@@ -573,3 +573,33 @@ test("gap replay order drives the real renderer reducer to the complete state", 
   assert.equal(state.runs["run-3"]!.turnId, "turn-3");
   store.close();
 });
+
+test("a trailing lost transient is detected after reopen by a fresh SessionMap", () => {
+  const { dir, store, pi, map } = setup();
+  map.bind(k1, pi);
+  const id = pi.getSessionId();
+  map.anchorRun(id, run("run-1"));
+  const [d1, delta] = fixture.engineEvents;
+  const one = map.publish(id, d1).event;
+  assert.equal(map.publish(id, delta).event.seq, 2);
+  const file = pi.getSessionFile()!;
+  store.close();
+
+  const reopened = Store.open(join(dir, "store.db"));
+  const fresh = new SessionMap(reopened, context);
+  fresh.bind(k1, SessionManager.open(file, join(dir, "pi")));
+  const replay = fresh.follow(k1, one.seq).replay;
+  assert.equal(replay.length, 1);
+  const [snapshot] = replay;
+  assert.equal(snapshot!.kind, "run.reconnect_snapshot");
+  assert.equal(snapshot!.seq, 3);
+  assert.deepEqual(snapshot!.payload, {
+    runId: "run-1",
+    lastDurableSeq: 1,
+    activeActionIds: [],
+    state: "ready",
+  });
+  // Committed, not synthesized: it replays from the Store.
+  assert.deepEqual(reopened.replayEvents("w-demo", "s1", 2), [snapshot]);
+  reopened.close();
+});

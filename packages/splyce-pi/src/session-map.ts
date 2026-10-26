@@ -168,10 +168,6 @@ export class SessionMap {
   private readonly byPi = new Map<string, Bound>();
   private readonly byKey = new Map<string, Bound>();
   private readonly channels = new Map<string, SessionChannel>();
-  /** Highest ledger seq this process committed per session (incl. transient). */
-  // ponytail: in-process only; trailing transient seqs from a previous process
-  // are invisible until the Store exposes its session highwater.
-  private readonly committed = new Map<string, number>();
 
   constructor(
     private readonly store: Store,
@@ -255,10 +251,9 @@ export class SessionMap {
     const events = this.granted(
       this.store.replayEvents(scopeId, sessionId, afterSeq),
     );
-    const highest = Math.max(
-      this.committed.get(keyOf(key)) ?? 0,
-      events.at(-1)?.seq ?? afterSeq,
-    );
+    // The persisted highwater includes transient reservations, so a lost
+    // trailing transient is visible even to a fresh map after reopen.
+    const highest = this.store.eventHighwater(scopeId, sessionId);
     const replay =
       events.length === highest - afterSeq
         ? events
@@ -321,7 +316,6 @@ export class SessionMap {
       sessionId: bound.key.sessionId,
     }).events;
     if (event === undefined) throw new Error("ledger committed no event");
-    this.committed.set(keyOf(bound.key), event.seq);
     return event;
   }
 
