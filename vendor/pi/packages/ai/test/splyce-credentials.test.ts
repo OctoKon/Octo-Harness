@@ -71,6 +71,7 @@ vi.mock("@google/genai", () => {
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
 import { stream as streamVertex } from "../src/api/google-vertex.ts";
+import { createLeasedFetch, createSecretTracker } from "../src/splyce-credentials.ts";
 import type { Api, Context, Model } from "../src/types.ts";
 
 const SECRET = "sk-test-secret-0123456789";
@@ -269,5 +270,55 @@ describe("Anthropic per-send enforcement", () => {
 		await start(lease());
 		await send();
 		expect(wire.sent.every((s) => s.redirect === "error")).toBe(true);
+	});
+});
+
+describe("shared credential helpers", () => {
+	const record = () => {
+		const calls: Array<{ input: unknown; headers: Headers; redirect: string | undefined }> = [];
+		const base = (async (input: unknown, init?: RequestInit) => {
+			calls.push({ input, headers: new Headers(init?.headers), redirect: init?.redirect });
+			return new Response("{}");
+		}) as unknown as typeof fetch;
+		return { calls, base };
+	};
+
+	it("keeps the headers of a Request input and lets init.headers take precedence", async () => {
+		const { calls, base } = record();
+		const leased = createLeasedFetch({ lease: lease() }, createSecretTracker(), "x-api-key", base);
+		const request = new Request("https://api.example/v1", {
+			method: "POST",
+			headers: { "content-type": "application/json", "x-trace": "from-request", authorization: "Bearer other" },
+			body: "{}",
+		});
+		await leased(request, { headers: { "x-trace": "from-init" } });
+		const sent = calls[0]!.headers;
+		expect(sent.get("content-type")).toBe("application/json");
+		expect(sent.get("x-trace")).toBe("from-init");
+		expect(sent.get("x-api-key")).toBe(SECRET);
+		expect(sent.get("authorization")).toBeNull();
+	});
+
+	it("writes a bearer scheme through format and drops a caller-supplied x-api-key", async () => {
+		const { calls, base } = record();
+		const leased = createLeasedFetch(
+			{ lease: lease() },
+			createSecretTracker(),
+			"authorization",
+			base,
+			(secret) => `Bearer ${secret}`,
+		);
+		await leased("https://api.example/v1", { headers: { "x-api-key": "caller-key" } });
+		expect(calls[0]!.headers.get("authorization")).toBe(`Bearer ${SECRET}`);
+		expect(calls[0]!.headers.get("x-api-key")).toBeNull();
+		expect(calls[0]!.redirect).toBe("error");
+	});
+
+	it("forgets every noted secret on clear", () => {
+		const tracker = createSecretTracker();
+		tracker.note(SECRET);
+		expect(tracker.redact(`key ${SECRET}`)).toBe("key [redacted]");
+		tracker.clear();
+		expect(tracker.redact(`key ${SECRET}`)).toBe(`key ${SECRET}`);
 	});
 });

@@ -19,6 +19,8 @@ export interface SplyceCredentials {
 export interface SecretTracker {
 	note(secret: string): void;
 	redact(text: string): string;
+	/** Forget every noted secret. Adapters call this when the request ends so no key outlives it. */
+	clear(): void;
 }
 
 export function createSecretTracker(): SecretTracker {
@@ -32,6 +34,7 @@ export function createSecretTracker(): SecretTracker {
 			for (const secret of seen) out = out.split(secret).join("[redacted]");
 			return out;
 		},
+		clear: () => seen.clear(),
 	};
 }
 
@@ -62,19 +65,25 @@ export async function withLeasedSecret<T>(
 
 /**
  * A fetch that obtains the secret from the lease on every send and writes it into one auth header, so the SDK client
- * built around it never holds the real key. Redirects are refused so the key cannot follow a response to another host.
+ * built around it never holds the real key. `format` shapes the header value (default: the raw secret; pass
+ * `(s) => `Bearer ${s}`` for bearer schemes). Headers carried by a `Request` input are kept, with `init.headers`
+ * taking precedence as `fetch` does. Any other auth header is dropped, and redirects are refused so the key cannot
+ * follow a response to another host.
  */
 export function createLeasedFetch(
 	credentials: SplyceCredentials,
 	tracker: SecretTracker,
 	header: string,
 	base: typeof globalThis.fetch = globalThis.fetch,
+	format: (secret: string) => string = (secret) => secret,
 ): typeof globalThis.fetch {
 	return (input, init) =>
 		withLeasedSecret(credentials, tracker, (secret) => {
-			const headers = new Headers(init?.headers);
+			const headers = new Headers(input instanceof Request ? input.headers : undefined);
+			for (const [name, value] of new Headers(init?.headers)) headers.set(name, value);
 			headers.delete("authorization");
-			headers.set(header, secret);
+			headers.delete("x-api-key");
+			headers.set(header, format(secret));
 			return base(input, { ...init, headers, redirect: "error" });
 		});
 }

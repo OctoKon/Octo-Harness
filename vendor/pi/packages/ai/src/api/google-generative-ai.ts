@@ -305,6 +305,9 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			output.errorMessage = secrets.redact(formatProviderError(normalizeProviderError(error)));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
+		} finally {
+			// No leased key outlives the request that used it.
+			secrets.clear();
 		}
 	})();
 

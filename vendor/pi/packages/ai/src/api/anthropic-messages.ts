@@ -946,6 +946,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			output.errorMessage = secrets.redact(error instanceof Error ? error.message : JSON.stringify(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
+		} finally {
+			// No leased key outlives the request that used it.
+			secrets.clear();
 		}
 	})();
 
