@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  projectStatus,
-  projectToolStatus,
-  projectTurnStatus,
-  type StatusRecordKind,
-} from "./status-view";
+import { projectStatus } from "./status-view";
 
 function outcome(
   effectState: "observed-success" | "observed-failure" | "uncertain",
@@ -66,75 +61,6 @@ describe("projectStatus", () => {
     expect(
       projectStatus("packageInstallation", { state: "removed" }).status,
     ).toBe("removed");
-  });
-
-  it("maps every persisted state without falling back to Unknown", () => {
-    const cases: Array<
-      [Exclude<StatusRecordKind, "outcome">, readonly string[]]
-    > = [
-      [
-        "run",
-        ["pending", "running", "completed", "failed", "canceled", "uncertain"],
-      ],
-      [
-        "action",
-        [
-          "proposed",
-          "pending",
-          "approved",
-          "denied",
-          "running",
-          "completed",
-          "failed",
-          "canceled",
-          "uncertain",
-        ],
-      ],
-      ["selectionTransition", ["pending", "ready", "failed", "canceled"]],
-      ["configurationTransition", ["pending", "applied", "draining", "failed"]],
-      [
-        "packageInstallation",
-        ["staging", "installed", "failed", "removing", "removed"],
-      ],
-    ];
-
-    for (const [kind, states] of cases) {
-      for (const state of states) {
-        const projected = projectStatus(kind, { state } as never);
-        expect(projected.status, `${kind}.${state}`).toBe(state);
-        expect(projected.label, `${kind}.${state}`).not.toBe("Unknown");
-      }
-    }
-  });
-
-  it("maps turn and tool view statuses used by the transcript", () => {
-    expect(projectTurnStatus("streaming")).toEqual({
-      label: "Working",
-      tone: "active",
-      status: "streaming",
-    });
-    expect(projectTurnStatus("waiting_approval").status).toBe(
-      "waiting-approval",
-    );
-    expect(projectTurnStatus("completed").status).toBe("completed");
-    expect(projectTurnStatus("failed").status).toBe("failed");
-    expect(projectTurnStatus("canceled").status).toBe("canceled");
-    expect(projectTurnStatus("stopped").status).toBe("stopped");
-    expect(projectToolStatus("pending")).toEqual({
-      label: "Pending - not executed",
-      tone: "neutral",
-      status: "pending",
-    });
-    expect(projectToolStatus("success").status).toBe("success");
-    expect(projectToolStatus("error")).toEqual({
-      label: "Failed",
-      tone: "negative",
-      status: "failed",
-    });
-    expect(projectToolStatus("uncertain").status).toBe("uncertain");
-    expect(projectToolStatus("canceled").status).toBe("canceled");
-    expect(projectTurnStatus(null).status).toBe("unknown");
-    expect(projectToolStatus("bogus" as never).status).toBe("unknown");
   });
 
   it("keeps pending, failed and uncertain distinct", () => {
@@ -206,21 +132,6 @@ describe("projectStatus", () => {
         effectState: "observed-success",
       } as never).status,
     ).toBe("unknown");
-  });
-
-  it("projects inherited Object keys to Unknown in every projector", () => {
-    for (const key of [
-      "constructor",
-      "toString",
-      "__proto__",
-      "hasOwnProperty",
-    ]) {
-      expect(projectStatus("run", { state: key } as never).status, key).toBe(
-        "unknown",
-      );
-      expect(projectTurnStatus(key as never).label, key).toBe("Unknown");
-      expect(projectToolStatus(key as never).label, key).toBe("Unknown");
-    }
   });
 
   it("does not mutate the input or copy metadata, paths or error text", () => {

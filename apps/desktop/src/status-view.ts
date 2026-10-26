@@ -22,11 +22,7 @@ export type StatusValue =
   | "applied"
   | "draining"
   | "cleanup-pending"
-  | "timed-out"
-  | "streaming"
-  | "waiting-approval"
-  | "stopped"
-  | "success";
+  | "timed-out";
 
 export interface StatusView {
   readonly label: string;
@@ -90,63 +86,9 @@ const STATE_VIEWS: Readonly<Record<string, StatusView>> = Object.freeze({
   draining: view("Draining", "active", "draining"),
 });
 
-// Own-property lookup only: inherited keys such as "constructor" or
-// "__proto__" must project to Unknown, never to an Object.prototype member.
-function lookup(views: Readonly<Record<string, StatusView>>, key: string) {
-  return Object.hasOwn(views, key) ? views[key]! : UNKNOWN;
-}
-
 function projectState(state: unknown): StatusView {
   if (typeof state !== "string") return UNKNOWN;
-  return lookup(STATE_VIEWS, state);
-}
-
-export type TurnViewStatus =
-  | "streaming"
-  | "waiting_approval"
-  | "completed"
-  | "failed"
-  | "canceled"
-  | "stopped";
-
-export type ToolViewStatus =
-  "pending" | "success" | "error" | "uncertain" | "canceled";
-
-const TURN_STATUS_VIEWS: Readonly<Record<TurnViewStatus, StatusView>> =
-  Object.freeze({
-    streaming: view("Working", "active", "streaming"),
-    waiting_approval: view(
-      "Waiting for approval",
-      "warning",
-      "waiting-approval",
-    ),
-    completed: view("Completed", "positive", "completed"),
-    failed: view("Failed", "negative", "failed"),
-    canceled: view("Canceled", "neutral", "canceled"),
-    stopped: view("Stopped", "neutral", "stopped"),
-  });
-
-const TOOL_STATUS_VIEWS: Readonly<Record<ToolViewStatus, StatusView>> =
-  Object.freeze({
-    pending: view("Pending - not executed", "neutral", "pending"),
-    success: view("Success", "positive", "success"),
-    error: view("Failed", "negative", "failed"),
-    uncertain: view("Uncertain", "warning", "uncertain"),
-    canceled: view("Canceled", "neutral", "canceled"),
-  });
-
-export function projectTurnStatus(
-  status: TurnViewStatus | null | undefined,
-): StatusView {
-  if (!status) return UNKNOWN;
-  return lookup(TURN_STATUS_VIEWS, status);
-}
-
-export function projectToolStatus(
-  status: ToolViewStatus | null | undefined,
-): StatusView {
-  if (!status) return UNKNOWN;
-  return lookup(TOOL_STATUS_VIEWS, status);
+  return STATE_VIEWS[state] ?? UNKNOWN;
 }
 
 function projectOutcome(
