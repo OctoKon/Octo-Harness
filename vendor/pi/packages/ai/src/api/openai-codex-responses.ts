@@ -7,7 +7,13 @@ import type {
 } from "openai/resources/responses/responses.js";
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
-import { assertCredentialsSupported } from "../splyce-credentials.ts";
+import {
+	assertCredentialOptions,
+	createLeasedFetch,
+	redactWithLease,
+	type SplyceCredentials,
+	withLeasedSecret,
+} from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -249,6 +255,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
 
 	(async () => {
+		let credentials: SplyceCredentials | undefined;
 		const output: AssistantMessage = {
 			role: "assistant",
 			content: [],
@@ -268,13 +275,22 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 		};
 
 		try {
-			assertCredentialsSupported("openai-codex-responses", options);
-			const apiKey = options?.apiKey;
+			assertCredentialOptions(options ?? {});
+			credentials = options?.credentials;
+			if (credentials && options?.transport !== "sse") {
+				throw new Error("Native Codex credentials require explicit SSE transport");
+			}
+			const apiKey = credentials ? "splyce-leased" : options?.apiKey;
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
-			const accountId = extractAccountId(apiKey);
+			const accountId = credentials
+				? await withLeasedSecret(credentials, extractAccountId)
+				: extractAccountId(apiKey);
+			const fetch = credentials
+				? createLeasedFetch(credentials, "authorization", options?.fetch, (secret) => `Bearer ${secret}`)
+				: (options?.fetch ?? globalThis.fetch);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				getDeclaredTools(normalizedContext.messages),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -414,7 +430,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 						httpTimeoutMs !== undefined && httpTimeoutMs > 0 ? AbortSignal.timeout(httpTimeoutMs) : undefined;
 					const combinedSignal = combineAbortSignals([options?.signal, headerTimeoutSignal]);
 					try {
-						response = await (options?.fetch ?? globalThis.fetch)(resolveCodexUrl(model.baseUrl), {
+						response = await fetch(resolveCodexUrl(model.baseUrl), {
 							method: "POST",
 							headers: sseHeaders,
 							body: sseBody,
@@ -502,7 +518,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			// Failed or cancelled output must not expose executable tool calls.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			delete output.errorMessage;
+			const errorMessage = formatProviderError(normalizeProviderError(error));
+			output.errorMessage = await redactWithLease(credentials, errorMessage);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -517,7 +535,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	if (!apiKey) {
+	if (!apiKey && !options?.credentials) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 
@@ -687,7 +705,13 @@ async function processStream(
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
 	await processResponsesStream(
-		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent),
+		mapCodexEvents(
+			parseSSE(response, options?.signal),
+			output,
+			model,
+			options?.onProviderStreamEvent,
+			options?.credentials,
+		),
 		output,
 		stream,
 		model,
@@ -766,10 +790,30 @@ async function* mapCodexEvents(
 	output: AssistantMessage,
 	model: Model<"openai-codex-responses">,
 	onProviderStreamEvent: StreamOptions["onProviderStreamEvent"] | undefined,
+	credentials?: SplyceCredentials,
 ): AsyncGenerator<ResponseStreamEvent> {
 	for await (const event of events) {
 		try {
-			await onProviderStreamEvent?.(event, model);
+			if (onProviderStreamEvent) {
+				let observed: unknown = event;
+				if (credentials) {
+					const { lease, redact } = credentials;
+					observed = await lease.use(() => {
+						const sanitize = (value: unknown): unknown => {
+							if (typeof value === "string") return redact(value);
+							if (Array.isArray(value)) return value.map(sanitize);
+							if (value && typeof value === "object") {
+								return Object.fromEntries(
+									Object.entries(value).map(([key, item]) => [redact(key), sanitize(item)]),
+								);
+							}
+							return value;
+						};
+						return sanitize(event);
+					});
+				}
+				await onProviderStreamEvent(observed, model);
+			}
 		} catch (error) {
 			// Keep callback failures out of Codex's WebSocket retry and SSE fallback path.
 			throw new ProviderStreamEventCallbackError(error);

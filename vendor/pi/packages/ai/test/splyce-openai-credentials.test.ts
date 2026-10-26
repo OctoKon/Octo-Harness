@@ -276,7 +276,7 @@ describe("Splyce OpenAI public call paths", () => {
 	}
 });
 
-it("refuses native credentials on the unbound direct Codex transport before any effect", async () => {
+it("rejects conflicting native and explicit Codex credentials before any effect", async () => {
 	const { credentials, state } = leaseFixture();
 	let sends = 0;
 	const token = `fixture.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } })).toString("base64")}.fixture`;
@@ -290,7 +290,7 @@ it("refuses native credentials on the unbound direct Codex transport before any 
 		},
 	}).result();
 	expect(result.stopReason).toBe("error");
-	expect(result.errorMessage).toContain("credentials are not supported");
+	expect(result.errorMessage).toContain("mutually exclusive");
 	expect(state.uses).toBe(0);
 	expect(sends).toBe(0);
 });

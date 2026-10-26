@@ -58,14 +58,28 @@ the token is not returned or cached in adapter options.
 
 Malformed native redactors terminate before any lease/send; formatting that
 validation error also remains safe. The shared unsupported-API assertions stay
-in place, with their fixture using the still-unbound Codex API. Direct Codex
-credential options also fail closed until its transport binding is complete.
+in place. Codex credentials remain rejected through compatibility and Models
+entrypoints until its shared registry handoff is complete.
+
+The direct Codex `stream` and `streamSimple` paths now accept native credentials
+only with explicit SSE. Automatic and WebSocket transports fail before any
+connection or send. Account identity is derived inside a lease; retained headers
+carry a placeholder until the per-send leased fetch supplies the real bearer.
+Error-event observers receive a sanitized copy of every string key and value
+inside a live lease, before JSON encoding; revoked observers receive no event.
+Terminal errors use the same live-lease redaction boundary as Chat and Responses.
+The direct native/explicit-key conflict remains rejected before any lease/send.
 
 Four new cases use the actual native resolver and OpenAI SDK with only the
 remote service replaced. They reject a connection revision changed after lease
 issuance and protect late stream errors after revocation for both APIs. Removing
 the terminal redaction lease guard fails both late-error cases; restoring the
-exact source passes the selected eight provider files, 120 cases with no skips.
+exact source passes the selected provider files. Twelve additional Codex SSE
+cases cover direct/simple calls, transport denial, revision changes, retries and
+terminal/observer redaction, including escaped diagnostic strings and keys.
+Removing each transport, per-send lease, observer and terminal redaction guard
+fails its matching test; exact restoration passes nine files, 132 cases with no
+skips.
 The native resolver's 27 cases and the integrated store/bridge/config/snapshot
 suite pass together, 94 cases. The request-port contract and its type fixture
 also pass, alongside 54 shared contract cases. These are local deterministic
