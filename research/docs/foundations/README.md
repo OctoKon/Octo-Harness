@@ -1,5 +1,7 @@
 # Harness foundations
 
+[TD-11 build preparation](td11-build-preparation.md) records compatibility inputs and missing build/support evidence before the shared bootstrap.
+
 | Chapter                                            | Coverage                                                              |
 | -------------------------------------------------- | --------------------------------------------------------------------- |
 | [Historical Rust stack](stack-decision.md)         | Superseded host proposal; optional Rust support candidates and gates  |
