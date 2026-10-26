@@ -91,6 +91,11 @@ describe("App wiring", () => {
     expect(providers).not.toBeNull();
     expect(providers.disabled).toBe(true);
     expect(q("#providers-title")?.textContent).toBe("Provider connections");
+    // No support record is delivered: the honest empty state, never a claim.
+    expect(q("[data-testid=support-status-empty]")?.textContent).toMatch(
+      /No support record available/,
+    );
+    expect(q("[data-testid=support-status] table")).toBeNull();
 
     button("Usage").click();
     flushSync();

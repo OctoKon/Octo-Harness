@@ -6,6 +6,7 @@
   import TurnStream from "./components/TurnStream.svelte";
   import Shell from "./components/shell/Shell.svelte";
   import UsageView from "./components/usage/UsageView.svelte";
+  import SupportStatus from "./components/SupportStatus.svelte";
   import Providers from "./routes/Providers.svelte";
   import {
     connectionState,
@@ -187,6 +188,7 @@
       <Providers connections={[]} families={[]} onAddCustom={() => {}} />
       <p role="status">Provider connections are unavailable: no profile service is connected.</p>
     </fieldset>
+    <SupportStatus cells={null} />
   {:else if view === "usage"}
     <UsageView usage={null} />
     <p role="status" data-testid="usage-unavailable-note">Usage unavailable - no engine usage report.</p>
