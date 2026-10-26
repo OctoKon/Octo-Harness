@@ -38,6 +38,28 @@ Run on this workstation: Node v24.20.0, win32 x64. It records API and pragma ava
 | `backup()`                | present as a module-level function                                              |
 | Transactions              | `BEGIN`/`COMMIT`/`ROLLBACK` via `exec`, `isTransaction` reflects the open state |
 
+## Pilot observation, 2026-10-26 (not the preregistered experiment)
+
+A throwaway harness outside this repository ran one trial of every case in the table below against both candidates on Node v24.20.0, win32 x64, with `journal_mode=WAL`, `synchronous=FULL` and foreign keys on. One trial each is a smoke check of the design, not the 30-trial CI protocol, and it qualifies nothing.
+
+| Result                                                                   | Built-in `node:sqlite`                                                     | `better-sqlite3` 13.0.3                 |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------- | --------------------------------------- |
+| S1-S8 (S2 split into killed-before/killed-after, S6 into fail-fast/wait) | 10/10 pass                                                                 | 10/10 pass                              |
+| Forced kill before commit                                                | 0 rows, readable                                                           | 0 rows, readable                        |
+| Forced kill after acknowledged commit                                    | row present                                                                | row present                             |
+| Truncated `-wal` beside a copy                                           | reopened, 0 rows                                                           | reopened, 0 rows                        |
+| Read-only write                                                          | generic `ERR_SQLITE_ERROR`, message "attempt to write a readonly database" | typed `SQLITE_READONLY`                 |
+| Second writer, no timeout                                                | `SQLITE_BUSY` immediately (default `timeout: 0`)                           | `SQLITE_BUSY` after the 5000 ms default |
+| Second writer with a busy timeout                                        | waited, both commits kept                                                  | waited, both commits kept               |
+| Install on Windows x64                                                   | already present                                                            | 2 packages, ~3 s, no compiler           |
+
+What this does and does not change:
+
+- **No selection change.** Both meet the J0 behaviours in a single trial, so the closure argument for the built-in stays the reason to prefer it, and the fallback stays available. Power-loss durability is still untested for both, and they bundle the same SQLite 3.53.4, so neither can inherit a durability advantage from this run.
+- **Error discrimination is a TD-09 requirement, not a preference.** `node:sqlite` reports a read-only write as a generic `ERR_SQLITE_ERROR` and surfaces the specific cause through `errcode`, so failure handling must branch on the SQLite result code rather than the JavaScript error class.
+- **Contention defaults differ and must be set explicitly.** `node:sqlite` defaults to a zero busy timeout, which turns a normal concurrent write into an immediate failure; any shared path has to set `timeout`/`busy_timeout` deliberately.
+- **The Windows packaging gap in `SQ-03` is closed for 13.0.3.** The published package installed prebuilt on this machine without a compiler, so the native-package cost is a closure and integrity question, not a toolchain one.
+
 ## Selection, proposed
 
 1. **Primary: built-in `node:sqlite`, pinned to the exact Node 24 minor shipped by R1.** It wins on closure, not on speed or durability: a barebones install should not carry a native SQLite artifact when the pinned runtime already contains one, and there is one fewer binary to sign, ship and verify. The price is paying attention to a release-candidate API and pinning the minor instead of a range.
@@ -75,7 +97,7 @@ TD-09 builds `tests/integration/store.ts` against one narrow adapter and runs th
 
 ## Disposition and recheck
 
-- **Disposition:** proposed — built-in `node:sqlite` first, `better-sqlite3` 13.0.3 fallback; experiment unrun.
+- **Disposition:** proposed — built-in `node:sqlite` first, `better-sqlite3` 13.0.3 fallback; single-trial pilot run, preregistered experiment unrun.
 - **Ownership:** TD-03 stops at this document; TD-09 implements the store and owns `J0_store_contract`; TD-51 later extends the crash matrix and TD-15 consumes the receipt ordering. A store-only result cannot certify native dispatch ordering.
 - **Reopen when:** the pinned Node minor or major changes, SQLite changes, `better-sqlite3` ships a new major, the advertised Windows platforms change, the store moves onto a network or synced path, or any acknowledged commit is later observed missing.
 
