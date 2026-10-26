@@ -5,6 +5,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -38,25 +39,23 @@ const wait = (f: string, ms = 15000) => {
 // Portable hard kill: no taskkill, so the case runs on POSIX runners too.
 // SIGKILL is a TerminateProcess on Windows and unblockable elsewhere, which is
 // exactly the crash under test — the child gets no cleanup path.
-const kill = (pid: number) => {
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch (err) {
-    // A child that already exited is not a failure: its disk state is what we assert on.
-    if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
-  }
+const kill = async (child: ReturnType<typeof spawn>) => {
+  const exited = once(child, "exit");
+  assert.ok(child.kill("SIGKILL"));
+  await exited;
+  assert.equal(child.signalCode, "SIGKILL");
 };
 const spawnChild = (mode: string, d: string) =>
   spawn(process.execPath, [CHILD, mode, d], { stdio: "ignore" });
 
-test("CM1 kill-during-append: acknowledged commit survives kill", () => {
+test("CM1 kill-during-append: acknowledged commit survives kill", async () => {
   const d = dir();
   const child = spawnChild("commit-then-signal", d);
   wait(join(d, "ack.json"));
   const ack = JSON.parse(readFileSync(join(d, "ack.json"), "utf8")) as {
     seq: number;
   };
-  kill(child.pid!);
+  await kill(child);
   const store = Store.open(join(d, "store.db"));
   const got = store.get("rec-child-ack");
   assert.equal(got.seq, ack.seq);
@@ -64,15 +63,19 @@ test("CM1 kill-during-append: acknowledged commit survives kill", () => {
   rmSync(d, { recursive: true, force: true });
 });
 
-test("CM2 kill-mid-transaction: uncommitted row absent after reopen", () => {
+test("CM2 kill-mid-transaction: uncommitted row absent after reopen", async () => {
   const d = dir();
   const child = spawnChild("mid-transaction", d);
   wait(join(d, "mid.json"));
-  kill(child.pid!);
+  const ack = JSON.parse(readFileSync(join(d, "open.json"), "utf8")) as {
+    seq: number;
+  };
+  await kill(child);
   const store = Store.open(join(d, "store.db"));
+  assert.equal(store.get("rec-child-open").seq, ack.seq);
   assert.throws(
     () => store.get("rec-uncommitted"),
-    (e: unknown) => e instanceof StoreError,
+    (e: unknown) => e instanceof StoreError && e.code === "STORE_NOT_FOUND",
   );
   store.close();
   rmSync(d, { recursive: true, force: true });
