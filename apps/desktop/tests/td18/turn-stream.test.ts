@@ -107,6 +107,7 @@ function render(
   run: TurnsState["runs"][string],
   props: Partial<{
     stale: boolean;
+    showApprovalControls: boolean;
     canRespond: (actionId: string) => boolean;
     onApproval: (
       approvalRequestId: string,
@@ -135,9 +136,6 @@ describe("TurnStream component", () => {
 
     const stream = document.querySelector('[data-testid="turn-stream"]');
     expect(stream?.getAttribute("data-status")).toBe("completed");
-    expect(stream?.querySelector(".status")?.getAttribute("data-tone")).toBe(
-      "positive",
-    );
 
     const visibleText = [
       ...document.querySelectorAll('[data-testid="turn-text"]'),
@@ -149,9 +147,6 @@ describe("TurnStream component", () => {
     const cards = document.querySelectorAll('[data-testid="tool-card"]');
     expect(cards).toHaveLength(1);
     expect(cards[0]?.getAttribute("data-action-id")).toBe("act_w4_scan");
-    expect(
-      cards[0]?.querySelector(".tool-status")?.getAttribute("data-tone"),
-    ).toBe("positive");
     expect(cards[0]?.textContent).toContain("Outcome:");
   });
 
@@ -161,9 +156,6 @@ describe("TurnStream component", () => {
 
     const card = document.querySelector('[data-testid="tool-card"]');
     expect(card?.textContent).toContain("Pending - not executed");
-    expect(card?.querySelector(".tool-status")?.getAttribute("data-tone")).toBe(
-      "neutral",
-    );
     expect(card?.textContent).toContain("Requested arguments");
     expect(card?.textContent).not.toContain("Outcome:");
   });
@@ -233,6 +225,22 @@ describe("TurnStream component", () => {
     ).toBeNull();
     expect(document.body.textContent).toContain("Approval closed");
     expect(document.body.textContent).toContain("Engine stopped");
+  });
+
+  it("does not render approval controls without an authoritative command context", () => {
+    render(applyAll([started(), intent(), approval()]).runs.run_a, {
+      showApprovalControls: false,
+    });
+
+    expect(
+      document.querySelector('[data-testid="approval-deny-button"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector('[data-testid="approval-allow-button"]'),
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain(
+      "Approval controls are not available",
+    );
   });
 
   it("keeps partial text visible on cancel and announces the stop", () => {

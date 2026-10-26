@@ -10,18 +10,30 @@ import { fileURLToPath } from "node:url";
 const args = process.argv.slice(2);
 let files;
 if (args.length === 0) {
-  files = ["tests/integration/store.ts", "tests/integration/receipts.ts"];
+  files = [
+    "tests/integration/store.ts",
+    "tests/integration/receipts.ts",
+    "tests/integration/bridge.ts",
+    "tests/integration/config.ts",
+    "tests/integration/snapshots.ts",
+  ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
   else if (args[1] === "C1_reconnect_cursor")
     files = ["tests/integration/receipts.ts"];
+  else if (args[1] === "C2_desktop_bridge")
+    files = ["tests/integration/bridge.ts"];
+  else if (args[1] === "C4_config_transition")
+    files = ["tests/integration/config.ts"];
+  else if (args[1] === "C5_dirty_snapshot")
+    files = ["tests/integration/snapshots.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C2_desktop_bridge | --case C4_config_transition | --case C5_dirty_snapshot]",
   );
   process.exit(2);
 }

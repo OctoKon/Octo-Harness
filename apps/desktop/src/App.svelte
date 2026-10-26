@@ -6,8 +6,8 @@
     handshake,
     onEvent,
     subscribe,
-    type Unsubscribe,
   } from "./stores/engine";
+  import { bindSelection, type BindingStatus } from "./stores/session-selection";
   import {
     createTurnStreamTransport,
     createTurnsState,
@@ -16,7 +16,8 @@
 
   let status = $state("disconnected");
   let turns = $state.raw<TurnsState>(createTurnsState());
-  let sessionDispose: Unsubscribe | null = null;
+  let subscription = $state<BindingStatus>({ state: "idle" });
+  let retry = $state<() => void>(() => {});
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
@@ -25,29 +26,24 @@
     // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
   }
 
-  function recover(fromSeq: number, sessionId: string) {
-    sessionDispose?.();
-    sessionDispose = null;
-    if (!sessionId) return;
-    subscribe(sessionId, fromSeq)
-      .then((dispose) => {
-        sessionDispose = dispose;
-      })
-      .catch(() => {
-        // The stream stays paused/stale; no session context is invented here.
-      });
-  }
-
   onMount(() => {
+    // The workbench selects the session (session-selection store); none is derived from events.
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
       },
-      onResync: recover,
+      onResync: (fromSeq, sessionId) => {
+        void binding.resubscribe(sessionId, fromSeq);
+      },
     });
+    const binding = bindSelection(transport, subscribe);
     const unsubState = connectionState.subscribe((val) => {
       status = val;
     });
+    const unsubBinding = binding.status.subscribe((next) => {
+      subscription = next;
+    });
+    retry = () => void binding.retry();
     const unsubEvents = onEvent((event) => transport.enqueue(event));
 
     handshake().catch(() => {
@@ -57,7 +53,8 @@
     return () => {
       unsubState();
       unsubEvents();
-      sessionDispose?.();
+      unsubBinding();
+      binding.dispose();
       transport.dispose();
     };
   });
@@ -73,12 +70,20 @@
     </div>
   </header>
 
+  {#if subscription.state === "failed"}
+    <div class="subscribe-error" role="alert" data-testid="subscribe-error">
+      <span>Could not subscribe to the session: {subscription.error}</span>
+      <button type="button" onclick={retry}>Retry</button>
+    </div>
+  {/if}
+
   <div class="app-content" class:conversation={currentRun !== undefined}>
     {#if currentRun}
       <section class="turn-pane" aria-label="Transcript">
         <TurnStream
           run={currentRun}
           stale={turns.stale || turns.needsResync || status !== "ready"}
+          showApprovalControls={false}
           canRespond={() => false}
           {onApproval}
         />
@@ -142,6 +147,15 @@
   .status-badge.unavailable {
     background: #fee2e2;
     color: #991b1b;
+  }
+  .subscribe-error {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 20px;
+    background: #fee2e2;
+    color: #991b1b;
+    font-size: 0.875rem;
   }
   .app-content {
     flex: 1;

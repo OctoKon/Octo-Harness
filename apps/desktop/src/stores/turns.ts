@@ -255,6 +255,18 @@ function missingPayload(state: TurnsState): TurnsState {
   return { ...state, protocolErrors: state.protocolErrors + 1 };
 }
 
+const EVENT_ID_WINDOW = 4096;
+
+/**
+ * Remembers an event id in a bounded window instead of copying the whole set per event, which made a burst of n events
+ * cost O(n^2). Anything older than the window is already rejected by the sequence checks, so pruning loses nothing.
+ */
+function rememberEventId(seen: Set<string>, eventId: string): Set<string> {
+  seen.add(eventId);
+  if (seen.size > EVENT_ID_WINDOW) seen.delete(seen.values().next().value!);
+  return seen;
+}
+
 // Mirrors the subscribe cursor to the engine; TD-15 owns replay, TD-18 owns gap detection.
 export function reduceTurns(
   state: TurnsState,
@@ -302,7 +314,7 @@ export function reduceTurns(
       envelope.durable && !isSnapshot
         ? Math.max(state.lastDurableSeq, envelope.seq)
         : state.lastDurableSeq,
-    seenEventIds: new Set(state.seenEventIds).add(envelope.eventId),
+    seenEventIds: rememberEventId(state.seenEventIds, envelope.eventId),
   };
 
   if (!("payload" in envelope)) {
@@ -478,7 +490,9 @@ export function reduceTurns(
       next.needsResync = false;
       delete next.resyncFromSeq;
       delete next.resyncAfterSeq;
-      next.lastDurableSeq = Math.max(state.lastDurableSeq, lastDurableSeq);
+      // Assumption: the snapshot is a hint, not applied history. The durable cursor
+      // only advances when a durable event is reduced, so authoritative replay
+      // from resyncFromSeq is applied exactly once and never skipped.
       next.lastSeq = Math.max(next.lastSeq, lastDurableSeq);
       const status: TurnStatus =
         snapshotState === "waiting_approval"
@@ -573,11 +587,15 @@ interface SessionChannel {
   transientFrames: number;
   transientBytes: number;
   resyncNotified: boolean;
+  durableSeq: number;
+  replayUntil: number;
+  seenEventIds: Set<string>;
 }
 
 export interface TurnStreamTransportOptions {
   state?: TurnsState;
   sessionId?: string;
+  scopeId?: string;
   schedule?: (task: () => void) => void;
   onState?: (state: TurnsState) => void;
   onResync?: (fromSeq: number, sessionId: string) => void;
@@ -588,6 +606,9 @@ export interface TurnStreamTransport {
   enqueue(event: SplyceEventEnvelope): void;
   flush(): TurnsState;
   current(sessionId?: string): TurnsState;
+  follow(sessionId: string, scopeId: string): void;
+  unfollow(sessionId: string): void;
+  rejectedCount(): number;
   dispose(): void;
 }
 
@@ -624,14 +645,12 @@ function rendererValidationContext(event: {
   };
 }
 
-function validateForRenderer(event: unknown): SplyceEventEnvelope | null {
-  if (event === null || typeof event !== "object") return null;
-  const candidate = event as { scopeId?: unknown; sessionId?: unknown };
-  const scopeId = candidate.scopeId;
-  const sessionId = candidate.sessionId;
-  if (typeof scopeId !== "string" || typeof sessionId !== "string") {
-    return null;
-  }
+// Scope and session come from the followed subscription, never from the event.
+function validateForRenderer(
+  event: unknown,
+  scopeId: string,
+  sessionId: string,
+): SplyceEventEnvelope | null {
   try {
     return validateEvent(
       event,
@@ -653,6 +672,19 @@ export function createTurnStreamTransport(
   const channels = new Map<string, SessionChannel>();
   let selectedSessionId: string | undefined =
     options.sessionId ?? options.state?.sessionId;
+  // sessionId -> scopeId, supplied by the caller (workbench/subscription).
+  const followed = new Map<string, string>(
+    selectedSessionId && options.scopeId
+      ? [[selectedSessionId, options.scopeId]]
+      : [],
+  );
+  const channelKey = (scopeId: string, sessionId: string) =>
+    `${scopeId}\u0000${sessionId}`;
+  const keyOf = (sessionId: string) => {
+    const scopeId = followed.get(sessionId);
+    return scopeId === undefined ? undefined : channelKey(scopeId, sessionId);
+  };
+  let rejected = 0;
   let scheduled = false;
   let disposed = false;
 
@@ -666,8 +698,9 @@ export function createTurnStreamTransport(
       }
     });
 
-  function channelFor(sessionId: string): SessionChannel {
-    const existing = channels.get(sessionId);
+  function channelFor(scopeId: string, sessionId: string): SessionChannel {
+    const key = channelKey(scopeId, sessionId);
+    const existing = channels.get(key);
     if (existing) return existing;
     const initial =
       options.state?.sessionId === sessionId
@@ -683,14 +716,17 @@ export function createTurnStreamTransport(
       transientFrames: 0,
       transientBytes: 0,
       resyncNotified: false,
+      durableSeq: initial.lastDurableSeq,
+      replayUntil: 0,
+      seenEventIds: new Set(),
     };
-    channels.set(sessionId, channel);
-    if (selectedSessionId === undefined) selectedSessionId = sessionId;
+    channels.set(key, channel);
     return channel;
   }
 
   function selectedChannel(): SessionChannel | undefined {
-    return selectedSessionId ? channels.get(selectedSessionId) : undefined;
+    const key = selectedSessionId ? keyOf(selectedSessionId) : undefined;
+    return key ? channels.get(key) : undefined;
   }
 
   function emit(channel: SessionChannel) {
@@ -718,12 +754,15 @@ export function createTurnStreamTransport(
 
   function overflow(channel: SessionChannel, code: TurnStreamErrorCode) {
     options.onError?.(code);
-    if (channel.state.needsResync) {
-      clearQueue(channel);
-      return;
+    // Discarded frames were never reduced: forget their ids so the authoritative
+    // replay (from the applied durable cursor) is not dropped as a duplicate.
+    for (const frame of channel.pending) {
+      channel.seenEventIds.delete(frame.event.eventId);
     }
     clearQueue(channel);
+    if (channel.state.needsResync) return;
     channel.acceptedSeq = channel.state.lastSeq;
+    channel.durableSeq = channel.state.lastDurableSeq;
     channel.state = {
       ...channel.state,
       needsResync: true,
@@ -753,6 +792,7 @@ export function createTurnStreamTransport(
   function pauseForResync(channel: SessionChannel) {
     applyPending(channel);
     channel.acceptedSeq = channel.state.lastSeq;
+    channel.durableSeq = channel.state.lastDurableSeq;
     channel.state = {
       ...channel.state,
       needsResync: true,
@@ -815,51 +855,77 @@ export function createTurnStreamTransport(
 
   function enqueue(event: SplyceEventEnvelope) {
     if (disposed) return;
-    const candidate = event as unknown as {
-      sessionId?: unknown;
-      kind?: unknown;
-    };
-    const sessionId =
-      typeof candidate?.sessionId === "string"
-        ? candidate.sessionId
-        : selectedSessionId;
-    if (!sessionId) return;
-    const channel = channelFor(sessionId);
-
+    const claim = event as { sessionId?: unknown; scopeId?: unknown } | null;
     if (
-      channel.state.needsResync &&
-      candidate.kind !== "run.reconnect_snapshot"
+      typeof claim?.sessionId === "string" &&
+      followed.get(claim.sessionId) !== claim.scopeId
     ) {
+      rejected += 1;
       return;
     }
-
     let bytes: number;
     try {
       bytes = frameBytes(event);
     } catch {
-      channel.state = {
-        ...channel.state,
-        protocolErrors: channel.state.protocolErrors + 1,
-      };
-      emit(channel);
+      const channel = selectedChannel();
+      if (channel) {
+        channel.state = {
+          ...channel.state,
+          protocolErrors: channel.state.protocolErrors + 1,
+        };
+        emit(channel);
+      }
       return;
     }
     if (bytes > TRANSPORT_LIMITS.maxEncodedFrameBytes) {
-      overflow(channel, "ERR_FRAME_TOO_LARGE");
+      const channel = selectedChannel();
+      if (channel) overflow(channel, "ERR_FRAME_TOO_LARGE");
+      return;
+    }
+    const validated = claim
+      ? validateForRenderer(
+          event,
+          claim.scopeId as string,
+          claim.sessionId as string,
+        )
+      : null;
+    if (!validated) {
+      const channel = selectedChannel();
+      if (channel) {
+        channel.state = {
+          ...channel.state,
+          protocolErrors: channel.state.protocolErrors + 1,
+        };
+        emit(channel);
+      }
+      return;
+    }
+    const channel = channelFor(validated.scopeId, validated.sessionId);
+
+    if (
+      channel.state.needsResync &&
+      validated.kind !== "run.reconnect_snapshot"
+    ) {
       return;
     }
 
-    const validated = validateForRenderer(event);
-    if (!validated || validated.sessionId !== sessionId) {
+    if (channel.seenEventIds.has(validated.eventId)) {
       channel.state = {
         ...channel.state,
-        protocolErrors: channel.state.protocolErrors + 1,
+        duplicateCount: channel.state.duplicateCount + 1,
       };
       emit(channel);
       return;
     }
 
-    if (validated.seq <= channel.acceptedSeq) {
+    // After a snapshot, durable frames in (applied cursor, snapshot cursor] are
+    // authoritative replay the reducer has not seen: accept them, in any gap shape.
+    const replay =
+      validated.durable &&
+      validated.seq <= channel.replayUntil &&
+      validated.seq > channel.durableSeq;
+
+    if (!replay && validated.seq <= channel.acceptedSeq) {
       channel.state = {
         ...channel.state,
         duplicateCount: channel.state.duplicateCount + 1,
@@ -869,7 +935,7 @@ export function createTurnStreamTransport(
     }
 
     const isSnapshot = validated.kind === "run.reconnect_snapshot";
-    if (!isSnapshot && validated.seq !== channel.acceptedSeq + 1) {
+    if (!isSnapshot && !replay && validated.seq !== channel.acceptedSeq + 1) {
       pauseForResync(channel);
       return;
     }
@@ -901,14 +967,23 @@ export function createTurnStreamTransport(
       }
     }
 
-    channel.acceptedSeq = Math.max(
-      channel.acceptedSeq,
-      accepted.seq,
-      isSnapshot && "payload" in accepted
-        ? ((accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ??
-            0)
-        : 0,
-    );
+    channel.seenEventIds.add(validated.eventId);
+    if (channel.seenEventIds.size > EVENT_ID_WINDOW) {
+      channel.seenEventIds.delete(channel.seenEventIds.values().next().value!);
+    }
+    if (validated.durable && !isSnapshot) {
+      channel.durableSeq = Math.max(channel.durableSeq, validated.seq);
+    }
+    if (isSnapshot && "payload" in accepted) {
+      // Replay may carry durable seqs below the snapshot's transport seq; the
+      // live cursor never moves backwards, so frame seq+1 stays contiguous.
+      channel.replayUntil = accepted.seq;
+      channel.acceptedSeq = Math.max(channel.acceptedSeq, accepted.seq);
+      // Reduce at once so the resync gate lifts before the replay frames arrive.
+      applyPending(channel);
+    } else {
+      channel.acceptedSeq = Math.max(channel.acceptedSeq, accepted.seq);
+    }
 
     if (
       channel.transientFrames > TRANSPORT_LIMITS.rendererQueueFrames ||
@@ -934,10 +1009,31 @@ export function createTurnStreamTransport(
   return {
     enqueue,
     flush,
-    current: (sessionId?: string) =>
-      (sessionId ? channels.get(sessionId) : selectedChannel())?.state ??
-      options.state ??
-      fallbackState,
+    follow(sessionId: string, scopeId: string) {
+      followed.set(sessionId, scopeId);
+      selectedSessionId ??= sessionId;
+    },
+    unfollow(sessionId: string) {
+      const key = keyOf(sessionId);
+      const channel = key ? channels.get(key) : undefined;
+      if (channel) clearQueue(channel);
+      if (key) channels.delete(key);
+      followed.delete(sessionId);
+      if (selectedSessionId === sessionId) {
+        selectedSessionId = undefined;
+        options.onState?.(options.state ?? fallbackState);
+      }
+    },
+    rejectedCount: () => rejected,
+    current: (sessionId?: string) => {
+      const key = sessionId ? keyOf(sessionId) : undefined;
+      const channel = sessionId
+        ? key
+          ? channels.get(key)
+          : undefined
+        : selectedChannel();
+      return channel?.state ?? options.state ?? fallbackState;
+    },
     dispose() {
       disposed = true;
       for (const channel of channels.values()) clearQueue(channel);
