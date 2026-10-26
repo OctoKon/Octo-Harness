@@ -6,10 +6,20 @@
   import TurnStream from "./components/TurnStream.svelte";
   import Shell from "./components/shell/Shell.svelte";
   import UsageView from "./components/usage/UsageView.svelte";
+  import ApprovalSurface from "./components/ApprovalSurface.svelte";
+  import PermissionModeSelect from "./components/PermissionModeSelect.svelte";
   import Providers from "./routes/Providers.svelte";
   import Setup from "./routes/Setup.svelte";
   import Modules from "./routes/Modules.svelte";
   import { unavailableModuleSnapshot } from "./stores/modules";
+  import type {
+    ApprovalContext,
+    ApprovalRequestView,
+  } from "./stores/approvals";
+  import {
+    initialPermissionMode,
+    type PermissionModeContext,
+  } from "./stores/permission-mode";
   import {
     connectionState,
     handshake,
@@ -53,6 +63,36 @@
     "No setup or module service is connected.",
   );
 
+  // TD-30: the turns store carries tool-call approvals for the inline
+  // ApprovalCard, but no request carries the config/profile/policy revisions it
+  // was issued against, and the dialog must not ask about a target it cannot
+  // verify. The surface therefore shows only requests with a known revision:
+  // there are none today, so the shell never claims an approval is pending.
+  const approvalRequests: readonly ApprovalRequestView[] = [];
+  const approvalContext: ApprovalContext = {
+    engine: "unavailable",
+    engineReason: "Session revisions are not delivered to the renderer yet.",
+    sessionId: null,
+    scopeId: null,
+    runId: null,
+    actionId: null,
+    targetScope: null,
+    normalizedTarget: null,
+    revision: null,
+    runCanceled: false,
+    nowMs: 0,
+  };
+
+  // TD-30 Supervisor: a mode change is engine-admitted, and without the session
+  // revisions it cannot be admitted at all. The selector is visibly disabled
+  // with that reason instead of pretending a selection could take effect.
+  const permissionContext: PermissionModeContext = {
+    engine: "unavailable",
+    engineReason: "Session revisions are not delivered to the renderer yet",
+    configRevision: null,
+    policyRevision: null,
+  };
+
   // Snapshot seam: the only thing allowed to complete a session load. Readiness proves nothing about sessions.
   let {
     loadSessions,
@@ -72,6 +112,11 @@
   let retry = $state<() => void>(() => {});
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
+  );
+  // A different session starts on the safe mode: no mode or pending request
+  // carries over from the previous one.
+  const permissionModeState = $derived(
+    initialPermissionMode($selectedSession?.sessionId ?? null),
   );
 
   function applyTree(event: SplyceEvent) {
@@ -183,9 +228,15 @@
       else handshake().catch(() => {});
     }}
   />
+  <section class="supervisor" aria-label="Supervisor" data-testid="supervisor">
+    <h2>Supervisor</h2>
+    <PermissionModeSelect modeState={permissionModeState} context={permissionContext} />
+  </section>
 {/snippet}
 
 {#snippet transcript()}
+  <!-- TD-30: engine-facing approval mount. Empty until requests carry revisions. -->
+  <ApprovalSurface requests={approvalRequests} context={approvalContext} />
   {#if subscription.state === "failed"}
     <div class="subscribe-error" role="alert" data-testid="subscribe-error">
       <span>Could not subscribe to the session: {subscription.error}</span>
@@ -293,6 +344,21 @@
   }
   [aria-current="page"] {
     font-weight: 700;
+  }
+  .supervisor {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid #e5e7eb;
+    margin-top: 8px;
+  }
+  .supervisor h2 {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #4b5563;
   }
   fieldset {
     border: 0;
