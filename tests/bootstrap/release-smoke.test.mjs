@@ -63,6 +63,7 @@ test("driver provenance rejects tampered bytes and mismatched versions", () => {
     webview2: {
       distribution: "Evergreen",
       runtimeVersion: "155.0.4283.62",
+      registryScope: "user",
     },
     edgeDriver: {
       version: "155.0.4283.62",
@@ -80,6 +81,7 @@ test("driver provenance rejects tampered bytes and mismatched versions", () => {
     edgeDriverSha256: manifest.edgeDriver.binarySha256,
     edgeDriverVersion: manifest.edgeDriver.version,
     runtimeVersion: manifest.webview2.runtimeVersion,
+    runtimeScope: manifest.webview2.registryScope,
   };
   assertDriverProvenance(manifest, pin, actual);
 
@@ -124,6 +126,12 @@ test("driver provenance rejects tampered bytes and mismatched versions", () => {
     assertDriverProvenance(manifest, pin, {
       ...actual,
       runtimeVersion: "155.0.4284.1",
+    }),
+  );
+  assert.throws(() =>
+    assertDriverProvenance(manifest, pin, {
+      ...actual,
+      runtimeScope: "machine",
     }),
   );
   assert.throws(() =>
