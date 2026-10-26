@@ -1,0 +1,67 @@
+name: Promote staging to main
+
+# Fast-forwards main to a staging commit once every required check on that exact commit has passed.
+# Runs from the default branch definition and executes no repository code.
+on:
+  workflow_run:
+    workflows: [Documentation quality, CodeQL, Staging release gate]
+    types: [completed]
+    branches: [staging]
+
+permissions: {}
+
+concurrency:
+  group: promote-main
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote to main
+    if: >-
+      (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-checks: read
+          permission-workflows: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app.outputs.token }}
+      - name: Fast-forward main to the fully checked staging commit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          REQUIRED: "Documentation quality|Analyze Python|Analyze Actions|Staging release gate"
+        run: |
+          set -euo pipefail
+          git fetch origin staging
+          if git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "main already contains $SHA."; exit 0
+          fi
+          git merge-base --is-ancestor "$SHA" origin/staging || { echo "::error::$SHA is not on staging."; exit 1; }
+          git merge-base --is-ancestor origin/main "$SHA" || { echo "::error::main is not an ancestor of $SHA; refusing a non-fast-forward."; exit 1; }
+          # Only GitHub Actions (app 15368) check runs count, matching the main ruleset.
+          # Several runs can share a name on one SHA (push, merge queue, reruns); the most recently started one counts.
+          runs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs?app_id=15368" --jq '.check_runs[] | "\(.name)\t\(.status)\t\(.conclusion)\t\(.started_at)"')
+          IFS='|' read -ra names <<< "$REQUIRED"
+          for name in "${names[@]}"; do
+            line=$(printf '%s\n' "$runs" | awk -F'\t' -v n="$name" '$1 == n' | sort -t "$(printf '\t')" -k4,4 | tail -n 1)
+            if [ "$(printf '%s' "$line" | cut -f2)" != completed ]; then
+              echo "Waiting: '$name' has not completed on $SHA; a later workflow completion retries."; exit 0
+            fi
+            if [ "$(printf '%s' "$line" | cut -f3)" != success ]; then
+              echo "::error::'$name' did not succeed on $SHA."; exit 1
+            fi
+          done
+          git push origin "$SHA:refs/heads/main"
+          echo "Promoted $SHA to main." >> "$GITHUB_STEP_SUMMARY"

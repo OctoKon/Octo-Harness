@@ -1,8 +1,10 @@
-# ADR-001: Shared contracts over an existing agent engine
+# ADR-001: Historical shared-contract synthesis
 
 **Active product scope:** Splyce is OSS with a barebones, modular local application and local authoritative state. Users explicitly select local and/or cloud inference per provider/profile/operation; a local-only profile forbids inference egress and silent fallback. Hosted execution, managed memory storage and unsolicited telemetry are not default dependencies. Current local+cloud direction supersedes the earlier global local-only ruling. [Cloud-role qualification](../capabilities/cloud-inference-lifecycle.md#required-per-cell-record-and-tests) binds allowed data classes to evidenced training-use policy and effective credential scope before dispatch. [Current master plan](../../../MASTER-PLAN.md).
 
-## Status: Refined by the Pi-first decision
+## Status: Superseded build guidance; retained research history
+
+**Historical snapshot, 2026-10-25; non-normative.** The CLI/headless first-slice, extension-first alternatives and first-release memory language below are superseded by the [Windows GUI master plan](../../../MASTER-PLAN.md), [native core fusion and composition contract](core-fusion.md), [barebones installation](modular-installation.md) and [80-task delivery plan](team-delivery-plan.md). Use those for all build scope, owners and gates. Original hypotheses remain here only to explain their evolution.
 
 Research synthesis, 2026-10-25. This is a design hypothesis drawn from primary-source notes, not a selected runtime, implemented system, measured ranking, or final master plan. The root master plan incorporates the expanded memory and inference research; discovery and runtime qualification have separate closure criteria. Product names below identify the documented mechanism, not an endorsement or a claim that their implementations compose unchanged.
 

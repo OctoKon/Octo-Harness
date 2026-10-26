@@ -126,5 +126,29 @@
     "claims": ["Local coding-agent log analytics and skill extraction."],
     "verification": "primary-overview",
     "notes": "Selected public primary source retrieved; no installation, security qualification or performance measurement."
+  },
+  {
+    "id": "GV-12",
+    "tool": "GitHub repository roles",
+    "url": "https://docs.github.com/en/organizations/managing-user-access-to-your-organizations-repositories/managing-repository-roles/repository-roles-for-an-organization",
+    "title": "Repository roles for an organization",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Read permits fork pull requests but not upstream push or approval satisfying required reviews; repository roles determine those capabilities."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched for contribution-path planning. This records general documented behavior, not private membership/permission responses or a grant of access."
+  },
+  {
+    "id": "GV-13",
+    "tool": "GitHub public forks",
+    "url": "https://docs.github.com/en/pull-requests/reference/forks",
+    "title": "Forks",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Public repository forks remain public and have their own permissions; contribution remains subject to applicable policies."
+    ],
+    "verification": "primary-documentation",
+    "notes": "Selected official page fetched for contribution-path planning. This records general documented behavior, not private membership/permission responses or a grant of access."
   }
 ]

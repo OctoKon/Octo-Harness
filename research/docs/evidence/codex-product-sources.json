@@ -40,12 +40,12 @@
     "tool": "Codex app-server",
     "url": "https://learn.chatgpt.com/docs/app-server",
     "title": "Codex App Server",
-    "accessed": "2026-10-25",
+    "accessed": "2026-10-26",
     "claims": [
-      "Thread/turn/approval/event protocol; current command/WebSocket transport has experimental production-support limits."
+      "The guide documents default stdio, separate experimental-field opt-in, and an experimental/production-support warning for the app-server command and WebSocket transport."
     ],
     "verification": "primary-documentation",
-    "notes": "Official selected source reviewed; dated product behavior, not account entitlement or Splyce runtime proof. Hosted services remain comparison only."
+    "notes": "Full guide re-fetched 2026-10-26, including the remote Code Mode host warning and experimental API section. Stable-field wording does not prove production support for stdio or the command. No Splyce runtime qualification."
   },
   {
     "id": "CP-05",

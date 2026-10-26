@@ -10,6 +10,20 @@ The SDK owns a model/tool loop with agents, tools, handoffs, guardrails, session
 
 [Agent Zero](https://github.com/agent0ai/agent-zero) is a project-oriented agent environment with workspaces, memory, and secrets. Its A0CLI connector bridges a terminal client to an already-running Agent Zero instance; it is not a second agent or an independent execution authority. That makes it a reference for instance bridging and project-scoped resources, not a reason to wrap Pi in another autonomous loop. **Pi qualification:** demonstrate that a connector cannot bypass Pi’s tool policy, project boundary, or consent path; verify secrets remain outside agent-visible receipts.
 
+## Open Interpreter: current Rust fork and legacy identity
+
+**Added 2026-10-26; source observations only, runtime n=0.** The index previously named this candidate without a chapter or ledger record. The current canonical [openinterpreter/openinterpreter](https://github.com/openinterpreter/openinterpreter/blob/ac1fcc8fe57aba51fcc3c79afd57a0883237fe87/README.md) at `ac1fcc8fe57aba51fcc3c79afd57a0883237fe87` identifies a Rust Codex fork and points separately to the community-maintained Python lineage. Its inspected LICENSE is Apache-2.0; do not transfer that fact to legacy code or dependencies. LN-11–12.
+
+**Mechanism chain:** the README describes selectable model-specific harnesses and ACP/Codex-exec client compatibility. The pinned provider registry explicitly declares `Responses`, `Chat` and `Messages` wire variants (LN-13), unlike the separately inspected upstream Codex revision. The [provider guide](https://www.openinterpreter.com/docs/terminal/providers) separates endpoint/auth/wire API, model identity and agent-facing harness behavior; its Google path uses compatible Chat Completions, which is not native Gemini protocol evidence. Thus a model name or emulated harness name cannot establish API parity, proprietary source rights or quality. LN-14.
+
+**Reuse hypothesis and weakness:** investigate a source-owned harness-selection mechanism and the additional native wire variants if they reduce maintained integration work. Apply the existing foundation Stage A/B gates, actual transport/receipt seams, provider histories/cancellation, selected asset closure, Windows lifecycle and full resource accounting. CLI/SDK protocol compatibility does not expose every internal effect or prove a stable rich-client API. A model-specific prompt/tool layout must earn improvement in preregistered paired trials; advertised speed/quality and sandboxing remain untested. Pi remains canonical; no nested engine or automatic replacement is authorized. The linked harness guide was inaccessible to the fetch tool, so its fine-grained behavior is not asserted here.
+
+### Interpreter Workstation client comparator
+
+The pinned README leads to [openinterpreter/interpreter-workstation](https://github.com/openinterpreter/interpreter-workstation/blob/f48f94b2e95e1178925b69fa57d5ec649dd996f5/README.md), revision `f48f94b2e95e1178925b69fa57d5ec649dd996f5`. It separates the client shell from Open Interpreter runtime/providers/App Server, describes a shared runtime home and a checksummed runtime pin per app release. Its manifest declares Electron/React/Vite, Node and Bun-related sidecar/headless scripts plus Windows smoke/Playwright commands; its inspected LICENSE is Apache-2.0. LN-15–17.
+
+Borrow the questions about matched engine/client revisions and recovery, not the entire client stack. Local/account-optional and authenticated remote routes are vendor-described behavior, not observed no-network or credential-boundary proof. Shared plugins/configuration must not bypass Splyce's explicit loader; download steps, listed tests and checksums do not establish a barebones payload, accessibility, installed Windows correctness or a smaller footprint. Splyce retains Tauri 2/Svelte 5. Any adoption needs actual handshake/cleanup, source/asset/license closure and release-artifact tests; none ran here.
+
 ## AutoGPT lineage
 
 [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT) now contains a platform/workflow direction and expert-oriented components, alongside the historical classic/Forge lineage. Those are not interchangeable packages or guarantees. Licensing is component-specific: the repository documents Polyform Shield coverage for some components and MIT coverage for others. Borrow declarative workflow composition only if it adds a measured capability; retain one task/execution owner. **Pi qualification:** produce a component/license inventory and show a simple repair needs fewer operational layers without AutoGPT.
@@ -32,15 +46,16 @@ Current [Suna](https://github.com/kortix-ai/suna) is an AI operating environment
 
 ## Mechanism map and decision gate
 
-| Family              | Reusable mechanism                                  | Boundary that must remain in the Pi-first host     |
-| ------------------- | --------------------------------------------------- | -------------------------------------------------- |
-| OpenAI Agents SDK   | approval/resume state split; redaction-aware traces | workspace revision, side-effect journal, retention |
-| Agent Zero          | project-scoped instance bridge                      | tool policy, secrets, one execution loop           |
-| AutoGPT             | declarative workflow components                     | licensing, retry and task ownership                |
-| BabyAGI / GPT Pilot | dependency receipts; explicit review artifacts      | recovery, role accountability, evaluation          |
-| AgentScope          | typed output and interruption                       | host isolation and credentials                     |
-| OpenManus           | browser/environment adapter seam                    | executor reality and cancellation                  |
-| Suna                | change-request and branch handoff                   | authoritative memory and authorization             |
+| Family                         | Reusable mechanism                                                                   | Boundary that must remain in the Pi-first host                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| OpenAI Agents SDK              | approval/resume state split; redaction-aware traces                                  | workspace revision, side-effect journal, retention                                          |
+| Agent Zero                     | project-scoped instance bridge                                                       | tool policy, secrets, one execution loop                                                    |
+| Open Interpreter / Workstation | model-specific harness selection; explicit wire variants; pinned client/runtime seam | native effect authority, actual provider parity, selected closure and Windows qualification |
+| AutoGPT                        | declarative workflow components                                                      | licensing, retry and task ownership                                                         |
+| BabyAGI / GPT Pilot            | dependency receipts; explicit review artifacts                                       | recovery, role accountability, evaluation                                                   |
+| AgentScope                     | typed output and interruption                                                        | host isolation and credentials                                                              |
+| OpenManus                      | browser/environment adapter seam                                                     | executor reality and cancellation                                                           |
+| Suna                           | change-request and branch handoff                                                    | authoritative memory and authorization                                                      |
 
 No family qualifies merely by naming sandboxing, memory, human review, or MCP. A later spike must demonstrate: (1) one loop owns retries and cancellation; (2) a paused action resumes only after explicit approval; (3) uncertain side effects halt and reconcile; (4) workspace, secrets, and network constraints hold for every adapter; and (5) removal of the added runtime worsens a declared quality or operability metric. Actual new gaps are adapter-level consent propagation, exact-side-effect recovery across external services, and evidence-preserving review handoffs; investigate those before a broader runtime crawl.
 
