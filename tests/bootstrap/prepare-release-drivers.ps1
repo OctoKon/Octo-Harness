@@ -7,6 +7,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $target = Join-Path $root "apps/desktop/src-tauri/target"
 $tools = Join-Path $target "smoke-tools"
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+. (Join-Path $PSScriptRoot "webview2-runtime.ps1")
 
 function Write-JsonUtf8NoBom {
   param([string]$Path, [object]$Value)
@@ -30,6 +31,14 @@ function Assert-SafeArchiveEntries {
   }
 }
 
+function Assert-PinnedCrateArchive {
+  param([string]$Path, [string]$ExpectedHash)
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "The pinned tauri-driver source archive is missing." }
+  $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($hash -ne $ExpectedHash) { throw "The tauri-driver source archive does not match its pinned checksum." }
+  $hash
+}
+
 function Test-DriverPreparationGuards {
   $rootPath = Join-Path $env:TEMP "release-driver-guard-test-$([guid]::NewGuid().ToString('N'))"
   Assert-SafeArchiveEntries $rootPath @(
@@ -42,6 +51,22 @@ function Test-DriverPreparationGuards {
     try { Assert-SafeArchiveEntries $rootPath @([pscustomobject]@{ FullName = $unsafe }) }
     catch { $rejected = $true }
     if (-not $rejected) { throw "The archive guard accepted unsafe path '$unsafe'." }
+  }
+
+  Test-WebView2RuntimeSelection
+
+  $cratePath = Join-Path $env:TEMP "tauri-driver-hash-test-$([guid]::NewGuid().ToString('N')).crate"
+  try {
+    [System.IO.File]::WriteAllBytes($cratePath, [byte[]]@(1, 2, 3))
+    $crateHash = (Get-FileHash -LiteralPath $cratePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ((Assert-PinnedCrateArchive $cratePath $crateHash) -ne $crateHash) { throw "The pinned crate hash check returned the wrong digest." }
+    $rejected = $false
+    try { Assert-PinnedCrateArchive $cratePath ('0' * 64) }
+    catch { $rejected = $true }
+    if (-not $rejected) { throw "The crate hash check accepted tampered bytes." }
+  }
+  finally {
+    if (Test-Path -LiteralPath $cratePath) { Remove-Item -LiteralPath $cratePath -Force }
   }
 
   $manifestPath = Join-Path $env:TEMP "release-driver-manifest-test-$([guid]::NewGuid().ToString('N')).json"
@@ -68,61 +93,43 @@ if (-not $tauriPin -or $tauriPin.version -notmatch '^\d+\.\d+\.\d+$' -or $tauriP
 }
 
 $build = Join-Path $target "smoke-driver-build"
+$sourceId = [guid]::NewGuid().ToString('N')
+$crateArchive = Join-Path $target "tauri-driver-$($tauriPin.version)-$sourceId.crate"
+$sourcePath = Join-Path $target "tauri-driver-$($tauriPin.version)-$sourceId"
+$crateUrl = "https://crates.io/api/v1/crates/tauri-driver/$($tauriPin.version)/download"
+New-Item -ItemType Directory -Path $target -Force | Out-Null
+Invoke-WebRequest -Uri $crateUrl -OutFile $crateArchive -TimeoutSec 120
+$crateHash = Assert-PinnedCrateArchive $crateArchive $tauriPin.crateSha256
+$archiveEntries = @(& tar.exe -tzf $crateArchive)
+if ($LASTEXITCODE -ne 0) { throw "Could not inspect the pinned tauri-driver source archive." }
+Assert-SafeArchiveEntries $sourcePath @($archiveEntries | ForEach-Object { [pscustomobject]@{ FullName = $_ } })
+New-Item -ItemType Directory -Path $sourcePath -Force | Out-Null
+& tar.exe -xzf $crateArchive -C $sourcePath --strip-components=1
+if ($LASTEXITCODE -ne 0) { throw "Could not extract the verified tauri-driver source archive." }
+$cargoToml = Join-Path $sourcePath 'Cargo.toml'
+if (-not (Test-Path -LiteralPath $cargoToml -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $sourcePath 'Cargo.lock') -PathType Leaf)) {
+  throw "The verified tauri-driver archive lacks its manifest or locked dependency file."
+}
+$packageBlock = [regex]::Match((Get-Content -LiteralPath $cargoToml -Raw), '(?ms)^\[package\]\s*(.*?)(?=^\[|\z)').Groups[1].Value
+if ($packageBlock -notmatch '(?m)^name\s*=\s*"tauri-driver"\s*$' -or $packageBlock -notmatch ('(?m)^version\s*=\s*"' + [regex]::Escape($tauriPin.version) + '"\s*$')) {
+  throw "The verified tauri-driver source manifest does not match the pinned package version."
+}
 $cargoHome = Join-Path $target "smoke-cargo-home-$([guid]::NewGuid().ToString('N'))"
 $previousCargoHome = $env:CARGO_HOME
 $env:CARGO_HOME = $cargoHome
 try {
-  & cargo install tauri-driver --version $tauriPin.version --locked --force --root $tools --target-dir $build
+  & cargo install --path $sourcePath --locked --force --root $tools --target-dir $build
   $cargoExitCode = $LASTEXITCODE
 }
 finally {
   if ($null -eq $previousCargoHome) { Remove-Item Env:CARGO_HOME -ErrorAction SilentlyContinue }
   else { $env:CARGO_HOME = $previousCargoHome }
 }
-if ($cargoExitCode -ne 0) { throw "cargo install tauri-driver failed with exit code $cargoExitCode." }
+if ($cargoExitCode -ne 0) { throw "cargo install from the verified tauri-driver source failed with exit code $cargoExitCode." }
 
-$crateCache = Join-Path $cargoHome "registry/cache"
-$crateFiles = @(Get-ChildItem -LiteralPath $crateCache -Filter "tauri-driver-$($tauriPin.version).crate" -File -Recurse)
-if ($crateFiles.Count -eq 0) { throw "Cargo did not retain the pinned tauri-driver source archive." }
-$crateHashes = @($crateFiles | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } | Select-Object -Unique)
-if ($crateHashes.Count -ne 1 -or $crateHashes[0] -ne $tauriPin.crateSha256) {
-  throw "The cached tauri-driver source archive does not match the pinned crate checksum."
-}
-
-$runtimeGuid = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-$runtimeKeys = @(
-  @{ Path = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$runtimeGuid"; Scope = "machine" },
-  @{ Path = "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$runtimeGuid"; Scope = "machine" },
-  @{ Path = "HKCU:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$runtimeGuid"; Scope = "user" }
-)
-$runtimeRegistration = $null
-foreach ($entry in $runtimeKeys) {
-  if (Test-Path -LiteralPath $entry.Path) {
-    $candidate = Get-ItemProperty -LiteralPath $entry.Path -ErrorAction Stop
-    if ($candidate.pv -match '^\d+(?:\.\d+){3}$' -and $candidate.pv -ne "0.0.0.0") {
-      $runtimeRegistration = $entry
-      $runtimeRegistration.Version = $candidate.pv
-      $runtimeRegistration.Location = $candidate.location
-      break
-    }
-  }
-}
+$runtimeRegistration = Get-InstalledWebView2Runtime
 if (-not $runtimeRegistration) { throw "The Evergreen WebView2 Runtime is not registered." }
 $runtimeVersion = $runtimeRegistration.Version
-$runtimeFiles = @()
-if ($runtimeRegistration.Location) {
-  $runtimeFiles += Join-Path (Join-Path $runtimeRegistration.Location $runtimeVersion) "msedgewebview2.exe"
-  $runtimeFiles += Join-Path $runtimeRegistration.Location "msedgewebview2.exe"
-}
-if ($runtimeRegistration.Scope -eq "user" -and $env:LOCALAPPDATA) {
-  $runtimeFiles += Join-Path $env:LOCALAPPDATA "Microsoft\EdgeWebView\Application\$runtimeVersion\msedgewebview2.exe"
-}
-$runtimeFiles += Join-Path ${env:ProgramFiles(x86)} "Microsoft\EdgeWebView\Application\$runtimeVersion\msedgewebview2.exe"
-$runtimeFiles += Join-Path $env:ProgramFiles "Microsoft\EdgeWebView\Application\$runtimeVersion\msedgewebview2.exe"
-$runtimeExecutable = $runtimeFiles | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-if (-not $runtimeExecutable) { throw "The registered WebView2 runtime executable was not found." }
-$runtimeFileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($runtimeExecutable).ProductVersion
-if ($runtimeFileVersion -ne $runtimeVersion) { throw "The WebView2 registry and executable versions disagree." }
 
 $pageUrl = "https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver"
 $page = (Invoke-WebRequest -Uri $pageUrl -UseBasicParsing -TimeoutSec 30).Content
@@ -166,8 +173,8 @@ $manifest = [ordered]@{
   preparedAtUtc = [DateTime]::UtcNow.ToString("o")
   tauriDriver = [ordered]@{
     version = $tauriPin.version
-    crateUrl = "https://crates.io/api/v1/crates/tauri-driver/$($tauriPin.version)/download"
-    crateSha256 = $tauriPin.crateSha256
+    crateUrl = $crateUrl
+    crateSha256 = $crateHash
     binarySha256 = $tauriHash
   }
   webview2 = [ordered]@{
