@@ -313,6 +313,8 @@ export class DesktopBridge {
   highestQueuedSeq(): number {
     let highest = 0;
     for (const frame of this.queue) {
+      // Transient deltas carry seqs but are never durable progress.
+      if (!frame.event.durable) continue;
       const seq = eventSeq(frame.event);
       if (seq > highest) highest = seq;
     }
