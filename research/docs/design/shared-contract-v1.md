@@ -43,6 +43,12 @@ The shared event envelope carries schema/protocol version, record/event identity
 
 Use the [existing fixture manifest](fixture-contract.md): FUI-W3 accessibility, FUI-W4 stream/backpressure, FUI-W5 approval races, FUI-W9 CSP. Contract fixtures establish rejection and round-trip behavior; they do not substitute for real native/packaged-app tests, UIA or the independent scripted `M` protocol.
 
+## Shared transport defaults and native lifecycle
+
+`TRANSPORT_LIMITS` exports frozen proposed defaults: 65,536 inline bytes; 262,144 encoded frame bytes including the four-byte big-endian length header; 1,024 pending frames and 8,388,608 pending bytes; a 16 ms transient coalescing window; and 256 renderer frames and 4,194,304 renderer bytes. These shared values establish no throughput or installed transport qualification. TD-07/08/15 own enforcement and qualification in their actual native, client and engine paths.
+
+`NativeLifecycleEvent` is an out-of-band native control notification with protocol version 1, kind `engine_exited`, boolean `expected`, numeric or null `exitCode`, and boolean `cleanupComplete`. It is separate from the durable event envelope and adds no operation or authority. This additive library change leaves existing validators and persisted formats unchanged.
+
 ## Build and handoff
 
 `npm run test:contracts -- --case TD-01` compiles strict TypeScript and tests the compiled public workspace export. Unknown case selectors fail. The initial `test:release-gate` runs the contracts suite because it is the only product-source suite present. CI executes the contract gate on Linux and Windows and adds `Analyze JavaScript` to CodeQL/protection/promotion requirements; review approval remains zero.
