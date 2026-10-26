@@ -424,17 +424,17 @@ test("durable canonical-workspace ownership: single writer, CAS epoch", () => {
     (error: unknown) =>
       error instanceof StoreError && error.code === "OWNERSHIP_STALE_EPOCH",
   );
-  store.releaseWorkspace(ws, "session-a", 2);
+  store.releaseWorkspace(ws, "session-a", 2); // release advances the fence to 3
   assert.equal(store.workspaceOwner(ws), undefined);
   const b = store.acquireWorkspace(ws, "session-b");
-  assert.equal(b.epoch, 3); // epochs never repeat
+  assert.equal(b.epoch, 4); // epochs never repeat, even after release
 
   // Ownership survives reopen: it is durable state, not memory.
   store.close();
   const reopened = Store.open(path);
   const owner = reopened.workspaceOwner(ws);
   assert.equal(owner?.ownerSessionId, "session-b");
-  assert.equal(owner?.epoch, 3);
+  assert.equal(owner?.epoch, 4);
   reopened.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -454,11 +454,11 @@ test("stale ownership epochs can never revalidate across workspaces", () => {
   // b's stale epoch 3 can never revalidate on re-acquire (gets 5).
   const b3 = store.renewWorkspace(w2, "s-b", 2);
   assert.equal(b3.epoch, 3);
-  store.releaseWorkspace(w2, "s-b", 3);
+  store.releaseWorkspace(w2, "s-b", 3); // release advances the fence to 4
   const a4 = store.renewWorkspace(w1, "s-a", 1);
-  assert.equal(a4.epoch, 4);
+  assert.equal(a4.epoch, 5);
   const b5 = store.acquireWorkspace(w2, "s-b");
-  assert.equal(b5.epoch, 5);
+  assert.equal(b5.epoch, 6);
   assert.throws(
     () => store.renewWorkspace(w2, "s-b", 3),
     (error: unknown) =>
@@ -663,5 +663,108 @@ test("read-only open validates, reads, and rejects writes explicitly", () => {
       error instanceof StoreError && error.code === "STORE_READ_ONLY",
   );
   ro.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("release advances the ownership fence: pre-release backup cannot resurrect the owner", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const ws = "C:\\ws\\fence";
+  store.acquireWorkspace(ws, "session-a"); // epoch 1
+  const backupPath = join(dir, "backup.db");
+  store.backup(backupPath); // carries ownership epoch 1 with owner A
+  store.releaseWorkspace(ws, "session-a", 1); // live fence advances to 2
+
+  // Restoring the pre-release snapshot would resurrect released owner A with
+  // a stale token and block session B � refused.
+  assert.throws(
+    () => store.restore(backupPath),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "STALE_OWNERSHIP",
+  );
+  // The released state survived the refused restore; B can acquire.
+  assert.equal(store.workspaceOwner(ws), undefined);
+  const b = store.acquireWorkspace(ws, "session-b");
+  assert.equal(b.epoch, 3);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("restore stages the replacement and preserves live data on staging failure", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const live = record("run");
+  store.append({ kind: "run", record: live }, caller);
+  const backupPath = join(dir, "backup.db");
+  store.backup(backupPath);
+  store.append({ kind: "run", record: record("run") }, caller);
+
+  // A directory occupies the staging path: the staging copy cannot be made,
+  // so restore must fail before ANY live byte is swapped.
+  mkdirSync(`${path}.restore-staging`);
+  assert.throws(() => store.restore(backupPath));
+  assert.equal(store.cursor(), 2);
+  assert.ok(store.get(live.recordId as string));
+  store.close();
+
+  // A successful restore leaves no preserved original behind.
+  const reopened = Store.open(path);
+  reopened.restore(backupPath);
+  assert.ok(!existsSync(`${path}.restore-original`));
+  assert.ok(!existsSync(`${path}.restore-staging`));
+  assert.equal(reopened.cursor(), 1); // backup state, per restore semantics
+  reopened.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("malformed epoch metadata fails closed everywhere", () => {
+  for (const bad of ["abc", "-3", "1.5", "9007199254740992"]) {
+    const dir = freshDir();
+    const path = join(dir, "store.db");
+    const store = Store.open(path);
+    store.append({ kind: "run", record: record("run") }, caller);
+    const del = record("run");
+    store.append({ kind: "run", record: del }, caller);
+    store.noteDeletion(del.recordId as string); // creates deletion_epoch row
+    store.close();
+    const raw = new DatabaseSync(path);
+    raw
+      .prepare("UPDATE store_meta SET value = ? WHERE key = 'deletion_epoch'")
+      .run(bad);
+    raw.close();
+    const tampered = Store.open(path);
+    // Reads, writes and epoch guards all refuse the corrupt counter.
+    assert.throws(() => tampered.deletionEpoch(), StoreError);
+    assert.throws(() => tampered.noteDeletion("rec-x"), StoreError);
+    tampered.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+  // Ownership side: malformed ownership_epoch refuses restore and acquire.
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const backupPath = join(dir, "backup.db");
+  store.acquireWorkspace("C:\\ws\\seed", "s0"); // creates ownership_epoch row
+  store.backup(backupPath);
+  store.close();
+  const raw = new DatabaseSync(path);
+  raw
+    .prepare("UPDATE store_meta SET value = '-1' WHERE key = 'ownership_epoch'")
+    .run();
+  raw.close();
+  const tampered = Store.open(path);
+  assert.throws(
+    () => tampered.restore(backupPath),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "STORE_LAYOUT",
+  );
+  assert.throws(
+    () => tampered.acquireWorkspace("C:\\ws\\x", "s"),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "STORE_LAYOUT",
+  );
+  tampered.close();
   rmSync(dir, { recursive: true, force: true });
 });

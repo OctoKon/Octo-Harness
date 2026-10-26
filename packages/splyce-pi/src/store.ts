@@ -16,6 +16,7 @@ import {
   copyFileSync,
   existsSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -519,11 +520,23 @@ export class Store {
     return { records, skippedUnknownSchema };
   }
 
-  private metaGet(key: string): number {
-    const row = this.db
-      .prepare("SELECT value FROM store_meta WHERE key = ?")
-      .get(key) as { value: string } | undefined;
-    return row === undefined ? 0 : Number(row.value);
+  /**
+   * Parses an epoch counter from store_meta. A persisted epoch must be a
+   * finite nonnegative safe integer; anything malformed fails closed so a
+   * corrupt counter can never silently restart at zero or allocate NaN.
+   */
+  private static parseEpoch(
+    raw: string | undefined,
+    key: string,
+  ): number | undefined {
+    if (raw === undefined) return undefined;
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new StoreError(
+        "STORE_LAYOUT",
+        `store_meta ${key} = ${JSON.stringify(raw)} is not a finite nonnegative safe integer; failing closed`,
+      );
+    return value;
   }
 
   /**
@@ -535,7 +548,7 @@ export class Store {
     this.assertWritable();
     try {
       this.db.exec("BEGIN IMMEDIATE;");
-      const epoch = this.metaGet("deletion_epoch") + 1;
+      const epoch = Store.epochOf(this.db, "deletion_epoch", "deletions") + 1;
       this.db
         .prepare(
           "INSERT INTO deletions (record_id, generation, deleted_at) VALUES (?, ?, ?) " +
@@ -573,7 +586,8 @@ export class Store {
     const row = db
       .prepare("SELECT value FROM store_meta WHERE key = ?")
       .get(key) as { value: string } | undefined;
-    if (row !== undefined) return Number(row.value);
+    const parsed = Store.parseEpoch(row?.value, key);
+    if (parsed !== undefined) return parsed;
     const history = db
       .prepare(`SELECT COUNT(*) AS n FROM ${historyTable}`)
       .get() as { n: number | bigint };
@@ -650,7 +664,7 @@ export class Store {
    * so it is refused.
    */
   restore(backupPath: string): void {
-    this.assertOpen();
+    this.assertWritable();
     let backup: { deletionEpoch: number; ownershipEpoch: number };
     try {
       backup = Store.validateBackup(backupPath);
@@ -669,19 +683,63 @@ export class Store {
         "STALE_OWNERSHIP",
         `backup ownership epoch ${String(backup.ownershipEpoch)} is older than current ${String(liveOwnershipEpoch)}; restoring would roll back the workspace writer state`,
       );
+
+    // Stage the replacement next to the live file and revalidate the staged
+    // bytes: the live file is untouched until a validated, reopenable
+    // replacement exists.
+    const staging = `${this.path}.restore-staging`;
+    const original = `${this.path}.restore-original`;
+    try {
+      copyFileSync(backupPath, staging);
+      Store.validateBackup(staging);
+    } catch (error) {
+      try {
+        // The staging path is store-reserved; clear any blocking artifact so
+        // a later restore attempt is not permanently wedged.
+        rmSync(staging, { recursive: true, force: true });
+      } catch {
+        // the reportable error is the copy/validation failure
+      }
+      throw error instanceof StoreError ? error : mapSqliteError(error);
+    }
+
+    // Swap with the original preserved until the staged store reopens; any
+    // failure reverts to the preserved original so acknowledged state is
+    // never destroyed.
     this.close();
     try {
       for (const suffix of ["-wal", "-shm"])
         if (existsSync(this.path + suffix)) rmSync(this.path + suffix);
-      copyFileSync(backupPath, this.path);
-    } finally {
+      if (existsSync(this.path)) renameSync(this.path, original);
+      renameSync(staging, this.path);
       const reopened = Store.open(this.path, {
         busyTimeoutMs: this.busyTimeoutMs,
         maxInlineBytes: this.maxInlineBytes,
       });
-      // take over the reopened handle (internal fields, see class docs)
       this.db = reopened.db;
       this.closed = false;
+    } catch (error) {
+      try {
+        if (existsSync(this.path)) rmSync(this.path, { force: true });
+        if (existsSync(original)) renameSync(original, this.path);
+        const recovered = Store.open(this.path, {
+          busyTimeoutMs: this.busyTimeoutMs,
+          maxInlineBytes: this.maxInlineBytes,
+        });
+        this.db = recovered.db;
+        this.closed = false;
+      } catch (recoveryError) {
+        throw new StoreError(
+          "STORE_RESTORE_FAILED",
+          `restore failed (${error instanceof Error ? error.message : String(error)}) and live recovery also failed (${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)})`,
+        );
+      }
+      throw error instanceof StoreError ? error : mapSqliteError(error);
+    }
+    try {
+      rmSync(original, { force: true });
+    } catch {
+      // leftover preserved copy is harmless; the live store is authoritative
     }
   }
 
@@ -705,7 +763,8 @@ export class Store {
       if (row === undefined) {
         // Epochs never repeat: the counter is globally monotonic in store_meta,
         // so a released workspace is re-acquired at a strictly higher epoch.
-        const epoch = this.metaGet("ownership_epoch") + 1;
+        const epoch =
+          Store.epochOf(this.db, "ownership_epoch", "workspace_ownership") + 1;
         this.db
           .prepare(
             "INSERT INTO workspace_ownership (workspace_id, owner_session_id, epoch, acquired_at, renewed_at) " +
@@ -786,7 +845,10 @@ export class Store {
       // lower than the global counter, so a stale epoch can never revalidate
       // after releases/renewals of other workspaces.
       const epoch =
-        Math.max(this.metaGet("ownership_epoch"), Number(row.epoch)) + 1;
+        Math.max(
+          Store.epochOf(this.db, "ownership_epoch", "workspace_ownership"),
+          Number(row.epoch),
+        ) + 1;
       this.db
         .prepare(
           "UPDATE workspace_ownership SET epoch = ?, renewed_at = ? WHERE workspace_id = ?",
@@ -840,6 +902,20 @@ export class Store {
           "OWNERSHIP_STALE_EPOCH",
           `workspace ${workspaceId} is at epoch ${String(row.epoch)}, caller presented ${String(expectedEpoch)}`,
         );
+      // Release advances the global fence: a backup taken before this
+      // release carries the old epoch, so restoring it can never resurrect
+      // the released owner or a stale token.
+      const epoch =
+        Math.max(
+          Store.epochOf(this.db, "ownership_epoch", "workspace_ownership"),
+          Number(row.epoch),
+        ) + 1;
+      this.db
+        .prepare(
+          "INSERT INTO store_meta (key, value) VALUES ('ownership_epoch', ?) " +
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .run(String(epoch));
       this.db
         .prepare("DELETE FROM workspace_ownership WHERE workspace_id = ?")
         .run(workspaceId);

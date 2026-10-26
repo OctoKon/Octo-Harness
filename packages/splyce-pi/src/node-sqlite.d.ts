@@ -46,4 +46,5 @@ declare module "node:fs" {
     data: string,
     options?: string | { encoding?: string | undefined },
   ): void;
+  export function renameSync(oldPath: string, newPath: string): void;
 }
