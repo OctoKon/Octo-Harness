@@ -151,3 +151,28 @@ test("exactly one resync per cursor advance", () => {
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("replay is session-scoped: s1 never receives s2 records in one scope", () => {
+  const dir = freshDir();
+  const { store, receipts } = openReceipts(dir);
+  const callerS1 = { ...caller, sessionId: "s1" };
+  const callerS2 = { ...caller, sessionId: "s2" };
+  const one = record("rec-m1");
+  const two = record("rec-m2");
+  receipts.commitStages([{ kind: "run", record: one }], callerS1);
+  receipts.commitStages([{ kind: "run", record: two }], callerS2);
+
+  // s1 replay returns only s1's records, and vice versa.
+  const forS1 = receipts.replay("w-demo", 0, callerS1);
+  assert.deepEqual(
+    forS1.records.map((r) => (r.record as { recordId: string }).recordId),
+    [one.recordId],
+  );
+  const forS2 = receipts.replay("w-demo", 0, callerS2);
+  assert.deepEqual(
+    forS2.records.map((r) => (r.record as { recordId: string }).recordId),
+    [two.recordId],
+  );
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});

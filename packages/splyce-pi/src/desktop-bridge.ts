@@ -83,7 +83,12 @@ export class DesktopBridge {
     return {
       ...this.baseContext,
       lastDurableSeq: this.receipts.durableCursor(),
-      maxInlineBytes: this.limits.maxInlineBytes,
+      // The inline budget can never exceed the frozen shared limit, whatever
+      // the caller's own context claims.
+      maxInlineBytes: Math.min(
+        this.baseContext.maxInlineBytes,
+        TRANSPORT_LIMITS.maxInlineBytes,
+      ),
     };
   }
 
@@ -123,6 +128,13 @@ export class DesktopBridge {
       );
     }
     const frame = this.encode(event);
+    // Encoded-frame cap from the frozen shared constants — never overridable
+    // by constructor options or caller context.
+    if (frame.bytes > TRANSPORT_LIMITS.maxEncodedFrameBytes)
+      throw new BridgeError(
+        "CONTRACT_FRAME_TOO_LARGE",
+        `encoded frame is ${String(frame.bytes)} bytes; the shared limit is ${String(TRANSPORT_LIMITS.maxEncodedFrameBytes)}`,
+      );
 
     if (event.durable) {
       // Durable saturation: refuse further delivery, force a scoped resync.
@@ -139,7 +151,10 @@ export class DesktopBridge {
       return undefined;
     }
 
-    // Transient (stream deltas): coalesce within the window per kind+runId.
+    // Transient (stream deltas): the only lossless coalescing is dropping an
+    // EXACT duplicate of the still-pending frame within the window — a
+    // repeated identical delta carries no new data. Incremental deltas are
+    // never dropped or replaced: a and b both drain, in order.
     const payload = event.payload as Record<string, unknown> | undefined;
     const runId = typeof payload?.runId === "string" ? payload.runId : "";
     const key = `${event.kind}:${runId}`;
@@ -147,16 +162,13 @@ export class DesktopBridge {
     const previous = this.transient.get(key);
     if (
       previous !== undefined &&
-      now - previous.at <= this.limits.transientCoalesceWindowMs
+      now - previous.at <= this.limits.transientCoalesceWindowMs &&
+      previous.frame.event.kind === event.kind &&
+      JSON.stringify(previous.frame.event.payload) ===
+        JSON.stringify(event.payload)
     ) {
-      // Replace the older delta in place: same cost, freshest data.
       const index = this.queue.indexOf(previous.frame);
-      if (index >= 0) {
-        this.queue[index] = frame;
-        this.queueBytes += frame.bytes - previous.frame.bytes;
-        this.transient.set(key, { frame, at: now });
-        return undefined;
-      }
+      if (index >= 0) return undefined; // exact duplicate, lossless skip
     }
     this.transient.set(key, { frame, at: now });
 
@@ -183,19 +195,13 @@ export class DesktopBridge {
   }
 
   private resyncFrame(): Frame {
+    // Every overflow emits its own resync control frame; the exactly-one
+    // rule is per overflow, not per cursor advance.
     const fromSeq = this.receipts.durableCursor();
     if (fromSeq === 0)
       throw new BridgeError(
         "BRIDGE_OVERFLOW",
         "queue overflow with no durable progress; nothing to resync",
-      );
-    if (
-      this.lastResyncFromSeq !== undefined &&
-      fromSeq <= this.lastResyncFromSeq
-    )
-      throw new BridgeError(
-        "RESYNC_NOT_PENDING",
-        `no durable progress since the resync at ${String(this.lastResyncFromSeq)}`,
       );
     this.lastResyncFromSeq = fromSeq;
     const event = {

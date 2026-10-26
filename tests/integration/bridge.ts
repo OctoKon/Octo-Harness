@@ -127,25 +127,58 @@ test("durable events queue, validate and drain as bounded frames", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("transient deltas coalesce within the window per kind+runId", () => {
+test("transient deltas are lossless: distinct deltas all drain, exact duplicates skip", () => {
   const { bridge, store, dir } = makeBridge();
   bridge.submit(event("turn.stream_delta", { runId: "r1", delta: "a" }));
   bridge.submit(event("turn.stream_delta", { runId: "r1", delta: "ab" }));
   bridge.submit(event("turn.stream_delta", { runId: "r1", delta: "abc" }));
-  // Three submits, one frame left after coalescing (freshest wins).
-  assert.equal(bridge.status().pendingFrames, 1);
+  // Incremental deltas are never dropped: all three drain, in order.
+  assert.equal(bridge.status().pendingFrames, 3);
   const { frames } = bridge.drain();
-  assert.equal(frames.length, 1);
-  const decoded = JSON.parse(
-    new TextDecoder().decode(frames[0]!.encoded.slice(4)),
-  ) as { payload: { delta: string } };
-  assert.equal(decoded.payload.delta, "abc");
+  assert.equal(frames.length, 3);
+  const deltas = frames.map(
+    (f) =>
+      (
+        JSON.parse(new TextDecoder().decode(f.encoded.slice(4))) as {
+          payload: { delta: string };
+        }
+      ).payload.delta,
+  );
+  assert.deepEqual(deltas, ["a", "ab", "abc"]);
+
+  // An exact duplicate of the pending delta within the window is losslessly
+  // skipped (no new data), keeping the queue bounded without losing chunks.
+  const dup = event("turn.stream_delta", { runId: "r1", delta: "dup" });
+  bridge.submit(dup);
+  const before = bridge.status().pendingFrames;
+  bridge.submit({ ...dup, eventId: "evt-dup2", recordId: "rec-dup2" });
+  assert.equal(bridge.status().pendingFrames, before);
 
   // Different runId does not coalesce with the previous one.
   bridge.submit(event("turn.stream_delta", { runId: "r1", delta: "x" }));
   bridge.submit(event("turn.stream_delta", { runId: "r2", delta: "y" }));
-  assert.equal(bridge.status().pendingFrames, 2);
+  assert.equal(bridge.status().pendingFrames, before + 2);
   bridge.drain();
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an oversized encoded frame is rejected against the frozen limit", () => {
+  const { bridge, store, dir } = makeBridge();
+  // Caller context claims a huge inline budget; the bridge clamps it to the
+  // shared constant, so an oversized inline payload is refused either at
+  // validation or at the encoded-frame cap.
+  const huge = event("turn.started", {
+    runId: "r1",
+    turnId: "t1",
+    blob: "x".repeat(400000),
+  });
+  assert.throws(
+    () => bridge.submit(huge),
+    (error: unknown) =>
+      error instanceof BridgeError && error.code === "CONTRACT_FRAME_TOO_LARGE",
+  );
+  assert.equal(bridge.status().pendingFrames, 0);
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -215,22 +248,24 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
   assert.equal(drained.frames.length, 0);
   assert.equal(bridge.status().paused, false);
 
-  // No new durable progress: a second resync is refused (exactly-one rule).
-  assert.throws(
-    () => bridge["resyncFrame"](),
-    (error: unknown) =>
-      error instanceof BridgeError && error.code === "RESYNC_NOT_PENDING",
-  );
-
-  // New durable progress re-arms the resync with the advanced cursor.
-  receipts_commit(store, caller, record);
+  // Every overflow emits its own resync; a second overflow at the same
+  // durable cursor produces a new resync (not an error).
   const resync2 = bridge["resyncFrame"]();
+  assert.equal(resync2.event.kind, "stream.resync");
   assert.equal(
     (resync2.event.payload as { fromSeq: number }).fromSeq,
     store.cursor("w-demo"),
   );
+
+  // New durable progress advances the resync cursor.
+  receipts_commit(store, caller, record);
+  const resync3 = bridge["resyncFrame"]();
   assert.equal(
-    (resync2.event.payload as { fromSeq: number }).fromSeq > payload.fromSeq,
+    (resync3.event.payload as { fromSeq: number }).fromSeq,
+    store.cursor("w-demo"),
+  );
+  assert.equal(
+    (resync3.event.payload as { fromSeq: number }).fromSeq > payload.fromSeq,
     true,
   );
   store.close();

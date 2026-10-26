@@ -21,7 +21,7 @@ import {
   writeFileSync,
 } from "node:fs";
 
-const LAYOUT_VERSION = 1 as const;
+const LAYOUT_VERSION = 2 as const;
 
 const RECORD_COLUMNS = [
   "seq",
@@ -29,6 +29,7 @@ const RECORD_COLUMNS = [
   "record_id",
   "schema_version",
   "scope_id",
+  "session_id",
   "created_at",
   "payload",
 ] as const;
@@ -192,7 +193,9 @@ export class Store {
     if (stampedVersion !== String(LAYOUT_VERSION))
       throw new StoreError(
         "STORE_LAYOUT",
-        `store layout version ${stampedVersion} is not supported (expected ${String(LAYOUT_VERSION)})`,
+        stampedVersion === "1"
+          ? `store layout version 1 predates session attribution; run Store.migrateV1(path) explicitly (expected ${String(LAYOUT_VERSION)})`
+          : `store layout version ${stampedVersion} is not supported (expected ${String(LAYOUT_VERSION)})`,
       );
     const required: Array<[string, readonly string[]]> = [
       ["records", RECORD_COLUMNS],
@@ -207,6 +210,62 @@ export class Store {
           "STORE_LAYOUT",
           `store claims layout ${stampedVersion} but table ${table} lacks columns: ${missing.join(", ")}`,
         );
+    }
+  }
+
+  /**
+   * Explicit v1 -> v2 migration: adds session attribution to the records
+   * table and stamps layout 2. Never invoked implicitly by open() — a v1
+   * store refuses to open until it is migrated on purpose, so the schema
+   * change cannot happen silently. Existing rows keep their bytes and get
+   * session_id '' (unknown session); session-filtered replay excludes them.
+   */
+  static migrateV1(path: string): void {
+    const db = new DatabaseSync(path, { timeout: 5000 });
+    try {
+      const stamped = db
+        .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
+        .get() as { value: string } | undefined;
+      if (stamped === undefined)
+        throw new StoreError(
+          "STORE_LAYOUT",
+          "store is not stamped; nothing to migrate",
+        );
+      if (stamped.value !== "1")
+        throw new StoreError(
+          "STORE_LAYOUT",
+          `store layout version ${stamped.value} is not migratable to ${String(LAYOUT_VERSION)} by migrateV1`,
+        );
+      const present = Store.tableColumns(db, "records");
+      for (const column of ["seq", "record_id", "payload"]) {
+        if (!present.has(column))
+          throw new StoreError(
+            "STORE_LAYOUT",
+            `records table lacks ${column}; store is not a valid v1 store`,
+          );
+      }
+      if (present.has("session_id"))
+        throw new StoreError(
+          "STORE_LAYOUT",
+          "records table already carries session_id; migrateV1 refuses to run twice",
+        );
+      db.exec("BEGIN IMMEDIATE;");
+      db.exec(
+        "ALTER TABLE records ADD COLUMN session_id TEXT NOT NULL DEFAULT ''",
+      );
+      db.prepare(
+        "UPDATE store_meta SET value = ? WHERE key = 'layout_version'",
+      ).run(String(LAYOUT_VERSION));
+      db.exec("COMMIT;");
+    } catch (error) {
+      try {
+        if (db.isTransaction) db.exec("ROLLBACK;");
+      } catch {
+        // the original failure is the reportable one
+      }
+      throw error instanceof StoreError ? error : mapSqliteError(error);
+    } finally {
+      db.close();
     }
   }
 
@@ -263,6 +322,7 @@ export class Store {
             "record_id TEXT NOT NULL UNIQUE, " +
             "schema_version INTEGER NOT NULL, " +
             "scope_id TEXT NOT NULL, " +
+            "session_id TEXT NOT NULL, " +
             "created_at TEXT NOT NULL, " +
             "payload TEXT NOT NULL)",
         );
@@ -354,17 +414,19 @@ export class Store {
   private insertValidated(
     kind: RecordKind,
     record: RecordByKind[RecordKind],
+    sessionId: string,
   ): number {
     const result = this.db
       .prepare(
-        "INSERT INTO records (kind, record_id, schema_version, scope_id, created_at, payload) " +
-          "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO records (kind, record_id, schema_version, scope_id, session_id, created_at, payload) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         kind,
         record.recordId,
         CONTRACT_VERSION,
         record.scopeId,
+        sessionId,
         record.createdAt,
         JSON.stringify(record),
       );
@@ -394,7 +456,7 @@ export class Store {
       throw mapSqliteError(error);
     }
     try {
-      const seq = this.insertValidated(input.kind, validated);
+      const seq = this.insertValidated(input.kind, validated, caller.sessionId);
       return { seq, recordId: validated.recordId };
     } catch (error) {
       throw mapSqliteError(error);
@@ -439,7 +501,7 @@ export class Store {
       this.db.exec("BEGIN IMMEDIATE;");
       const seqs: number[] = [];
       for (const [kind, record] of prepared) {
-        seqs.push(this.insertValidated(kind, record));
+        seqs.push(this.insertValidated(kind, record, caller.sessionId));
       }
       this.db.exec("COMMIT;");
       return { seqs };
@@ -495,15 +557,30 @@ export class Store {
     return this.readRow(row);
   }
 
-  /** Ordered read of a scope's records after a cursor. */
-  list(scopeId: string, afterSeq = 0): ListResult {
+  /**
+   * Ordered read of a scope's records after a cursor. When `sessionId` is
+   * given, only records committed by that session are returned — replay for
+   * one session never mixes another session's records. Records written
+   * before session attribution (migrated v1 rows) carry '' and are excluded
+   * from session-filtered reads.
+   */
+  list(scopeId: string, afterSeq = 0, sessionId?: string): ListResult {
     this.assertOpen();
-    const rows = this.db
-      .prepare(
-        "SELECT seq, kind, schema_version, payload FROM records " +
-          "WHERE scope_id = ? AND seq > ? ORDER BY seq ASC",
-      )
-      .all(scopeId, afterSeq) as unknown[];
+    const rows = (
+      sessionId === undefined
+        ? this.db
+            .prepare(
+              "SELECT seq, kind, schema_version, payload FROM records " +
+                "WHERE scope_id = ? AND seq > ? ORDER BY seq ASC",
+            )
+            .all(scopeId, afterSeq)
+        : this.db
+            .prepare(
+              "SELECT seq, kind, schema_version, payload FROM records " +
+                "WHERE scope_id = ? AND seq > ? AND session_id = ? ORDER BY seq ASC",
+            )
+            .all(scopeId, afterSeq, sessionId)
+    ) as unknown[];
     const records: StoredRecord[] = [];
     let skippedUnknownSchema = 0;
     for (const row of rows) {

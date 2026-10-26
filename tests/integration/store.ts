@@ -479,7 +479,7 @@ test("a stamped v1 store with missing tables fails closed, never healed", () => 
   );
   raw
     .prepare(
-      "INSERT INTO store_meta (key, value) VALUES ('layout_version', '1')",
+      "INSERT INTO store_meta (key, value) VALUES ('layout_version', '2')",
     )
     .run();
   raw.close();
@@ -799,5 +799,62 @@ test("first-swap rename failure preserves live bytes and keeps the handle usable
   const verify = Store.open(path);
   assert.equal(verify.cursor(), 3);
   verify.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("v1 stores refuse to open until explicit migrateV1; migration preserves bytes", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  // Build a genuine v1 store: old records columns, stamped layout 1, with a
+  // committed record written before session attribution existed.
+  const raw = new DatabaseSync(path);
+  raw.exec(
+    "CREATE TABLE store_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE records (seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, " +
+      "record_id TEXT NOT NULL UNIQUE, schema_version INTEGER NOT NULL, scope_id TEXT NOT NULL, " +
+      "created_at TEXT NOT NULL, payload TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE deletions (record_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, deleted_at TEXT NOT NULL)",
+  );
+  raw.exec(
+    "CREATE TABLE workspace_ownership (workspace_id TEXT PRIMARY KEY, owner_session_id TEXT NOT NULL, " +
+      "epoch INTEGER NOT NULL, acquired_at TEXT NOT NULL, renewed_at TEXT NOT NULL)",
+  );
+  raw.prepare("INSERT INTO store_meta VALUES ('layout_version', '1')").run();
+  raw.close();
+
+  // open() refuses a v1 store � explicit migration only, never silent.
+  assert.throws(
+    () => Store.open(path),
+    (error: unknown) =>
+      error instanceof StoreError &&
+      error.code === "STORE_LAYOUT" &&
+      error.message.includes("migrateV1"),
+  );
+
+  // migrateV1 adds session attribution and stamps 2 without touching rows.
+  Store.migrateV1(path);
+  const migrated = Store.open(path);
+  assert.equal(migrated.cursor(), 0);
+  migrated.close();
+
+  // After migration, appends attribute sessions and replay stays scoped.
+  const store = Store.open(path);
+  const a = record("run");
+  const callerS1 = { ...caller, sessionId: "s1" };
+  store.append({ kind: "run", record: a }, callerS1);
+  assert.equal(store.cursor(), 1);
+  const scoped = store.list("w-demo", 0, "s1");
+  assert.equal(scoped.records.length, 1);
+  store.close();
+
+  // migrateV1 refuses to run twice (store is now v2).
+  assert.throws(
+    () => Store.migrateV1(path),
+    (error: unknown) => error instanceof StoreError,
+  );
   rmSync(dir, { recursive: true, force: true });
 });

@@ -89,7 +89,9 @@ export class Receipts {
         error instanceof Error ? error.message : String(error),
       );
     }
-    return this.store.list(scopeId, cursor);
+    // Session-scoped replay: one session's replay never returns another
+    // session's records in the same scope.
+    return this.store.list(scopeId, cursor, caller.sessionId);
   }
 
   /**
