@@ -15,6 +15,14 @@
       "types": "./dist/session-map.d.ts",
       "import": "./dist/session-map.js"
     },
+    "./provider-auth": {
+      "types": "./dist/provider-auth.d.ts",
+      "import": "./dist/provider-auth.js"
+    },
+    "./credential-resolver": {
+      "types": "./dist/credential-resolver.d.ts",
+      "import": "./dist/credential-resolver.js"
+    },
     "./provider-admission": {
       "types": "./dist/provider-admission.d.ts",
       "import": "./dist/provider-admission.js"

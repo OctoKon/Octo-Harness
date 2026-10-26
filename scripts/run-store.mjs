@@ -21,6 +21,7 @@ if (args.length === 0) {
     "tests/integration/crash-matrix.ts",
     "tests/integration/snapshots.ts",
     "tests/integration/events.ts",
+    "tests/integration/credentials.ts",
   ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
@@ -39,13 +40,15 @@ if (args.length === 0) {
     files = ["tests/integration/snapshots.ts"];
   else if (args[1] === "C6_event_ledger")
     files = ["tests/integration/events.ts"];
+  else if (args[1] === "C4_credential_resolution")
+    files = ["tests/integration/credentials.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C5_dirty_snapshot | --case C6_event_ledger]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C5_dirty_snapshot | --case C6_event_ledger]",
   );
   process.exit(2);
 }
