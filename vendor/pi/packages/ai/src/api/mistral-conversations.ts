@@ -1,5 +1,5 @@
 import { calculateCost, clampThinkingLevel } from "../models.ts";
-import { assertCredentialOptions, createLeasedFetch, redactorOf } from "../splyce-credentials.ts";
+import { assertCredentialOptions, createLeasedFetch, redactWithLease } from "../splyce-credentials.ts";
 import type {
 	AssistantMessage,
 	Message,
@@ -134,7 +134,6 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 
 	(async () => {
 		const output = createOutput(model);
-		const redact = redactorOf(options ?? {});
 
 		try {
 			assertCredentialOptions(options ?? {}, model.headers);
@@ -187,7 +186,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			// An errored or aborted response never carries tool calls into dispatch or persistence.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = redact(formatMistralError(error));
+			output.errorMessage = await redactWithLease(options?.credentials, formatMistralError(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

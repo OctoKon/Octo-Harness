@@ -277,6 +277,32 @@ describe.each(families)("credentials option: $name", (family) => {
 		expect(result.errorMessage ?? "").not.toContain(SECRET);
 	});
 
+	it("never calls a lease-scoped redactor outside the lease: a revoked lease gives generic error text", async () => {
+		sdk.failWith = `401 invalid x-api-key ${SECRET}`;
+		const base = expiringLease(1);
+		let inside = false;
+		const scoped = {
+			use: async <T>(consume: (secret: string) => T | Promise<T>) => {
+				return base.use(async (secret: string) => {
+					inside = true;
+					try {
+						return await consume(secret);
+					} finally {
+						inside = false;
+					}
+				});
+			},
+		};
+		const result = await family.run({
+			credentials: {
+				lease: scoped,
+				redact: (text: string) => (inside ? text.split(SECRET).join("[native]") : text),
+			},
+		});
+		expect(result.stopReason).toBe("error");
+		expect(JSON.stringify(result)).not.toContain(SECRET);
+	});
+
 	it("asks the lease again for every use instead of keeping the first answer", async () => {
 		const counted = expiringLease(100);
 		await family.run({ credentials: creds(counted) });
