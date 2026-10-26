@@ -1,9 +1,66 @@
+param([switch]$TestOnly)
+
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $target = Join-Path $root "apps/desktop/src-tauri/target"
 $tools = Join-Path $target "smoke-tools"
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
+function Write-JsonUtf8NoBom {
+  param([string]$Path, [object]$Value)
+  $json = ConvertTo-Json -InputObject $Value -Depth 5
+  [System.IO.File]::WriteAllText($Path, $json + [Environment]::NewLine, $utf8NoBom)
+}
+
+function Assert-SafeArchiveEntries {
+  param([string]$Destination, [object[]]$Entries)
+  $rootPath = [System.IO.Path]::GetFullPath($Destination).TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+  foreach ($entry in $Entries) {
+    $entryPath = ([string]$entry.FullName).Replace([char]92, [char]47)
+    $segments = $entryPath.Split('/')
+    if ($entryPath.StartsWith('/') -or $segments -contains '..' -or @($segments | Where-Object { $_.Contains(':') }).Count -gt 0) {
+      throw "The Microsoft WebDriver archive contains an unsafe path."
+    }
+    $resolvedPath = [System.IO.Path]::GetFullPath((Join-Path $Destination $entryPath))
+    if (-not $resolvedPath.StartsWith($rootPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "The Microsoft WebDriver archive contains an unsafe path."
+    }
+  }
+}
+
+function Test-DriverPreparationGuards {
+  $rootPath = Join-Path $env:TEMP "release-driver-guard-test-$([guid]::NewGuid().ToString('N'))"
+  Assert-SafeArchiveEntries $rootPath @(
+    [pscustomobject]@{ FullName = "msedgedriver.exe" },
+    [pscustomobject]@{ FullName = "Driver_Notes/EULA" },
+    [pscustomobject]@{ FullName = "Driver_Notes\credits.html" }
+  )
+  foreach ($unsafe in @("../escape", "..\escape", "nested/../../escape", "/absolute", "C:\absolute")) {
+    $rejected = $false
+    try { Assert-SafeArchiveEntries $rootPath @([pscustomobject]@{ FullName = $unsafe }) }
+    catch { $rejected = $true }
+    if (-not $rejected) { throw "The archive guard accepted unsafe path '$unsafe'." }
+  }
+
+  $manifestPath = Join-Path $env:TEMP "release-driver-manifest-test-$([guid]::NewGuid().ToString('N')).json"
+  try {
+    Write-JsonUtf8NoBom $manifestPath ([ordered]@{ schemaVersion = 1 })
+    $bytes = [System.IO.File]::ReadAllBytes($manifestPath)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+      throw "The driver manifest must be UTF-8 without a BOM."
+    }
+    $null = [System.Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -ErrorAction Stop
+  }
+  finally {
+    if (Test-Path -LiteralPath $manifestPath) { Remove-Item -LiteralPath $manifestPath -Force }
+  }
+}
+
+Test-DriverPreparationGuards
+if ($TestOnly) { Write-Output "Driver preparation guard tests passed."; exit 0 }
+
 $inventory = Get-Content (Join-Path $PSScriptRoot "tauri-driver-inventory.json") -Raw | ConvertFrom-Json
 $tauriPin = $inventory | Where-Object { $_.name -eq "tauri-driver" }
 if (-not $tauriPin -or $tauriPin.version -notmatch '^\d+\.\d+\.\d+$' -or $tauriPin.crateSha256 -notmatch '^[0-9a-f]{64}$') {
@@ -11,10 +68,19 @@ if (-not $tauriPin -or $tauriPin.version -notmatch '^\d+\.\d+\.\d+$' -or $tauriP
 }
 
 $build = Join-Path $target "smoke-driver-build"
-& cargo install tauri-driver --version $tauriPin.version --locked --force --root $tools --target-dir $build
-if ($LASTEXITCODE -ne 0) { throw "cargo install tauri-driver failed with exit code $LASTEXITCODE." }
+$cargoHome = Join-Path $target "smoke-cargo-home-$([guid]::NewGuid().ToString('N'))"
+$previousCargoHome = $env:CARGO_HOME
+$env:CARGO_HOME = $cargoHome
+try {
+  & cargo install tauri-driver --version $tauriPin.version --locked --force --root $tools --target-dir $build
+  $cargoExitCode = $LASTEXITCODE
+}
+finally {
+  if ($null -eq $previousCargoHome) { Remove-Item Env:CARGO_HOME -ErrorAction SilentlyContinue }
+  else { $env:CARGO_HOME = $previousCargoHome }
+}
+if ($cargoExitCode -ne 0) { throw "cargo install tauri-driver failed with exit code $cargoExitCode." }
 
-$cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
 $crateCache = Join-Path $cargoHome "registry/cache"
 $crateFiles = @(Get-ChildItem -LiteralPath $crateCache -Filter "tauri-driver-$($tauriPin.version).crate" -File -Recurse)
 if ($crateFiles.Count -eq 0) { throw "Cargo did not retain the pinned tauri-driver source archive." }
@@ -48,6 +114,9 @@ if ($runtimeRegistration.Location) {
   $runtimeFiles += Join-Path (Join-Path $runtimeRegistration.Location $runtimeVersion) "msedgewebview2.exe"
   $runtimeFiles += Join-Path $runtimeRegistration.Location "msedgewebview2.exe"
 }
+if ($runtimeRegistration.Scope -eq "user" -and $env:LOCALAPPDATA) {
+  $runtimeFiles += Join-Path $env:LOCALAPPDATA "Microsoft\EdgeWebView\Application\$runtimeVersion\msedgewebview2.exe"
+}
 $runtimeFiles += Join-Path ${env:ProgramFiles(x86)} "Microsoft\EdgeWebView\Application\$runtimeVersion\msedgewebview2.exe"
 $runtimeFiles += Join-Path $env:ProgramFiles "Microsoft\EdgeWebView\Application\$runtimeVersion\msedgewebview2.exe"
 $runtimeExecutable = $runtimeFiles | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
@@ -76,10 +145,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::OpenRead($edgeArchive)
 try {
   foreach ($entry in $zip.Entries) {
-    $parts = $entry.FullName.Replace('\', '/').Split('/')
-    if ([IO.Path]::IsPathRooted($entry.FullName) -or $parts -contains '..') {
-      throw "The Microsoft WebDriver archive contains an unsafe path."
-    }
+    Assert-SafeArchiveEntries $edgeDirectory @($entry)
   }
   if (-not ($zip.Entries | Where-Object { $_.FullName -eq "msedgedriver.exe" })) {
     throw "The Microsoft WebDriver archive is missing msedgedriver.exe."
@@ -118,5 +184,5 @@ $manifest = [ordered]@{
   }
 }
 $manifestPath = Join-Path $tools "driver-manifest.json"
-$manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+Write-JsonUtf8NoBom $manifestPath $manifest
 Write-Output "Qualified tauri-driver $($tauriPin.version) and WebDriver $edgeVersion for Evergreen WebView2 $runtimeVersion."

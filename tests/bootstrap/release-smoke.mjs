@@ -58,7 +58,8 @@ $keys = @(
 )
 foreach ($key in $keys) {
   if (Test-Path -LiteralPath $key) {
-    $version = (Get-ItemProperty -LiteralPath $key -Name pv -ErrorAction Stop).pv
+    $registration = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
+    $version = $registration.pv
     if ($version -match '^\\d+(?:\\.\\d+){3}$' -and $version -ne '0.0.0.0') {
       $version
       exit 0

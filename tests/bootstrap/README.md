@@ -32,6 +32,11 @@ workspace dialog currently returns `POLICY_DENIED`; smoke checks this harmless
 command remains denied and the app remains unavailable. This does not qualify
 general filesystem/tool effects or native UIA accessibility.
 
+CI runs Pi's build-only `--hydrate-pinned` command before the offline build. It
+fetches the immutable revision in `vendor/pi/nix/model-catalog.json`, verifies
+its bytes against that SHA-256 revision, and uses Pi's existing hydrator. It
+does not refresh or change the pin from the live models.dev catalog.
+
 ## Qualified tool inputs
 
 The [official Tauri overview](https://v2.tauri.app/develop/tests/webdriver/) and
@@ -46,10 +51,14 @@ release smoke does not replace it.
   **Apache-2.0 OR MIT**. The source archive SHA-256 is pinned in
   `tauri-driver-inventory.json`. The helper installs it with the published crate
   lockfile and verifies the cached archive against that pin before recording the
-  build's executable hash in `target/smoke-tools/driver-manifest.json`:
+  build's executable hash in `target/smoke-tools/driver-manifest.json`. Each run
+  uses a new isolated Cargo home so Cargo cannot reuse an unpacked, locally
+  modified source tree. CI runs archive-path and BOM-free manifest regression
+  checks before preparing the drivers:
 
   ```powershell
-  cargo install tauri-driver --version 2.1.0 --locked --force --root apps/desktop/src-tauri/target/smoke-tools --target-dir apps/desktop/src-tauri/target/smoke-driver-build
+  & tests/bootstrap/prepare-release-drivers.ps1 -TestOnly
+  & tests/bootstrap/prepare-release-drivers.ps1
   ```
 
   `tauri-driver-inventory.json` records package versions, licenses, repositories
@@ -76,6 +85,7 @@ Self-check the fail-closed readiness assertions:
 
 ```powershell
 node --test tests/bootstrap/release-smoke.test.mjs
+node --test tests/bootstrap/hydrate-pinned-model-data.test.mjs
 ```
 
 The embedded route still needs exact compatible WebdriverIO/service/test-plugin
