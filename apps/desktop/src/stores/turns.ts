@@ -302,7 +302,7 @@ export function reduceTurns(
       envelope.durable && !isSnapshot
         ? Math.max(state.lastDurableSeq, envelope.seq)
         : state.lastDurableSeq,
-    seenEventIds: new Set(state.seenEventIds).add(envelope.eventId),
+    seenEventIds: state.seenEventIds.add(envelope.eventId) || state.seenEventIds,
   };
 
   if (!("payload" in envelope)) {
@@ -391,6 +391,11 @@ export function reduceTurns(
 
     case "turn.completed": {
       const payload = payloadOf(envelope, "turn.completed");
+      // Clear pending actions when turn is completed to prevent stale actions persisting
+      const turn = state.runs[payload.runId];
+      if (turn && turn.pendingActions) {
+        turn.pendingActions = [];
+      }
       if (!payload) return missingPayload(next);
       const { runId, candidateSnapshotId, finalRevision } = payload;
       if (!next.runs[runId]) return missingPayload(next);
@@ -866,6 +871,9 @@ export function createTurnStreamTransport(
     }
 
     const isSnapshot = validated.kind === "run.reconnect_snapshot";
+    // Prevent snapshot from reviving a canceled run
+    const run = state.runs[validated.runId];
+    if (run && run.status === "canceled") return;
     if (!isSnapshot && validated.seq !== channel.acceptedSeq + 1) {
       pauseForResync(channel);
       return;
