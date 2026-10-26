@@ -1,0 +1,120 @@
+import { describe, expect, it } from "vitest";
+import {
+  acknowledgeMode,
+  bindPermissionSession,
+  initialPermissionMode,
+  permissionModeView,
+  rejectMode,
+  requestPermissionMode,
+  type PermissionModeContext,
+  type PermissionModeState,
+} from "./permission-mode";
+
+const context = (
+  overrides: Partial<PermissionModeContext> = {},
+): PermissionModeContext => ({
+  engine: "ready",
+  engineReason: null,
+  configRevision: "cfg-1",
+  policyRevision: "pol-1",
+  ...overrides,
+});
+
+const bound = (sessionId = "ses-1"): PermissionModeState =>
+  initialPermissionMode(sessionId);
+
+describe("U1_permission_mode", () => {
+  it("starts manual, shows a request as pending, and changes only on acknowledgement", () => {
+    const state = bound();
+    expect(permissionModeView(state).effectiveLabel).toBe("Manual");
+
+    const request = requestPermissionMode(state, "accept-edits", context());
+    expect(request.kind).toBe("requested");
+    if (request.kind !== "requested") throw new Error("expected request");
+
+    const pending = permissionModeView(request.state);
+    // Requested and effective stay distinct until the engine answers.
+    expect(pending.effectiveLabel).toBe("Manual");
+    expect(pending.pendingLabel).toBe("Accept edits (pending engine)");
+    expect(pending.announcement).toBeNull();
+
+    const acknowledged = acknowledgeMode(request.state, "accept-edits");
+    const view = permissionModeView(acknowledged);
+    expect(view.effectiveLabel).toBe("Accept edits");
+    expect(view.pendingLabel).toBeNull();
+    expect(view.announcement).toBe("Permission mode is now Accept edits.");
+    // The live region text is stable, so re-rendering does not re-announce.
+    expect(permissionModeView(acknowledged).announcement).toBe(
+      view.announcement,
+    );
+  });
+
+  it("keeps the prior mode when the engine rejects the change", () => {
+    const request = requestPermissionMode(bound(), "auto", context());
+    if (request.kind !== "requested") throw new Error("expected request");
+
+    const rejected = rejectMode(request.state, "Policy forbids auto mode.");
+    const view = permissionModeView(rejected);
+    expect(view.effectiveLabel).toBe("Manual");
+    expect(view.rejectedReason).toBe("Policy forbids auto mode.");
+    expect(view.pendingLabel).toBeNull();
+    // A late acknowledgement cannot revive a rejected request.
+    expect(acknowledgeMode(rejected, "auto").effective).toBe("manual");
+  });
+
+  it("requires a separate confirmation for bypass-class modes", () => {
+    const confirm = requestPermissionMode(bound(), "bypass", context());
+    expect(confirm.kind).toBe("confirm");
+    if (confirm.kind !== "confirm") throw new Error("expected confirm");
+    expect(confirm.reason).toContain("safe choice keeps the current mode");
+    // Nothing is pending before that confirmation.
+    expect(bound().status).toBe("idle");
+    expect(
+      permissionModeView(bound()).options.find((o) => o.mode === "bypass"),
+    ).toMatchObject({ dangerous: true, selected: false, pending: false });
+  });
+
+  it("blocks requests while the engine is unavailable or revisions are missing", () => {
+    const offline = requestPermissionMode(
+      bound(),
+      "auto",
+      context({
+        engine: "unavailable",
+        engineReason: "Engine process exited.",
+      }),
+    );
+    expect(offline.kind).toBe("blocked");
+    expect(offline.kind === "blocked" && offline.reason).toContain(
+      "Engine process exited.",
+    );
+
+    expect(
+      requestPermissionMode(bound(), "auto", context({ policyRevision: null }))
+        .kind,
+    ).toBe("blocked");
+  });
+
+  it("refuses a duplicate pending request for the same mode", () => {
+    const request = requestPermissionMode(bound(), "plan", context());
+    if (request.kind !== "requested") throw new Error("expected request");
+    const duplicate = requestPermissionMode(request.state, "plan", context());
+    expect(duplicate.kind).toBe("blocked");
+    expect(duplicate.kind === "blocked" && duplicate.reason).toContain(
+      "already awaiting",
+    );
+  });
+
+  it("discards pending state and resets to manual in another session", () => {
+    const request = requestPermissionMode(bound("ses-1"), "auto", context());
+    if (request.kind !== "requested") throw new Error("expected request");
+
+    const moved = bindPermissionSession(request.state, "ses-2");
+    expect(moved.sessionId).toBe("ses-2");
+    expect(moved.effective).toBe("manual");
+    expect(moved.requested).toBeNull();
+    expect(moved.status).toBe("idle");
+
+    // Same session is a no-op, so an in-flight request survives a re-render.
+    expect(bindPermissionSession(request.state, "ses-1")).toBe(request.state);
+  });
+});
