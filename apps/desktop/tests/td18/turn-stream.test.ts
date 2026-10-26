@@ -107,6 +107,7 @@ function render(
   run: TurnsState["runs"][string],
   props: Partial<{
     stale: boolean;
+    showApprovalControls: boolean;
     canRespond: (actionId: string) => boolean;
     onApproval: (
       approvalRequestId: string,
@@ -224,6 +225,20 @@ describe("TurnStream component", () => {
     ).toBeNull();
     expect(document.body.textContent).toContain("Approval closed");
     expect(document.body.textContent).toContain("Engine stopped");
+  });
+
+  it("does not render approval controls without an authoritative command context", () => {
+    render(applyAll([started(), intent(), approval()]).runs.run_a, {
+      showApprovalControls: false,
+    });
+
+    expect(
+      document.querySelector('[data-testid="approval-deny-button"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector('[data-testid="approval-allow-button"]'),
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain("Approval controls are not available");
   });
 
   it("keeps partial text visible on cancel and announces the stop", () => {

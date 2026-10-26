@@ -17,6 +17,7 @@
   let status = $state("disconnected");
   let turns = $state.raw<TurnsState>(createTurnsState());
   let sessionDispose: Unsubscribe | null = null;
+  let subscribedSessionId: string | null = null;
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
@@ -25,23 +26,31 @@
     // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
   }
 
-  function recover(fromSeq: number, sessionId: string) {
+  async function subscribeActiveSession(
+    sessionId: string | undefined,
+    afterSeq: number,
+  ) {
+    if (!sessionId || subscribedSessionId === sessionId) return;
     sessionDispose?.();
     sessionDispose = null;
-    if (!sessionId) return;
-    subscribe(sessionId, fromSeq)
-      .then((dispose) => {
-        sessionDispose = dispose;
-      })
-      .catch(() => {
-        // The stream stays paused/stale; no session context is invented here.
-      });
+    try {
+      sessionDispose = await subscribe(sessionId, afterSeq);
+      subscribedSessionId = sessionId;
+    } catch {
+      // The stream stays paused/stale; no session context is invented here.
+    }
+  }
+
+  function recover(fromSeq: number, sessionId: string) {
+    subscribedSessionId = null;
+    void subscribeActiveSession(sessionId, fromSeq);
   }
 
   onMount(() => {
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
+        void subscribeActiveSession(next.sessionId, next.lastDurableSeq);
       },
       onResync: recover,
     });
@@ -50,14 +59,19 @@
     });
     const unsubEvents = onEvent((event) => transport.enqueue(event));
 
-    handshake().catch(() => {
-      // Handshake rejection leaves status in 'unavailable' or 'error'
-    });
+    handshake()
+      .then(() =>
+        subscribeActiveSession(turns.sessionId, turns.lastDurableSeq),
+      )
+      .catch(() => {
+        // Handshake rejection leaves status in 'unavailable' or 'error'
+      });
 
     return () => {
       unsubState();
       unsubEvents();
       sessionDispose?.();
+      subscribedSessionId = null;
       transport.dispose();
     };
   });
@@ -79,6 +93,7 @@
         <TurnStream
           run={currentRun}
           stale={turns.stale || turns.needsResync || status !== "ready"}
+          showApprovalControls={false}
           canRespond={() => false}
           {onApproval}
         />

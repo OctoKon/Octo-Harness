@@ -664,4 +664,57 @@ describe("TD-18 renderer transport", () => {
 
     expect(requests).toEqual([[1, "ses_spec"]]);
   });
+
+  it("rejects a malformed frame while paused before inspecting its kind", () => {
+    const transport = createTurnStreamTransport({ schedule: manual });
+    transport.enqueue(started());
+    transport.flush();
+    transport.enqueue(delta(4, "gap"));
+    transport.flush();
+
+    transport.enqueue({
+      ...delta(2, "bad replay"),
+      payload: { runId: "run_a", turnId: "turn_a", delta: 42 },
+    } as unknown as SplyceEventEnvelope);
+
+    const state = transport.flush();
+    expect(state.needsResync).toBe(true);
+    expect(state.protocolErrors).toBe(1);
+    expect(state.runs.run_a.text).toBe("");
+  });
+
+  it("replays durable events after a reconnect snapshot without skipping them", () => {
+    const transport = createTurnStreamTransport({ schedule: manual });
+    transport.enqueue(started());
+    transport.flush();
+    transport.enqueue(delta(4, "gap"));
+    transport.flush();
+
+    transport.enqueue(
+      event(5, "run.reconnect_snapshot", {
+        runId: "run_a",
+        lastDurableSeq: 2,
+        turnId: "turn_a",
+        activeActionIds: [],
+        state: "busy",
+      }),
+    );
+    transport.flush();
+    transport.enqueue(toolIntent(3, "act_replay"));
+    transport.enqueue(
+      event(4, "turn.tool_outcome", {
+        runId: "run_a",
+        actionId: "act_replay",
+        status: "success",
+        outcomeRef: "ref_replay",
+      }),
+    );
+
+    const state = transport.flush();
+    expect(state.needsResync).toBe(false);
+    expect(state.runs.run_a.actions[0]).toMatchObject({
+      actionId: "act_replay",
+      status: "success",
+    });
+  });
 });

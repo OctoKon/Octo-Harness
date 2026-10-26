@@ -9,11 +9,13 @@
   let {
     run,
     stale = false,
+    showApprovalControls = true,
     canRespond = () => true,
     onApproval,
   }: {
     run: TurnView;
     stale?: boolean;
+    showApprovalControls?: boolean;
     canRespond?: (actionId: string) => boolean;
     onApproval: (
       approvalRequestId: string,
@@ -173,7 +175,7 @@
               <p class="tool-error">{action.error}</p>
             {/if}
 
-            {#if action.approval?.state === "requested"}
+            {#if action.approval?.state === "requested" && showApprovalControls}
               {#if canRespond(action.actionId) && !stale}
                 <div
                   class="approval"

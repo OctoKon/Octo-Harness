@@ -815,47 +815,44 @@ export function createTurnStreamTransport(
 
   function enqueue(event: SplyceEventEnvelope) {
     if (disposed) return;
-    const candidate = event as unknown as {
-      sessionId?: unknown;
-      kind?: unknown;
-    };
-    const sessionId =
-      typeof candidate?.sessionId === "string"
-        ? candidate.sessionId
-        : selectedSessionId;
-    if (!sessionId) return;
-    const channel = channelFor(sessionId);
-
-    if (
-      channel.state.needsResync &&
-      candidate.kind !== "run.reconnect_snapshot"
-    ) {
-      return;
-    }
-
     let bytes: number;
     try {
       bytes = frameBytes(event);
     } catch {
-      channel.state = {
-        ...channel.state,
-        protocolErrors: channel.state.protocolErrors + 1,
-      };
-      emit(channel);
+      const channel = selectedChannel();
+      if (channel) {
+        channel.state = {
+          ...channel.state,
+          protocolErrors: channel.state.protocolErrors + 1,
+        };
+        emit(channel);
+      }
       return;
     }
     if (bytes > TRANSPORT_LIMITS.maxEncodedFrameBytes) {
-      overflow(channel, "ERR_FRAME_TOO_LARGE");
+      const channel = selectedChannel();
+      if (channel) overflow(channel, "ERR_FRAME_TOO_LARGE");
       return;
     }
-
     const validated = validateForRenderer(event);
-    if (!validated || validated.sessionId !== sessionId) {
-      channel.state = {
-        ...channel.state,
-        protocolErrors: channel.state.protocolErrors + 1,
-      };
-      emit(channel);
+    if (!validated) {
+      const channel = selectedChannel();
+      if (channel) {
+        channel.state = {
+          ...channel.state,
+          protocolErrors: channel.state.protocolErrors + 1,
+        };
+        emit(channel);
+      }
+      return;
+    }
+    const sessionId = validated.sessionId;
+    const channel = channelFor(sessionId);
+
+    if (
+      channel.state.needsResync &&
+      validated.kind !== "run.reconnect_snapshot"
+    ) {
       return;
     }
 
@@ -901,14 +898,9 @@ export function createTurnStreamTransport(
       }
     }
 
-    channel.acceptedSeq = Math.max(
-      channel.acceptedSeq,
-      accepted.seq,
-      isSnapshot && "payload" in accepted
-        ? ((accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ??
-            0)
-        : 0,
-    );
+    channel.acceptedSeq = isSnapshot && "payload" in accepted
+      ? ((accepted.payload as { lastDurableSeq?: number }).lastDurableSeq ?? 0)
+      : Math.max(channel.acceptedSeq, accepted.seq);
 
     if (
       channel.transientFrames > TRANSPORT_LIMITS.rendererQueueFrames ||
