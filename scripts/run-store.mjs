@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // TD-09/TD-15 integration runner. One file per named case so a case can never
@@ -32,12 +33,9 @@ if (args.length === 0) {
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
+const tsc = join(dirname(dirname(require.resolve("typescript"))), "bin", "tsc");
 for (const command of [
-  [
-    require.resolve("typescript/bin/tsc"),
-    "-p",
-    "packages/splyce-pi/tsconfig.json",
-  ],
+  [tsc, "-p", "packages/splyce-pi/tsconfig.json"],
   ["--test", "--test-timeout=120000", ...files],
 ]) {
   const result = spawnSync(process.execPath, command, {

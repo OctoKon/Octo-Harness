@@ -18,8 +18,8 @@ import {
 	toToolDeclaration,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
-import { assertSplyceReady } from "./splyce-readiness.ts";
 import { requireSplyceToolAdmission } from "./splyce-admission.ts";
+import { assertSplyceReady } from "./splyce-readiness.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AgentContext,
@@ -844,37 +844,37 @@ async function executePreparedToolCall(
 		prepared.toolCall.name,
 		prepared.args,
 		async (admittedArgs) => {
-	const updateEvents: Promise<void>[] = [];
-	let acceptingUpdates = true;
-	const startedAt = performance.now();
-	const elapsed = () => Math.round(performance.now() - startedAt);
+			const updateEvents: Promise<void>[] = [];
+			let acceptingUpdates = true;
+			const startedAt = performance.now();
+			const elapsed = () => Math.round(performance.now() - startedAt);
 
-	try {
-		const result = await prepared.tool.execute(
-			prepared.toolCall.id,
-			admittedArgs as never,
-			signal,
-			(partialResult) => {
-				if (!acceptingUpdates) return;
-				updateEvents.push(Promise.resolve(onUpdate(partialResult)));
-			},
-		);
-		const durationMs = elapsed();
-		acceptingUpdates = false;
-		await Promise.all(updateEvents);
-		return { result, isError: result.isError === true, durationMs };
-	} catch (error) {
-		const durationMs = elapsed();
-		acceptingUpdates = false;
-		await Promise.all(updateEvents);
-		return {
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
-			isError: true,
-			durationMs,
-		};
-	} finally {
-		acceptingUpdates = false;
-	}
+			try {
+				const result = await prepared.tool.execute(
+					prepared.toolCall.id,
+					admittedArgs as never,
+					signal,
+					(partialResult) => {
+						if (!acceptingUpdates) return;
+						updateEvents.push(Promise.resolve(onUpdate(partialResult)));
+					},
+				);
+				const durationMs = elapsed();
+				acceptingUpdates = false;
+				await Promise.all(updateEvents);
+				return { result, isError: result.isError === true, durationMs };
+			} catch (error) {
+				const durationMs = elapsed();
+				acceptingUpdates = false;
+				await Promise.all(updateEvents);
+				return {
+					result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+					isError: true,
+					durationMs,
+				};
+			} finally {
+				acceptingUpdates = false;
+			}
 		},
 		signal,
 	);

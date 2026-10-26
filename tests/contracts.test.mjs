@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
-  TRANSPORT_LIMITS,
   PI_REVISION,
   FOUNDATION,
   TRANSPORT_LIMITS,
@@ -39,6 +38,7 @@ test("transport defaults are exact, immutable and shared with the native build s
   assert.throws(() => {
     TRANSPORT_LIMITS.maxEncodedFrameBytes = 1;
   }, TypeError);
+  assert.equal(TRANSPORT_LIMITS.maxEncodedFrameBytes, 262144);
   assert.deepEqual(
     JSON.parse(BRIDGE_PROTOCOL_JSON).transportLimits,
     TRANSPORT_LIMITS,
@@ -115,23 +115,6 @@ test("TD-01: public package exports the frozen versions and pinned Pi revision",
     entryMode: "sdk-host",
     disabledBuiltinExtensions: ["llama.cpp", "codemode", "tool-search", "mcp"],
   });
-});
-
-test("TD-01: transport defaults are exact and immutable", () => {
-  assert.deepEqual(TRANSPORT_LIMITS, {
-    maxInlineBytes: 65536,
-    maxEncodedFrameBytes: 262144,
-    pendingQueueMaxFrames: 1024,
-    pendingQueueMaxBytes: 8388608,
-    transientCoalesceWindowMs: 16,
-    rendererMaxFrames: 256,
-    rendererMaxBytes: 4194304,
-  });
-  assert.ok(Object.isFrozen(TRANSPORT_LIMITS));
-  assert.throws(() => {
-    TRANSPORT_LIMITS.maxEncodedFrameBytes = 1;
-  }, TypeError);
-  assert.equal(TRANSPORT_LIMITS.maxEncodedFrameBytes, 262144);
 });
 
 for (const { op, payload } of fixture("commands")) {

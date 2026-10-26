@@ -6,7 +6,12 @@ import {
   type RecordByKind,
   type RunRecord,
 } from "./contracts.js";
-import { Store, type CallerContext, type WorkspaceOwnership } from "./store.js";
+import {
+  Store,
+  StoreError,
+  type CallerContext,
+  type WorkspaceOwnership,
+} from "./store.js";
 
 export class AdmissionError extends Error {
   readonly code: string;
@@ -185,16 +190,31 @@ export class NativePolicy {
       if (parent?.state !== "running") this.deny(permit, "PARENT_NOT_RUNNING");
     }
     const action = this.action(permit, "approved");
-    this.store.appendBatch(
-      [
-        { kind: "action", record: action },
+    try {
+      this.store.appendBatch(
+        [
+          { kind: "action", record: action },
+          {
+            kind: "action",
+            record: { ...action, recordId: randomUUID(), state: "running" },
+          },
+        ],
+        this.caller,
         {
-          kind: "action",
-          record: { ...action, recordId: randomUUID(), state: "running" },
+          scopeId: permit.targetScopeId,
+          idempotencyKey: permit.idempotencyKey,
+          actionId: permit.actionId,
         },
-      ],
-      this.caller,
-    );
+        {
+          workspaceId: permit.ownership.workspaceId,
+          epoch: permit.ownership.epoch,
+        },
+      );
+    } catch (error) {
+      if (error instanceof StoreError && error.code === "ACTION_ALREADY_EXISTS")
+        throw new AdmissionError("ACTION_REQUIRES_RECONCILIATION");
+      throw error;
+    }
     // No asynchronous callback separates the final fence from executor handoff.
     this.check(toolCallId, toolName, signal);
     let result: T;
