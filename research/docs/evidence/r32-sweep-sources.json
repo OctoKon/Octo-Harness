@@ -1251,5 +1251,77 @@
     "claims": ["GLM-5.3 uses a custom license rather than MIT."],
     "verification": "primary source located by Codex deep research; not re-fetched by the parent",
     "notes": "Unverified until the owning task qualifies the exact artifact; no Splyce test."
+  },
+  {
+    "id": "R32-smartscreen",
+    "tool": "Windows SmartScreen",
+    "url": "https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation",
+    "title": "SmartScreen reputation",
+    "accessed": "2026-10-26",
+    "claims": [
+      "EV certificates no longer bypass SmartScreen; on Windows 11 Smart App Control blocks unsigned executables without positive reputation."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-signpath-terms",
+    "tool": "SignPath Foundation",
+    "url": "https://signpath.org/terms",
+    "title": "SignPath Foundation terms",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Free OSS code signing requires an OSI license, an actively maintained project already released in the form to be signed, and documented functionality."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-tauri-nsis",
+    "tool": "Tauri Windows installer",
+    "url": "https://v2.tauri.app/distribute/windows-installer/",
+    "title": "Windows installer",
+    "accessed": "2026-10-26",
+    "claims": [
+      "NSIS installs per user in LOCALAPPDATA by default; perMachine requires administrator privileges."
+    ],
+    "verification": "primary documentation; parent re-fetched",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-signpath-github",
+    "tool": "SignPath GitHub",
+    "url": "https://docs.signpath.io/trusted-build-systems/github",
+    "title": "GitHub trusted build system",
+    "accessed": "2026-10-26",
+    "claims": [
+      "The GitHub connector verifies that a build was performed by a GitHub workflow; hosted-runner-only requirements for OSS signing are reported but not re-verified."
+    ],
+    "verification": "primary documentation located by an independent researcher; partially re-fetched",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-azure-artifact-signing",
+    "tool": "Azure Artifact Signing",
+    "url": "https://learn.microsoft.com/en-us/azure/artifact-signing/quickstart",
+    "title": "Artifact Signing quickstart",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Paid service; individual developers must be in the US or Canada; certificates are short-lived so timestamping is required."
+    ],
+    "verification": "primary documentation located by an independent researcher; not re-fetched by the parent",
+    "notes": "Release planning input; no Splyce installer exists yet."
+  },
+  {
+    "id": "R32-winget-requirements",
+    "tool": "winget",
+    "url": "https://learn.microsoft.com/en-us/windows/package-manager/package/repository",
+    "title": "Windows Package Manager repository",
+    "accessed": "2026-10-26",
+    "claims": [
+      "Submissions require silent install, clean uninstall, HTTPS publisher URLs and a SHA256 match."
+    ],
+    "verification": "primary documentation located by an independent researcher; not re-fetched by the parent",
+    "notes": "Release planning input; no Splyce installer exists yet."
   }
 ]
