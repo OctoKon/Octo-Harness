@@ -1159,14 +1159,36 @@ export class Store {
       accountScopeRef: setup.descriptors.accountScopeRef,
       locality: setup.connection.locality,
     };
+    // One immutable artifact per described binding; the profile links it through sourceIds.
+    const descriptorArtifacts = setup.profile.bindings.flatMap((binding) => {
+      if (binding.modelDescriptor === undefined) return [];
+      const recordId = `setup:${key}:modeldesc:${binding.role}`;
+      const json = JSON.stringify(binding.modelDescriptor);
+      return [
+        {
+          ...base(recordId),
+          artifactId: recordId,
+          digest: `sha256:${createHash("sha256").update(json).digest("hex")}`,
+          mediaType: "application/vnd.splyce.model-descriptor+json",
+          byteLength: new TextEncoder().encode(json).length,
+          retentionClass: "workspace",
+          role: binding.role,
+          modelId: binding.modelId,
+          descriptor: binding.modelDescriptor,
+        },
+      ];
+    });
     const profile = {
       ...base(ids.profile),
+      sourceIds: [digestRef, ...descriptorArtifacts.map((a) => a.recordId)],
       profileId: setup.profile.profileId,
       profileRevision: setup.profile.profileRevision,
       configRevision: this.configRevision(scopeId),
       roleBindingRefs: [] as string[],
       installedModuleRefs: [] as string[],
-      bindings: setup.profile.bindings,
+      bindings: setup.profile.bindings.map(
+        ({ modelDescriptor: _descriptor, ...pinned }) => pinned,
+      ),
       egressPolicyRefs: [...setup.descriptors.egressPolicyRefs],
       limitsArtifactId: setup.descriptors.limitsArtifactId,
     };
@@ -1197,7 +1219,9 @@ export class Store {
       ...caller,
       resolveReference: (ref, refScope) =>
         (refScope === scopeId &&
-          (ref === connection.endpointRef || ref === digestRef)) ||
+          (ref === connection.endpointRef ||
+            ref === digestRef ||
+            descriptorArtifacts.some((a) => a.recordId === ref))) ||
         resolve(ref),
     };
     let replayed: SetupResult | undefined;
@@ -1207,13 +1231,20 @@ export class Store {
           { kind: "providerEndpoint", record: endpoint },
           { kind: "providerConnection", record: connection },
           { kind: "profileSnapshot", record: profile },
+          ...descriptorArtifacts.map((record) => ({
+            kind: "artifact" as const,
+            record,
+          })),
         ],
         [],
         batchCaller,
         {
           expectedSetup: {
             workspaceId: scopeId,
-            recordIds: Object.values(ids),
+            recordIds: [
+              ...Object.values(ids),
+              ...descriptorArtifacts.map((a) => a.recordId),
+            ],
             digestRef,
             onReplay: (records) => {
               replayed = {
@@ -1495,7 +1526,11 @@ export class Store {
       // Every prepared record is guarded exactly once: one expectation per kind.
       if (
         expectedEntityRevision !== undefined &&
-        prepared.length !== expectations.length
+        prepared.length !==
+          expectations.length +
+            (expectedSetup === undefined
+              ? 0
+              : prepared.filter(([kind]) => kind === "artifact").length)
       )
         throw new StoreError(
           "ENTITY_GUARD_MISMATCH",

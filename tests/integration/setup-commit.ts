@@ -66,6 +66,15 @@ const input = (overrides: Record<string, unknown> = {}) => ({
         providerConnectionId: "conn1",
         connectionRevision: "c1",
         modelId: "gpt-x",
+        modelDescriptor: {
+          source: "catalog",
+          catalogVersion: "2026-10",
+          contextWindow: 128000,
+          maxOutputTokens: 8192,
+          reasoning: true,
+          input: ["text", "image"],
+          costKnown: true,
+        },
       },
     ],
   },
@@ -634,10 +643,137 @@ const METADATA_CASES: Case[] = [
     "chat plus distinct embedding",
     (v) =>
       void v.profile.bindings.push({
-        ...v.profile.bindings[0]!,
+        role: "embedding",
+        providerConnectionId: "conn1",
+        connectionRevision: "c1",
+        modelId: "embed-x",
+      } as never),
+    true,
+  ],
+  [
+    "chat binding without descriptor",
+    (v) =>
+      void delete (v.profile.bindings[0] as Record<string, unknown>)
+        .modelDescriptor,
+    false,
+  ],
+  [
+    "user descriptor with explicit limits",
+    (v) =>
+      void (v.profile.bindings[0]!.modelDescriptor = {
+        source: "user",
+        contextWindow: 32000,
+        maxOutputTokens: 4096,
+        reasoning: false,
+        input: ["text"],
+        costKnown: false,
+      } as never),
+    true,
+  ],
+  [
+    "user descriptor without contextWindow",
+    (v) =>
+      void (v.profile.bindings[0]!.modelDescriptor = {
+        source: "user",
+        maxOutputTokens: 4096,
+        reasoning: false,
+        input: ["text"],
+        costKnown: false,
+      } as never),
+    false,
+  ],
+  [
+    "user descriptor without maxOutputTokens",
+    (v) =>
+      void (v.profile.bindings[0]!.modelDescriptor = {
+        source: "user",
+        contextWindow: 32000,
+        reasoning: false,
+        input: ["text"],
+        costKnown: false,
+      } as never),
+    false,
+  ],
+  [
+    "catalog descriptor without catalogVersion",
+    (v) =>
+      void delete (
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).catalogVersion,
+    false,
+  ],
+  [
+    "unknown descriptor source",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).source = "guess"),
+    false,
+  ],
+  [
+    "non-positive contextWindow",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).contextWindow = 0),
+    false,
+  ],
+  [
+    "fractional maxOutputTokens",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).maxOutputTokens = 1.5),
+    false,
+  ],
+  [
+    "empty input modalities",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).input = []),
+    false,
+  ],
+  [
+    "duplicate input modalities",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).input = ["text", "text"]),
+    false,
+  ],
+  [
+    "unknown input modality",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).input = ["audio"]),
+    false,
+  ],
+  [
+    "non-boolean reasoning",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).reasoning = "yes"),
+    false,
+  ],
+  [
+    "unknown descriptor field",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).price = 1),
+    false,
+  ],
+  [
+    "descriptor on a non-chat binding",
+    (v) =>
+      void v.profile.bindings.push({
+        ...structuredClone(v.profile.bindings[0]!),
         role: "embedding",
       }),
-    true,
+    false,
   ],
   ["requestId 129", (v) => void (v.requestId = "r".repeat(129)), false],
   ["requestId secret shape", (v) => void (v.requestId = secretLike), false],
@@ -783,4 +919,52 @@ test("a replay never resurrects a record another handle deleted", (t) => {
     );
   }
   other.close();
+});
+
+test("the model descriptor is persisted as an immutable artifact linked from the profile", (t) => {
+  const { store, caller } = fixture(t);
+  const done = store.commitSetup(input(), caller);
+  const ref = done.profile.sourceIds.find(
+    (id) => id.startsWith("setup:") && id.includes("modeldesc"),
+  );
+  assert.ok(ref, "profile links its descriptor artifact");
+  const stored = store.get(ref).record as unknown as Record<string, unknown>;
+  assert.equal(
+    (
+      store.get(done.profile.recordId).record as {
+        bindings: Record<string, unknown>[];
+      }
+    ).bindings[0]!.modelDescriptor,
+    undefined,
+  );
+  assert.deepEqual(
+    stored.descriptor,
+    input().profile.bindings[0]!.modelDescriptor,
+  );
+  assert.equal(stored.role, "chat");
+  // identical retry replays, and a tombstoned descriptor blocks replay
+  assert.deepEqual(store.commitSetup(input(), caller), done);
+  store.noteDeletion(ref);
+  assert.throws(
+    () => store.commitSetup(input(), caller),
+    code("SETUP_DELETED"),
+  );
+});
+
+test("a chat binding without a model descriptor names the missing field", (t) => {
+  const { store, caller } = fixture(t);
+  const value = clone();
+  delete (value.profile.bindings[0] as Record<string, unknown>).modelDescriptor;
+  const names = (error: unknown) =>
+    (error as { code?: string; message?: string }).code === "SETUP_INVALID" &&
+    String((error as Error).message).includes(
+      "profile.bindings.modelDescriptor",
+    );
+  assert.throws(() => validateSetupMetadata(value), names);
+  assert.throws(
+    () => validateSetupMetadata(value, { credentialPending: true }),
+    names,
+  );
+  assert.throws(() => store.commitSetup(value, caller), names);
+  assert.deepEqual(kinds(store), []);
 });

@@ -18,6 +18,17 @@ export class SetupMetadataError extends Error {
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
+/** What the chat model can do; every limit is explicit, nothing is defaulted. */
+export interface SetupModelDescriptor {
+  source: "catalog" | "user";
+  catalogVersion?: string;
+  contextWindow: number;
+  maxOutputTokens: number;
+  reasoning: boolean;
+  input: ("text" | "image")[];
+  costKnown: boolean;
+}
+
 export interface SetupInput {
   workspaceId: string;
   requestId: string;
@@ -44,6 +55,8 @@ export interface SetupInput {
       providerConnectionId: string;
       connectionRevision: string;
       modelId: string;
+      /** Required on the chat binding, absent on every other binding. */
+      modelDescriptor?: SetupModelDescriptor;
     }[];
   };
   /** Supplied by the native owner; commitSetup never invents these. */
@@ -128,6 +141,66 @@ function setupToken(value: unknown, field: string): string {
   )
     setupInvalid(field);
   return value;
+}
+function setupPositiveInt(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0)
+    setupInvalid(field);
+  return value;
+}
+function setupBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") setupInvalid(field);
+  return value;
+}
+function setupModelDescriptor(
+  value: unknown,
+  field: string,
+): SetupModelDescriptor {
+  if (!isPlainObject(value)) return setupInvalid(field);
+  const source = value.source;
+  if (source !== "catalog" && source !== "user")
+    return setupInvalid(`${field}.source`);
+  const keys = [
+    "source",
+    "contextWindow",
+    "maxOutputTokens",
+    "reasoning",
+    "input",
+    "costKnown",
+    ...(Object.hasOwn(value, "catalogVersion") ? ["catalogVersion"] : []),
+  ];
+  setupObject(value, field, keys);
+  if (source === "catalog" && !Object.hasOwn(value, "catalogVersion"))
+    setupInvalid(`${field}.catalogVersion`);
+  const input = value.input;
+  if (
+    !Array.isArray(input) ||
+    input.length === 0 ||
+    !input.every((item) => item === "text" || item === "image") ||
+    new Set(input).size !== input.length
+  )
+    setupInvalid(`${field}.input`);
+  return {
+    source,
+    ...(Object.hasOwn(value, "catalogVersion")
+      ? {
+          catalogVersion: setupId(
+            value.catalogVersion,
+            `${field}.catalogVersion`,
+          ),
+        }
+      : {}),
+    contextWindow: setupPositiveInt(
+      value.contextWindow,
+      `${field}.contextWindow`,
+    ),
+    maxOutputTokens: setupPositiveInt(
+      value.maxOutputTokens,
+      `${field}.maxOutputTokens`,
+    ),
+    reasoning: setupBoolean(value.reasoning, `${field}.reasoning`),
+    input: [...input] as ("text" | "image")[],
+    costKnown: setupBoolean(value.costKnown, `${field}.costKnown`),
+  };
 }
 function setupRevision(value: unknown, field: string): string | null {
   return value === null ? null : setupId(value, field);
@@ -237,11 +310,15 @@ export function validateSetupMetadata(
   if (!Array.isArray(p.bindings) || p.bindings.length === 0)
     setupInvalid("profile.bindings");
   const bindings = p.bindings.map((value: unknown, index: number) => {
+    const isChat = isPlainObject(value) && value.role === "chat";
+    if (isChat && !Object.hasOwn(value, "modelDescriptor"))
+      setupInvalid("profile.bindings.modelDescriptor");
     const b = setupObject(value, `profile.bindings[${index}]`, [
       "role",
       "providerConnectionId",
       "connectionRevision",
       "modelId",
+      ...(isChat ? ["modelDescriptor"] : []),
     ]);
     if (
       b.providerConnectionId !== connectionId ||
@@ -253,11 +330,21 @@ export function validateSetupMetadata(
       providerConnectionId: connectionId,
       connectionRevision,
       modelId: setupModelRef(b.modelId, `profile.bindings[${index}].modelId`),
+      ...(isChat
+        ? {
+            modelDescriptor: setupModelDescriptor(
+              b.modelDescriptor,
+              `profile.bindings[${index}].modelDescriptor`,
+            ),
+          }
+        : {}),
     };
   });
   // The profileSnapshot contract's own binding-set check (unique roles, a chat binding).
   try {
-    validateProfileBindings(bindings);
+    validateProfileBindings(
+      bindings.map(({ modelDescriptor: _descriptor, ...pinned }) => pinned),
+    );
   } catch (error) {
     if (error instanceof ContractError) setupInvalid("profile.bindings");
     throw error;
