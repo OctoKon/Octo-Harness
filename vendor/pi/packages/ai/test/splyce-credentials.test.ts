@@ -148,6 +148,12 @@ const families = [
 				context(),
 				{ fetch: recordingFetch, ...extra },
 			).result(),
+		wrongApi: (extra: Record<string, unknown>) =>
+			streamAnthropic(
+				model("anthropic", "pi-messages", "claude-haiku-4-5", "https://api.anthropic.com") as never,
+				context(),
+				{ fetch: recordingFetch, ...extra },
+			).result(),
 		baseKey: (opts: Record<string, unknown>) => opts.baseURL,
 		ambient: { ANTHROPIC_API_KEY: "env-secret-anthropic", ANTHROPIC_AUTH_TOKEN: "env-secret-token" },
 		/** Where the real secret was delivered. */
@@ -169,6 +175,17 @@ const families = [
 				context(),
 				extra,
 			).result(),
+		wrongApi: (extra: Record<string, unknown>) =>
+			streamGoogle(
+				model(
+					"google",
+					"pi-messages",
+					"gemini-3-flash-preview",
+					"https://generativelanguage.example/v1beta",
+				) as never,
+				context(),
+				extra,
+			).result(),
 		baseKey: (opts: Record<string, unknown>) => (opts.httpOptions as { baseUrl?: string } | undefined)?.baseUrl,
 		ambient: { GEMINI_API_KEY: "env-secret-gemini", GOOGLE_API_KEY: "env-secret-google" },
 		delivered: () => sdk.googleOpts.map((o) => o.apiKey),
@@ -186,6 +203,12 @@ const families = [
 					"gemini-3-flash-preview",
 					"https://vertex.example",
 				) as Model<"google-vertex">,
+				context(),
+				{ project: "p", location: "us-central1", ...extra },
+			).result(),
+		wrongApi: (extra: Record<string, unknown>) =>
+			streamVertex(
+				model("google-vertex", "pi-messages", "gemini-3-flash-preview", "https://vertex.example") as never,
 				context(),
 				{ project: "p", location: "us-central1", ...extra },
 			).result(),
@@ -314,6 +337,16 @@ describe.each(families)("credentials option: $name", (family) => {
 		const counted = expiringLease(100);
 		const result = await family.run({ credentials: { lease: counted } as never });
 		expect(result.stopReason).toBe("error");
+		expect(counted.state.uses).toBe(0);
+		expect(family.sdkCalls()).toHaveLength(0);
+		expect(wire.sent).toHaveLength(0);
+	});
+
+	it("refuses a model of another API with native credentials before any lease, SDK or send", async () => {
+		const counted = expiringLease(100);
+		const result = await family.wrongApi({ credentials: creds(counted) });
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage ?? "").toContain("API identity");
 		expect(counted.state.uses).toBe(0);
 		expect(family.sdkCalls()).toHaveLength(0);
 		expect(wire.sent).toHaveLength(0);

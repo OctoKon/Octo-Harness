@@ -10,6 +10,14 @@ import type { ProviderResponse } from "./types.ts";
 // Adapters keep no copy of any secret: redaction is the native redactor's job, and a lease without one is refused
 // before anything is leased or sent.
 
+/** A refusal decided before anything was leased or sent: its text holds no secret, so it is never lease-redacted. */
+export class CredentialPreflightError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "CredentialPreflightError";
+	}
+}
+
 export interface SplyceSecretLease {
 	use<T>(consume: (secret: string) => T | Promise<T>): Promise<T>;
 }
@@ -96,7 +104,7 @@ function assertNoCallerAuthHeaders(...sources: HeaderSource[]): void {
 	for (const source of sources) {
 		for (const [name, value] of Object.entries(source ?? {})) {
 			if (value !== null && value !== undefined && CALLER_AUTH_HEADERS.has(name.toLowerCase())) {
-				throw new Error(`credentials do not allow a caller-supplied ${name} header`);
+				throw new CredentialPreflightError(`credentials do not allow a caller-supplied ${name} header`);
 			}
 		}
 	}
@@ -117,9 +125,12 @@ export function assertCredentialOptions(
 ): void {
 	const { credentials } = options;
 	if (!credentials) return;
-	if (options.apiKey !== undefined) throw new Error("apiKey and credentials are mutually exclusive");
-	if (typeof credentials.redact !== "function") throw new Error("credentials require a native redact function");
-	if (typeof credentials.lease?.use !== "function") throw new Error("credentials require a native lease.use function");
+	if (options.apiKey !== undefined)
+		throw new CredentialPreflightError("apiKey and credentials are mutually exclusive");
+	if (typeof credentials.redact !== "function")
+		throw new CredentialPreflightError("credentials require a native redact function");
+	if (typeof credentials.lease?.use !== "function")
+		throw new CredentialPreflightError("credentials require a native lease.use function");
 	assertNoCallerAuthHeaders(modelHeaders, options.headers);
 }
 
@@ -130,7 +141,7 @@ export function assertCredentialApiIdentity(
 	options: { credentials?: SplyceCredentials | undefined } | undefined,
 ): void {
 	if (options?.credentials && actualApi !== expectedApi) {
-		throw new Error("Native credential API identity does not match this adapter");
+		throw new CredentialPreflightError("Native credential API identity does not match this adapter");
 	}
 }
 
@@ -142,7 +153,8 @@ export function assertSafeLeasedGooglePayload(params: unknown): void {
 	const http = (params as { config?: { httpOptions?: Record<string, unknown> } } | undefined)?.config?.httpOptions;
 	if (!http) return;
 	for (const key of ["baseUrl", "headers", "retryOptions", "apiVersion", "baseUrlResourceScope"]) {
-		if (http[key] !== undefined) throw new Error(`credentials do not allow the payload to set httpOptions.${key}`);
+		if (http[key] !== undefined)
+			throw new CredentialPreflightError(`credentials do not allow the payload to set httpOptions.${key}`);
 	}
 }
 

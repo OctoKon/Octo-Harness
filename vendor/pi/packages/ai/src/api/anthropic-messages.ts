@@ -19,7 +19,9 @@ import {
 } from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
+	CredentialPreflightError,
 	createLeasedFetch,
 	redactEventWithLease,
 	redactResponseWithLease,
@@ -626,6 +628,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				client = options.client;
 				isOAuth = false;
 			} else {
+				assertCredentialApiIdentity(model.api, "anthropic-messages", options);
 				assertCredentialOptions(options ?? {}, model.headers);
 				// Splyce: with a lease the SDK client holds only a placeholder; the real key is leased and written into the
 				// auth header on every HTTP send (including SDK retries), and redirects are refused.
@@ -959,7 +962,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			output.content = output.content.filter((block) => block.type !== "toolCall" || finishedToolCalls.has(block));
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = await redactWithLease(
-				leasedCredentials,
+				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
 				error instanceof Error ? error.message : JSON.stringify(error),
 			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
