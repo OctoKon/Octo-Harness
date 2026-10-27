@@ -8,8 +8,10 @@ import {
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
 	assertSafeLeasedGooglePayload,
+	CredentialPreflightError,
 	redactEventWithLease,
 	redactWithLease,
 	withLeasedSecret,
@@ -106,6 +108,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
 			}
+			assertCredentialApiIdentity(model.api, "google-vertex", options);
 			assertCredentialOptions(options ?? {}, model.headers);
 			const credentials = leasedCredentials;
 			const apiKey = resolveApiKey(options);
@@ -337,7 +340,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = await redactWithLease(
-				leasedCredentials,
+				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
 				formatProviderError(normalizeProviderError(error)),
 			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });

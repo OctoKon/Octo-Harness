@@ -6,8 +6,10 @@ import {
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
 	assertSafeLeasedGooglePayload,
+	CredentialPreflightError,
 	redactEventWithLease,
 	redactWithLease,
 	withLeasedSecret,
@@ -97,6 +99,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
 				throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
 			}
+			assertCredentialApiIdentity(model.api, "google-generative-ai", options);
 			assertCredentialOptions(options ?? {}, model.headers);
 			const credentials = leasedCredentials;
 			const apiKey = options?.apiKey;
@@ -317,7 +320,7 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = await redactWithLease(
-				leasedCredentials,
+				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
 				formatProviderError(normalizeProviderError(error)),
 			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
