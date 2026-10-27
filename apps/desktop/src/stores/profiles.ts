@@ -154,6 +154,45 @@ export interface CustomEndpointDraft {
   readonly headers: readonly HeaderDraft[];
 }
 
+/** What the native credential writer would receive; never persisted here. */
+export interface CredentialDraft {
+  readonly displayName: string;
+  readonly baseUrl: string;
+  readonly apiKey: string;
+}
+
+/**
+ * Field-by-field problems, never the values: an invalid key or URL must not be
+ * echoed back into the DOM or a log. Empty means valid.
+ */
+export function validateCredentialDraft(
+  draft: CredentialDraft,
+): readonly string[] {
+  const errors: string[] = [];
+  const name = draft.displayName.trim();
+  if (name === "") errors.push("Name is required.");
+  else if (safeDisplayName(name, "connection") !== name)
+    errors.push("Name must not look like a URL or a credential.");
+
+  const raw = draft.baseUrl.trim();
+  const key = normalized(raw);
+  if (key === null) errors.push("Base URL is not a valid URL.");
+  else {
+    const url = new URL(raw);
+    if (
+      url.protocol !== "https:" &&
+      !(url.protocol === "http:" && isLoopbackUrl(raw))
+    )
+      errors.push("Base URL must use https unless the endpoint is local.");
+    if (url.search !== "" || url.hash !== "" || /[?#]/.test(raw))
+      errors.push("Base URL must not contain a query string or fragment.");
+    if (url.username !== "" || url.password !== "")
+      errors.push("Base URL must not contain credentials; use the API key.");
+  }
+  if (draft.apiKey.trim() === "") errors.push("API key is required.");
+  return errors;
+}
+
 export interface ExistingEndpoint {
   readonly id: string;
   readonly endpointLabel: string;
