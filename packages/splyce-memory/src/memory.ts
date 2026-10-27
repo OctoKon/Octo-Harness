@@ -12,7 +12,10 @@ import type { AppendInput, CallerContext, Store } from "@splyce/pi/store";
 import {
   type EmbeddingPort,
   type FusedHit,
+  LIMITS,
+  type Redactor,
   RetrievalIndex,
+  redactSecrets,
 } from "@splyce/retrieval";
 
 export const EXTRACTION_REVISION = "extractive-v1";
@@ -53,6 +56,8 @@ export interface MemoryOptions {
   extract?: Extractor;
   /** Dense recall is off unless the host binds an `embed` role port. */
   embedding?: EmbeddingPort;
+  /** Extra redaction (e.g. the TD-16 resolver's live-secret redactor), applied after the built-in patterns. */
+  redact?: Redactor;
 }
 
 export class MemoryError extends Error {
@@ -155,6 +160,7 @@ export class Memory {
     private readonly db: DatabaseSync,
     private readonly extract: Extractor,
     private readonly index: RetrievalIndex,
+    private readonly redact: Redactor,
   ) {}
 
   /** Opens (creating if needed) the projection file and reapplies any store deletions it missed. */
@@ -162,6 +168,8 @@ export class Memory {
     const db = new DatabaseSync(path);
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("PRAGMA synchronous = FULL;");
+    // Purged rows are overwritten on disk, not left in free pages.
+    db.exec("PRAGMA secure_delete = ON;");
     db.exec(
       "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);" +
         "CREATE TABLE IF NOT EXISTS cursors (scope_id TEXT NOT NULL, session_id TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY (scope_id, session_id));" +
@@ -171,7 +179,15 @@ export class Memory {
       db,
       options.embedding === undefined ? {} : { embedding: options.embedding },
     );
-    const memory = new Memory(store, db, options.extract ?? extractive, index);
+    const extra = options.redact;
+    const memory = new Memory(
+      store,
+      db,
+      options.extract ?? extractive,
+      index,
+      (text) =>
+        extra === undefined ? redactSecrets(text) : extra(redactSecrets(text)),
+    );
     memory.syncDeletions();
     return memory;
   }
@@ -224,11 +240,16 @@ export class Memory {
       this.store.noteDeletion(observation.observationId);
       this.store.noteDeletion(observation.claimArtifactId);
       this.db.exec("BEGIN IMMEDIATE;");
-      this.index.remove([row.observation_id]);
-      this.db
-        .prepare("DELETE FROM observations WHERE observation_id = ?")
-        .run(row.observation_id);
-      this.db.exec("COMMIT;");
+      try {
+        this.index.remove([row.observation_id]);
+        this.db
+          .prepare("DELETE FROM observations WHERE observation_id = ?")
+          .run(row.observation_id);
+        this.db.exec("COMMIT;");
+      } catch (error) {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+        throw error;
+      }
       purged += 1;
     }
     this.db
@@ -240,6 +261,42 @@ export class Memory {
   }
 
   /**
+   * Committed durable events of a session. `replayEvents` fails closed when any
+   * of them is tombstoned; then this reads only the events committed after the
+   * last tombstoned row (found by bisecting `list`'s store-seq cursor), so a
+   * deletion never stalls capture and deleted evidence is never read.
+   */
+  private replay(scopeId: string, sessionId: string): SplyceEvent[] {
+    try {
+      return this.store.replayEvents(scopeId, sessionId);
+    } catch (error) {
+      if (storeCode(error) !== "EVENT_DELETED") throw error;
+    }
+    const read = (afterSeq: number): SplyceEvent[] =>
+      this.store
+        .list(scopeId, afterSeq, sessionId)
+        .records.flatMap((entry) =>
+          entry.kind === "event"
+            ? [(entry.record as { envelope: SplyceEvent }).envelope]
+            : [],
+        );
+    // ponytail: events committed before the last tombstoned row and not yet captured are skipped; a Store replay that skips tombstones removes that gap.
+    let low = 0;
+    let high = this.store.cursor(scopeId);
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      try {
+        read(mid);
+        high = mid;
+      } catch (error) {
+        if (storeCode(error) !== "EVENT_DELETED") throw error;
+        low = mid + 1;
+      }
+    }
+    return read(low);
+  }
+
+  /**
    * Captures committed durable events of one session after the persisted
    * cursor. Idempotent: ids are derived from (scope, session, revision,
    * sources), the store commit is guarded by the deletion epoch read before
@@ -248,14 +305,14 @@ export class Memory {
   capture(scopeId: string, sessionId: string): Observation[] {
     this.syncDeletions();
     const epoch = this.store.deletionEpoch();
-    // ponytail: full-session replay per capture (needed for intent/delta context); incremental state when sessions get long.
-    const events = this.store.replayEvents(scopeId, sessionId);
+    // ponytail: full-session replay per capture (needed for intent context); incremental state when sessions get long.
+    const events = this.replay(scopeId, sessionId);
     const after = this.cursor(scopeId, sessionId);
     const bySource = new Map(
       events.map((event) => [eventRecordId(event), event]),
     );
     const prepared = this.extract(events, after).map((draft) => {
-      const text = draft.text.trim();
+      const text = this.redact(draft.text).slice(0, LIMITS.docChars).trim();
       if (!text)
         throw new MemoryError("EMPTY_OBSERVATION", "observation text is empty");
       const sourceIds = [...new Set(draft.sourceIds)].sort();

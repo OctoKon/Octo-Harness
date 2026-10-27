@@ -97,6 +97,35 @@ test("M1: a crash after the store commit but before the projection commit never 
   assert.match(hit?.text ?? "", /login/);
 });
 
+test("M1: capture continues after a mid-session deletion and never reads the deleted event", async (t) => {
+  const fx = setup(t);
+  commit(fx.store, turn("a", "src/canary.ts", "canary plan zebra"));
+  assert.equal(fx.memory.capture("w-demo", "s1").length, 1);
+  commit(fx.store, turn("b", "src/bravo.ts", "bravo work"));
+  fx.store.noteDeletion("event:a-outcome");
+  commit(fx.store, turn("c", "src/charlie.ts", "charlie work"));
+  const captured = fx.memory.capture("w-demo", "s1");
+  assert.deepEqual(
+    captured.map((o) => o.sourceIds),
+    [
+      ["event:b-intent", "event:b-outcome"],
+      ["event:c-intent", "event:c-outcome"],
+    ],
+  );
+  assert.equal(
+    fx.memory.cursor("w-demo", "s1"),
+    fx.store.eventCursor("w-demo", "s1"),
+  );
+  assert.deepEqual(await fx.memory.query("w-demo", "canary zebra", 5), []);
+  assert.equal(
+    (await fx.memory.query("w-demo", "charlie", 1))[0]?.sourceIds[0],
+    "event:c-intent",
+  );
+  const reopened = fx.reopen();
+  assert.deepEqual(reopened.capture("w-demo", "s1"), []);
+  assert.deepEqual(await reopened.query("w-demo", "canary zebra", 5), []);
+});
+
 test("M1: uncited or foreign-cited drafts are rejected and commit nothing", (t) => {
   for (const sourceIds of [[], ["event:not-in-this-session"]]) {
     const fx = setup(t, {

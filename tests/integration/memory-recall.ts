@@ -1,6 +1,7 @@
 // TD-40 M2: hybrid recall (BM25, dense port, entity-graph PPR, RRF) and the
 // deletion lifecycle across every index, restart and restore.
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -185,6 +186,9 @@ test("M2: a deleted source is purged from lexical, vector and graph indexes and 
   fx.closeMemory();
   const memoryBackup = join(fx.dir, "memory-before.db");
   fx.copyMemoryTo(memoryBackup);
+  assert.ok(
+    readFileSync(memoryBackup).toString("latin1").includes("Canary answer"),
+  );
   fx.openMemory();
 
   fx.store.noteDeletion("event:gone-outcome");
@@ -226,7 +230,8 @@ test("M2: a deleted source is purged from lexical, vector and graph indexes and 
 
   fx.reopen();
   await absent();
-  assert.throws(() => fx.memory.capture("w-demo", "s1"), code("EVENT_DELETED"));
+  assert.deepEqual(fx.memory.capture("w-demo", "s1"), []); // replay past the tombstone; nothing re-derived
+  await absent();
   assert.throws(() => fx.store.restore(storeBackup), code("STALE_RESTORE"));
 
   fx.closeMemory();
@@ -236,4 +241,129 @@ test("M2: a deleted source is purged from lexical, vector and graph indexes and 
   await absent();
   // source (1) + observation/claim receipts (2), re-tombstoned when the restored projection was re-purged (2)
   assert.equal(fx.store.deletionEpoch(), 5);
+  // secure_delete: purged text is overwritten on disk, not left in free pages.
+  fx.closeMemory();
+  const bytes = ["", "-wal"]
+    .filter((suffix) => existsSync(fx.memoryPath + suffix))
+    .map((suffix) => readFileSync(fx.memoryPath + suffix).toString("latin1"))
+    .join("");
+  assert.equal(bytes.includes("Canary answer"), false);
+  assert.equal(bytes.includes("Kept answer"), true);
+});
+
+// Secret-shaped fixtures are assembled at runtime so no literal credential sits in the repo.
+const shaped = (...parts: string[]) => parts.join("");
+
+test("M2: secrets are redacted before any index, the memory file or the embedding port", async (t) => {
+  const inputs: string[] = [];
+  const port = fakeEmbedding();
+  const embedding = {
+    modelId: port.modelId,
+    dimensions: port.dimensions,
+    embed: (texts: readonly string[]) => {
+      inputs.push(...texts);
+      return port.embed(texts);
+    },
+  };
+  const secrets = [
+    shaped("sk", "-live-", "4f9a8b7c6d5e4f3a2b1c"),
+    shaped("gh", "p_", "abcdefghijklmnopqrstuvwxyz0123"),
+    shaped("github", "_pat_", "11ABCDEFG0123456789_abcdefghij"),
+    shaped("xo", "xb-", "1234567890-abcdefghij"),
+    shaped("AK", "IA", "QWERTYUIOP123456"),
+    shaped(
+      "ey",
+      "JhbGciOiJIUzI1NiJ9.",
+      "eyJzdWIiOiIxMjM0NTY3ODkwIn0.",
+      "dozjgNryP4J3jVmNHl0w5N",
+    ),
+    "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+    "hunter2-db-pass",
+    "Zx9-opaque-bearer",
+    "custom-vault-secret-42",
+  ];
+  const fx = setup(t, {
+    embedding,
+    redact: (text) => text.replaceAll("custom-vault-secret-42", "[VAULT]"),
+  });
+  const pem = shaped(
+    "-----BEGIN ",
+    "PRIVATE KEY-----\n",
+    secrets[6] ?? "",
+    "\n-----END ",
+    "PRIVATE KEY-----",
+  );
+  commit(
+    fx.store,
+    turn(
+      "s",
+      "src/deploy.ts",
+      `curl -H "Authorization: ${shaped("Bea", "rer ")}Zx9-opaque-bearer" OPENAI=${secrets[0]} gh=${secrets[1]} pat ${secrets[2]} slack ${secrets[3]} aws ${secrets[4]} jwt ${secrets[5]} ${pem} db_password=hunter2-db-pass vault ${secrets[9]} deploy finished`,
+    ),
+  );
+  const [observation] = fx.memory.capture("w-demo", "s1");
+  assert.match(observation?.text ?? "", /deploy finished/);
+  assert.ok((await fx.memory.query("w-demo", "deploy finished", 5)).length > 0);
+  const db = new DatabaseSync(fx.memoryPath);
+  const tables = (
+    db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND (name LIKE 'rx_%' OR name = 'observations')",
+      )
+      .all() as Array<{ name: string }>
+  ).map((row) => row.name);
+  const dump = tables
+    .map((name) => JSON.stringify(db.prepare(`SELECT * FROM ${name}`).all()))
+    .join("\n")
+    .toLowerCase();
+  db.close();
+  assert.ok(inputs.length > 0);
+  for (const secret of secrets) {
+    assert.equal(dump.includes(secret.toLowerCase()), false, secret);
+    assert.equal(
+      inputs.some((input) => input.includes(secret)),
+      false,
+      secret,
+    );
+    assert.equal(observation?.text.includes(secret), false, secret);
+  }
+
+  const failing = new RetrievalIndex(new DatabaseSync(":memory:"), {
+    embedding: {
+      modelId: "fails",
+      dimensions: 4,
+      embed: async () => {
+        throw new Error(
+          `upstream 401 for ${shaped("Bea", "rer ")}${secrets[0]}`,
+        );
+      },
+    },
+  });
+  failing.add([{ id: "x", scopeId: "s", text: "hello" }]);
+  await assert.rejects(
+    failing.embedPending("s"),
+    (error: unknown) =>
+      code("EMBEDDING_FAILED")(error) &&
+      !(error as Error).message.includes(secrets[0] ?? "?"),
+  );
+});
+
+test("M2: oversized documents and queries stay bounded", () => {
+  const rx = index();
+  const started = Date.now();
+  const huge = "a-".repeat(100_000) + "/ src/real/path.ts tail";
+  rx.add([{ id: "big", scopeId: "s", text: huge }]);
+  extractEntities(huge);
+  const query = Array.from({ length: 50_000 }, (_, i) => `t${i}`).join(" ");
+  rx.lexical("s", query, 5);
+  rx.graph("s", query, 5);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 1500, `took ${elapsed}ms`);
+  const stored = new DatabaseSync(":memory:");
+  new RetrievalIndex(stored).add([{ id: "big", scopeId: "s", text: huge }]);
+  const row = stored
+    .prepare("SELECT length(text) AS n FROM rx_docs WHERE id = 'big'")
+    .get() as { n: number };
+  assert.equal(row.n, 8000);
+  assert.ok(extractEntities(huge).length <= 32);
 });
