@@ -245,11 +245,6 @@ export class DesktopBridge {
       this.baseContext.sessionId,
     );
     const fromSeq = this._clientAppliedSeq;
-    if (fromSeq === 0)
-      throw new BridgeError(
-        "BRIDGE_OVERFLOW",
-        "queue overflow with no client-applied progress; nothing to resync",
-      );
     if (fromSeq > highwater)
       throw new BridgeError(
         "INVALID_CURSOR",
@@ -265,7 +260,7 @@ export class DesktopBridge {
       sourceIds: [],
       scopeId: this.baseContext.scopeId,
       sessionId: this.baseContext.sessionId,
-      seq: fromSeq,
+      seq: fromSeq === 0 ? 1 : fromSeq,
       durable: true,
       kind: "stream.resync",
       payload: { fromSeq },

@@ -520,6 +520,52 @@ test("highestQueuedSeq counts durable frames only", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("fresh client (applied 0) overflow resyncs from 0", () => {
+  const { bridge, store } = makeBridge();
+  const caller = {
+    sessionId: "s1",
+    configRevision: "cfg1",
+    profileRevision: "profile1",
+    policyRevision: "policy1",
+    resolveReference: () => true,
+  };
+  const runFixtures = JSON.parse(
+    readFileSync(new URL("../fixtures/contracts/records.json", import.meta.url), "utf8"),
+  ) as Record<string, Record<string, unknown>>;
+  store.commitEvents(
+    [
+      {
+        kind: "run",
+        record: {
+          ...structuredClone(runFixtures.run),
+          recordId: "rec-fresh-src",
+          scopeId: "w-demo",
+        },
+      },
+    ],
+    [
+      {
+        schemaVersion: CONTRACT_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
+        eventId: "evt-fresh-1",
+        recordId: "rec-fresh-src",
+        createdAt: "2026-10-26T00:00:00.000Z",
+        sourceIds: ["rec-fresh-src"],
+        sessionId: "s1",
+        scopeId: "w-demo",
+        durable: true,
+        kind: "engine.status",
+        payload: { state: "ready", activeWorkers: 0 },
+      } as never,
+    ],
+    caller,
+  );
+  bridge.clientAppliedSeq = 0;
+  const resync = bridge["resyncFrame"]();
+  assert.equal((resync.event.payload as { fromSeq: number }).fromSeq, 0);
+});
+
+
 test("overflow resync starts at the client applied cursor (saturation)", () => {
   const { bridge, store } = makeBridge();
   const caller = {
