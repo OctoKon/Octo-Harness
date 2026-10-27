@@ -146,7 +146,7 @@ index 5165e1c..f2802e3 100644
  			// Keep callback failures out of Codex's WebSocket retry and SSE fallback path.
  			throw new ProviderStreamEventCallbackError(error);
 diff --git a/vendor/pi/packages/ai/src/api/openai-completions.ts b/vendor/pi/packages/ai/src/api/openai-completions.ts
-index 0e5b606..b70a7ec 100644
+index 0e5b606..4e83fba 100644
 --- a/vendor/pi/packages/ai/src/api/openai-completions.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-completions.ts
 @@ -12,6 +12,15 @@ import type {
@@ -262,8 +262,17 @@ index 0e5b606..b70a7ec 100644
  
  	const base = {
  		...buildBaseOptions(model, context, options, options?.apiKey),
+@@ -775,6 +804,8 @@ function createClient(
+ 
+ 	return new OpenAI({
+ 		apiKey,
++		// Injected transports own diagnostic redaction; SDK logging bypasses it.
++		...(fetch ? { logLevel: "off" as const } : {}),
+ 		baseURL: model.baseUrl,
+ 		dangerouslyAllowBrowser: true,
+ 		fetch,
 diff --git a/vendor/pi/packages/ai/src/api/openai-responses.ts b/vendor/pi/packages/ai/src/api/openai-responses.ts
-index c29e6ad..e512629 100644
+index c29e6ad..c49deae 100644
 --- a/vendor/pi/packages/ai/src/api/openai-responses.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-responses.ts
 @@ -1,6 +1,16 @@
@@ -413,7 +422,16 @@ index c29e6ad..e512629 100644
  
  	const base = {
  		...buildBaseOptions(model, context, options, options?.apiKey),
-@@ -343,6 +378,7 @@ function buildParams(
+@@ -329,6 +364,8 @@ function createClient(
+ 
+ 	return new OpenAI({
+ 		apiKey,
++		// Injected transports own diagnostic redaction; SDK logging bypasses it.
++		...(fetch ? { logLevel: "off" as const } : {}),
+ 		baseURL: model.baseUrl,
+ 		dangerouslyAllowBrowser: true,
+ 		fetch,
+@@ -343,6 +380,7 @@ function buildParams(
  	compat: Required<OpenAIResponsesCompat>,
  	grammarToolInputProperties: ReadonlyMap<string, string>,
  	configurationUpdateEffort: string | undefined,
@@ -421,7 +439,7 @@ index c29e6ad..e512629 100644
  ) {
  	const transcriptTools = resolveTranscriptTools(context.messages, getResponsesToolSupport(compat));
  	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
-@@ -359,7 +395,7 @@ function buildParams(
+@@ -359,7 +397,7 @@ function buildParams(
  
  	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
  	// Sign in with ChatGPT rejects these request fields.

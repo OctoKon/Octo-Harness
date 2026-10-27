@@ -153,6 +153,16 @@ core patch to `packages/ai`, recorded here per [core fusion](../../research/docs
   redaction, no fallback). Provider-specific admission, per-send endpoint rechecks on the Google/Vertex SDK paths and
   cancellation of the SDK transport belong to TD-13/TD-16 and the native transport.
 
+## Native OpenAI request consumer
+
+`0010-native-openai-consumer.patch` adds the owned Pi API consumer for the native
+request-port contract. It consumes Chat Completions or Responses inside the
+request lifetime, copies and redacts observer data, and waits for asynchronous
+response cancellation before releasing the callback. The refreshed 0006 patch
+also disables SDK logging for injected transports. See the
+[consumer record](0010-native-openai-consumer.md) for patch order, local fixture
+evidence and the remaining native/installed integration boundary.
+
 ## Pinned model data hydration
 
 `0005-hydrate-pinned-model-catalog.patch` applies after patch 0003. It adds a
