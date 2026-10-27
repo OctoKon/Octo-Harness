@@ -59,13 +59,28 @@ const id = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
 
 function snapshot(store: Store, scopeId: string, sessionId: string) {
-  const stamp = () =>
-    JSON.stringify([
+  // The fence values are read inside the same before/after stamp window as
+  // the journal list: the returned values are exactly the ones the second
+  // stamp verified consistent with the records, so a write inside the read
+  // window can never end up inside the fence.
+  const fence = {
+    scopeCursor: 0,
+    sessionCursor: 0,
+    deletionEpoch: 0,
+  };
+  const stamp = () => {
+    const values: [number, number, number, number, string] = [
       store.cursor(scopeId),
+      store.sessionCursor(scopeId, sessionId),
       store.deletionEpoch(),
       store.ownershipEpoch(),
       store.configRevision(scopeId),
-    ]);
+    ];
+    fence.scopeCursor = values[0];
+    fence.sessionCursor = values[1];
+    fence.deletionEpoch = values[2];
+    return JSON.stringify(values);
+  };
   const before = stamp();
   const scope = store.list(scopeId);
   const target = store.list(scopeId, 0, sessionId);
@@ -90,6 +105,7 @@ function snapshot(store: Store, scopeId: string, sessionId: string) {
     );
   return {
     records: target.records,
+    fence,
   };
 }
 
@@ -235,10 +251,26 @@ export function applyRecovery(
         "RECOVERY_DELETED_SOURCE",
         `Recovery journal source ${JSON.stringify(record.recordId)} is deleted; nothing is corrected`,
       );
-  const scopeCursor = store.cursor(scopeId);
-  const sessionCursor = store.sessionCursor(scopeId, caller.sessionId);
-  const deletionEpoch = store.deletionEpoch();
-  const ownershipEpoch = store.ownershipEpoch();
+  // The ownership fence compares the TARGET workspace's own row epoch (the
+  // same row commitBatch reads under the lock), never the store-global
+  // ownership counter: another workspace's acquire must not block this
+  // recovery, and an unacquired target must not read a foreign epoch.
+  const workspaceIds = new Set(
+    [...current.runs.values()].map((run) => run.workspaceId),
+  );
+  if (workspaceIds.size > 1)
+    fail(
+      "RECOVERY_SCOPE",
+      "Target session runs attribute inconsistent workspace ids",
+    );
+  const workspaceId = [...workspaceIds][0];
+  const ownershipEpoch = ((): number | undefined => {
+    if (workspaceId === undefined) return undefined;
+    const row = handle
+      .prepare("SELECT epoch FROM workspace_ownership WHERE workspace_id = ?")
+      .get(workspaceId) as { epoch: number | bigint } | undefined;
+    return row === undefined ? 0 : Number(row.epoch);
+  })();
   const report = reconcile({
     runs: [...current.runs.values()],
     actions: [...current.actions.values()],
@@ -339,17 +371,19 @@ export function applyRecovery(
       writes,
       writeCaller,
       undefined,
-      { workspaceId: scopeId, epoch: ownershipEpoch },
+      ownershipEpoch === undefined
+        ? undefined
+        : { workspaceId: workspaceId!, epoch: ownershipEpoch },
       { scopeId, revision: caller.configRevision },
       undefined,
       {
-        expectedScopeCursor: { scopeId, seq: scopeCursor },
+        expectedScopeCursor: { scopeId, seq: initial.fence.scopeCursor },
         expectedSessionCursor: {
           scopeId,
           sessionId: caller.sessionId,
-          seq: sessionCursor,
+          seq: initial.fence.sessionCursor,
         },
-        expectedDeletionEpoch: deletionEpoch,
+        expectedDeletionEpoch: initial.fence.deletionEpoch,
       },
     );
     seqs = result.seqs;

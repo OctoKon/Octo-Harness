@@ -942,6 +942,84 @@ test("#154 P2-4: a non-witness liveness value is rejected", (t) => {
   assert.deepEqual(f.store.list(scopeId), before);
 });
 
+test("#157 P1-A: a newer durable outcome committed inside the snapshot window fails the fence closed", (t) => {
+  const f = fixture(t);
+  const ids = originalIds(f.store);
+  const writer = f.open();
+  const writerCaller = nativeCaller(writer);
+  const originalPrepare = f.store.db.prepare.bind(f.store.db);
+  let fired = false;
+  f.store.db.prepare = (sql) => {
+    const statement = originalPrepare(sql);
+    // The tombstone scan is the first applier step after the snapshot: a real
+    // competitor commits a newer observed-failure outcome exactly there.
+    if (!fired && /FROM deletions/.test(String(sql))) {
+      fired = true;
+      writer.append(
+        {
+          kind: "outcome",
+          record: row("outcome", "newer-failure", {
+            sourceIds: [f.original.action.recordId],
+            actionId: f.original.action.actionId,
+            resultArtifactId: "result1",
+            effectState: "observed-failure",
+            errorClass: "execution",
+          }),
+        },
+        writerCaller,
+      );
+    }
+    return statement;
+  };
+  try {
+    assert.throws(
+      () => applyRecovery(f.store, input(f)),
+      (error) => error.code === "RECOVERY_STALE_SNAPSHOT",
+    );
+  } finally {
+    f.store.db.prepare = originalPrepare;
+  }
+  assert.equal(fired, true);
+  assert.deepEqual(changedRows(f.store, ids), []);
+  assert.equal(latest(f.store, "action", "a1").state, "running");
+});
+
+test("#157 P1-B: another workspace's ownership never blocks the target's recovery", (t) => {
+  const f = fixture(t);
+  // A different workspace acquires (bumping the store-global ownership
+  // counter); the target run's workspace row has its own epoch.
+  f.store.acquireWorkspace("w-other", "other-session");
+  const result = applyRecovery(f.store, input(f));
+  assert.deepEqual(result.applied.actionIds, ["a1"]);
+  assert.equal(latest(f.store, "action", "a1").state, "uncertain");
+});
+
+test("#157 P1-B: a released target workspace still admits recovery at its own epoch", (t) => {
+  const f = fixture(t);
+  const acquired = f.store.acquireWorkspace(scopeId, targetSession);
+  f.store.releaseWorkspace(scopeId, targetSession, acquired.epoch);
+  const result = applyRecovery(f.store, input(f));
+  assert.deepEqual(result.applied.actionIds, ["a1"]);
+  assert.equal(latest(f.store, "action", "a1").state, "uncertain");
+});
+
+test("#157 P3: a tombstoned uncited outcome still fails recovery closed", (t) => {
+  const f = fixture(t, { seeded: false });
+  const seededRow = seed(f.store, {
+    effectState: "observed-failure",
+    errorClass: "execution",
+  });
+  f.store.noteDeletion(seededRow.outcome.recordId);
+  const before = f.store.list(scopeId);
+  const cursor = f.store.cursor();
+  assert.throws(
+    () => applyRecovery(f.store, input(f)),
+    (error) => error.code === "RECOVERY_DELETED_SOURCE",
+  );
+  assert.equal(f.store.cursor(), cursor);
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
 test(
   "#137: killing the applier after its first uncommitted write leaves no partial correction",
   { timeout: 20000 },
