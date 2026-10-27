@@ -104,14 +104,19 @@ Requested environment overrides alone do not prove uptake:
 [Microsoft documents that elevated hosts ignore WebView2 environment overrides](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags).
 These observations do not change launch settings or establish the failure's cause.
 
-That portability branch also retains a **Documentation quality** token-observation
-job for manual dispatch. This native harness branch does not add those workflow
-jobs. The helper can run
+That portability branch retains the earlier token-observation job. This native
+harness branch adds a manual, own-branch-only **Documentation quality** job to query
+launch prerequisites without building or starting the app. The helper runs
 with `-Details` and records elevation type (1 default/no linked
 token, 2 full, 3 limited) and linked-token handle availability, then closes that
 handle. It never uses the token to launch a process or changes runner policy.
-These runner-process facts are prerequisites for evaluating a limited-token
-launch, not proof that such a launch works or that the packaged smoke passes.
+Details now also include an allowlisted integrity-level label and only the presence
+and enabled state of `SeIncreaseQuotaPrivilege`, using query-only token access.
+No identity SID, group list, other privileges, paths or handles leave the helper.
+Unknown observations stay null. Quota absence would rule out relying on that held
+privilege for a restricted-token launch; presence does not prove launch access,
+medium integrity, desktop/session compatibility or WebDriver success. No privilege
+is enabled or added. These facts do not establish the packaged smoke passes.
 
 Self-check the fail-closed readiness assertions:
 

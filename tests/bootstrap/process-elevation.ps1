@@ -14,7 +14,55 @@ public static class SmokeProcessElevation {
     [DllImport("advapi32.dll")] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
     [DllImport("advapi32.dll")] static extern bool GetTokenInformation(IntPtr token, int kind, out int value, int length, out int returned);
     [DllImport("advapi32.dll", EntryPoint="GetTokenInformation")] static extern bool GetLinkedToken(IntPtr token, int kind, out IntPtr value, int length, out int returned);
+    [DllImport("advapi32.dll", EntryPoint="GetTokenInformation")] static extern bool GetTokenBuffer(IntPtr token, int kind, IntPtr value, int length, out int returned);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode)] static extern bool LookupPrivilegeValue(string system, string name, out long luid);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    static IntPtr Query(IntPtr token, int kind, out int length) {
+        GetTokenBuffer(token, kind, IntPtr.Zero, 0, out length);
+        if (length < 4 || length > 65536) return IntPtr.Zero;
+        IntPtr buffer = Marshal.AllocHGlobal(length);
+        int returned;
+        if (GetTokenBuffer(token, kind, buffer, length, out returned) && returned >= 4 && returned <= length) {
+            length = returned;
+            return buffer;
+        }
+        Marshal.FreeHGlobal(buffer);
+        return IntPtr.Zero;
+    }
+    static int Integrity(IntPtr token) {
+        int length;
+        IntPtr buffer = Query(token, 25, out length);
+        try {
+            if (buffer == IntPtr.Zero || length < IntPtr.Size + 4) return -1;
+            // Read the mandatory-label SID locally; never return identity SIDs or token contents.
+            string sid = new System.Security.Principal.SecurityIdentifier(Marshal.ReadIntPtr(buffer)).Value;
+            int rid;
+            return sid.StartsWith("S-1-16-") && int.TryParse(sid.Substring(7), out rid) ? rid : -1;
+        } finally { if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer); }
+    }
+    static int[] Quota(IntPtr token) {
+        long luid;
+        if (!LookupPrivilegeValue(null, "SeIncreaseQuotaPrivilege", out luid)) return new int[] { -1, -1 };
+        int length;
+        IntPtr buffer = Query(token, 3, out length);
+        try {
+            return ParseQuota(buffer, length, luid);
+        } finally { if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer); }
+    }
+    static int[] ParseQuota(IntPtr buffer, int length, long luid) {
+            if (buffer == IntPtr.Zero || length < 4) return new int[] { -1, -1 };
+            int count = Marshal.ReadInt32(buffer);
+            // TOKEN_PRIVILEGES uses a DWORD count followed by 12-byte LUID_AND_ATTRIBUTES entries.
+            if (count < 0 || count > (length - 4) / 12) return new int[] { -1, -1 };
+            for (int i = 0; i < count; i++) {
+                int offset = 4 + i * 12;
+                if (Marshal.ReadInt64(buffer, offset) == luid) {
+                    int flags = Marshal.ReadInt32(buffer, offset + 8);
+                    return (flags & 4) != 0 ? new int[] { 0, 0 } : new int[] { 1, (flags & 2) != 0 ? 1 : 0 };
+                }
+            }
+            return new int[] { 0, 0 };
+    }
     public static int[] Read(int id, long expectedCreationMs, bool details) {
         IntPtr process = OpenProcess(0x1000, false, id), token = IntPtr.Zero, linked = IntPtr.Zero;
         try {
@@ -31,7 +79,10 @@ public static class SmokeProcessElevation {
                 else if (GetLinkedToken(token, 19, out linked, IntPtr.Size, out returned) && returned == IntPtr.Size)
                     linkedAvailable = linked == IntPtr.Zero ? 0 : 1;
             }
-            return new int[] { elevated, elevationType, linkedAvailable };
+            int integrity = -1;
+            int[] quota = new int[] { -1, -1 };
+            if (details) { integrity = Integrity(token); quota = Quota(token); }
+            return new int[] { elevated, elevationType, linkedAvailable, integrity, quota[0], quota[1] };
         } finally {
             if (linked != IntPtr.Zero) CloseHandle(linked);
             if (token != IntPtr.Zero) CloseHandle(token);
@@ -46,6 +97,10 @@ public static class SmokeProcessElevation {
     if ($Details) {
         $result.elevationType = if ($observed[1] -in 1, 2, 3) { $observed[1] } else { $null }
         $result.linkedTokenAvailable = if ($observed[2] -ge 0) { [bool]$observed[2] } else { $null }
+        $levels = @{ 0 = 'untrusted'; 4096 = 'low'; 8192 = 'medium'; 8448 = 'medium-plus'; 12288 = 'high'; 16384 = 'system'; 20480 = 'protected' }
+        $result.integrityLevel = if ($levels.ContainsKey($observed[3])) { $levels[$observed[3]] } else { $null }
+        $result.quotaPrivilegePresent = if ($observed[4] -ge 0) { [bool]$observed[4] } else { $null }
+        $result.quotaPrivilegeEnabled = if ($observed[5] -ge 0) { [bool]$observed[5] } else { $null }
     }
     $result | ConvertTo-Json -Compress
 } catch {

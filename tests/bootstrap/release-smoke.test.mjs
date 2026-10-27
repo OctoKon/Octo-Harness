@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import {
   assertDriverProvenance,
   assertGenerationUnconfigured,
@@ -13,6 +14,72 @@ import {
   webviewOverrideFlags,
   processElevation,
 } from "./release-smoke.mjs";
+
+test(
+  "quota metadata distinguishes enabled, disabled, absent, removed and malformed entries",
+  { skip: process.platform !== "win32" },
+  () => {
+    const helper = readFileSync(
+      new URL("./process-elevation.ps1", import.meta.url),
+      "utf8",
+    );
+    const source = helper.match(/@'\r?\n([\s\S]*?)\r?\n'@/)[1];
+    const actual = JSON.parse(
+      execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-EncodedCommand",
+          Buffer.from(
+            `
+    $ErrorActionPreference = 'Stop'
+    $ProgressPreference = 'SilentlyContinue'
+    Add-Type -TypeDefinition @'
+${source}
+'@
+    $method = [SmokeProcessElevation].GetMethod('ParseQuota', [Reflection.BindingFlags]'NonPublic,Static')
+    $buffer = [Runtime.InteropServices.Marshal]::AllocHGlobal(40)
+    $results = [Collections.Generic.List[object]]::new()
+    try {
+      [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 3)
+      for ($i = 0; $i -lt 3; $i++) {
+        [Runtime.InteropServices.Marshal]::WriteInt64($buffer, (4 + 12 * $i), [long](123 + 333 * $i))
+        [Runtime.InteropServices.Marshal]::WriteInt32($buffer, (12 + 12 * $i), 2)
+      }
+      $results.Add($method.Invoke($null, @($buffer, 40, [long]456)))
+      [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 24, 0)
+      $results.Add($method.Invoke($null, @($buffer, 40, [long]456)))
+      $results.Add($method.Invoke($null, @($buffer, 40, [long]999)))
+      [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 24, 4)
+      $results.Add($method.Invoke($null, @($buffer, 40, [long]456)))
+      [Runtime.InteropServices.Marshal]::WriteInt32($buffer, 4)
+      $results.Add($method.Invoke($null, @($buffer, 40, [long]456)))
+      [Runtime.InteropServices.Marshal]::WriteInt32($buffer, -1)
+      $results.Add($method.Invoke($null, @($buffer, 40, [long]456)))
+      $results.Add($method.Invoke($null, @($buffer, 3, [long]456)))
+      $results.Add($method.Invoke($null, @([IntPtr]::Zero, 40, [long]456)))
+      ConvertTo-Json -InputObject $results -Compress
+    } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($buffer) }
+  `,
+            "utf16le",
+          ).toString("base64"),
+        ],
+        { encoding: "utf8", windowsHide: true, timeout: 15000 },
+      ),
+    );
+    assert.deepEqual(actual, [
+      [1, 1],
+      [1, 0],
+      [0, 0],
+      [0, 0],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+    ]);
+  },
+);
 
 test("WebView override observations distinguish requested from effective flags", () => {
   const folder = "C:\\private-profile\\fresh folder";
@@ -114,10 +181,28 @@ test(
       );
       if (details.elevationType === 1)
         assert.equal(details.linkedTokenAvailable, false);
+      assert(
+        [
+          "untrusted",
+          "low",
+          "medium",
+          "medium-plus",
+          "high",
+          "system",
+          "protected",
+        ].includes(details.integrityLevel),
+      );
+      assert.equal(typeof details.quotaPrivilegePresent, "boolean");
+      assert.equal(typeof details.quotaPrivilegeEnabled, "boolean");
+      if (!details.quotaPrivilegePresent)
+        assert.equal(details.quotaPrivilegeEnabled, false);
       assert.deepEqual(Object.keys(details).sort(), [
         "elevated",
         "elevationType",
+        "integrityLevel",
         "linkedTokenAvailable",
+        "quotaPrivilegeEnabled",
+        "quotaPrivilegePresent",
         "status",
       ]);
       assert.deepEqual(

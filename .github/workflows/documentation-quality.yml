@@ -14,6 +14,22 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  windows-token-observation:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/sreerevanth/td11-native-harness'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Observe runner launch prerequisites without changing its token
+        shell: pwsh
+        run: |
+          $owned = Get-Process -Id $PID
+          $created = [DateTimeOffset]::new($owned.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds()
+          $observation = & ./tests/bootstrap/process-elevation.ps1 -ProcessId $PID -CreationTimeMs $created -Details | ConvertFrom-Json
+          $observation | ConvertTo-Json -Compress
+          if ($observation.status -ne 'observed' -or $null -eq $observation.integrityLevel -or $null -eq $observation.quotaPrivilegePresent -or $null -eq $observation.quotaPrivilegeEnabled) {
+            throw 'Runner launch prerequisites unavailable'
+          }
   documentation-quality:
     name: Documentation quality
     runs-on: ubuntu-latest
