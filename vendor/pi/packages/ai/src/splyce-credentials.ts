@@ -24,6 +24,8 @@ export interface SplyceCredentials {
  */
 export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
 	"anthropic-messages",
+	"azure-openai-responses",
+	"bedrock-converse-stream",
 	"google-generative-ai",
 	"google-vertex",
 ]);

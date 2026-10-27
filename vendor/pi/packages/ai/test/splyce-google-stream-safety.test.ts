@@ -39,9 +39,10 @@ import { Type } from "typebox";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
 import { convertMessages } from "../src/api/google-shared.ts";
 import { stream as streamVertex } from "../src/api/google-vertex.ts";
-import type { Api, AssistantMessage, Context, Model } from "../src/types.ts";
+import type { Api, AssistantMessage, Model, TranscriptContext } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
-const model = (provider: string, api: string, id: string) =>
+const model = <TApi extends Api>(provider: string, api: TApi, id: string) =>
 	({
 		id,
 		name: id,
@@ -53,14 +54,15 @@ const model = (provider: string, api: string, id: string) =>
 		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 100000,
 		maxTokens: 8000,
-	}) as unknown as Model<Api>;
+	}) as unknown as Model<TApi>;
 const gemini = model("google", "google-generative-ai", "gemini-3-flash-preview");
 const vertex = model("google-vertex", "google-vertex", "gemini-3-flash-preview");
 
-const context = (): Context => ({
-	messages: [{ role: "user", content: "go", timestamp: 1 }],
-	tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
-});
+const context = (): TranscriptContext =>
+	normalizeContext({
+		messages: [{ role: "user", content: "go", timestamp: 1 }],
+		tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
+	});
 const call = (extra: Record<string, unknown> = {}) => ({
 	functionCall: { id: "fc_1", name: "read", args: { path: "/workspace/a.txt" } },
 	...extra,

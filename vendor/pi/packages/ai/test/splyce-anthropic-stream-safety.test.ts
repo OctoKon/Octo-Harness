@@ -4,7 +4,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
-import type { Api, Context, Model } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
+import type { Model, TranscriptContext } from "../src/types.ts";
 
 type Ev = { event: string; data: unknown };
 const sse = (events: Ev[]) =>
@@ -49,8 +50,8 @@ const model = {
 	cost: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
 	contextWindow: 200000,
 	maxTokens: 64000,
-} as unknown as Model<Api>;
-const context = (): Context => ({
+} as unknown as Model<"anthropic-messages">;
+const context = (): TranscriptContext => normalizeContext({
 	messages: [{ role: "user", content: "go", timestamp: 1 }],
 	tools: [{ name: "read", description: "read a file", parameters: Type.Object({ path: Type.String() }) }],
 });

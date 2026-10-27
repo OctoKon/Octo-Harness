@@ -82,7 +82,8 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
 import { stream as streamVertex } from "../src/api/google-vertex.ts";
 import type { SplyceCredentials } from "../src/splyce-credentials.ts";
-import type { Api, Context, Model } from "../src/types.ts";
+import type { Api, Model, TranscriptContext } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const SECRET = "e2e-secret-value-0123456789";
 const ADMITTED = "endpoint-admitted";
@@ -100,7 +101,8 @@ const model = (provider: string, api: string, baseUrl: string) =>
 		contextWindow: 100000,
 		maxTokens: 8000,
 	}) as unknown as Model<Api>;
-const context = (): Context => ({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
+const context = (): TranscriptContext =>
+	normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
 
 /** Interface-only upstream; this is the smallest faithful implementation: admit only the bound endpoint. */
 const admission = (connectionId: string, revision: string) => ({
