@@ -4,9 +4,13 @@ export * from "./proxy.ts";
 export { bindSplyceToolAdmission, type SplyceToolAdmission } from "./splyce-admission.ts";
 export {
 	assertSameSplyceOwner,
+	assertSplycePersistence,
 	assertSplyceReady,
 	disposeSplyceOwner,
 	inheritSplyceOwner,
+	isSplyceOwned,
+	type SplycePersistenceSanitizer,
+	sanitizeSplycePersistence,
 	sealSplyceAgentCallbacks,
 } from "./splyce-readiness.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
