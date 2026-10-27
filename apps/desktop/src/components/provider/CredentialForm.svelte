@@ -132,6 +132,9 @@
         aria-describedby={errors.modelId ? "setup-model-error" : undefined}
       />
       {@render error("modelId")}
+      <p id="setup-limits-note" class="note">
+        Token limits: leave both blank only for a known catalog model. A custom model needs both from your provider; Splyce never guesses them. Cost is shown as unknown for custom models.
+      </p>
       <label for="setup-context">Context window (tokens)</label>
       <input
         id="setup-context"
@@ -139,7 +142,7 @@
         bind:value={contextWindow}
         autocomplete="off"
         aria-invalid={errors.contextWindow ? "true" : undefined}
-        aria-describedby={errors.contextWindow ? "setup-context-error" : undefined}
+        aria-describedby={errors.contextWindow ? "setup-context-error setup-limits-note" : "setup-limits-note"}
       />
       {@render error("contextWindow")}
       <label for="setup-output">Max output tokens</label>
@@ -149,7 +152,7 @@
         bind:value={maxOutputTokens}
         autocomplete="off"
         aria-invalid={errors.maxOutputTokens ? "true" : undefined}
-        aria-describedby={errors.maxOutputTokens ? "setup-output-error" : undefined}
+        aria-describedby={errors.maxOutputTokens ? "setup-output-error setup-limits-note" : "setup-limits-note"}
       />
       {@render error("maxOutputTokens")}
       <label class="check"><input id="setup-reasoning" type="checkbox" bind:checked={reasoning} /> Reasoning model</label>

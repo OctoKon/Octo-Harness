@@ -165,10 +165,11 @@
   // The secret lives only in this one send; the payload object is not kept.
   async function configureProvider(draft: ProviderSetupDraft) {
     if (!workspace) throw new Error("No project selected");
+    const requestId = crypto.randomUUID();
     await sendSetup(
       "provider.configure",
-      crypto.randomUUID(),
-      providerConfigurePayload(draft, workspace.workspaceId),
+      requestId,
+      providerConfigurePayload(draft, workspace.workspaceId, requestId),
     );
   }
   let stopped = $derived(engineConnected && status === "disconnected");
