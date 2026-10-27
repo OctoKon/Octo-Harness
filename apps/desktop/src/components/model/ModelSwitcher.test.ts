@@ -269,4 +269,23 @@ describe("ModelSwitcher", () => {
     render(createModelSelection("bind_a"));
     expect(text("model-catalog-stale")).toBe("");
   });
+
+  it("a stale empty catalog still carries the warning", () => {
+    // Empty and stale are independent facts: the engine reported nothing AND
+    // the report may be behind. Saying only "no models" hides the second one.
+    render(createModelSelection("bind_a"), { options: [], stale: true });
+
+    expect(text("model-catalog-empty")).toContain("reported no models");
+    expect(text("model-catalog-stale")).toContain("may be out of date");
+  });
+
+  it("a failed catalog never borrows the stale warning", () => {
+    render(createModelSelection("bind_a"), {
+      catalogStatus: "error",
+      stale: true,
+    });
+
+    expect(text("model-catalog-error")).toContain("could not be loaded");
+    expect(text("model-catalog-stale")).toBe("");
+  });
 });
