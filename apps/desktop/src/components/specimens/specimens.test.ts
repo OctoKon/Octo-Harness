@@ -12,6 +12,51 @@ import {
   resolveTheme,
 } from "./tokens";
 
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+const FORCED_QUERY = "(forced-colors: active)";
+type MediaListener = (event: MediaQueryListEvent) => void;
+
+function mockMedia(initial: { dark: boolean; forced: boolean }) {
+  const original = window.matchMedia;
+  const listeners = new Map<string, Set<MediaListener>>();
+  const fake = (query: string): MediaQueryList => {
+    const set = listeners.get(query) ?? new Set<MediaListener>();
+    listeners.set(query, set);
+    return {
+      matches: query === DARK_QUERY ? initial.dark : initial.forced,
+      media: query,
+      onchange: null,
+      addEventListener: (
+        _type: string,
+        listener: EventListenerOrEventListenerObject | null,
+      ) => {
+        if (typeof listener === "function") set.add(listener as MediaListener);
+      },
+      removeEventListener: (
+        _type: string,
+        listener: EventListenerOrEventListenerObject | null,
+      ) => {
+        if (typeof listener === "function")
+          set.delete(listener as MediaListener);
+      },
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => true,
+    } as unknown as MediaQueryList;
+  };
+  window.matchMedia = fake;
+  return {
+    emit(query: string, matches: boolean) {
+      for (const listener of listeners.get(query) ?? []) {
+        listener({ matches, media: query } as MediaQueryListEvent);
+      }
+    },
+    restore() {
+      window.matchMedia = original;
+    },
+  };
+}
+
 const mounted: object[] = [];
 function render(c: unknown, props: Record<string, unknown>) {
   const target = document.createElement("div");
@@ -80,6 +125,33 @@ describe("TD-75 theme specimens", () => {
     expect(hcSection.getAttribute("data-resolved-theme")).toBe("high-contrast");
     expect(hc.textContent).toContain(TOKENS["high-contrast"].selection);
     expect(hc.textContent).toContain("system (high-contrast)");
+  });
+
+  it("follows live system preference and forced-colors changes", () => {
+    const media = mockMedia({ dark: false, forced: false });
+    try {
+      const t = render(ThemeSpecimen, { theme: "system" });
+      const section = () => t.querySelector("[data-testid=theme-specimen]")!;
+      expect(section().getAttribute("data-resolved-theme")).toBe("light");
+
+      media.emit(DARK_QUERY, true);
+      flushSync();
+      expect(section().getAttribute("data-resolved-theme")).toBe("dark");
+      expect(t.textContent).toContain("system (dark)");
+
+      media.emit(FORCED_QUERY, true);
+      flushSync();
+      expect(section().getAttribute("data-resolved-theme")).toBe(
+        "high-contrast",
+      );
+      expect(t.textContent).toContain("system (high-contrast)");
+
+      media.emit(FORCED_QUERY, false);
+      flushSync();
+      expect(section().getAttribute("data-resolved-theme")).toBe("dark");
+    } finally {
+      media.restore();
+    }
   });
 
   it("status samples carry glyph and text, not colour alone", () => {
