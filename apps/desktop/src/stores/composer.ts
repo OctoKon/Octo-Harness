@@ -10,6 +10,16 @@ export interface ComposerAvailability {
   stale: boolean;
   /** A prompt was already sent and is not settled yet. */
   pending: boolean;
+  /**
+   * Engine-reported generation readiness.
+   *
+   * `true` = the engine proved a generation port is ready.
+   * `false` = the engine proved it is NOT configured (no profile/model).
+   * `undefined` = readiness was not reported, which is not the same claim.
+   *
+   * Fail closed: anything but `true` blocks sending.
+   */
+  generationReady?: boolean;
   /** Sending is not wired for this session yet; shown as the blocked reason. */
   unavailable?: string;
 }
@@ -28,6 +38,15 @@ export function sendBlockedReason(a: ComposerAvailability): string | null {
   const connection = CONNECTION_REASONS[a.connection];
   if (connection) return connection;
   if (!a.sessionId) return "No session is selected.";
+  // Contract (commons/backend-frontend-contracts.md): generation=false must read
+  // "Generation unconfigured" and keep send disabled, so the generation gate
+  // wins over the wiring gap. Once generation is true, the wiring gap is shown.
+  if (a.generationReady === false)
+    return "Generation unconfigured. Connect a provider and select a model.";
+  // Unreported is its own state: the engine has not said whether generation is
+  // configured, so claiming it is unconfigured would be a false statement.
+  if (a.generationReady !== true)
+    return "Generation readiness has not been reported yet. Sending stays blocked.";
   if (a.unavailable) return a.unavailable;
   if (a.stale) return "Session state is out of date. Refresh before sending.";
   return null;

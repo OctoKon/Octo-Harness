@@ -14,7 +14,10 @@
     run,
     stale = false,
     showApprovalControls = true,
-    canRespond = () => true,
+    // Fail closed: a caller that does not state who may answer must not get live
+    // approval controls. App.svelte already passes () => false because session
+    // revisions are not delivered to the renderer yet.
+    canRespond = () => false,
     onApproval,
   }: {
     run: TurnView;
