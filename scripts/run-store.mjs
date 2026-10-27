@@ -26,6 +26,8 @@ if (args.length === 0) {
     "tests/integration/credentials.ts",
     "tests/integration/code-index.ts",
     "tests/integration/worktrees.ts",
+    "tests/integration/grants.ts",
+    "tests/integration/policy-grants.ts",
   ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
@@ -64,13 +66,17 @@ if (args.length === 0) {
   // named case only.
   else if (args[1] === "E1_readonly_subagents")
     files = ["tests/integration/subagents.ts"];
+  else if (args[1] === "C2_grants_store")
+    files = ["tests/integration/grants.ts"];
+  else if (args[1] === "C2_policy_grants")
+    files = ["tests/integration/policy-grants.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C5_dirty_snapshot | --case C6_event_ledger | --case M1_memory_capture | --case M2_memory_recall | --case CTX_code_index | --case E1_worktrees | --case E1_readonly_subagents]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C2_grants_store | --case C2_policy_grants | --case C5_dirty_snapshot | --case C6_event_ledger | --case M1_memory_capture | --case M2_memory_recall | --case CTX_code_index | --case E1_worktrees | --case E1_readonly_subagents]",
   );
   process.exit(2);
 }

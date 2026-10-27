@@ -240,6 +240,8 @@ export interface RecordBodies {
       role: string;
       providerConnectionId: string;
       connectionRevision: string;
+      /** Exact model the binding dispatches; absent on historical snapshots. */
+      modelId?: string;
     }[];
   };
   selectionTransition: {
@@ -304,7 +306,48 @@ export interface RecordBodies {
     revision: string;
     releasedAt: string | null;
   };
+  /** TD-13 native-admitted directory. The canonical path is never persisted
+   * here (records are exportable and path-free); it lives in the native-only
+   * `workspace_paths` table keyed by workspaceId. */
+  admittedWorkspace: {
+    workspaceId: string;
+    displayName: string;
+    admittedAt: string;
+    revision: string;
+    volumeSerial: string;
+    fileId: string;
+  };
+  /** TD-13 append-only grant: consume/revoke append `<grantId>.consumed` /
+   * `<grantId>.revoked` revisions carrying consumedAt / revokedAt. */
+  grant: {
+    grantId: string;
+    workspaceId: string;
+    sessionId: string;
+    capability: (typeof GRANT_CAPABILITIES)[number];
+    scope: (typeof GRANT_SCOPES)[number];
+    consumedAt?: string;
+    revokedAt?: string;
+    actionId?: string;
+    argumentsDigest?: string;
+    origin?: string;
+  };
+  /** TD-13 canonical provider endpoint, immutable per revision (TD-26 CAS). */
+  providerEndpoint: {
+    endpointId: string;
+    canonicalUrl: string;
+    apiFamily: string;
+    locality: (typeof ENDPOINT_LOCALITIES)[number];
+    revision: string;
+  };
 }
+export const GRANT_CAPABILITIES = [
+  "fs.read",
+  "fs.write",
+  "shell.run",
+  "net.provider",
+] as const;
+export const GRANT_SCOPES = ["session", "once"] as const;
+export const ENDPOINT_LOCALITIES = ["hosted", "loopback"] as const;
 export type RecordKind = keyof RecordBodies;
 export type RecordByKind = {
   [K in RecordKind]: RecordMetadata & RecordBodies[K];
@@ -325,11 +368,15 @@ export type ConfigurationTransitionRecord =
   RecordByKind["configurationTransition"];
 export type SessionWriterLeaseRecord = RecordByKind["sessionWriterLease"];
 export type BranchAnchorRecord = RecordByKind["branchAnchor"];
+export type AdmittedWorkspaceRecord = RecordByKind["admittedWorkspace"];
+export type GrantRecord = RecordByKind["grant"];
+export type ProviderEndpointRecord = RecordByKind["providerEndpoint"];
 
 type Rule =
   | "text"
   | "delta"
   | "id"
+  | "modelRef"
   | "ref"
   | "nullableRef"
   | "nullableId"
@@ -496,7 +543,114 @@ export const RECORD_SCHEMAS = {
     revision: "text",
     releasedAt: "nullableUtc",
   },
+  admittedWorkspace: {
+    workspaceId: "id",
+    displayName: "text",
+    admittedAt: "utc",
+    revision: "id",
+    volumeSerial: "id",
+    fileId: "id",
+  },
+  grant: {
+    grantId: "id",
+    workspaceId: "id",
+    sessionId: "id",
+    capability: GRANT_CAPABILITIES,
+    scope: GRANT_SCOPES,
+  },
+  providerEndpoint: {
+    endpointId: "id",
+    canonicalUrl: "text",
+    apiFamily: "id",
+    locality: ENDPOINT_LOCALITIES,
+    revision: "id",
+  },
 } as const satisfies { [K in RecordKind]: Shape };
+const STRICT_OPTIONAL: Partial<Record<RecordKind, Shape>> = {
+  admittedWorkspace: {},
+  grant: {
+    consumedAt: "utc",
+    revokedAt: "utc",
+    actionId: "id",
+    argumentsDigest: "text",
+    origin: "text",
+  },
+  providerEndpoint: {},
+};
+const METADATA_KEYS = [
+  "schemaVersion",
+  "recordId",
+  "createdAt",
+  "scopeId",
+  "sourceIds",
+];
+const LOOPBACK_HOSTS = ["127.0.0.1", "[::1]", "localhost"];
+
+/**
+ * Canonical provider base URL (TD-13): absolute https, or http only on a
+ * loopback host with locality "loopback"; no userinfo, query, fragment,
+ * backslashes, whitespace or dot segments; lowercase scheme/host, default
+ * port stripped, trailing slashes removed.
+ */
+export function canonicalEndpointUrl(raw: unknown, locality: unknown): string {
+  requireThat(
+    typeof raw === "string" &&
+      raw.length <= 2048 &&
+      !/[\s\\#?@]/u.test(raw) &&
+      /^[a-z][a-z0-9+.-]*:\/\//iu.test(raw),
+    "INVALID_ENDPOINT",
+    "canonicalUrl",
+  );
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new ContractError("INVALID_ENDPOINT", "Invalid endpoint URL");
+  }
+  const path = raw.replace(/^[^:]+:\/\/[^/]*/u, "");
+  requireThat(
+    !/(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)/iu.test(path) && !/\/\//u.test(path),
+    "INVALID_ENDPOINT",
+    "dot or empty path segment",
+  );
+  const loopback = LOOPBACK_HOSTS.includes(url.hostname);
+  requireThat(
+    (locality === "loopback" &&
+      loopback &&
+      (url.protocol === "http:" || url.protocol === "https:")) ||
+      (locality === "hosted" && !loopback && url.protocol === "https:"),
+    "INVALID_ENDPOINT",
+    "scheme/locality",
+  );
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/u, "")}`;
+}
+
+/** Renderer/grant-safe origin `scheme://host:port` (explicit port, no path). */
+export function originView(endpoint: { canonicalUrl: string }): string {
+  let url: URL;
+  try {
+    url = new URL(endpoint.canonicalUrl);
+  } catch {
+    throw new ContractError("INVALID_ENDPOINT", "Invalid endpoint URL");
+  }
+  const port = url.port || (url.protocol === "https:" ? "443" : "80");
+  return `${url.protocol}//${url.hostname}:${port}`;
+}
+
+function validOrigin(origin: unknown): boolean {
+  if (typeof origin !== "string" || !/^https?:\/\/[^/]+:\d+$/u.test(origin))
+    return false;
+  try {
+    const host = new URL(origin).hostname;
+    const canonicalUrl = canonicalEndpointUrl(
+      origin,
+      LOOPBACK_HOSTS.includes(host) ? "loopback" : "hosted",
+    );
+    return originView({ canonicalUrl }) === origin;
+  } catch {
+    return false;
+  }
+}
 
 for (const schema of Object.values(RECORD_SCHEMAS)) {
   for (const spec of Object.values(schema))
@@ -856,6 +1010,15 @@ function opaque(value: unknown, field: string): asserts value is string {
   text(value, field);
   requireThat(!/\s|[\\/]/u.test(value), "INVALID_SHAPE", field);
 }
+/** A model reference may contain `/` and `:` (OpenRouter, Bedrock); no whitespace, control or format chars. */
+function modelRef(value: unknown, field: string): asserts value is string {
+  text(value, field);
+  requireThat(
+    value.length <= 256 && !/[\s\u0000-\u001f\u007f-\u009f\p{Cf}]/u.test(value),
+    "INVALID_SHAPE",
+    field,
+  );
+}
 function uint(value: unknown, field: string): asserts value is number {
   requireThat(
     typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
@@ -1037,6 +1200,9 @@ function rule(
     case "id":
       opaque(value, field);
       break;
+    case "modelRef":
+      modelRef(value, field);
+      break;
     case "ref":
       reference(value, field, context);
       break;
@@ -1147,7 +1313,7 @@ export function validateRecord<K extends RecordKind>(
       shape(
         binding,
         { role: "id", providerConnectionId: "id", connectionRevision: "id" },
-        {},
+        { modelId: "modelRef" },
         context,
         true,
       );
@@ -1187,6 +1353,73 @@ export function validateRecord<K extends RecordKind>(
       record.targetScopeId === context.scopeId,
       "WRONG_SCOPE",
       "targetScopeId",
+    );
+  const strictOptional = STRICT_OPTIONAL[kind];
+  if (strictOptional !== undefined) {
+    const required = RECORD_SCHEMAS[kind] as Shape;
+    for (const key of Object.keys(record))
+      requireThat(
+        METADATA_KEYS.includes(key) ||
+          Object.hasOwn(required, key) ||
+          Object.hasOwn(strictOptional, key),
+        "INVALID_SHAPE",
+        "unknown field",
+      );
+    for (const [key, spec] of Object.entries(strictOptional))
+      if (Object.hasOwn(record, key)) rule(record[key], spec, key, context);
+    for (const key of Object.keys(record))
+      if (
+        key === "recordId" ||
+        required[key] === "id" ||
+        strictOptional[key] === "id"
+      )
+        requireThat(
+          (record[key] as string).length <= 128,
+          "INVALID_SHAPE",
+          `${key} length`,
+        );
+  }
+  if (kind === "grant") {
+    const once = record.scope === "once";
+    const provider = record.capability === "net.provider";
+    const bound = ["actionId", "argumentsDigest"].map((key) =>
+      Object.hasOwn(record, key),
+    );
+    requireThat(
+      bound.every((present) => present === once),
+      "INVALID_SHAPE",
+      "once grant binding",
+    );
+    if (once)
+      requireThat(
+        /^sha256:[0-9a-f]{64}$/u.test(record.argumentsDigest as string),
+        "INVALID_SHAPE",
+        "argumentsDigest",
+      );
+    requireThat(
+      once || !Object.hasOwn(record, "consumedAt"),
+      "INVALID_SHAPE",
+      "consumedAt",
+    );
+    requireThat(
+      provider === Object.hasOwn(record, "origin") &&
+        (!provider || (!once && validOrigin(record.origin))),
+      "INVALID_SHAPE",
+      "origin",
+    );
+    requireThat(
+      (record.capability !== "fs.write" && record.capability !== "shell.run") ||
+        once,
+      "INVALID_SHAPE",
+      "mutating capability requires a once grant",
+    );
+  }
+  if (kind === "providerEndpoint")
+    requireThat(
+      canonicalEndpointUrl(record.canonicalUrl, record.locality) ===
+        record.canonicalUrl,
+      "INVALID_ENDPOINT",
+      "canonicalUrl",
     );
   if (kind === "providerRole" && record.locality === "hosted")
     reference(record.qualificationRef, "qualificationRef", context);

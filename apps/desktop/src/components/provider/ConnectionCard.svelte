@@ -10,16 +10,16 @@
 </script>
 
 <li class="connection" data-state={connection.state} data-testid="connection">
-  <h4 id={`conn-${connection.id}`}>{connection.id}</h4>
+  <h4 id={`conn-${connection.id}`}>{connection.displayName}</h4>
   <dl aria-labelledby={`conn-${connection.id}`}>
     <dt>Endpoint</dt>
-    <dd>{connection.endpointLabel}</dd>
+    <dd>{connection.endpointHost ?? "Unavailable"}</dd>
     <dt>Data destination</dt>
     <dd>{connection.egress}</dd>
     <dt>Locality</dt>
     <dd>{connection.locality === "local" ? "Local" : "Cloud"}</dd>
     <dt>Credential</dt>
-    <dd>{label[connection.credential]} ({connection.credentialRef})</dd>
+    <dd>{label[connection.credential]}</dd>
     <dt>Revision</dt>
     <dd>{connection.revision}</dd>
   </dl>

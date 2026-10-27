@@ -41,6 +41,7 @@ import { piMessagesApi } from "./api/pi-messages.lazy.ts";
 import { getEnvApiKey } from "./env-api-keys.ts";
 import type { ModelsApiStreamOptions } from "./models.ts";
 import { builtinModels, getBuiltinModel, getBuiltinModels, getBuiltinProviders } from "./providers/all.ts";
+import { assertCredentialsSupported } from "./splyce-credentials.ts";
 
 export type { BuiltinProvider } from "./providers/all.ts";
 
@@ -225,7 +226,8 @@ function withEnvApiKey<TOptions extends StreamOptions>(
 	model: Model<Api>,
 	options: TOptions | undefined,
 ): TOptions | undefined {
-	if (hasExplicitApiKey(options?.apiKey)) return options;
+	// Splyce: a leased credential is the only credential; never mix in an ambient key.
+	if (options?.credentials || hasExplicitApiKey(options?.apiKey)) return options;
 	const apiKey = getEnvApiKey(model.provider, options?.env);
 	if (!apiKey || apiKey === AMBIENT_AUTH_MARKER) return options;
 	return { ...options, apiKey } as TOptions;
@@ -254,6 +256,7 @@ export function stream<TApi extends Api>(
 	context: Context,
 	options?: ProviderStreamOptions,
 ): AssistantMessageEventStream {
+	assertCredentialsSupported(model.api, options);
 	const transcript = normalizeContext(context);
 	const builtinProvider = getBuiltinProviderForModel(model);
 	if (builtinProvider) {
@@ -280,6 +283,7 @@ export function streamSimple<TApi extends Api>(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
+	assertCredentialsSupported(model.api, options);
 	const transcript = normalizeContext(context);
 	const builtinProvider = getBuiltinProviderForModel(model);
 	if (builtinProvider) {

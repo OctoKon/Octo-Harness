@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, WebviewWindow, ipc::Channel};
 
@@ -85,6 +85,25 @@ impl Subscriptions {
     }
 
     fn forward(&mut self, event: Value) -> Result<(), BridgeError> {
+        if event["frame"] == "control" {
+            if event.as_object().is_none_or(|fields| {
+                fields.len() != 4
+                    || !["frame", "kind", "sessionId", "fromSeq"]
+                        .iter()
+                        .all(|key| fields.contains_key(*key))
+            }) || event["kind"] != "stream.resync"
+                || !opaque(&event["sessionId"])
+                || !matches_rule(&event["fromSeq"], &json!("uint"))
+            {
+                return Err(BridgeError::engine());
+            }
+            let session_id = event["sessionId"].as_str().unwrap();
+            let subscription = self.0.get(session_id).ok_or_else(BridgeError::engine)?;
+            if subscription.events.send(event.clone()).is_err() {
+                self.0.remove(session_id);
+            }
+            return Ok(());
+        }
         let session_id = event["sessionId"]
             .as_str()
             .ok_or_else(BridgeError::engine)?
@@ -169,6 +188,7 @@ pub struct BridgeState {
     inner: Arc<Mutex<Inner>>,
     subscriptions: Arc<Mutex<Subscriptions>>,
     next_id: Arc<AtomicU64>,
+    workspace_busy: Arc<AtomicBool>,
 }
 
 impl BridgeState {
@@ -187,6 +207,7 @@ impl BridgeState {
             })),
             subscriptions: Arc::new(Mutex::new(Subscriptions::default())),
             next_id: Arc::new(AtomicU64::new(1)),
+            workspace_busy: Arc::new(AtomicBool::new(false)),
         };
         let observer = state.clone();
         std::thread::spawn(move || {
@@ -453,6 +474,22 @@ fn valid_command(op: &str, value: &Value) -> bool {
     })
 }
 
+fn valid_setup(op: &str, value: &Value) -> bool {
+    let fields = ["frame", "command", "requestId", "payload"];
+    value.as_object().is_some_and(|object| {
+        object.len() == fields.len() && fields.iter().all(|key| object.contains_key(*key))
+    }) && value["frame"] == "setup"
+        && value["command"] == "metadata"
+        && op == "metadata"
+        && opaque(&value["requestId"])
+        && value["requestId"]
+            .as_str()
+            .is_some_and(|id| id.len() <= 128)
+        && value["payload"]
+            .as_object()
+            .is_some_and(|payload| payload.is_empty())
+}
+
 fn valid_ports(value: &Value) -> bool {
     let Some(ports) = value.as_object() else {
         return false;
@@ -525,10 +562,25 @@ pub async fn send(
     payload: Value,
 ) -> Result<Value, BridgeError> {
     caller(&window)?;
-    if !valid_command(&op, &payload) {
-        return Err(BridgeError::denied());
+    let setup = payload["frame"] == "setup";
+    let correlation_field = if setup { "requestId" } else { "correlationId" };
+    if !(if setup {
+        valid_setup(&op, &payload)
+    } else {
+        valid_command(&op, &payload)
+    }) {
+        let mut error = BridgeError::denied();
+        if setup
+            && opaque(&payload["requestId"])
+            && payload["requestId"]
+                .as_str()
+                .is_some_and(|id| id.len() <= 128)
+        {
+            error.correlation_id = payload["requestId"].as_str().unwrap().to_owned();
+        }
+        return Err(error);
     }
-    let correlation = payload["correlationId"]
+    let correlation = payload[correlation_field]
         .as_str()
         .unwrap_or("native-validation")
         .to_owned();
@@ -565,15 +617,259 @@ pub async fn subscribe(
     state.subscribe_channel(session_id, after_seq, on_event, on_lifecycle)
 }
 
+struct WorkspaceLease(Arc<AtomicBool>);
+
+impl WorkspaceLease {
+    fn acquire(busy: &Arc<AtomicBool>) -> Result<Arc<Self>, BridgeError> {
+        busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| BridgeError::denied())?;
+        Ok(Arc::new(Self(busy.clone())))
+    }
+}
+
+impl Drop for WorkspaceLease {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+struct WorkspaceRequest(Arc<AtomicBool>);
+
+impl Drop for WorkspaceRequest {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn active_workspace_request(active: &AtomicBool) -> Result<(), BridgeError> {
+    if active.load(Ordering::Acquire) {
+        Ok(())
+    } else {
+        Err(BridgeError::denied())
+    }
+}
+
+fn receive_workspace_selection(
+    receiver: std::sync::mpsc::Receiver<
+        Result<Option<crate::workspace::QualifiedDirectory>, BridgeError>,
+    >,
+    active: &AtomicBool,
+    timeout: std::time::Duration,
+) -> Result<Option<crate::workspace::QualifiedDirectory>, BridgeError> {
+    receiver.recv_timeout(timeout).map_err(|_| {
+        active.store(false, Ordering::Release);
+        BridgeError::denied()
+    })?
+}
+
+fn workspace_selection(value: Value) -> Result<Value, BridgeError> {
+    let fields = ["workspaceId", "displayName", "admittedAt", "revision"];
+    if value.as_object().is_none_or(|object| {
+        object.len() != fields.len() || !fields.iter().all(|key| object.contains_key(*key))
+    }) || !opaque(&value["workspaceId"])
+        || !["displayName", "admittedAt", "revision"]
+            .iter()
+            .all(|key| matches_rule(&value[*key], &json!("text")))
+    {
+        return Err(BridgeError::engine());
+    }
+    Ok(json!({"selectionRef":value["workspaceId"],"workspace":value}))
+}
+
+fn admit_selected(
+    selected: crate::workspace::QualifiedDirectory,
+    admit: impl FnOnce(Value) -> Result<Value, BridgeError>,
+) -> Result<Value, BridgeError> {
+    selected.verify().map_err(|_| BridgeError::denied())?;
+    let canonical_path = selected.path().to_str().ok_or_else(BridgeError::denied)?;
+    let identity = selected.identity();
+    let value = admit(json!({
+        "canonicalPath":canonical_path,
+        "volumeSerial":identity.volume_serial.to_string(),
+        "fileId":identity.file_id.to_string(),
+    }))?;
+    // Keep the selected directory and its ancestors pinned through the commit ACK.
+    let result = workspace_selection(value);
+    drop(selected);
+    result
+}
+
 #[tauri::command]
-pub async fn dialog_select_workspace(window: WebviewWindow) -> Result<Value, BridgeError> {
+pub async fn dialog_select_workspace(
+    window: WebviewWindow,
+    state: tauri::State<'_, BridgeState>,
+) -> Result<Value, BridgeError> {
     caller(&window)?;
-    Err(BridgeError::denied())
+    let lease = WorkspaceLease::acquire(&state.workspace_busy)?;
+    let request = WorkspaceRequest(Arc::new(AtomicBool::new(true)));
+    let (selected_tx, selected_rx) = std::sync::mpsc::sync_channel(1);
+    let owner = window.clone();
+    let chooser_lease = lease.clone();
+    let chooser_active = request.0.clone();
+    window
+        .run_on_main_thread(move || {
+            let _lease = chooser_lease;
+            let selected = active_workspace_request(&chooser_active).and_then(|()| {
+                caller(&owner)?;
+                let handle = owner.hwnd().map_err(|_| BridgeError::denied())?;
+                let selection = crate::workspace::choose_directory(handle.0.cast())
+                    .map_err(|_| BridgeError::denied())?;
+                active_workspace_request(&chooser_active)?;
+                Ok(selection)
+            });
+            let _ = selected_tx.send(selected);
+        })
+        .map_err(|_| BridgeError::denied())?;
+    let waiting_active = request.0.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        receive_workspace_selection(
+            selected_rx,
+            &waiting_active,
+            std::time::Duration::from_secs(300),
+        )
+    })
+    .await
+    .map_err(|_| BridgeError::engine())??;
+    active_workspace_request(&request.0)?;
+    caller(&window)?;
+    let Some(selected) = selected else {
+        return Ok(Value::Null);
+    };
+    let bridge = state.inner().clone();
+    let admission_active = request.0.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let _lease = lease;
+        active_workspace_request(&admission_active)?;
+        caller(&window)?;
+        admit_selected(selected, |params| {
+            active_workspace_request(&admission_active)?;
+            caller(&window)?;
+            bridge.call("native.workspace.admit", params)
+        })
+    })
+    .await
+    .map_err(|_| BridgeError::engine())?;
+    drop(request);
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_lease_rejects_second_invocation_until_ack_releases_last_owner() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let request = WorkspaceLease::acquire(&busy).ok().unwrap();
+        let chooser = request.clone();
+        assert!(WorkspaceLease::acquire(&busy).is_err());
+        drop(chooser);
+        assert!(WorkspaceLease::acquire(&busy).is_err());
+        drop(request);
+        assert!(WorkspaceLease::acquire(&busy).is_ok());
+    }
+
+    #[test]
+    fn workspace_lease_has_one_winner_under_concurrent_invocations() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let attempts = std::sync::Barrier::new(8);
+        let held = std::sync::Barrier::new(8);
+        let winners = AtomicU64::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    attempts.wait();
+                    let lease = WorkspaceLease::acquire(&busy);
+                    if lease.is_ok() {
+                        winners.fetch_add(1, Ordering::Relaxed);
+                    }
+                    held.wait();
+                    drop(lease);
+                });
+            }
+        });
+        assert_eq!(winners.load(Ordering::Relaxed), 1);
+        assert!(WorkspaceLease::acquire(&busy).is_ok());
+    }
+
+    #[test]
+    fn workspace_timeout_before_ui_revokes_queued_chooser() {
+        let request = WorkspaceRequest(Arc::new(AtomicBool::new(true)));
+        let (_sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(
+            receive_workspace_selection(receiver, &request.0, std::time::Duration::ZERO).is_err()
+        );
+        assert!(active_workspace_request(&request.0).is_err());
+    }
+
+    #[test]
+    fn workspace_late_selection_cannot_reach_store_or_release_live_chooser_lease() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let lease = WorkspaceLease::acquire(&busy).ok().unwrap();
+        let chooser_lease = lease.clone();
+        let request = WorkspaceRequest(Arc::new(AtomicBool::new(true)));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(
+            receive_workspace_selection(receiver, &request.0, std::time::Duration::ZERO).is_err()
+        );
+        drop(lease);
+        assert!(WorkspaceLease::acquire(&busy).is_err());
+        assert!(active_workspace_request(&request.0).is_err());
+        assert!(sender.send(Ok(None)).is_err());
+        drop(chooser_lease);
+        assert!(WorkspaceLease::acquire(&busy).is_ok());
+    }
+
+    #[test]
+    fn workspace_canceled_request_revokes_callbacks_and_dispatch() {
+        let request = WorkspaceRequest(Arc::new(AtomicBool::new(true)));
+        let callback_active = request.0.clone();
+        assert!(active_workspace_request(&callback_active).is_ok());
+        drop(request);
+        assert!(active_workspace_request(&callback_active).is_err());
+    }
+
+    #[test]
+    fn workspace_selection_rejects_private_or_incomplete_responses() {
+        let view = json!({"workspaceId":"ws-test","displayName":"project","admittedAt":"2026-10-27T00:00:00Z","revision":"1"});
+        assert_eq!(
+            workspace_selection(view.clone()).ok(),
+            Some(json!({"selectionRef":"ws-test","workspace":view}))
+        );
+        for field in ["canonicalPath", "volumeSerial", "fileId", "secret"] {
+            let mut invalid = view.clone();
+            invalid[field] = json!("private");
+            assert!(workspace_selection(invalid).is_err());
+        }
+        for field in ["workspaceId", "displayName", "admittedAt", "revision"] {
+            let mut invalid = view.clone();
+            invalid.as_object_mut().unwrap().remove(field);
+            assert!(workspace_selection(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn qualified_selection_keeps_handles_through_admission_ack() {
+        let path = std::env::temp_dir().join(format!(
+            "splyce-admit-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        let selected = crate::workspace::qualify_directory(&path).unwrap();
+        let expected_path = selected.path().to_str().unwrap().to_owned();
+        let identity = selected.identity();
+        let selection = admit_selected(selected, |params| {
+            assert_eq!(params, json!({"canonicalPath":expected_path,"volumeSerial":identity.volume_serial.to_string(),"fileId":identity.file_id.to_string()}));
+            assert!(std::fs::rename(&path, path.with_extension("moved")).is_err());
+            Ok(json!({"workspaceId":"ws-native","displayName":"project","admittedAt":"2026-10-27T00:00:00Z","revision":"1"}))
+        }).ok().unwrap();
+        assert_eq!(selection["selectionRef"], "ws-native");
+        std::fs::remove_dir(path).unwrap();
+    }
 
     fn recording_channel() -> (Channel<Value>, Arc<Mutex<Vec<Value>>>) {
         let received = Arc::new(Mutex::new(Vec::new()));
@@ -677,6 +973,60 @@ mod tests {
     }
 
     #[test]
+    fn native_channel_forwards_only_valid_resync_controls_to_current_subscription() {
+        let mut subscriptions = Subscriptions::default();
+        let ack = json!({"sessionId":"s1","scopeId":"w1","afterSeq":0});
+        let (old_events, old_received) = recording_channel();
+        assert!(
+            subscriptions
+                .install("s1", 0, &ack, old_events, recording_channel().0)
+                .is_ok()
+        );
+        let (events, received) = recording_channel();
+        assert!(
+            subscriptions
+                .install("s1", 0, &ack, events, recording_channel().0)
+                .is_ok()
+        );
+        let control =
+            json!({"frame":"control","kind":"stream.resync","sessionId":"s1","fromSeq":0});
+        let mut nonzero = control.clone();
+        nonzero["fromSeq"] = json!(9_007_199_254_740_991_u64);
+        assert!(subscriptions.forward(control.clone()).is_ok());
+        assert!(subscriptions.forward(nonzero.clone()).is_ok());
+        assert!(subscriptions.forward(event()).is_ok());
+        assert!(old_received.lock().unwrap().is_empty());
+        assert_eq!(
+            received.lock().unwrap().as_slice(),
+            &[control.clone(), nonzero, event()]
+        );
+        let mut invalid = Vec::new();
+        for (key, value) in [
+            ("kind", json!("other")),
+            ("sessionId", json!("s2")),
+            ("sessionId", json!("../s1")),
+            ("fromSeq", json!(-1)),
+            ("fromSeq", json!(1.5)),
+            ("fromSeq", json!(9_007_199_254_740_992_u64)),
+            ("scopeId", json!("w1")),
+            ("seq", json!(1)),
+            ("durable", json!(true)),
+            ("recordId", json!("r1")),
+        ] {
+            let mut candidate = control.clone();
+            candidate[key] = value;
+            invalid.push(candidate);
+        }
+        let mut missing = control;
+        missing.as_object_mut().unwrap().remove("fromSeq");
+        invalid.push(missing);
+        for candidate in invalid {
+            assert!(subscriptions.forward(candidate).is_err());
+        }
+        assert_eq!(received.lock().unwrap().len(), 3);
+    }
+
+    #[test]
     fn native_channel_validates_status_ports_before_delivery() {
         let mut subscriptions = Subscriptions::default();
         let (events, received) = recording_channel();
@@ -738,6 +1088,25 @@ mod tests {
         assert_eq!(lifecycle_received.lock().unwrap().as_slice(), &[exited]);
         assert!(subscriptions.forward(event()).is_ok());
         assert_eq!(received.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn setup_metadata_requires_exact_sessionless_shape_and_matching_op() {
+        let valid =
+            json!({"frame":"setup","command":"metadata","requestId":"request1","payload":{}});
+        assert!(valid_setup("metadata", &valid));
+        assert!(!valid_setup("other", &valid));
+        for (key, value) in [
+            ("command", json!("unknown")),
+            ("sessionId", json!("s1")),
+            ("extra", json!(true)),
+            ("payload", json!({"extra":true})),
+            ("requestId", json!("bad/id")),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[key] = value;
+            assert!(!valid_setup("metadata", &invalid));
+        }
     }
 
     #[test]

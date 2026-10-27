@@ -10,10 +10,13 @@
   let {
     entries,
     status = "on",
+    stale = false,
     onForget,
   }: {
     entries: MemoryEntry[];
     status?: MemoryStatus;
+    /** The list may be behind the engine's current revision. */
+    stale?: boolean;
     onForget: (observationId: string) => Promise<void>;
   } = $props();
 
@@ -57,15 +60,26 @@
   bind:this={listEl}
   tabindex="-1"
   aria-labelledby="memory-title"
+  aria-busy={status === "loading" ? "true" : undefined}
   data-testid="memory-list"
 >
   <h3 id="memory-title">Memory</h3>
 
-  {#if status !== "on" || entries.length === 0}
-    <p data-testid="memory-empty">{emptyMessage(status)}</p>
+  {#if status === "loading"}
+    <p role="status" data-testid="memory-loading">{emptyMessage("loading")}</p>
+  {:else if status === "error"}
+    <p role="alert" data-testid="memory-error">{emptyMessage("error")}</p>
+  {:else if status !== "on" || entries.length === 0}
+    <p data-testid="memory-empty">{emptyMessage(status, stale)}</p>
   {/if}
 
-  {#if status !== "unavailable"}
+  {#if status !== "unavailable" && status !== "error"}
+    {#if stale && entries.length > 0}
+      <p role="status" data-testid="memory-stale">
+        These items may be out of date. The engine has not confirmed the current
+        revision.
+      </p>
+    {/if}
     <ul>
       {#each entries as e (e.observation.observationId)}
         {@const id = e.observation.observationId}
