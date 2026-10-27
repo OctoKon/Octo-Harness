@@ -28,6 +28,7 @@ if (args.length === 0) {
     "tests/integration/grants.ts",
     "tests/integration/policy-grants.ts",
     "tests/integration/code-index.ts",
+    "tests/integration/worktrees.ts",
   ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
@@ -69,13 +70,20 @@ if (args.length === 0) {
     files = ["tests/integration/code-index.ts"];
   else if (args[1] === "C2_agent_context_tools")
     files = ["tests/integration/agent-context-tools.ts"];
+  // TD-70 write-capable subagent worktrees.
+  else if (args[1] === "E1_worktrees")
+    files = ["tests/integration/worktrees.ts"];
+  // TD-70 delegated children; needs the built Pi Agent (build:pi), so it is a
+  // named case only.
+  else if (args[1] === "E1_readonly_subagents")
+    files = ["tests/integration/subagents.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C2_workspace_tools | --case C3_crash_matrix | --case C4_config_transition | --case C4_setup_commit | --case C4_credential_resolution | --case C2_grants_store | --case C2_policy_grants | --case C5_dirty_snapshot | --case C6_event_ledger | --case M1_memory_capture | --case M2_memory_recall | --case CTX_code_index | --case C2_agent_context_tools]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C2_workspace_tools | --case C3_crash_matrix | --case C4_config_transition | --case C4_setup_commit | --case C4_credential_resolution | --case C2_grants_store | --case C2_policy_grants | --case C5_dirty_snapshot | --case C6_event_ledger | --case M1_memory_capture | --case M2_memory_recall | --case CTX_code_index | --case C2_agent_context_tools | --case E1_worktrees | --case E1_readonly_subagents]",
   );
   process.exit(2);
 }

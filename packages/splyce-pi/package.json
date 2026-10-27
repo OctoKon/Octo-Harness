@@ -43,6 +43,10 @@
       "types": "./dist/setup-metadata.d.ts",
       "import": "./dist/setup-metadata.js"
     },
+    "./subagents": {
+      "types": "./dist/subagents.d.ts",
+      "import": "./dist/subagents.js"
+    },
     "./provider-profiles": {
       "types": "./dist/provider-profiles.d.ts",
       "import": "./dist/provider-profiles.js"

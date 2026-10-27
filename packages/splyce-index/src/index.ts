@@ -406,6 +406,16 @@ function rootIgnore(root: string): (rel: string, dir: boolean) => boolean {
 		);
 }
 
+/**
+ * Workspace-relative files the index would list (gitignore-aware, links never
+ * followed) minus secret-shaped paths; the TD-70 non-git snapshot source.
+ */
+export function listWorkspaceFiles(root: string): string[] {
+	return listCandidates(canonicalRoot(root))
+		.files.map((f) => f.rel)
+		.filter((rel) => !isSecretPath(rel));
+}
+
 function listCandidates(root: string): {
 	files: Candidate[];
 	links: IndexedLink[];

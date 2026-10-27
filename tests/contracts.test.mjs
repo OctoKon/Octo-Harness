@@ -773,3 +773,50 @@ test("TD-15: stream.resync is an exact unsequenced control frame, never an event
     false,
   );
 });
+
+test("TD-70: child.* payloads are strict at every level and status matches the kind", () => {
+  const find = (kind) => fixture("events").find((value) => value.kind === kind);
+  const valid = event(find("child.completed"));
+  assert.deepEqual(validateEvent(valid, context), valid);
+  const patched = (mutate) => {
+    const input = copy(valid);
+    mutate(input.payload);
+    return input;
+  };
+  for (const mutate of [
+    (p) => (p.budget.extra = 1),
+    (p) => (p.budget.used = -1),
+    (p) => delete p.budget.limit,
+    (p) => (p.citations[0].extra = 1),
+    (p) => (p.citations[0].line = 0),
+    (p) => (p.citations = ["src/main.ts:3"]),
+    (p) => delete p.citations[0].path,
+    (p) => (p.diff.extra = 1),
+    (p) => (p.diff.files[0].extra = 1),
+    (p) => (p.diff.files[0].status = "renamed"),
+    (p) => (p.diff = { files: "src/main.ts" }),
+    (p) => (p.status = "running"),
+    (p) => (p.reason = "BUDGET_TURNS"),
+    (p) => (p.runId = "r1"),
+    (p) => (p.parentRunId = "missing"),
+  ])
+    rejects(() => validateEvent(patched(mutate), context));
+  for (const [kind, status] of [
+    ["child.started", "completed"],
+    ["child.progress", "failed"],
+    ["child.cancelled", "running"],
+  ]) {
+    const fields = find(kind);
+    rejects(() =>
+      validateEvent(
+        event({ ...fields, payload: { ...fields.payload, status } }),
+        context,
+      ),
+    );
+  }
+  const failed = find("child.failed");
+  const { reason: _reason, ...noReason } = failed.payload;
+  rejects(() =>
+    validateEvent(event({ ...failed, payload: noReason }), context),
+  );
+});
