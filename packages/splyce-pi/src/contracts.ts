@@ -1,5 +1,5 @@
 export const CONTRACT_VERSION = 1 as const;
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 // Proposed bounded defaults; performance qualification remains outstanding.
 export const TRANSPORT_LIMITS = Object.freeze({
   maxInlineBytes: 65536,
@@ -332,6 +332,7 @@ type Rule =
   | "uint"
   | "bool"
   | "limits"
+  | "portAvailability"
   | "eventEnvelope"
   | readonly string[];
 type Shape = { readonly [key: string]: Rule };
@@ -614,6 +615,7 @@ export interface EventPayloads {
   "engine.status": {
     state: "ready" | "busy" | "stopping" | "stopped";
     activeWorkers: number;
+    ports?: PortAvailability;
   };
   "stream.resync": { fromSeq: number };
   "run.reconnect_snapshot": {
@@ -697,6 +699,7 @@ const EVENT_SCHEMAS = {
   },
 } as const satisfies { [K in EventKind]: Shape };
 const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
+  "engine.status": { ports: "portAvailability" },
   "turn.tool_outcome": { outcomeRef: "ref", error: "text" },
   "approval.requested": { timeoutMs: "uint" },
   "turn.stream_delta": { turnId: "ref" },
@@ -717,6 +720,13 @@ export const BRIDGE_PROTOCOL_JSON = JSON.stringify({
   eventKinds: EVENT_KINDS,
 });
 
+export interface PortAvailability {
+  generation: boolean;
+  provider: boolean;
+  workspace: boolean;
+  modules: boolean;
+}
+
 export interface Handshake {
   protocolVersion: typeof PROTOCOL_VERSION;
   schemaVersion: typeof CONTRACT_VERSION;
@@ -730,6 +740,7 @@ export interface Handshake {
     policy: boolean;
     store: boolean;
     receipts: boolean;
+    ports: PortAvailability;
   };
 }
 
@@ -931,6 +942,9 @@ function rule(
     return;
   }
   switch (spec) {
+    case "portAvailability":
+      validatePortAvailability(value);
+      break;
     case "eventEnvelope": {
       const event = validateEvent(value, context);
       requireThat(event.durable, "INVALID_SHAPE", "durable event");
@@ -1005,7 +1019,11 @@ function shape(
       );
 }
 function version(value: unknown, field: string): void {
-  requireThat(value === CONTRACT_VERSION, "UNSUPPORTED_VERSION", field);
+  requireThat(
+    value === (field === "schemaVersion" ? CONTRACT_VERSION : PROTOCOL_VERSION),
+    "UNSUPPORTED_VERSION",
+    field,
+  );
 }
 function current(
   value: Record<string, unknown>,
@@ -1294,6 +1312,26 @@ export function validateEvent(
   return value as SplyceEvent;
 }
 
+export function validatePortAvailability(value: unknown): PortAvailability {
+  json(value, false);
+  const ports = object(value, "readiness.ports");
+  const keys = ["generation", "provider", "workspace", "modules"];
+  requireThat(
+    Object.keys(ports).length === keys.length &&
+      keys.every(
+        (key) => Object.hasOwn(ports, key) && typeof ports[key] === "boolean",
+      ),
+    "INVALID_SHAPE",
+    "readiness.ports",
+  );
+  return Object.freeze({
+    generation: ports.generation as boolean,
+    provider: ports.provider as boolean,
+    workspace: ports.workspace as boolean,
+    modules: ports.modules as boolean,
+  });
+}
+
 export function validateHandshake(value: unknown): Handshake {
   json(value, false);
   const handshake = object(value, "handshake");
@@ -1339,9 +1377,9 @@ export function validateHandshake(value: unknown): Handshake {
   );
   const readiness = object(handshake.readiness, "readiness");
   requireThat(
-    Object.keys(readiness).length === 4 &&
+    Object.keys(readiness).length === 5 &&
       Object.keys(readiness).every((key) =>
-        ["state", "policy", "store", "receipts"].includes(key),
+        ["state", "policy", "store", "receipts", "ports"].includes(key),
       ),
     "INVALID_SHAPE",
     "readiness",
@@ -1353,6 +1391,12 @@ export function validateHandshake(value: unknown): Handshake {
   );
   for (const key of ["policy", "store", "receipts"])
     requireThat(typeof readiness[key] === "boolean", "INVALID_SHAPE", key);
+  const ports = validatePortAvailability(readiness.ports);
+  requireThat(
+    readiness.state === "ready" || !Object.values(ports).some(Boolean),
+    "INVALID_SHAPE",
+    "readiness.ports",
+  );
   requireThat(
     readiness.state !== "ready" ||
       (readiness.policy === true &&
