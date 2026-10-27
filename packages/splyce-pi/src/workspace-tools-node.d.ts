@@ -25,6 +25,12 @@ declare module "node:fs/promises" {
   export function lstat(
     path: string,
   ): Promise<{ size: number; isFile(): boolean; isDirectory(): boolean }>;
+  export interface FileHandle {
+    stat(): Promise<{ size: number }>;
+    readFile(options: { encoding: "utf8" }): Promise<string>;
+    close(): Promise<void>;
+  }
+  export function open(path: string, flags: "r"): Promise<FileHandle>;
 }
 
 declare module "node:worker_threads" {

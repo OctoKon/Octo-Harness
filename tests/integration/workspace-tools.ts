@@ -3,13 +3,15 @@
 
 import assert from "node:assert/strict";
 import {
+  closeSync,
   existsSync,
+  fstatSync,
   linkSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
-  statSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -526,9 +528,15 @@ test("a capped shell run writes no raw output spill file", async () => {
   for (const f of readdirSync(tmpdir())) {
     try {
       const p = join(tmpdir(), f);
-      const st = statSync(p);
-      if (st.isFile() && st.mtimeMs >= started && st.size > 4000)
-        assert.ok(!readFileSync(p, "utf8").includes("SPILLMARK"), f);
+      // One descriptor for stat and read: the scan cannot be raced by a replace.
+      const fd = openSync(p, "r");
+      try {
+        const st = fstatSync(fd);
+        if (st.isFile() && st.mtimeMs >= started && st.size > 4000)
+          assert.ok(!readFileSync(fd, "utf8").includes("SPILLMARK"), f);
+      } finally {
+        closeSync(fd);
+      }
     } catch (e) {
       if ((e as Error).name === "AssertionError") throw e;
     }
