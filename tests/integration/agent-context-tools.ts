@@ -16,9 +16,9 @@ import {
   codeIndexTools,
 } from "../../packages/splyce-index/dist/index.js";
 import {
-  MAX_OUTPUT_BYTES,
   captureMemoryAfterTurn,
   createAgentContextTools,
+  MAX_OUTPUT_BYTES,
 } from "../../packages/splyce-pi/dist/agent-context-tools.js";
 import { redactSecrets } from "../../packages/splyce-retrieval/dist/retrieval.js";
 import { commit, setup, turn } from "./memory-fixture.ts";
@@ -273,4 +273,126 @@ test("C2: memory output is scrubbed and each observation text is capped", async 
   const text = await tools[0]?.execute({ query: "leak" });
   assert.ok(text && !text.includes(SECRET));
   assert.ok(text.length < 2500);
+});
+
+// A credential the JSON encoder would escape: quote and backslash.
+const ODD = 'pw"x\\y-1234567890';
+const exact = (text: string) => text.split(ODD).join("[X]");
+const fakeTool = (execute: () => Promise<unknown>) => ({
+  name: "fake",
+  description: "d",
+  parameters: { type: "object", properties: { a: { type: "string" } } },
+  execute,
+});
+const memoryHit = (text: string) => ({
+  observationId: "o1",
+  text,
+  sourceIds: ["event:x"],
+  score: 1,
+  createdAt: "2026-10-27T00:00:00.000Z",
+});
+
+test("C2: a secret with quote and backslash is redacted before JSON encoding", async () => {
+  const { root, index } = await repo({
+    ...FILES,
+    "src/q.ts": `alphaWidget('${ODD}');\n`,
+  });
+  const tools = createAgentContextTools({
+    workspaceRoot: root,
+    index,
+    codeTools: codeIndexTools(index),
+    memory: {
+      capture: () => [],
+      query: async () => [memoryHit(`note ${ODD} end`)],
+    },
+    scopeId: "w-demo",
+    redact: exact,
+  });
+  const by = (n: string) => tools.find((t) => t.name === n);
+  const sym = await by("code_symbol")?.execute({ name: "alphaWidget" });
+  assert.ok(sym?.includes("[X]"), sym);
+  assert.ok(!sym?.includes("pw"), sym);
+  const mem = await by("memory_search")?.execute({ query: "note" });
+  assert.ok(mem?.includes("[X]") && !mem.includes("pw"), mem);
+});
+
+test("C2: memory text is redacted before the 2000-char cut", async () => {
+  const { root, index } = await repo(FILES);
+  const tools = createAgentContextTools({
+    workspaceRoot: root,
+    index,
+    codeTools: [],
+    memory: {
+      capture: () => [],
+      query: async () => [memoryHit(`${"w".repeat(1995)}${ODD}tail`)],
+    },
+    scopeId: "w-demo",
+    redact: exact,
+  });
+  const text = (await tools[0]?.execute({ query: "w" })) ?? "";
+  assert.ok(!text.includes("pw"), text);
+});
+
+test("C2: scrub runs before the output cap", async () => {
+  const { root, index } = await repo(FILES);
+  const [tool] = createAgentContextTools({
+    workspaceRoot: root,
+    index,
+    codeTools: [
+      fakeTool(async () => `${"a".repeat(MAX_OUTPUT_BYTES - 16)}${ODD}tail`),
+    ],
+    redact: exact,
+  });
+  const r = await tool?.result({});
+  assert.ok(r && !r.text.includes("pw"), r?.text.slice(-40));
+  assert.ok(Buffer.byteLength(r.text) <= MAX_OUTPUT_BYTES);
+});
+
+test("C2: tools and their schemas are deeply frozen", async () => {
+  const { tools } = await build();
+  for (const t of tools as unknown as Record<string, unknown>[]) {
+    assert.ok(Object.isFrozen(t) && Object.isFrozen(t.parameters));
+    assert.throws(() => (t.execute = async () => ""), TypeError);
+    assert.throws(() => (t.readOnly = false), TypeError);
+    const props = (t.parameters as { properties: object }).properties;
+    assert.ok(Object.isFrozen(props));
+    assert.throws(() => ((props as Record<string, unknown>).x = 1), TypeError);
+  }
+});
+
+test("C2: tool failures surface a generic error without paths", async () => {
+  const { root, index } = await repo(FILES);
+  const enoent = () =>
+    Object.assign(new Error("ENOENT: open 'C:\\Users\\victim\\vault\\f.ts'"), {
+      code: "ENOENT",
+    });
+  const tools = createAgentContextTools({
+    workspaceRoot: root,
+    index,
+    codeTools: [
+      fakeTool(async () => {
+        throw enoent();
+      }),
+    ],
+    memory: {
+      capture: () => [],
+      query: async () => {
+        throw enoent();
+      },
+    },
+    scopeId: "w-demo",
+    redact: redactSecrets,
+  });
+  for (const [t, args] of [
+    [tools[0], {}],
+    [tools[1], { query: "q" }],
+  ] as const) {
+    await assert.rejects(
+      async () => await t?.execute(args),
+      (e: Error & { code?: string }) =>
+        e.name === "ContextToolError" &&
+        e.code === "ENOENT" &&
+        !/Users|victim|vault/.test(e.message),
+    );
+  }
 });
