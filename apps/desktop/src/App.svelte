@@ -8,6 +8,7 @@
   import UsageView from "./components/usage/UsageView.svelte";
   import ApprovalSurface from "./components/ApprovalSurface.svelte";
   import PermissionModeSelect from "./components/PermissionModeSelect.svelte";
+  import SupportStatus from "./components/SupportStatus.svelte";
   import Providers from "./routes/Providers.svelte";
   import Setup from "./routes/Setup.svelte";
   import Modules from "./routes/Modules.svelte";
@@ -249,6 +250,7 @@
       <Providers connections={[]} families={[]} onAddCustom={() => {}} />
       <p role="status">Provider connections are unavailable: no profile service is connected.</p>
     </fieldset>
+    <SupportStatus cells={null} />
   {:else if view === "setup"}
     <Setup
       snapshot={moduleSnapshot}
