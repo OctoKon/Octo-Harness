@@ -65,9 +65,36 @@
         "sessionId": "ses_test_01",
         "seq": 3,
         "durable": true,
-        "kind": "stream.resync",
+        "kind": "approval.requested",
         "payload": {
-          "fromSeq": 1
+          "approvalRequestId": "app_req_w6_01",
+          "runId": "run_w6_crash",
+          "actionId": "act_w6_write",
+          "capabilityId": "cap_fs_write_file",
+          "targetScope": "w-demo",
+          "normalizedTarget": "target_notes_md",
+          "riskRationale": "Writing a file while the engine is being terminated.",
+          "timeoutMs": 30000
+        }
+      }
+    },
+    {
+      "delayMs": 20,
+      "event": {
+        "schemaVersion": 1,
+        "protocolVersion": 1,
+        "recordId": "rec_w6_04",
+        "eventId": "evt_01W6_04",
+        "createdAt": "2026-10-26T12:00:00.020Z",
+        "sourceIds": ["src_01"],
+        "scopeId": "w-demo",
+        "sessionId": "ses_test_01",
+        "seq": 4,
+        "durable": true,
+        "kind": "engine.status",
+        "payload": {
+          "state": "stopped",
+          "activeWorkers": 0
         }
       }
     }
@@ -82,7 +109,9 @@
   "assertions": {
     "expectedState": {
       "connectionState": "disconnected",
-      "reconnectOffered": true
+      "reconnectOffered": true,
+      "draftPreserved": true,
+      "staleApprovalsDisabled": true
     },
     "expectedDispatches": [
       {
@@ -95,6 +124,11 @@
         "role": "alert",
         "name": "Engine stopped",
         "expectedState": "visible"
+      },
+      {
+        "role": "button",
+        "name": "Restart Engine",
+        "expectedState": "focusable"
       }
     ],
     "guardRemovalCheck": {

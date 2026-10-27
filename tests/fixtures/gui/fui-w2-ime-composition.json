@@ -3,7 +3,7 @@
   "caseId": "FUI-W2",
   "title": "IME composition safety",
   "targetTask": "TD-71",
-  "description": "Multi-stage CJK IME text composition in composer. Candidate confirmation emits zero prompt submissions; explicit Enter outside composition submits exactly intended string once.",
+  "description": "Multi-stage CJK IME text composition in composer. Candidate confirmation emits zero prompt submissions; explicit Ctrl+Enter outside composition submits exactly intended string once.",
   "preconditions": {
     "windowMode": "normal",
     "dpiScale": 1.0,
@@ -86,14 +86,27 @@
       "action": "shortcut",
       "targetSelector": "textarea",
       "payload": "Enter"
+    },
+    {
+      "step": 3,
+      "action": "shortcut",
+      "targetSelector": "textarea",
+      "payload": "Ctrl+Enter"
     }
   ],
   "assertions": {
     "expectedState": {
       "isComposing": false,
-      "submittedCount": 0
+      "submittedCount": 1
     },
-    "expectedDispatches": [],
+    "expectedDispatches": [
+      {
+        "op": "session.prompt",
+        "payloadMatch": {
+          "text": "日本語テスト"
+        }
+      }
+    ],
     "accessibilityQueries": [
       {
         "role": "textbox",
