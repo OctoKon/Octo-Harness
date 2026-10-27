@@ -364,6 +364,8 @@ function createClient(
 
 	return new OpenAI({
 		apiKey,
+		// Injected transports own diagnostic redaction; SDK logging bypasses it.
+		...(fetch ? { logLevel: "off" as const } : {}),
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		fetch,

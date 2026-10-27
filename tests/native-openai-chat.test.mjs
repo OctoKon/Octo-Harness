@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { inspect } from "node:util";
 import test, { after, before } from "node:test";
-import { runNativeOpenAIChat } from "../packages/splyce-pi/dist/native-openai-chat.js";
+import { runNativeOpenAIChat } from "../vendor/pi/packages/ai/dist/api/native-openai-chat.js";
 
 const KEY = "fixture-native-key-material";
 const REDACTED = "[REDACTED]";
@@ -633,3 +633,149 @@ test(
     assert.equal(textOf(result), "hello");
   },
 );
+
+for (const api of ["openai-completions", "openai-responses"]) {
+  test(
+    `${api}: SDK debug logging cannot expose native response diagnostics`,
+    { timeout: 4000 },
+    async () => {
+      const captured = [];
+      const methods = ["debug", "info", "log", "warn", "error"];
+      const saved = Object.fromEntries(
+        methods.map((name) => [name, console[name]]),
+      );
+      const previousLogLevel = process.env.OPENAI_LOG;
+      const f = fixture({
+        api,
+        fetch: () =>
+          new Response(`provider diagnostic ${KEY}`, {
+            status: 500,
+            headers: {
+              "content-type": "text/plain",
+              "x-provider-diagnostic": KEY,
+            },
+          }),
+      });
+      let result;
+      try {
+        process.env.OPENAI_LOG = "debug";
+        for (const name of methods)
+          console[name] = (...values) =>
+            captured.push(inspect(values, { depth: 20 }));
+        result = await f.run();
+      } finally {
+        for (const name of methods) console[name] = saved[name];
+        if (previousLogLevel === undefined) delete process.env.OPENAI_LOG;
+        else process.env.OPENAI_LOG = previousLogLevel;
+      }
+      assert.equal(result.stopReason, "error");
+      assert.ok(result.errorMessage);
+      assert.equal(f.state.invocations, 1);
+      assert.equal(f.state.calls.length, 1);
+      assert.equal(f.state.active, false);
+      assert.equal(f.state.timeline.at(-1), "port-release");
+      assert.ok(f.state.events.some((event) => event.type === "error"));
+      noKey({ captured, result, events: f.state.events });
+    },
+  );
+}
+
+for (const api of ["openai-completions", "openai-responses"]) {
+  for (const mode of ["observer-failure", "native-abort"]) {
+    // Splyce #70: producer completion does not imply async body cancellation settled.
+    test(
+      `${api}: ${mode} keeps consume active until asynchronous body cancellation settles`,
+      { timeout: 4000 },
+      async (t) => {
+        const fetched = deferred();
+        const cancelStarted = deferred();
+        const cancelGate = deferred();
+        const f = fixture({
+          api,
+          fetch: (_request, state) =>
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  const events =
+                    api === "openai-completions"
+                      ? chatEvents("first delta").slice(0, 1)
+                      : responseEvents("first delta").slice(0, 4);
+                  controller.enqueue(
+                    encoder.encode(
+                      events
+                        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                        .join(""),
+                    ),
+                  );
+                  fetched.resolve();
+                },
+                async cancel() {
+                  state.timeline.push("cancel-begin");
+                  cancelStarted.resolve();
+                  await cancelGate.promise;
+                  state.timeline.push("cancel-settled");
+                },
+              }),
+              { headers: { "content-type": "text/event-stream" } },
+            ),
+        });
+        let settled = false;
+        let result;
+        let failure;
+        const pending = f
+          .run({
+            onEvent: (event) => {
+              assert.equal(f.state.active, true);
+              f.state.events.push(event);
+              if (mode === "observer-failure" && event.type === "text_delta") {
+                f.state.timeline.push("observer-failure");
+                throw new Error(`observer failure ${KEY}`);
+              }
+            },
+          })
+          .then(
+            (value) => {
+              result = value;
+              settled = true;
+            },
+            (error) => {
+              failure = error;
+              settled = true;
+            },
+          );
+        t.after(async () => {
+          cancelGate.resolve();
+          f.state.controller.abort();
+          await pending;
+        });
+        if (mode === "native-abort") {
+          await fetched.promise;
+          f.state.timeline.push("native-abort");
+          f.state.controller.abort();
+        }
+        await Promise.race([
+          cancelStarted.promise,
+          pending.then(() =>
+            assert.fail("consumer settled before body cancellation started"),
+          ),
+        ]);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(settled, false, "body cancellation is still gated");
+        assert.equal(f.state.active, true);
+        assert.equal(f.state.timeline.includes("port-release"), false);
+        cancelGate.resolve();
+        await pending;
+        assert.equal(f.state.calls.length, 1);
+        assert.ok(f.state.timeline.indexOf("cancel-settled") >= 0);
+        assert.ok(
+          f.state.timeline.indexOf("cancel-settled") <
+            f.state.timeline.indexOf("port-release"),
+        );
+        assert.equal(f.state.active, false);
+        if (mode === "observer-failure") assert.ok(failure instanceof Error);
+        else assert.equal(result.stopReason, "aborted");
+        noKey({ result, failure, events: f.state.events });
+      },
+    );
+  }
+}
