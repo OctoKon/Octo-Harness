@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -102,7 +103,7 @@ function harness(limits?: { timeoutMs?: number; maxOutputBytes?: number }) {
       ? { limits: { timeoutMs: 20000, maxOutputBytes: 1 << 20, ...limits } }
       : {}),
   });
-  return { root, outside, ws, grants, log, tools };
+  return { root, outside, ws, grants, log, tools, receipts };
 }
 type H = ReturnType<typeof harness>;
 const run = (h: H, name: string, args: object) =>
@@ -399,8 +400,17 @@ test("shell timeout kills the process tree and reports SHELL_TIMEOUT", async () 
       .trim() || readFileSync(join(h.root, "pid.txt"), "utf8").trim(),
   );
   assert.ok(pid > 0);
-  await new Promise((r) => setTimeout(r, 500));
-  assert.throws(() => process.kill(pid, 0));
+  const dead = () => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  for (let i = 0; i < 50 && !dead(); i++)
+    await new Promise((r) => setTimeout(r, 200));
+  assert.ok(dead(), "process tree must be gone");
   assert.equal(h.log.length, 1);
   assert.equal(h.log[0]?.ok, false);
 });
@@ -844,4 +854,186 @@ test("read, ls, find, grep, write and edit carry a summary without an exit code"
   for (const r of [read, cut, ls, find, grep, w, e])
     assert.equal("exitCode" in r.summary, false);
   assert.equal(await run(h, "read", { path: "a.txt" }), "one\ntwo\nthree");
+});
+
+// Tier-1 review of #155 (b1a157a): each case failed on that revision.
+const GREP_STOPPED = ["GREP_BUDGET", "PATTERN_REJECTED"];
+
+test("grep stops catastrophic patterns that pass the nested-quantifier filter within a second", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "a.txt"), `${"a".repeat(40)}!`);
+  for (const pattern of ["((a+))+$", "(a|aa)+$", "((a)+)+$", "(a+){1,99}$"]) {
+    const started = Date.now();
+    const code = await codeOf(run(h, "grep", { pattern }));
+    assert.ok(GREP_STOPPED.includes(code), `${pattern}: ${code}`);
+    assert.ok(
+      Date.now() - started < 1500,
+      `${pattern}: ${String(Date.now() - started)}ms`,
+    );
+  }
+  assert.match(String(await run(h, "grep", { pattern: "a+!" })), /a\.txt:1:/);
+});
+
+test("grep and find honour an abort signal, including in the middle of a stuck match", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "a.txt"), `${"a".repeat(40)}!`);
+  const exec = (name: string, args: object, s: AbortSignal) =>
+    (
+      h.tools[name] as {
+        execute(a: object, s: AbortSignal): Promise<unknown>;
+      }
+    ).execute(args, s);
+  const done = AbortSignal.abort();
+  assert.equal(await codeOf(exec("grep", { pattern: "a" }, done)), "ABORTED");
+  assert.equal(await codeOf(exec("find", { pattern: "*" }, done)), "ABORTED");
+  const ctl = new AbortController();
+  setTimeout(() => ctl.abort(), 50);
+  const started = Date.now();
+  assert.equal(
+    await codeOf(exec("grep", { pattern: "(a|aa)+$" }, ctl.signal)),
+    "ABORTED",
+  );
+  assert.ok(Date.now() - started < 1000);
+});
+
+test("a granted write never modifies a file outside the root that is hard-linked into it", async () => {
+  for (const tool of ["write", "edit"]) {
+    const h = harness();
+    writeFileSync(join(h.outside, "victim.txt"), "orig");
+    linkSync(join(h.outside, "victim.txt"), join(h.root, "hl.txt"));
+    h.grants.approve("fs.write", "hl.txt");
+    await run(
+      h,
+      tool,
+      tool === "write"
+        ? { path: "hl.txt", content: "PWNED" }
+        : { path: "hl.txt", edits: [{ oldText: "orig", newText: "PWNED" }] },
+    );
+    assert.equal(
+      readFileSync(join(h.outside, "victim.txt"), "utf8"),
+      "orig",
+      tool,
+    );
+    assert.equal(readFileSync(join(h.root, "hl.txt"), "utf8"), "PWNED", tool);
+    assert.deepEqual(
+      readdirSync(h.root),
+      ["hl.txt"],
+      `${tool}: no temp file left`,
+    );
+  }
+});
+
+test("a directory swapped for a junction before mkdir cannot make a directory outside the root", async () => {
+  const h = harness();
+  mkdirSync(join(h.root, "sub"));
+  h.grants.approve("fs.write", "sub/newdir/f.txt");
+  const consume = h.grants.consume.bind(h.grants);
+  h.grants.consume = (id, r) => {
+    consume(id, r);
+    rmSync(join(h.root, "sub"), { recursive: true });
+    symlinkSync(h.outside, join(h.root, "sub"), "junction");
+  };
+  assert.equal(
+    await codeOf(run(h, "write", { path: "sub/newdir/f.txt", content: "x" })),
+    "WORKSPACE_ESCAPE",
+  );
+  assert.deepEqual(readdirSync(h.outside), []);
+});
+
+test("a receipt store failure after a real write is RECEIPT_FAILED, not a false failed receipt or a raw error", async () => {
+  const h = harness();
+  const seen: boolean[] = [];
+  h.receipts.record = (e) => {
+    seen.push(e.ok);
+    throw new Error("store down");
+  };
+  h.grants.approve("fs.write", "f.txt");
+  const err = await run(h, "write", { path: "f.txt", content: "x" }).then(
+    () => undefined,
+    (e: { code?: string; message: string }) => e,
+  );
+  assert.equal(err?.code, "RECEIPT_FAILED");
+  assert.match(err.message, /may have happened/);
+  assert.equal(readFileSync(join(h.root, "f.txt"), "utf8"), "x");
+  assert.deepEqual(seen, [true]);
+});
+
+test("edit matches CRLF and BOM files with LF text and writes the original line endings back", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "c.txt"), "﻿line1\r\nline2\r\nline3\r\n");
+  h.grants.approve("fs.write", "c.txt");
+  await run(h, "edit", {
+    path: "c.txt",
+    edits: [{ oldText: "line1\nline2", newText: "X\nY" }],
+  });
+  assert.equal(
+    readFileSync(join(h.root, "c.txt"), "utf8"),
+    "﻿X\r\nY\r\nline3\r\n",
+  );
+  writeFileSync(join(h.root, "lf.txt"), "a\nb\n");
+  h.grants.approve("fs.write", "lf.txt");
+  await run(h, "edit", {
+    path: "lf.txt",
+    edits: [{ oldText: "a\nb", newText: "c" }],
+  });
+  assert.equal(readFileSync(join(h.root, "lf.txt"), "utf8"), "c\n");
+});
+
+test("edits match the original text, overlaps and empty edits are BAD_ARGS, and nothing is consumed on rejection", async () => {
+  const h = harness();
+  const file = join(h.root, "s.txt");
+  writeFileSync(file, "foo bar");
+  const id = h.grants.approve("fs.write", "s.txt");
+  const edit = (edits: object[]) => run(h, "edit", { path: "s.txt", edits });
+  assert.equal(
+    await codeOf(
+      edit([
+        { oldText: "foo", newText: "baz" },
+        { oldText: "baz bar", newText: "Z" },
+      ]),
+    ),
+    "EDIT_NOT_FOUND",
+  );
+  assert.equal(
+    await codeOf(
+      edit([
+        { oldText: "foo b", newText: "1" },
+        { oldText: "o ba", newText: "2" },
+      ]),
+    ),
+    "BAD_ARGS",
+  );
+  assert.equal(await codeOf(edit([])), "BAD_ARGS");
+  assert.equal(await codeOf(edit([{ oldText: "", newText: "x" }])), "BAD_ARGS");
+  assert.equal(readFileSync(file, "utf8"), "foo bar");
+  assert.equal(h.grants.all.find((g) => g.id === id)?.consumed, undefined);
+  await edit([
+    { oldText: "bar", newText: "foo" },
+    { oldText: "foo ", newText: "" },
+  ]);
+  assert.equal(readFileSync(file, "utf8"), "foo");
+});
+
+test("grep reports files it skipped for size instead of silently ignoring them", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "huge.txt"), `needle${"x".repeat(1 << 20)}`);
+  writeFileSync(join(h.root, "small.txt"), "needle");
+  const r = await (
+    h.tools.grep as {
+      result(a: object): Promise<{ text: string; skipped?: number }>;
+    }
+  ).result({ pattern: "needle" });
+  assert.equal(r.skipped, 1);
+  assert.match(r.text, /small\.txt:1:needle/);
+  assert.match(r.text, /\[skipped 1 file\(s\) over 1 MiB\]/);
+});
+
+test("more windows device spellings are denied", winOnly, async () => {
+  await denied(harness(), [
+    "COM¹",
+    "LPT².txt",
+    "CONIN$",
+    "CONOUT$",
+    "sub/conin$.x",
+  ]);
 });

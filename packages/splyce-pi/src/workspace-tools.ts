@@ -2,14 +2,19 @@
 // powershell) for the agent loop. Every path is confined to the admitted
 // workspace root; fs.write and shell.run need a one-time grant bound to the
 // exact target, consumed before the effect, with one receipt per effect.
+// fs.read runs on a session-scoped grant that is checked on every call but never
+// consumed, and reads leave no receipt: only effects (writes, shell) do.
 // Pi's own tool implementations are not imported: they need the built
 // coding-agent package and @types/node, which this package's tsconfig excludes.
 
 import { spawn } from "node:child_process";
+import { Worker } from "node:worker_threads";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
+  rename,
+  rm,
   readdir,
   readFile,
   realpath,
@@ -77,6 +82,7 @@ export type ErrorCode =
   | "BAD_ARGS"
   | "PATTERN_REJECTED"
   | "GREP_BUDGET"
+  | "RECEIPT_FAILED"
   | "ABORTED"
   | "IO_ERROR";
 
@@ -103,6 +109,8 @@ export interface ToolSummary {
 export interface ToolResult {
   text: string;
   summary: ToolSummary;
+  /** Files a search skipped for size; kept outside summary, which is a strict wire shape. */
+  skipped?: number;
 }
 export interface WorkspaceTool {
   name: string;
@@ -137,10 +145,21 @@ const ENV_ALLOW = new Set(
 );
 const SECRET = /KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_API_/i;
 const win = process.platform === "win32";
-const DEVICE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
+const DEVICE =
+  /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)(\..*)?$/i;
 const MAX_READ_BYTES = 8 << 20;
 const MAX_WALK_FILE_BYTES = 1 << 20;
 const MAX_PATTERN = 256;
+const GREP_FILE_MS = 400;
+const MATCH_WORKER = `const { parentPort, workerData } = require("node:worker_threads");
+const re = new RegExp(workerData.source, workerData.flags);
+parentPort.on("message", (m) => {
+  const hits = [];
+  const ls = m.text.split("\\n");
+  for (let i = 0; i < ls.length && hits.length < m.room; i++)
+    if (re.test(ls[i].slice(0, m.maxLine))) hits.push(i);
+  parentPort.postMessage(hits);
+});`;
 const MAX_GREP_SCAN_BYTES = 8 << 20;
 // shortcut: lines are matched on their first 4096 chars to bound backtracking input.
 const MAX_GREP_LINE = 4096;
@@ -173,6 +192,47 @@ function cap(
     text: new TextDecoder().decode(bytes.slice(0, maxBytes)),
     truncated: true,
     bytes: bytes.length,
+  };
+}
+
+/** Matches lines in a worker that is terminated when a match overruns or the call is aborted. */
+function matcher(re: RegExp, signal?: AbortSignal) {
+  const w = new Worker(MATCH_WORKER, {
+    eval: true,
+    workerData: { source: re.source, flags: re.flags },
+  });
+  let pending: ((r: number[] | WorkspaceToolError) => void) | undefined;
+  w.on("message", (m) => pending?.(m as number[]));
+  w.on("error", () =>
+    pending?.(new WorkspaceToolError("IO_ERROR", "search worker failed")),
+  );
+  return {
+    test: (text: string, room: number, ms: number) =>
+      new Promise<number[]>((done, reject) => {
+        const finish = (r: number[] | WorkspaceToolError) => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          pending = undefined;
+          if (r instanceof WorkspaceToolError) reject(r);
+          else done(r);
+        };
+        const timer = setTimeout(
+          () =>
+            finish(
+              new WorkspaceToolError(
+                "GREP_BUDGET",
+                "search exceeded its time budget",
+              ),
+            ),
+          ms,
+        );
+        const onAbort = () =>
+          finish(new WorkspaceToolError("ABORTED", "aborted"));
+        signal?.addEventListener("abort", onAbort, { once: true });
+        pending = finish;
+        w.postMessage({ text, room, maxLine: MAX_GREP_LINE });
+      }),
+    close: () => void w.terminate(),
   };
 }
 
@@ -337,16 +397,63 @@ export function createWorkspaceTools(
         `${capability} grant unusable for ${target}`,
       );
     }
+    let out: T;
     try {
-      const out = await fn();
-      receipts.record({ ...intent, summary: out.summary, ok: out.ok });
-      return out;
+      out = await fn();
     } catch (e) {
-      receipts.record({
-        ...intent,
-        summary: e instanceof WorkspaceToolError ? e.code : "failed",
-        ok: false,
-      });
+      try {
+        receipts.record({
+          ...intent,
+          summary: e instanceof WorkspaceToolError ? e.code : "failed",
+          ok: false,
+        });
+      } catch {
+        // the original failure is the one worth reporting
+      }
+      throw e;
+    }
+    try {
+      receipts.record({ ...intent, summary: out.summary, ok: out.ok });
+    } catch {
+      return fail(
+        "RECEIPT_FAILED",
+        `${capability} effect may have happened; its receipt was not recorded`,
+      );
+    }
+    return out;
+  }
+
+  // The destination is replaced by rename, never opened for writing, so a hard
+  // link to a file outside the root is cut instead of written through.
+  // shortcut: a new file gets default permissions, not the replaced file's mode.
+  async function put(
+    path: string,
+    abs: string,
+    data: string,
+    signal?: AbortSignal,
+  ) {
+    await recheck(path, abs, signal);
+    const missing: string[] = [];
+    for (
+      let d = dirname(abs);
+      !(await lstat(d).then(
+        () => true,
+        () => false,
+      ));
+      d = dirname(d)
+    )
+      missing.unshift(d);
+    for (const d of missing) {
+      await mkdir(d);
+      await recheck(path, abs, signal);
+    }
+    const tmp = join(dirname(abs), `.${basename(abs)}.${randomUUID()}.tmp`);
+    try {
+      await writeFile(tmp, data);
+      await recheck(path, abs, signal);
+      await rename(tmp, abs);
+    } catch (e) {
+      await rm(tmp, { force: true }).catch(() => undefined);
       throw e;
     }
   }
@@ -389,7 +496,9 @@ export function createWorkspaceTools(
       c.truncated
         ? `${c.text}\n[output truncated]`
         : more
-          ? `${c.text}\n${more}`
+          ? c.text
+            ? `${c.text}\n${more}`
+            : more
           : c.text,
       started,
       c.bytes,
@@ -614,7 +723,7 @@ export function createWorkspaceTools(
         },
         ["pattern"],
       ),
-      async result(args, _signal, actionId) {
+      async result(args, signal, actionId) {
         const started = Date.now();
         const a = act(args, actionId);
         const glob = str(args.pattern, "pattern");
@@ -623,8 +732,12 @@ export function createWorkspaceTools(
         gate("fs.read", rel, a);
         const limit = optNum(args.limit, 1000);
         const hits: string[] = [];
+        const t0 = Date.now();
         await io(rel, async () => {
           for await (const e of walk(abs, rel === "" ? "" : rel)) {
+            if (signal?.aborted) fail("ABORTED", "aborted");
+            if (Date.now() - t0 > timeoutMs)
+              fail("GREP_BUDGET", "search exceeded its time budget");
             if (re.test(glob.includes("/") ? e.rel : basename(e.rel)))
               hits.push(e.rel);
             if (hits.length >= limit) break;
@@ -648,7 +761,7 @@ export function createWorkspaceTools(
         },
         ["pattern"],
       ),
-      async result(args, _signal, actionId) {
+      async result(args, signal, actionId) {
         const started = Date.now();
         const a = act(args, actionId);
         const pat = str(args.pattern, "pattern");
@@ -678,35 +791,57 @@ export function createWorkspaceTools(
         gate("fs.read", rel, a);
         const limit = optNum(args.limit, 100);
         const hits: string[] = [];
-        await io(rel, async () => {
-          const st = await lstat(abs);
-          const files = st.isFile()
-            ? [{ abs, rel, file: true }]
-            : walk(abs, rel);
-          const t0 = Date.now();
-          let scanned = 0;
-          for await (const e of files) {
-            if (
-              !e.file ||
-              (gre && !gre.test(g?.includes("/") ? e.rel : basename(e.rel)))
-            )
-              continue;
-            const size = (await lstat(e.abs)).size;
-            if (size > MAX_WALK_FILE_BYTES) continue;
-            scanned += size;
-            if (scanned > MAX_GREP_SCAN_BYTES)
-              fail("GREP_BUDGET", "search exceeded its scan budget");
-            const ls = (await readFile(e.abs, "utf8")).split("\n");
-            for (let i = 0; i < ls.length && hits.length < limit; i++) {
-              if (Date.now() - t0 > timeoutMs)
+        let skipped = 0;
+        if (signal?.aborted) fail("ABORTED", "aborted");
+        // Matching runs in a worker so a catastrophic regex can be killed.
+        const m = matcher(re, signal);
+        try {
+          await io(rel, async () => {
+            const st = await lstat(abs);
+            const files = st.isFile()
+              ? [{ abs, rel, file: true }]
+              : walk(abs, rel);
+            const t0 = Date.now();
+            let scanned = 0;
+            for await (const e of files) {
+              if (signal?.aborted) fail("ABORTED", "aborted");
+              if (
+                !e.file ||
+                (gre && !gre.test(g?.includes("/") ? e.rel : basename(e.rel)))
+              )
+                continue;
+              const size = (await lstat(e.abs)).size;
+              if (size > MAX_WALK_FILE_BYTES) {
+                skipped++;
+                continue;
+              }
+              scanned += size;
+              if (scanned > MAX_GREP_SCAN_BYTES)
+                fail("GREP_BUDGET", "search exceeded its scan budget");
+              const left = timeoutMs - (Date.now() - t0);
+              if (left <= 0)
                 fail("GREP_BUDGET", "search exceeded its time budget");
-              if (re.test((ls[i] as string).slice(0, MAX_GREP_LINE)))
+              const text = await readFile(e.abs, "utf8");
+              const ls = text.split("\n");
+              // shortcut: one file may use 400ms of regex time, raise it if real searches hit it.
+              for (const i of await m.test(
+                text,
+                limit - hits.length,
+                Math.min(GREP_FILE_MS, left),
+              ))
                 hits.push(`${e.rel}:${String(i + 1)}:${ls[i] as string}`);
+              if (hits.length >= limit) break;
             }
-            if (hits.length >= limit) break;
-          }
-        });
-        return lines(hits.join("\n"), started, "");
+          });
+        } finally {
+          m.close();
+        }
+        const r = lines(
+          hits.join("\n"),
+          started,
+          skipped ? `[skipped ${String(skipped)} file(s) over 1 MiB]` : "",
+        );
+        return skipped ? { ...r, skipped } : r;
       },
     },
     {
@@ -729,9 +864,7 @@ export function createWorkspaceTools(
         const grantId = gate("fs.write", rel, a);
         const o = await effect("fs.write", rel, grantId, a, () =>
           io(rel, async () => {
-            await mkdir(dirname(abs), { recursive: true });
-            await recheck(path, abs, signal);
-            await writeFile(abs, content);
+            await put(path, abs, content, signal);
             const n = encoder.encode(content).length;
             return {
               summary: `wrote ${String(n)} bytes`,
@@ -770,23 +903,46 @@ export function createWorkspaceTools(
         const list = Array.isArray(args.edits)
           ? (args.edits as Record<string, unknown>[])
           : fail("BAD_ARGS", "edits must be an array");
+        if (list.length === 0) fail("BAD_ARGS", "edits must not be empty");
         const path = str(args.path, "path");
         const { abs, rel } = await confine(path);
         const grantId = gate("fs.write", rel, a);
-        let text = await io(rel, () => readFile(abs, "utf8"));
-        for (const e of list) {
-          const o = str(e.oldText, "oldText");
-          const n = str(e.newText, "newText");
-          const at = o === "" ? -1 : text.indexOf(o);
-          if (at < 0) fail("EDIT_NOT_FOUND", `oldText not found in ${rel}`);
-          if (text.indexOf(o, at + 1) >= 0)
-            fail("EDIT_AMBIGUOUS", `oldText matches more than once in ${rel}`);
-          text = text.slice(0, at) + n + text.slice(at + o.length);
+        const raw = await io(rel, () => readFile(abs, "utf8"));
+        // Match on LF text; a file that is entirely CRLF (and its BOM) is restored on write.
+        const bom = raw.startsWith("﻿") ? "﻿" : "";
+        const body = raw.slice(bom.length);
+        const crlf = body.includes("\r\n") && !/(?<!\r)\n/.test(body);
+        const lf = (s: string) => (crlf ? s.replace(/\r\n/g, "\n") : s);
+        const original = lf(body);
+        // Every edit is matched against the original text, so edits cannot see each other's output.
+        const found = list
+          .map((e) => {
+            const o = lf(str(e.oldText, "oldText"));
+            const n = lf(str(e.newText, "newText"));
+            if (o === "") fail("BAD_ARGS", "oldText must not be empty");
+            const at = original.indexOf(o);
+            if (at < 0) fail("EDIT_NOT_FOUND", `oldText not found in ${rel}`);
+            if (original.indexOf(o, at + 1) >= 0)
+              fail(
+                "EDIT_AMBIGUOUS",
+                `oldText matches more than once in ${rel}`,
+              );
+            return { at, end: at + o.length, n };
+          })
+          .sort((x, y) => x.at - y.at);
+        let text = "";
+        let pos = 0;
+        for (const f of found) {
+          if (f.at < pos) fail("BAD_ARGS", "edits overlap");
+          text += original.slice(pos, f.at) + f.n;
+          pos = f.end;
         }
+        text += original.slice(pos);
+        if (crlf) text = text.replace(/\n/g, "\r\n");
+        text = bom + text;
         const o = await effect("fs.write", rel, grantId, a, () =>
           io(rel, async () => {
-            await recheck(path, abs, signal);
-            await writeFile(abs, text);
+            await put(path, abs, text, signal);
             return {
               summary: `edited ${String(list.length)} block(s)`,
               ok: true,

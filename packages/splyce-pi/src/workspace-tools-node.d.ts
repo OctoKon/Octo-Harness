@@ -14,10 +14,9 @@ declare module "node:fs/promises" {
   }
   export function readFile(path: string, encoding: "utf8"): Promise<string>;
   export function writeFile(path: string, data: string): Promise<void>;
-  export function mkdir(
-    path: string,
-    options: { recursive: true },
-  ): Promise<unknown>;
+  export function mkdir(path: string): Promise<unknown>;
+  export function rename(from: string, to: string): Promise<void>;
+  export function rm(path: string, options: { force: true }): Promise<void>;
   export function readdir(
     path: string,
     options: { withFileTypes: true },
@@ -26,6 +25,16 @@ declare module "node:fs/promises" {
   export function lstat(
     path: string,
   ): Promise<{ size: number; isFile(): boolean; isDirectory(): boolean }>;
+}
+
+declare module "node:worker_threads" {
+  export class Worker {
+    constructor(code: string, options: { eval: true; workerData: unknown });
+    on(event: "message", cb: (value: unknown) => void): this;
+    on(event: "error", cb: (error: Error) => void): this;
+    postMessage(value: unknown): void;
+    terminate(): Promise<number>;
+  }
 }
 
 declare module "node:path" {
