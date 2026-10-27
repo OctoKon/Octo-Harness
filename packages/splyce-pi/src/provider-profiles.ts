@@ -28,6 +28,7 @@ export type ProviderProfilesErrorCode =
   | "PROFILE_UNKNOWN_CONNECTION"
   | "PROFILE_UNKNOWN_PROFILE"
   | "PROFILE_CONNECTION_REVISION_MISMATCH"
+  | "PROFILE_MODEL_UNBOUND"
   | "PROFILE_INVALID";
 
 export class ProviderProfilesError extends Error {
@@ -66,6 +67,22 @@ export interface ProfileBinding {
   readonly providerConnectionId: string;
   /** The exact connection revision, never "latest". */
   readonly connectionRevision: string;
+  /** The exact model this role dispatches (for example "anthropic/claude-sonnet-4-5"). */
+  readonly modelId: string;
+}
+
+/** A binding at rest. Historical snapshots predate `modelId`, so it is optional here only. */
+export interface StoredProfileBinding {
+  readonly role: string;
+  readonly providerConnectionId: string;
+  readonly connectionRevision: string;
+  readonly modelId?: string;
+}
+
+/** Why an effective profile cannot build a generation model. */
+export interface GenerationBlocker {
+  readonly code: "PROFILE_MODEL_UNBOUND";
+  readonly role: string;
 }
 
 export interface ProfileInput {
@@ -89,7 +106,11 @@ export interface EffectiveProfile {
   readonly profileId: string;
   readonly profileRevision: string;
   readonly configRevision: string;
-  readonly bindings: readonly ProfileBinding[];
+  readonly bindings: readonly StoredProfileBinding[];
+  /** True iff every binding names a model and its exact connection revision resolves. */
+  readonly generationReady: boolean;
+  /** The first reason generation is not ready, or null when it is. */
+  readonly generationBlocker: GenerationBlocker | null;
 }
 
 export interface SelectInput {
@@ -163,22 +184,76 @@ function id(value: unknown): asserts value is string {
   if (/\s|[\\/]/u.test(value)) invalid();
 }
 
+/** Model references keep `/` and `:`; whitespace and control characters are rejected. */
+function modelId(value: unknown): asserts value is string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 256 ||
+    /[\s\u0000-\u001f\u007f-\u009f]/u.test(value)
+  )
+    invalid();
+}
+
+function bindingBase(binding: unknown) {
+  if (binding === null || typeof binding !== "object" || Array.isArray(binding))
+    invalid();
+  const role = (binding as Record<string, unknown>).role;
+  const providerConnectionId = (binding as Record<string, unknown>)
+    .providerConnectionId;
+  const connectionRevision = (binding as Record<string, unknown>)
+    .connectionRevision;
+  id(role);
+  id(providerConnectionId);
+  id(connectionRevision);
+  return { role, providerConnectionId, connectionRevision };
+}
+
+/** Write input: a new profile must name its model. */
 function bindings(value: unknown): ProfileBinding[] {
   if (!Array.isArray(value)) invalid();
   const roles = new Set<string>();
   const result: ProfileBinding[] = [];
   for (const binding of value) {
-    object(binding, ["role", "providerConnectionId", "connectionRevision"]);
-    id(binding.role);
-    id(binding.providerConnectionId);
-    id(binding.connectionRevision);
-    if (roles.has(binding.role)) invalid();
-    roles.add(binding.role);
-    result.push({
-      role: binding.role,
-      providerConnectionId: binding.providerConnectionId,
-      connectionRevision: binding.connectionRevision,
-    });
+    object(binding, [
+      "role",
+      "providerConnectionId",
+      "connectionRevision",
+      "modelId",
+    ]);
+    const model = binding.modelId;
+    modelId(model);
+    const parsed = { ...bindingBase(binding), modelId: model };
+    if (roles.has(parsed.role)) invalid();
+    roles.add(parsed.role);
+    result.push(parsed);
+  }
+  if (!roles.has("chat")) invalid();
+  return result;
+}
+
+/** Read input: historical snapshots have no `modelId`; they stay readable but not generation ready. */
+function storedBindings(value: unknown): StoredProfileBinding[] {
+  if (!Array.isArray(value)) invalid();
+  const roles = new Set<string>();
+  const result: StoredProfileBinding[] = [];
+  for (const binding of value) {
+    if (binding === null || typeof binding !== "object") invalid();
+    const withModel = Object.hasOwn(binding, "modelId");
+    object(
+      binding,
+      withModel
+        ? ["role", "providerConnectionId", "connectionRevision", "modelId"]
+        : ["role", "providerConnectionId", "connectionRevision"],
+    );
+    const parsed = bindingBase(binding);
+    if (withModel) {
+      const model = (binding as { modelId: unknown }).modelId;
+      modelId(model);
+      result.push({ ...parsed, modelId: model });
+    } else result.push(parsed);
+    if (roles.has(parsed.role)) invalid();
+    roles.add(parsed.role);
   }
   if (!roles.has("chat")) invalid();
   return result;
@@ -272,6 +347,21 @@ export function createProviderProfiles({
     observation?: ReturnType<Store["readAuthority"]>,
   ): ProfileBinding[] {
     const checked = bindings(value);
+    for (const binding of checked)
+      connection(
+        scopeId,
+        binding.providerConnectionId,
+        binding.connectionRevision,
+        observation,
+      );
+    return checked;
+  }
+  function checkStoredBindings(
+    scopeId: string,
+    value: unknown,
+    observation?: ReturnType<Store["readAuthority"]>,
+  ): StoredProfileBinding[] {
+    const checked = storedBindings(value);
     for (const binding of checked)
       connection(
         scopeId,
@@ -436,7 +526,14 @@ export function createProviderProfiles({
         input.profileId,
         input.profileRevision,
       );
-      checkBindings(input.scopeId, selected.bindings);
+      const pinned = checkStoredBindings(input.scopeId, selected.bindings);
+      // A legacy snapshot without a model cannot be selected again: re-apply is required.
+      const unbound = pinned.find((binding) => binding.modelId === undefined);
+      if (unbound)
+        throw new ProviderProfilesError(
+          "PROFILE_MODEL_UNBOUND",
+          `profile binding for role "${unbound.role}" has no model`,
+        );
       const change = { ...input };
       config.request(change, caller);
       return config.apply(change, caller);
@@ -489,12 +586,18 @@ export function createProviderProfiles({
         selected.profileRevision,
         observation,
       );
-      const pinned = checkBindings(scopeId, value.bindings, observation);
+      const pinned = checkStoredBindings(scopeId, value.bindings, observation);
+      // Legacy selections stay visible, but dispatch must fail closed until re-applied.
+      const unbound = pinned.find((binding) => binding.modelId === undefined);
       return {
         profileId: selected.profileId,
         profileRevision: selected.profileRevision,
         configRevision,
         bindings: pinned,
+        generationReady: unbound === undefined,
+        generationBlocker: unbound
+          ? { code: "PROFILE_MODEL_UNBOUND", role: unbound.role }
+          : null,
       };
     },
   };
