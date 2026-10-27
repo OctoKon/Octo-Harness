@@ -289,9 +289,11 @@ export function reduceTurns(
 	const isSnapshot = envelope.kind === "run.reconnect_snapshot";
 	if (
 		state.seenEventIds.has(envelope.eventId) ||
-		(envelope.durable
-			? envelope.seq <= state.lastDurableSeq
-			: envelope.seq <= state.lastSeq)
+		(isSnapshot && state.needsResync
+			? envelope.seq < state.lastDurableSeq
+			: envelope.durable
+				? envelope.seq <= state.lastDurableSeq
+				: envelope.seq <= state.lastSeq)
 	) {
 		return { ...state, duplicateCount: state.duplicateCount + 1 };
 	}
@@ -584,6 +586,8 @@ interface SessionChannel {
 	transientFrames: number;
 	transientBytes: number;
 	resyncNotified: boolean;
+	/** While recovering: the one durable seq whose replay completes recovery. */
+	recoverNext: number | undefined;
 	durableSeq: number;
 	replayUntil: number;
 	seenEventIds: Set<string>;
@@ -713,6 +717,7 @@ export function createTurnStreamTransport(
 			transientFrames: 0,
 			transientBytes: 0,
 			resyncNotified: false,
+			recoverNext: undefined,
 			durableSeq: initial.lastDurableSeq,
 			replayUntil: 0,
 			seenEventIds: new Set(),
@@ -738,6 +743,9 @@ export function createTurnStreamTransport(
 	) {
 		if (!channel.state.needsResync || channel.resyncNotified) return;
 		channel.resyncNotified = true;
+		// Replay after afterSeq may be plain contiguous durable history (no
+		// snapshot): its first unapplied frame completes recovery.
+		channel.recoverNext = Math.max(afterSeq, channel.acceptedSeq) + 1;
 		options.onResync?.(afterSeq, channel.state.sessionId ?? "");
 	}
 
@@ -818,7 +826,10 @@ export function createTurnStreamTransport(
 			);
 		}
 		if (channel.state.needsResync && !hadResync) notifyResync(channel);
-		if (!channel.state.needsResync) channel.resyncNotified = false;
+		if (!channel.state.needsResync) {
+			channel.resyncNotified = false;
+			channel.recoverNext = undefined;
+		}
 	}
 
 	function pauseForResync(channel: SessionChannel) {
@@ -939,11 +950,33 @@ export function createTurnStreamTransport(
 		}
 		const channel = channelFor(validated.scopeId, validated.sessionId);
 
-		if (
-			channel.state.needsResync &&
-			validated.kind !== "run.reconnect_snapshot"
-		) {
-			return;
+		const isSnapshot = validated.kind === "run.reconnect_snapshot";
+		const recovering = channel.state.needsResync;
+		if (recovering && !isSnapshot) {
+			if (!validated.durable || validated.seq !== channel.recoverNext) {
+				if (validated.seq <= channel.acceptedSeq) {
+					channel.state = {
+						...channel.state,
+						duplicateCount: channel.state.duplicateCount + 1,
+					};
+					emit(channel);
+				}
+				// Beyond recoverNext: keep waiting for the requested replay.
+				return;
+			}
+			// The first contiguous durable replay frame completes recovery.
+			const {
+				resyncFromSeq: _from,
+				resyncAfterSeq: _after,
+				...rest
+			} = channel.state;
+			channel.state = {
+				...rest,
+				needsResync: false,
+				resyncCount: channel.state.resyncCount + 1,
+			};
+			channel.recoverNext = undefined;
+			channel.resyncNotified = false;
 		}
 
 		if (channel.seenEventIds.has(validated.eventId)) {
@@ -962,7 +995,12 @@ export function createTurnStreamTransport(
 			validated.seq <= channel.replayUntil &&
 			validated.seq > channel.durableSeq;
 
-		if (!replay && validated.seq <= channel.acceptedSeq) {
+		// A recovering snapshot at the applied cursor completes recovery.
+		const duplicate =
+			recovering && isSnapshot
+				? validated.seq < channel.acceptedSeq
+				: validated.seq <= channel.acceptedSeq;
+		if (!replay && duplicate) {
 			channel.state = {
 				...channel.state,
 				duplicateCount: channel.state.duplicateCount + 1,
@@ -971,7 +1009,6 @@ export function createTurnStreamTransport(
 			return;
 		}
 
-		const isSnapshot = validated.kind === "run.reconnect_snapshot";
 		if (!isSnapshot && !replay && validated.seq !== channel.acceptedSeq + 1) {
 			pauseForResync(channel);
 			return;

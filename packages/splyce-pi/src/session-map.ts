@@ -268,6 +268,8 @@ export class SessionMap {
 			channel = Object.freeze({ ...bound.key, receipts, bridge });
 			this.channels.set(keyOf(key), channel);
 		}
+		// The follower has applied through afterSeq: later overflows resync from it.
+		channel.bridge.clientAppliedSeq = afterSeq;
 		return { channel, replay };
 	}
 

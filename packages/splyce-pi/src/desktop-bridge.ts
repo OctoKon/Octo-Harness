@@ -110,23 +110,24 @@ export class DesktopBridge {
 		baseContext: ContractContext,
 		receipts: Receipts,
 		options: TransportLimitOptions = {},
-		clientAppliedSeq = 0,
 	) {
 		this.baseContext = baseContext;
 		this.receipts = receipts;
 		this.limits = { ...TRANSPORT_LIMIT_OPTIONS, ...options };
-		this._clientAppliedSeq =
-			clientAppliedSeq ||
-			(typeof (options as { clientAppliedSeq?: unknown }).clientAppliedSeq ===
-			"number"
-				? (options as { clientAppliedSeq: number }).clientAppliedSeq
-				: 0);
+	}
+
+	/** This session's event highwater: the cursor domain of every envelope seq. */
+	private sessionEventCursor(): number {
+		return this.receipts.sessionEventCursor(
+			this.baseContext.scopeId,
+			this.baseContext.sessionId,
+		);
 	}
 
 	private context(): ContractContext {
 		return {
 			...this.baseContext,
-			lastDurableSeq: this.receipts.durableCursor(),
+			lastDurableSeq: this.sessionEventCursor(),
 			// The tightest of the caller's budget, the option budget and the frozen
 			// shared ceiling applies: smaller is honored, larger never widens it.
 			maxInlineBytes: Math.min(
@@ -243,10 +244,7 @@ export class DesktopBridge {
 		// Every overflow emits its own resync control frame; the exactly-one
 		// rule is per overflow, not per cursor advance. The base cursor is
 		// session-exact: other sessions'/scopes' records never move it.
-		const highwater = this.receipts.sessionEventCursor(
-			this.baseContext.scopeId,
-			this.baseContext.sessionId,
-		);
+		const highwater = this.sessionEventCursor();
 		const fromSeq = this._clientAppliedSeq;
 		if (fromSeq > highwater)
 			throw new BridgeError(
@@ -299,11 +297,15 @@ export class DesktopBridge {
 	}
 
 	/**
-	 * Replay after a cursor (exclusive) directly from the durable store, used
-	 * after a resync: identical semantics to `subscribe afterSeq`.
+	 * This session's retained event envelopes with seq > afterSeq (exclusive),
+	 * in the session event-seq domain: identical to `subscribe afterSeq`.
 	 */
-	replay(afterSeq: number, caller: Parameters<Receipts["replay"]>[2]) {
-		return this.receipts.replay(this.baseContext.scopeId, afterSeq, caller);
+	replay(afterSeq: number): SplyceEvent[] {
+		return this.receipts.replayEvents(
+			this.baseContext.scopeId,
+			this.baseContext.sessionId,
+			afterSeq,
+		);
 	}
 
 	status(): BridgeStatus {
@@ -315,35 +317,20 @@ export class DesktopBridge {
 		};
 	}
 
-	/** Highest queued durable seq — the renderer's next afterSeq base. */
-	/** Client's last applied/acknowledged event seq (public, settable). */
+	/** Client's last applied event seq: the base of the next overflow resync. */
 	get clientAppliedSeq(): number {
 		return this._clientAppliedSeq;
 	}
 	set clientAppliedSeq(value: number) {
-		if (typeof value === "number" && Number.isFinite(value) && value >= 0)
-			this._clientAppliedSeq = value;
+		if (!Number.isSafeInteger(value) || value < 0)
+			throw new BridgeError(
+				"INVALID_CURSOR",
+				"client-applied seq must be a non-negative safe integer",
+			);
+		this._clientAppliedSeq = value;
 	}
 
-	/** Alias: record a client-acknowledged event seq (monotonic). */
-	acknowledge(seq: number): void {
-		if (typeof seq === "number" && seq > this._clientAppliedSeq)
-			this._clientAppliedSeq = seq;
-	}
-	acknowledgeClientSeq(seq: number): void {
-		this.acknowledge(seq);
-	}
-	setClientAppliedSeq(seq: number): void {
-		this.clientAppliedSeq = seq;
-	}
-	clientApplied(seq: number): void {
-		this.clientAppliedSeq = seq;
-	}
-	/** Subscribe-style entry: record the client's afterSeq cursor. */
-	subscribe(afterSeq: number): void {
-		this.clientAppliedSeq = afterSeq;
-	}
-
+	/** Highest queued durable seq — the renderer's next afterSeq base. */
 	highestQueuedSeq(): number {
 		let highest = 0;
 		for (const frame of this.queue) {
