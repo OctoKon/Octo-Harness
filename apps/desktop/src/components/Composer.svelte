@@ -20,6 +20,7 @@
     sessionId,
     stale = false,
     generationReady,
+    workspaceSelected = false,
     unavailable,
     cancellable = false,
     contextArtifactIds = [],
@@ -31,6 +32,8 @@
     stale?: boolean;
     /** Engine-reported generation readiness; fail closed when false. */
     generationReady?: boolean;
+    /** A project is selected; sending is blocked without one. */
+    workspaceSelected?: boolean;
     unavailable?: string;
     cancellable?: boolean;
     contextArtifactIds?: readonly string[];
@@ -49,6 +52,7 @@
       sessionId,
       stale,
       generationReady,
+      workspaceSelected,
       pending,
       unavailable,
     }),
@@ -62,6 +66,7 @@
       sessionId,
       stale,
       generationReady,
+      workspaceSelected,
       pending,
       unavailable,
     }))

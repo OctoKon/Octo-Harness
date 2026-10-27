@@ -20,6 +20,8 @@ export interface ComposerAvailability {
    * Fail closed: anything but `true` blocks sending.
    */
   generationReady?: boolean;
+  /** A project was chosen and admitted; fail closed when absent. */
+  workspaceSelected?: boolean;
   /** Sending is not wired for this session yet; shown as the blocked reason. */
   unavailable?: string;
 }
@@ -43,6 +45,8 @@ export function sendBlockedReason(a: ComposerAvailability): string | null {
   // configured, so claiming it is unconfigured would be a false statement.
   if (a.generationReady !== true)
     return "Generation readiness has not been reported yet. Sending stays blocked.";
+  if (!a.workspaceSelected)
+    return "No project is selected. Choose a project first.";
   if (a.unavailable) return a.unavailable;
   if (a.stale) return "Session state is out of date. Refresh before sending.";
   return null;

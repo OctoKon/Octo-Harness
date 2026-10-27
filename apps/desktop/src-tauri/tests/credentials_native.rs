@@ -4,7 +4,7 @@
 mod credentials;
 
 use credentials::{
-    CredentialError, CredentialRef, MAX_SECRET_BYTES, delete_owned, read_owned, write_generated,
+    delete_owned, read_owned, write_generated, CredentialError, CredentialRef, MAX_SECRET_BYTES,
 };
 use std::ptr::null_mut;
 use windows_sys::Win32::Security::Credentials::{

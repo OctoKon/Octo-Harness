@@ -154,43 +154,148 @@ export interface CustomEndpointDraft {
   readonly headers: readonly HeaderDraft[];
 }
 
-/** What the native credential writer would receive; never persisted here. */
-export interface CredentialDraft {
-  readonly displayName: string;
-  readonly baseUrl: string;
+export type ApiFamily = "openai-completions" | "openai-responses";
+export const API_FAMILIES: readonly ApiFamily[] = [
+  "openai-completions",
+  "openai-responses",
+];
+
+/** Form values as typed; held only by the form, never persisted here. */
+export interface ProviderSetupDraft {
+  readonly endpoint: string;
+  readonly apiFamily: ApiFamily;
+  readonly modelId: string;
+  readonly contextWindow: string;
+  readonly maxOutputTokens: string;
+  readonly reasoning: boolean;
+  readonly image: boolean;
   readonly apiKey: string;
+}
+
+export type SetupField =
+  "endpoint" | "modelId" | "contextWindow" | "maxOutputTokens" | "apiKey";
+export type SetupErrors = Partial<Record<SetupField, string>>;
+
+const MAX_CONTEXT = 2_097_152;
+const MAX_OUTPUT = 1_048_576;
+
+function limit(text: string, max: number): number | null {
+  const value = /^\d+$/.test(text.trim()) ? Number(text.trim()) : NaN;
+  return Number.isSafeInteger(value) && value >= 1 && value <= max
+    ? value
+    : null;
 }
 
 /**
  * Field-by-field problems, never the values: an invalid key or URL must not be
- * echoed back into the DOM or a log. Empty means valid.
+ * echoed back into the DOM or a log. Mirrors the native setup rules. Empty means valid.
  */
-export function validateCredentialDraft(
-  draft: CredentialDraft,
-): readonly string[] {
-  const errors: string[] = [];
-  const name = draft.displayName.trim();
-  if (name === "") errors.push("Name is required.");
-  else if (safeDisplayName(name, "connection") !== name)
-    errors.push("Name must not look like a URL or a credential.");
-
-  const raw = draft.baseUrl.trim();
-  const key = normalized(raw);
-  if (key === null) errors.push("Base URL is not a valid URL.");
+export function validateProviderSetup(draft: ProviderSetupDraft): SetupErrors {
+  const errors: SetupErrors = {};
+  const raw = draft.endpoint.trim();
+  if (normalized(raw) === null)
+    errors.endpoint = "Endpoint URL is not a valid URL.";
   else {
     const url = new URL(raw);
-    if (
+    if (url.username !== "" || url.password !== "")
+      errors.endpoint =
+        "Endpoint URL must not contain credentials; use the API key.";
+    else if (url.search !== "" || url.hash !== "" || /[?#]/.test(raw))
+      errors.endpoint =
+        "Endpoint URL must not contain a query string or fragment.";
+    else if (
       url.protocol !== "https:" &&
       !(url.protocol === "http:" && isLoopbackUrl(raw))
     )
-      errors.push("Base URL must use https unless the endpoint is local.");
-    if (url.search !== "" || url.hash !== "" || /[?#]/.test(raw))
-      errors.push("Base URL must not contain a query string or fragment.");
-    if (url.username !== "" || url.password !== "")
-      errors.push("Base URL must not contain credentials; use the API key.");
+      errors.endpoint =
+        "Endpoint URL must use https unless the endpoint is local.";
   }
-  if (draft.apiKey.trim() === "") errors.push("API key is required.");
+  const model = draft.modelId.trim();
+  if (model === "") errors.modelId = "Model ID is required.";
+  else if (
+    model.length > 256 ||
+    /[\s\u0000-\u001f\u007f-\u009f\p{Cf}]/u.test(model)
+  )
+    errors.modelId =
+      "Model ID must be at most 256 characters with no spaces or control characters.";
+  if (draft.apiKey.trim() === "") errors.apiKey = "API key is required.";
+  // Both blank: only a known catalog model is accepted natively. Never invented here.
+  if (draft.contextWindow.trim() === "" && draft.maxOutputTokens.trim() === "")
+    return errors;
+  const context = limit(draft.contextWindow, MAX_CONTEXT);
+  if (context === null)
+    errors.contextWindow = `Context window must be a whole number from 1 to ${MAX_CONTEXT}.`;
+  const output = limit(draft.maxOutputTokens, MAX_OUTPUT);
+  if (output === null)
+    errors.maxOutputTokens = `Max output tokens must be a whole number from 1 to ${MAX_OUTPUT}.`;
+  else if (context !== null && output > context)
+    errors.maxOutputTokens =
+      "Max output tokens must not exceed the context window.";
   return errors;
+}
+
+/** The frozen `provider.configure` payload; requestId equals the setup frame's. */
+export interface ProviderConfigurePayload {
+  readonly requestId: string;
+  readonly workspaceId: string;
+  readonly providerConnectionId: string;
+  readonly profileId: string;
+  readonly apiFamily: ApiFamily;
+  readonly endpoint: string;
+  readonly locality: "local" | "hosted";
+  readonly chat: {
+    readonly modelId: string;
+    readonly model?: {
+      readonly contextWindow: number;
+      readonly maxOutputTokens: number;
+      readonly reasoning: boolean;
+      readonly input: readonly ("text" | "image")[];
+    };
+  };
+  readonly accountScopeRef: "provider-default";
+  readonly credential:
+    | { readonly kind: "new"; readonly secret: string }
+    | { readonly kind: "keep" };
+  readonly expectedConnectionRevision: string | null;
+  readonly expectedProfileRevision: string | null;
+  readonly expectedEndpointRevision: string | null;
+}
+
+/** Builds a new-connection payload from a draft that already passed validation. */
+export function providerConfigurePayload(
+  draft: ProviderSetupDraft,
+  workspaceId: string,
+  requestId: string,
+  newId: () => string = () => crypto.randomUUID(),
+): ProviderConfigurePayload {
+  const endpoint = normalized(draft.endpoint.trim())!;
+  const custom =
+    draft.contextWindow.trim() !== "" || draft.maxOutputTokens.trim() !== "";
+  return {
+    requestId,
+    workspaceId,
+    providerConnectionId: newId(),
+    profileId: newId(),
+    apiFamily: draft.apiFamily,
+    endpoint,
+    locality: isLoopbackUrl(endpoint) ? "local" : "hosted",
+    chat: {
+      modelId: draft.modelId.trim(),
+      ...(custom && {
+        model: {
+          contextWindow: Number(draft.contextWindow.trim()),
+          maxOutputTokens: Number(draft.maxOutputTokens.trim()),
+          reasoning: draft.reasoning,
+          input: draft.image ? ["text", "image"] : ["text"],
+        },
+      }),
+    },
+    accountScopeRef: "provider-default",
+    credential: { kind: "new", secret: draft.apiKey },
+    expectedConnectionRevision: null,
+    expectedProfileRevision: null,
+    expectedEndpointRevision: null,
+  };
 }
 
 export interface ExistingEndpoint {
