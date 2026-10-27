@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   CONTRACT_VERSION,
   FOUNDATION,
+  HANDSHAKE_CAPABILITIES,
   PI_REVISION,
   PROTOCOL_VERSION,
 } from "@splyce/pi/contracts";
@@ -51,6 +52,7 @@ test("TD-08: engine exit during handshake remains disconnected after late succes
     piRevision: PI_REVISION,
     entryMode: FOUNDATION.entryMode,
     disabledBuiltinExtensions: [...FOUNDATION.disabledBuiltinExtensions],
+    capabilities: [...HANDSHAKE_CAPABILITIES],
     readiness: {
       state: "ready",
       policy: true,
@@ -134,6 +136,7 @@ test("generation port controls renderer readiness and can recover", async () => 
     piRevision: PI_REVISION,
     entryMode: FOUNDATION.entryMode,
     disabledBuiltinExtensions: [...FOUNDATION.disabledBuiltinExtensions],
+    capabilities: [...HANDSHAKE_CAPABILITIES],
     readiness: {
       state: "ready",
       policy: true,
@@ -188,6 +191,7 @@ test("status ports update from subscription and late events cannot resurrect an 
     piRevision: PI_REVISION,
     entryMode: FOUNDATION.entryMode,
     disabledBuiltinExtensions: [...FOUNDATION.disabledBuiltinExtensions],
+    capabilities: [...HANDSHAKE_CAPABILITIES],
     readiness: {
       state: "ready",
       policy: true,
@@ -276,6 +280,7 @@ test("malformed live port status fails closed without consumer delivery", async 
     piRevision: PI_REVISION,
     entryMode: FOUNDATION.entryMode,
     disabledBuiltinExtensions: [...FOUNDATION.disabledBuiltinExtensions],
+    capabilities: [...HANDSHAKE_CAPABILITIES],
     readiness: {
       state: "ready",
       policy: true,

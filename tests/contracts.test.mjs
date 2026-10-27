@@ -662,6 +662,38 @@ test("TD-01: frozen handshake accepts unavailable but requires all readiness gua
     rejects(() => validateHandshake({ ...input, ...patch }));
 });
 
+test("TD-15: handshake capability refuses an engine that cannot send control frames", () => {
+  const input = fixture("handshake");
+  assert.deepEqual(validateHandshake(input), input);
+  // The frozen capability is what makes a legacy v2 engine (8 fields, no
+  // capability list) fail visibly at handshake instead of pairing silently.
+  const legacy = { ...input };
+  delete legacy.capabilities;
+  rejects(() => validateHandshake(legacy));
+  // Declared but missing: refused (fail closed), never silently accepted.
+  rejects(() => validateHandshake({ ...input, capabilities: ["other"] }));
+  rejects(() =>
+    validateHandshake({ ...input, capabilities: ["controlFrames:resync", 7] }),
+  );
+  rejects(() => validateHandshake({ ...input, capabilities: "all" }));
+  // Unknown extra fields stay refused: the shape is exact.
+  rejects(() => validateHandshake({ ...input, capability: [] }));
+  // The generated Rust-side spec carries the same capability, so the native
+  // host validates one source of truth.
+  assert.deepEqual(JSON.parse(BRIDGE_PROTOCOL_JSON).capabilities, [
+    "controlFrames:resync",
+  ]);
+  // A newer engine may declare more than this client uses: unknown extra
+  // capabilities are forward-compatible, the required one is not optional.
+  assert.deepEqual(
+    validateHandshake({
+      ...input,
+      capabilities: ["controlFrames:resync", "future:thing"],
+    }).capabilities,
+    ["controlFrames:resync", "future:thing"],
+  );
+});
+
 test("TD-15: stream.resync is an exact unsequenced control frame, never an event", () => {
   const control = {
     frame: "control",

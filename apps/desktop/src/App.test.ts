@@ -21,6 +21,7 @@ import {
 } from "./stores/engine";
 import {
   FOUNDATION,
+  HANDSHAKE_CAPABILITIES,
   PI_REVISION,
   type SplyceEvent,
 } from "@splyce/pi/contracts";
@@ -44,6 +45,7 @@ const readyHandshake = {
   piRevision: PI_REVISION,
   entryMode: FOUNDATION.entryMode,
   disabledBuiltinExtensions: [...FOUNDATION.disabledBuiltinExtensions],
+  capabilities: [...HANDSHAKE_CAPABILITIES],
   readiness: {
     state: "ready",
     policy: true,

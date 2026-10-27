@@ -8,6 +8,7 @@ import {
   PROTOCOL_VERSION,
   PI_REVISION,
   FOUNDATION,
+  HANDSHAKE_CAPABILITIES,
   TRANSPORT_LIMITS,
   validateHandshake,
 } from "@splyce/pi/contracts";
@@ -84,6 +85,7 @@ function nativeHandshake(host) {
     piRevision: PI_REVISION,
     entryMode: FOUNDATION.entryMode,
     disabledBuiltinExtensions: [...FOUNDATION.disabledBuiltinExtensions],
+    capabilities: [...HANDSHAKE_CAPABILITIES],
     readiness: host.handshakeReadiness,
   });
 }

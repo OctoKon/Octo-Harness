@@ -640,3 +640,167 @@ test("follow re-resolves payload references from the event schema: a revoked pay
   assert.deepEqual(map.follow(k1, 0).replay, [started, intent]);
   store.close();
 });
+
+test("repeated resubscribe through SessionMap -> bridge -> turns completes recovery every cycle", async () => {
+  const { createTurnStreamTransport, resyncRequest } =
+    await import("../../apps/desktop/src/stores/turns.ts");
+  const { store, pi, map } = setup();
+  map.bind(k1, pi);
+  const id = pi.getSessionId();
+  map.anchorRun(id, run("run-1"));
+  const [d1, delta] = fixture.engineEvents;
+  map.publish(id, d1);
+  map.publish(id, delta);
+  const three = map.publish(id, {
+    ...durableEvent("evt-3"),
+    payload: { runId: "run-3", turnId: "turn-3" },
+  }).event;
+
+  const resyncs: number[] = [];
+  const transport = createTurnStreamTransport({
+    sessionId: "s1",
+    scopeId: "w-demo",
+    schedule: () => {},
+    onResync: (fromSeq) => resyncs.push(fromSeq),
+  });
+
+  // Initial subscribe: the committed replay (led by its snapshot) lands with
+  // no gap and no protocol error.
+  for (const event of map.follow(k1, 0).replay) transport.enqueue(event);
+  let state = transport.flush();
+  assert.equal(state.needsResync, false);
+  assert.equal(state.protocolErrors, 0);
+  assert.equal(state.lastDurableSeq, three.seq);
+
+  // Two full control -> resubscribe cycles: the retained contiguous history
+  // completes recovery without waiting for a snapshot, and redelivered
+  // duplicates never move a cursor (the Codex deadlock repro, end to end).
+  for (let cycle = 1; cycle <= 2; cycle += 1) {
+    transport.enqueue({
+      frame: "control",
+      kind: "stream.resync",
+      sessionId: "s1",
+      fromSeq: 0,
+    } as never);
+    assert.equal(transport.current().needsResync, true);
+    assert.deepEqual(resyncRequest(transport.current()), { afterSeq: 0 });
+    const { channel, replay } = map.follow(k1, 0);
+    // B2: the bridge re-arms overflow resyncs at the follower's cursor.
+    assert.equal(channel.bridge.clientAppliedSeq, 0);
+    for (const event of replay) transport.enqueue(event);
+    state = transport.flush();
+    assert.equal(state.needsResync, false);
+    assert.equal(state.resyncCount, cycle);
+    assert.equal(state.lastDurableSeq, three.seq);
+    assert.equal(state.protocolErrors, 0);
+  }
+  assert.deepEqual(resyncs, [0, 0]);
+
+  // Third cycle at the engine's highwater: a new event plus the resumed
+  // cursor completes recovery and re-arms the bridge at the applied cursor.
+  transport.enqueue({
+    frame: "control",
+    kind: "stream.resync",
+    sessionId: "s1",
+    fromSeq: three.seq,
+  } as never);
+  assert.deepEqual(resyncs, [0, 0, three.seq]);
+  const four = map.publish(id, {
+    ...durableEvent("evt-4"),
+    payload: { runId: "run-4", turnId: "turn-4" },
+  }).event;
+  const { channel, replay } = map.follow(k1, three.seq);
+  assert.equal(channel.bridge.clientAppliedSeq, three.seq);
+  // Earlier ledger snapshots may ride along; the new event must be there.
+  assert.equal(replay.at(-1)!.eventId, "evt-4");
+  for (const event of replay) transport.enqueue(event);
+  state = transport.flush();
+  assert.equal(state.needsResync, false);
+  assert.equal(state.resyncCount, 3);
+  assert.equal(state.lastDurableSeq, four.seq);
+  store.close();
+});
+
+test("interleaved two-session cursors stay isolated across bridge and transport", async () => {
+  const { createTurnStreamTransport } =
+    await import("../../apps/desktop/src/stores/turns.ts");
+  const { dir, store, pi, map } = setup();
+  const pi2 = SessionManager.create(dir, join(dir, "pi"));
+  map.bind(k1, pi);
+  map.bind(k2, pi2);
+  const id1 = pi.getSessionId();
+  const id2 = pi2.getSessionId();
+  map.anchorRun(id1, run("run-1"));
+  map.anchorRun(id2, run("run-2"));
+
+  // Interleave the two sessions' publishes: s1 holds three durable events,
+  // s2 holds two — their cursors must never bleed into each other.
+  const a1 = map.publish(id1, {
+    ...durableEvent("evt-a1"),
+    payload: { runId: "run-1", turnId: "turn-a1" },
+  }).event;
+  const b1 = map.publish(id2, {
+    ...durableEvent("evt-b1"),
+    payload: { runId: "run-2", turnId: "turn-b1" },
+  }).event;
+  const a2 = map.publish(id1, {
+    ...durableEvent("evt-a2"),
+    payload: { runId: "run-1", turnId: "turn-a2" },
+  }).event;
+  const b2 = map.publish(id2, {
+    ...durableEvent("evt-b2"),
+    payload: { runId: "run-2", turnId: "turn-b2" },
+  }).event;
+  const a3 = map.publish(id1, {
+    ...durableEvent("evt-a3"),
+    payload: { runId: "run-1", turnId: "turn-a3" },
+  }).event;
+  assert.equal(a1.sessionId, "s1");
+  assert.equal(b1.sessionId, "s2");
+  assert.equal(a3.seq, 3);
+  assert.equal(b2.seq, 2);
+
+  const resyncs1: number[] = [];
+  const resyncs2: number[] = [];
+  const t1 = createTurnStreamTransport({
+    sessionId: "s1",
+    scopeId: "w-demo",
+    schedule: () => {},
+    onResync: (fromSeq) => resyncs1.push(fromSeq),
+  });
+  const t2 = createTurnStreamTransport({
+    sessionId: "s2",
+    scopeId: "w-demo",
+    schedule: () => {},
+    onResync: (fromSeq) => resyncs2.push(fromSeq),
+  });
+  const first1 = map.follow(k1, 0);
+  const first2 = map.follow(k2, 0);
+  for (const event of first1.replay) t1.enqueue(event);
+  for (const event of first2.replay) t2.enqueue(event);
+  const state1 = t1.flush();
+  const state2 = t2.flush();
+  assert.equal(state1.lastDurableSeq, a3.seq);
+  assert.equal(state2.lastDurableSeq, b2.seq);
+  assert.deepEqual(Object.keys(state1.runs).sort(), ["run-1"]);
+  assert.deepEqual(Object.keys(state2.runs).sort(), ["run-2"]);
+
+  // A control for s1 clamps to s1's cursor and never wakes s2's transport.
+  t1.enqueue({
+    frame: "control",
+    kind: "stream.resync",
+    sessionId: "s1",
+    fromSeq: 99,
+  } as never);
+  assert.deepEqual(resyncs1, [a3.seq]);
+  assert.equal(t1.current().needsResync, true);
+  assert.deepEqual(resyncs2, []);
+  assert.equal(t2.current().needsResync, false);
+  assert.equal(t2.current().protocolErrors, 0);
+  assert.equal(t2.current().lastDurableSeq, b2.seq);
+
+  // Each session's bridge re-arms at its own applied cursor (B2, isolated).
+  assert.equal(map.follow(k1, a3.seq).channel.bridge.clientAppliedSeq, 3);
+  assert.equal(map.follow(k2, b2.seq).channel.bridge.clientAppliedSeq, 2);
+  store.close();
+});

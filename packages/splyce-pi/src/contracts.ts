@@ -858,6 +858,13 @@ const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
 export const EVENT_KINDS = Object.freeze(
   Object.keys(EVENT_SCHEMAS) as EventKind[],
 );
+/**
+ * Capabilities the engine must advertise in its handshake. A client that does
+ * not recognise every entry refuses the handshake visibly: an engine speaking
+ * a newer dialect can never be silently ignored by an older client (and the
+ * older client's exact-shape validator rejects the unknown field outright).
+ */
+export const HANDSHAKE_CAPABILITIES = ["controlFrames:resync"] as const;
 export const BRIDGE_PROTOCOL_JSON = JSON.stringify({
   schemaVersion: CONTRACT_VERSION,
   protocolVersion: PROTOCOL_VERSION,
@@ -867,6 +874,7 @@ export const BRIDGE_PROTOCOL_JSON = JSON.stringify({
   commands: COMMAND_SCHEMAS,
   optional: COMMAND_OPTIONAL,
   eventKinds: EVENT_KINDS,
+  capabilities: HANDSHAKE_CAPABILITIES,
 });
 
 export interface PortAvailability {
@@ -884,6 +892,7 @@ export interface Handshake {
   piRevision: typeof PI_REVISION;
   entryMode: typeof FOUNDATION.entryMode;
   disabledBuiltinExtensions: typeof FOUNDATION.disabledBuiltinExtensions;
+  capabilities: string[];
   readiness: {
     state: "unavailable" | "ready";
     policy: boolean;
@@ -1585,7 +1594,7 @@ export function validateHandshake(value: unknown): Handshake {
   ])
     version(handshake[key], key);
   requireThat(
-    Object.keys(handshake).length === 8 &&
+    Object.keys(handshake).length === 9 &&
       Object.keys(handshake).every((key) =>
         [
           "protocolVersion",
@@ -1595,6 +1604,7 @@ export function validateHandshake(value: unknown): Handshake {
           "piRevision",
           "entryMode",
           "disabledBuiltinExtensions",
+          "capabilities",
           "readiness",
         ].includes(key),
       ),
@@ -1616,6 +1626,16 @@ export function validateHandshake(value: unknown): Handshake {
       ),
     "UNSUPPORTED_VERSION",
     "disabledBuiltinExtensions",
+  );
+  // Every dialect the engine needs must be declared: a client without the
+  // capability refuses the handshake instead of silently dropping the frames.
+  const capabilities = handshake.capabilities;
+  requireThat(
+    Array.isArray(capabilities) &&
+      capabilities.every((entry: unknown) => typeof entry === "string") &&
+      HANDSHAKE_CAPABILITIES.every((entry) => capabilities.includes(entry)),
+    "UNSUPPORTED_VERSION",
+    "capabilities",
   );
   const readiness = object(handshake.readiness, "readiness");
   requireThat(

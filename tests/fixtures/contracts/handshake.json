@@ -6,6 +6,7 @@
   "piRevision": "d5b3de22d0e24a3e9c38a9410d3329b099717283",
   "entryMode": "sdk-host",
   "disabledBuiltinExtensions": ["llama.cpp", "codemode", "tool-search", "mcp"],
+  "capabilities": ["controlFrames:resync"],
   "readiness": {
     "state": "unavailable",
     "policy": false,

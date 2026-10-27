@@ -344,7 +344,8 @@ test("drain honors the renderer budget and replays from the durable cursor", () 
   assert.equal(third.frames.length, 1);
   assert.equal(third.morePending, false);
 
-  // Replay after the last delivered seq is exclusive and cursor-bounded.
+  // Replay after the last delivered seq is exclusive and cursor-bounded, in
+  // the session's event domain: the committed record never leaks into it.
   const receipts = new Receipts(store);
   const run = JSON.parse(
     readFileSync(
@@ -357,9 +358,9 @@ test("drain honors the renderer budget and replays from the durable cursor", () 
     unknown
   >;
   receipts_commit(store, caller, record);
-  const cursor = receipts.durableCursor("w-demo");
-  const replayed = bridge.replay(cursor, caller);
-  assert.equal(replayed.records.length, 0);
+  const cursor = receipts.sessionEventCursor("w-demo", "s1");
+  const replayed = bridge.replay(cursor);
+  assert.equal(replayed.length, 0);
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });

@@ -1027,4 +1027,70 @@ describe("TD-15 stream.resync control frame", () => {
     expect(resyncs).toEqual([]);
     expect(transport.rejectedCount()).toBe(1);
   });
+
+  it("R5 the engine fromSeq never moves the client past its durable cursor", () => {
+    const { transport, resyncs } = setup();
+    transport.enqueue(startedAt(1));
+    transport.flush();
+    expect(transport.current().lastDurableSeq).toBe(1);
+    // The engine asks for replay after 3 while the client applied only 1:
+    // the request must clamp to 1 so events 2 and 3 can never be skipped.
+    transport.enqueue(resyncControl(3));
+    expect(resyncs).toEqual([1]);
+    expect(transport.current().resyncFromSeq).toBe(1);
+    expect(resyncRequest(transport.current())).toEqual({ afterSeq: 1 });
+  });
+
+  it("R6 a malformed control counts on its named session, not the selected one", () => {
+    const resyncs: number[] = [];
+    const transport = createTurnStreamTransport({
+      sessionId: "ses_a",
+      scopeId: "scope_spec",
+      schedule: (task) => task(),
+      onResync: (fromSeq) => resyncs.push(fromSeq),
+    });
+    transport.follow("ses_a", "scope_spec");
+    transport.follow("ses_b", "scope_spec");
+    transport.enqueue({
+      frame: "control",
+      kind: "stream.resync",
+      sessionId: "ses_b",
+      fromSeq: "bad",
+    } as unknown as SplyceEventEnvelope);
+    expect(resyncs).toEqual([]);
+    expect(transport.current("ses_b").protocolErrors).toBe(1);
+    expect(transport.current("ses_a").protocolErrors).toBe(0);
+  });
+
+  it("R7 contiguous replay without a snapshot completes recovery (no deadlock)", () => {
+    const { transport, resyncs } = setup();
+    transport.enqueue(startedAt(1));
+    transport.flush();
+    // The engine says "replay after 0" while event 1 is already held.
+    transport.enqueue(resyncControl(0));
+    expect(resyncs).toEqual([0]);
+    expect(transport.current().needsResync).toBe(true);
+    // Its retained history returns only the contiguous, already-held event 1:
+    // recovery must still complete instead of discarding it and waiting forever.
+    transport.enqueue(startedAt(1));
+    const state = transport.flush();
+    expect(state.needsResync).toBe(false);
+    expect(state.resyncCount).toBe(1);
+    expect(state.lastDurableSeq).toBe(1);
+  });
+
+  it("R8 an equal-cursor reconnect snapshot clears recovery", () => {
+    const { transport, resyncs } = setup();
+    transport.enqueue(startedAt(1));
+    transport.flush();
+    transport.enqueue(resyncControl(1));
+    expect(resyncs).toEqual([1]);
+    expect(transport.current().needsResync).toBe(true);
+    // The snapshot sits exactly at the applied cursor: it is not a duplicate.
+    transport.enqueue({ ...snapshot(1), eventId: "evt_snap_equal" });
+    const state = transport.flush();
+    expect(state.needsResync).toBe(false);
+    expect(state.resyncCount).toBe(1);
+    expect(state.lastDurableSeq).toBe(1);
+  });
 });
