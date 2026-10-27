@@ -15,9 +15,12 @@ const context = {
 };
 
 for (const file of [
+  "fui-w1-base-only.json",
+  "fui-w2-ime-composition.json",
   "fui-w3-accessibility.json",
   "fui-w4-stream-backpressure.json",
   "fui-w5-approval-race.json",
+  "fui-w6-crash-recovery.json",
 ]) {
   test(`TD-34: GUI fixture ${file} conforms to frozen contract v1`, () => {
     const content = JSON.parse(
