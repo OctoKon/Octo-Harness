@@ -202,7 +202,7 @@
       {stopped ? "engine stopped" : status}
     </span>
   </div>
-  <nav aria-label="Views">
+  <nav class="views-nav" aria-label="Views">
     {#each VIEWS as [id, label] (id)}
       <button type="button" aria-current={view === id ? "page" : undefined} onclick={() => (view = id)}>
         {label}
@@ -212,11 +212,11 @@
   <SessionTree
     {nav}
     {onSelect}
+    canRetry={status === "ready"}
     onFocus={(key) => dispatchNav({ type: "focus", key })}
     onMove={(to) => dispatchNav({ type: "move", to })}
     onRetry={() => {
       if (status === "ready" && loadSessions) void runLoad();
-      else void connect();
     }}
   />
 {/snippet}
@@ -256,11 +256,14 @@
           <h2>{stopped ? "Engine stopped" : readiness?.state === "ready" ? "Generation unconfigured" : "Engine Unavailable"}</h2>
           <p>
             {stopped
-              ? "The native engine exited. Restart the app to reconnect; the last transcript may be incomplete."
+              ? "The native engine exited. Reconnect to resume or restart the app; the last transcript may be incomplete."
               : readiness?.state === "ready"
                 ? "Generation requires a configured provider and workspace."
               : "Backend native services (policy, durable store, and receipts) are currently initializing or unavailable. Release qualification requires all three subsystems verified before task execution."}
           </p>
+          {#if stopped || status === "unavailable" || status === "error"}
+            <button type="button" class="retry-btn" onclick={() => void connect()}>Retry</button>
+          {/if}
         </div>
       {/if}
       {#if currentRun}
@@ -313,12 +316,41 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px;
+    padding: 12px 16px;
   }
   .brand h1 {
     font-size: 1.125rem;
     margin: 0;
     font-weight: 700;
+  }
+  .views-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 12px 12px 12px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .views-nav button {
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: #4b5563;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .views-nav button:hover {
+    background: #f3f4f6;
+    color: #111827;
+  }
+  .views-nav button[aria-current="page"] {
+    background: #ffffff;
+    color: #111827;
+    font-weight: 600;
+    border-color: #d1d5db;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
   .status-badge {
     padding: 2px 8px;
@@ -390,5 +422,20 @@
     color: #4b5563;
     font-size: 0.875rem;
     line-height: 1.5;
+    margin-bottom: 20px;
+  }
+  .retry-btn {
+    padding: 8px 20px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #ffffff;
+    background: #111827;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .retry-btn:hover {
+    background: #374151;
   }
 </style>
