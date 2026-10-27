@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import type { Handshake, SplyceEvent } from "@splyce/pi/contracts";
+  import type { Handshake, PortAvailability, SplyceEvent } from "@splyce/pi/contracts";
   import Composer from "./components/Composer.svelte";
   import SessionTree from "./components/SessionTree.svelte";
   import TurnStream from "./components/TurnStream.svelte";
@@ -14,6 +14,7 @@
     connectionState,
     handshake,
     onEvent,
+    portAvailability,
     subscribe,
     type EngineConnectionState,
   } from "./stores/engine";
@@ -68,6 +69,8 @@
 
   let status = $state<EngineConnectionState>("disconnected");
   let readiness = $state<Handshake["readiness"] | null>(null);
+  let ports = $state<PortAvailability | null>(null);
+  let generationReady = $derived(ports === null ? undefined : ports.generation);
   let engineConnected = $state(false);
   let stopped = $derived(engineConnected && status === "disconnected");
   let mounted = false;
@@ -149,7 +152,13 @@
     const binding = bindSelection(transport, subscribe);
     const unsubState = connectionState.subscribe((val) => {
       status = val;
-      if (val === "disconnected") readiness = null;
+      if (val === "disconnected") {
+        readiness = null;
+        ports = null;
+      }
+    });
+    const unsubPorts = portAvailability.subscribe((val) => {
+      ports = val;
     });
     const unsubBinding = binding.status.subscribe((next) => {
       subscription = next;
@@ -165,6 +174,7 @@
     return () => {
       mounted = false;
       unsubState();
+      unsubPorts();
       unsubEvents();
       unsubBinding();
       binding.dispose();
@@ -180,6 +190,7 @@
   data-readiness-policy={readiness ? readiness.policy : "unknown"}
   data-readiness-store={readiness ? readiness.store : "unknown"}
   data-readiness-receipts={readiness ? readiness.receipts : "unknown"}
+  data-readiness-generation={ports ? ports.generation : "unknown"}
 >
   <Shell {rail} {transcript} {composer} {evidence} />
 </div>
@@ -273,12 +284,12 @@
 
 {#snippet composer()}
   <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so
-       sending is disabled. generationReady is deliberately omitted: the engine does not
-       report readiness.ports.generation yet, and an omitted flag means "not reported",
-       not "unconfigured". Wire it the moment the parser lands in stores/engine.ts. -->
+       sending is disabled. generationReady is derived from portAvailability; fail closed
+       when false or unreported. -->
   <Composer
     connection={status}
     sessionId={$selectedSession?.sessionId ?? null}
+    {generationReady}
     unavailable="Sending is not available yet"
     send={async () => {
       throw new Error("Sending is unavailable: session revisions are not wired.");
