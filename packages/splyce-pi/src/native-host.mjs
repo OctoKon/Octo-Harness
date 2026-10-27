@@ -6,6 +6,7 @@ import { createProviderProfiles } from "../dist/provider-profiles.js";
 import { Receipts } from "../dist/receipts.js";
 import { createNativeProviderSetup } from "./native-provider-setup.mjs";
 import { createNativeSessionSetup } from "./native-session-setup.mjs";
+import { NativeControl } from "./native-control.mjs";
 import {
   INITIAL_CONFIG_REVISION,
   Store,
@@ -25,6 +26,67 @@ function opaqueId(value) {
     /\s|[\\/]/u.test(value)
   )
     fail("NATIVE_INVALID_ID");
+}
+
+function lazyFactory(options) {
+  let instance;
+  let loading;
+  const listeners = new Set();
+  const get = async () => {
+    loading ??= import("./native-session-factory.mjs").then(
+      ({ createNativeSessionFactory }) => {
+        instance = createNativeSessionFactory(options);
+        for (const listener of listeners)
+          listener.release = instance.onEvents?.(listener.fn);
+        return instance;
+      },
+    );
+    return loading;
+  };
+  const existing = () => {
+    if (!instance) fail("NATIVE_SESSION_UNAVAILABLE");
+    return instance;
+  };
+  return {
+    get hasReadySession() {
+      return instance?.hasReadySession === true;
+    },
+    onEvents(fn) {
+      const listener = { fn, release: instance?.onEvents?.(fn) };
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+        listener.release?.();
+      };
+    },
+    async prepare(...args) {
+      return (await get()).prepare(...args);
+    },
+    async restore(...args) {
+      return (await get()).restore(...args);
+    },
+    bind(...args) {
+      return existing().bind(...args);
+    },
+    dispose(...args) {
+      return existing().dispose(...args);
+    },
+    preparePrompt(...args) {
+      return existing().preparePrompt(...args);
+    },
+    cancel(...args) {
+      return existing().cancel(...args);
+    },
+    subscribe(...args) {
+      return existing().subscribe(...args);
+    },
+    unsubscribe(...args) {
+      return existing().unsubscribe(...args);
+    },
+    drainEvents(...args) {
+      return existing().drainEvents(...args);
+    },
+  };
 }
 
 // Private entrypoint: only Rust's first bootstrap frame supplies this path.
@@ -47,10 +109,15 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
   const receipts = new Receipts(store);
   const profiles = createProviderProfiles({ store, config });
   const providerSetup = createNativeProviderSetup(store, directory);
+  const factory =
+    sessionFactory ??
+    (nativeControl instanceof NativeControl
+      ? lazyFactory({ store, profiles, control: nativeControl, directory })
+      : undefined);
   const sessions = createNativeSessionSetup({
     store,
     control: nativeControl,
-    factory: sessionFactory,
+    factory,
   });
   try {
     store.audit();
@@ -118,8 +185,8 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
         store: true,
         receipts: true,
         ports: Object.freeze({
-          generation: false,
-          provider: false,
+          generation: factory?.hasReadySession === true,
+          provider: factory?.hasReadySession === true,
           workspace: false,
           modules: false,
         }),
@@ -159,6 +226,29 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
     startSession(input, requestId, signal) {
       return sessions.handle("session.start", input, requestId, signal);
     },
+    preparePrompt(command, signal) {
+      if (!factory?.preparePrompt) fail("NATIVE_SESSION_UNAVAILABLE");
+      return factory.preparePrompt(command, signal);
+    },
+    cancelSession(input) {
+      if (!factory?.cancel) fail("NATIVE_SESSION_UNAVAILABLE");
+      return factory.cancel(input);
+    },
+    subscribeSession(sessionId, afterSeq) {
+      if (!factory?.subscribe) fail("NATIVE_SESSION_UNAVAILABLE");
+      return factory.subscribe(sessionId, afterSeq);
+    },
+    unsubscribeSession(sessionId) {
+      if (!factory?.unsubscribe) fail("NATIVE_SESSION_UNAVAILABLE");
+      return factory.unsubscribe(sessionId);
+    },
+    drainSessionEvents(sessionId) {
+      if (!factory?.drainEvents) fail("NATIVE_SESSION_UNAVAILABLE");
+      return factory.drainEvents(sessionId);
+    },
+    onSessionEvents(listener) {
+      return factory?.onEvents?.(listener) ?? (() => {});
+    },
     async shutdown() {
       try {
         await sessions.close();
@@ -167,7 +257,7 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
       }
     },
     close() {
-      if (sessionFactory) fail("NATIVE_ASYNC_SHUTDOWN_REQUIRED");
+      if (factory) fail("NATIVE_ASYNC_SHUTDOWN_REQUIRED");
       store.close();
     },
   });

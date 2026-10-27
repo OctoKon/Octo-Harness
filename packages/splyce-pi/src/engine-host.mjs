@@ -11,6 +11,7 @@ import {
   FOUNDATION,
   TRANSPORT_LIMITS,
   validateHandshake,
+  validateCommand,
 } from "@splyce/pi/contracts";
 
 export const MAX_FRAME_BYTES = TRANSPORT_LIMITS.maxEncodedFrameBytes;
@@ -118,11 +119,14 @@ export async function runHost(
   let hostShutdown;
   let stopped = false;
   let failure;
+  let inputEnded = false;
   let queued = 0;
   let writes = Promise.resolve();
   let operations = Promise.resolve();
   const lifetime = new AbortController();
   let native;
+  const subscriptions = new Map();
+  let removeEventListener = () => {};
   const fail = (error) => {
     failure ??= error;
     lifetime.abort();
@@ -161,6 +165,69 @@ export async function runHost(
     writes.catch(fail);
     return writes;
   };
+  function drain(sessionId) {
+    const subscription = subscriptions.get(sessionId);
+    if (!subscription || !subscription.active || subscription.draining) return;
+    subscription.draining = true;
+    void (async () => {
+      try {
+        do {
+          subscription.pending = false;
+          const batch = await host.drainSessionEvents(sessionId);
+          if (
+            !batch ||
+            !Array.isArray(batch.frames) ||
+            typeof batch.morePending !== "boolean"
+          )
+            throw new FrameError();
+          for (const event of batch.frames) {
+            if (
+              subscriptions.get(sessionId) !== subscription ||
+              !subscription.active
+            )
+              return;
+            await write({ event });
+          }
+          subscription.pending ||= batch.morePending;
+        } while (
+          subscription.pending &&
+          subscriptions.get(sessionId) === subscription &&
+          subscription.active
+        );
+      } catch (error) {
+        fail(error);
+      } finally {
+        subscription.draining = false;
+        if (
+          subscription.pending &&
+          subscriptions.get(sessionId) === subscription &&
+          subscription.active
+        )
+          drain(sessionId);
+      }
+    })();
+  }
+  const exact = (value, fields) =>
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === fields.length &&
+    fields.every((field) => Object.hasOwn(value, field));
+  const validId = (value) =>
+    typeof value === "string" &&
+    value.length > 0 &&
+    Buffer.byteLength(value) <= 128 &&
+    !/[\s\p{Cc}\p{Cf}\/\\]/u.test(value);
+  const denied = (id, code = "POLICY_DENIED") => ({
+    id,
+    ok: false,
+    error: {
+      code,
+      message: "Native command unavailable",
+      correlationId: id,
+      retryable: false,
+    },
+  });
   native = new NativeControl(write, fail);
   async function handle(request) {
     if (stopped || failure) return;
@@ -176,6 +243,14 @@ export async function runHost(
       )
         throw new FrameError();
       host = createHost(request.params.appDataDir, native);
+      removeEventListener =
+        host.onSessionEvents?.((sessionId) => {
+          const subscription = subscriptions.get(sessionId);
+          if (subscription) {
+            subscription.pending = true;
+            drain(sessionId);
+          }
+        }) ?? (() => {});
       reply = { id: request.id, ok: true, value: { state: "initialized" } };
     } else if (request.method === "native.bootstrap") {
       throw new FrameError();
@@ -353,39 +428,105 @@ export async function runHost(
           },
         };
       }
-    } else {
-      let code = "POLICY_DENIED";
-      if (request.method === "send") {
+    } else if (request.method === "subscribe") {
+      const { sessionId, afterSeq } = request.params;
+      if (
+        !exact(request.params, ["sessionId", "afterSeq"]) ||
+        !validId(sessionId) ||
+        !Number.isSafeInteger(afterSeq) ||
+        afterSeq < 0
+      ) {
+        reply = denied(request.id);
+      } else {
+        const subscription = { active: false, draining: false, pending: true };
+        subscriptions.set(sessionId, subscription);
         try {
-          await host.assertCurrent(request.params.scopeId, {
-            configRevision: request.params.expectedConfigRevision,
-            profileRevision: request.params.expectedProfileRevision,
-            policyRevision: request.params.expectedPolicyRevision,
-          });
-        } catch (error) {
-          if (error?.code === "STALE_REVISION") code = error.code;
-          else if (
-            ![
-              "NATIVE_INVALID_ID",
-              "NATIVE_CONFIG_UNAVAILABLE",
-              "NATIVE_PROFILE_UNAVAILABLE",
-              "NATIVE_PROFILE_STALE",
-            ].includes(error?.code)
+          const value = await host.subscribeSession(sessionId, afterSeq);
+          if (
+            !exact(value, ["sessionId", "scopeId", "afterSeq"]) ||
+            value.sessionId !== sessionId ||
+            !validId(value.scopeId) ||
+            value.afterSeq !== afterSeq
           )
-            throw error;
+            throw new FrameError();
+          await write({ id: request.id, ok: true, value });
+          subscription.active = true;
+          drain(sessionId);
+          return;
+        } catch {
+          subscriptions.delete(sessionId);
+          reply = denied(request.id);
         }
       }
-      reply = {
-        id: request.id,
-        ok: false,
-        error: {
-          code,
-          message:
-            "Generation unconfigured; native runnable ports are unavailable",
-          correlationId: request.id,
-          retryable: false,
-        },
-      };
+    } else if (request.method === "unsubscribe") {
+      const { sessionId } = request.params;
+      if (!exact(request.params, ["sessionId"]) || !validId(sessionId))
+        reply = denied(request.id);
+      else {
+        subscriptions.delete(sessionId);
+        try {
+          await host.unsubscribeSession(sessionId);
+          reply = { id: request.id, ok: true, value: { unsubscribed: true } };
+        } catch {
+          reply = denied(request.id);
+        }
+      }
+    } else if (request.method === "cancel") {
+      const { sessionId, reason } = request.params;
+      if (
+        !exact(request.params, ["sessionId", "reason"]) ||
+        !validId(sessionId) ||
+        (reason !== null &&
+          (typeof reason !== "string" || reason.length > 4096))
+      )
+        reply = denied(request.id);
+      else {
+        try {
+          const value = await host.cancelSession({ sessionId, reason });
+          if (!exact(value, ["canceled"]) || value.canceled !== true)
+            throw new FrameError();
+          reply = { id: request.id, ok: true, value };
+        } catch {
+          reply = denied(request.id);
+        }
+      }
+    } else if (request.method === "send") {
+      try {
+        const command = request.params;
+        if (command.op !== "session.prompt") throw new FrameError();
+        validateCommand(command, {
+          sessionId: command.sessionId,
+          scopeId: command.scopeId,
+          configRevision: command.expectedConfigRevision,
+          profileRevision: command.expectedProfileRevision,
+          policyRevision: command.expectedPolicyRevision,
+          lastDurableSeq: 0,
+          maxInlineBytes: TRANSPORT_LIMITS.maxEncodedFrameBytes,
+          resolveReference: () => false,
+        });
+        await host.assertCurrent(command.scopeId, {
+          configRevision: command.expectedConfigRevision,
+          profileRevision: command.expectedProfileRevision,
+          policyRevision: command.expectedPolicyRevision,
+        });
+        const value = await host.preparePrompt(command, lifetime.signal);
+        if (
+          !exact(value, ["accepted", "runId", "turnId"]) ||
+          value.accepted !== true ||
+          !validId(value.runId) ||
+          !validId(value.turnId)
+        )
+          throw new FrameError();
+        reply = { id: request.id, ok: true, value };
+      } catch (error) {
+        if (inputEnded) throw error;
+        reply = denied(
+          request.id,
+          error?.code === "STALE_REVISION" ? "STALE_REVISION" : "POLICY_DENIED",
+        );
+      }
+    } else {
+      reply = denied(request.id);
     }
     await write(reply);
     if (shutdown) {
@@ -418,6 +559,7 @@ export async function runHost(
       if (!stopped && !failure) fail(error);
     }
     // EOF revokes pending native reads; late responses cannot outlive this host.
+    inputEnded = true;
     native.shutdown();
     await operations;
     try {
@@ -427,6 +569,8 @@ export async function runHost(
     }
     if (failure) throw failure;
   } finally {
+    removeEventListener();
+    subscriptions.clear();
     native.shutdown();
     if (!hostShutdown) {
       if (host?.shutdown) await host.shutdown();
