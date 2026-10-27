@@ -48,26 +48,19 @@ function processes() {
   return JSON.parse(result || "[]");
 }
 
-function installedWebViewVersion() {
-  return powershell(`
-$guid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
-$keys = @(
-  "HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\$guid",
-  "HKLM:\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\$guid",
-  "HKCU:\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\$guid"
-)
-foreach ($key in $keys) {
-  if (Test-Path -LiteralPath $key) {
-    $registration = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
-    $version = $registration.pv
-    if ($version -match '^\\d+(?:\\.\\d+){3}$' -and $version -ne '0.0.0.0') {
-      $version
-      exit 0
-    }
-  }
-}
-throw 'The Evergreen WebView2 Runtime registry version is unavailable.'
-`);
+function installedWebViewRuntime() {
+  const probe = resolve(root, "tests/bootstrap/webview2-runtime.ps1");
+  return JSON.parse(
+    execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-File", probe, "-Probe"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 15000,
+      },
+    ),
+  );
 }
 
 function webViewVersionFromProcess(process) {
@@ -98,6 +91,7 @@ export function assertDriverProvenance(manifest, pin, actual) {
   assert.equal(manifest.webview2.distribution, "Evergreen");
   assert.match(manifest.webview2.runtimeVersion, version);
   assert.equal(manifest.webview2.runtimeVersion, actual.runtimeVersion);
+  assert.equal(manifest.webview2.registryScope, actual.runtimeScope);
   assert.match(manifest.edgeDriver.version, version);
   assert.equal(manifest.edgeDriver.version, actual.edgeDriverVersion);
   assert.equal(manifest.edgeDriver.sourcePage, edgeWebDriverPage);
@@ -247,15 +241,17 @@ export async function runSmoke() {
       /^Microsoft Edge WebDriver (\d+(?:\.\d+){3})\b/,
     )?.[1];
     assert(edgeVersion, "msedgedriver must report its four-part version");
-    const runtime = installedWebViewVersion();
+    const runtime = installedWebViewRuntime();
     assertDriverProvenance(manifest, tauriDriverPin, {
       tauriDriverSha256: report.driverSha256,
       edgeDriverSha256: report.edgeSha256,
       edgeArchiveSha256: report.edgeArchiveSha256,
       edgeDriverVersion: edgeVersion,
-      runtimeVersion: runtime,
+      runtimeVersion: runtime.version,
+      runtimeScope: runtime.scope,
     });
-    report.webviewVersion = runtime;
+    report.webviewVersion = runtime.version;
+    report.webviewScope = runtime.scope;
     report.edgeDriverVersion = edgeVersion;
     const before = processes();
     assert(
@@ -312,7 +308,7 @@ export async function runSmoke() {
       return current.find(
         (candidate) =>
           ownedBy(candidate, child.pid, current) &&
-          webViewVersionFromProcess(candidate) === runtime,
+          webViewVersionFromProcess(candidate) === runtime.version,
       );
     }, "packaged app uses the registered Evergreen WebView2 runtime");
     report.webviewProcess = webview;

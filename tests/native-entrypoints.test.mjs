@@ -422,7 +422,7 @@ registerHooks({ load(url, context, next) {
     if (url.endsWith('/agent/dist/splyce-admission.js')) {
       const binding = 'const admission = tool && admissions.get(tool);';
       if (!mutated.includes(binding)) throw new Error('binding mutation target not found');
-      mutated = mutated.replace(binding, 'const admission = {check() {}, execute(_id, _name, args, invoke) {return invoke(args);}};');
+      mutated = mutated.replace(binding, 'const admission = {check() {}, reserve() {}, async prepare() {}, finish() {}, discard() {}, execute(_id, _name, args, invoke) {return invoke(args);}};');
     }
     return { ...result, source: mutated };
   }

@@ -70,6 +70,30 @@ remain required. Trusted in-process code retains direct OS authority. Reapply
 all three patches on donor upgrades and rerun the physical and installed-app
 gates before publishing a new candidate.
 
+## Validated native tool preparation
+
+`0008-validated-tool-preparation.patch` extends the owned Pi 1.4.0 admission seam.
+Before argument callbacks, the native host atomically reserves the action identity
+as a durable proposed record. Pi validates arguments, awaits native qualification,
+then runs extension hooks. Failed or canceled preparation records a terminal state;
+a failed terminal write leaves the proposal fenced. A matching local preparation
+becomes executable only after successful hooks, and is consumed at dispatch.
+Execution atomically checks the original proposed reservation before appending the
+decision and intent. A reopened or competing policy cannot reuse the identity.
+
+`AgentSession._executeNestedToolCall` forwards the actual parent tool-call ID.
+The direct `NativePolicy` checks current grant, ownership, validated digest and
+same-run/scope/workspace parent action. The parent must still be running. Native
+errors reject; no grant minting or production readiness is enabled.
+
+`tests/native-admission.test.mjs` exercises the loaded Pi tool path, reservation
+and hook ordering, dynamic qualification, competing store handles, durable recovery,
+nested ancestry, cancellation, revocation and actual SQLite failures with physical
+fixture bytes. Guard-removal checks cover reservation, preparation, completion,
+authority, intent and the atomic reservation precondition. SDK/GUI activation,
+installed executor qualification and containment of trusted in-process callbacks
+remain unverified.
+
 ## Pi HTTP client update
 
 `0003-undici-8.12.3.patch` applies after the native admission patch. It updates
