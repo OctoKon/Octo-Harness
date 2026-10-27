@@ -525,6 +525,43 @@ test("a crash before commit leaves neither the running receipt nor the consumpti
   );
 });
 
+test("providerEndpoint is writable only through compareAndAppend", (t) => {
+  const { a } = fixture(t);
+  const record = {
+    schemaVersion: 1,
+    recordId: "ex",
+    createdAt: "2026-10-27T00:00:00.000Z",
+    scopeId: "w1",
+    sourceIds: [],
+    endpointId: "endpoint1",
+    canonicalUrl: "https://api.example.com/v1",
+    apiFamily: "openai-completions",
+    locality: "hosted",
+    revision: "r1",
+  };
+  const input = { kind: "providerEndpoint" as const, record };
+  const before = a.cursor();
+  assert.throws(() => a.append(input, caller), code("NATIVE_API_REQUIRED"));
+  assert.throws(
+    () => a.appendBatch([input], caller),
+    code("NATIVE_API_REQUIRED"),
+  );
+  assert.throws(
+    () => a.commitEvents([input], [], caller),
+    code("NATIVE_API_REQUIRED"),
+  );
+  assert.equal(a.cursor(), before);
+  a.compareAndAppend(input, caller, {
+    kind: "providerEndpoint",
+    scopeId: "w1",
+    entityId: "endpoint1",
+    expectedRevision: null,
+  });
+  assert.equal(
+    a.resolveEndpoint("w1", "endpoint1", "r1"),
+    "https://api.example.com/v1",
+  );
+});
 test("grant and workspace records are written only through their Store APIs", (t) => {
   const { a } = fixture(t);
   const { once } = setup(a);

@@ -238,12 +238,16 @@ interface NativeGrantPreconditions {
   };
 }
 
-const NATIVE_ONLY_KINDS: readonly string[] = ["admittedWorkspace", "grant"];
+const NATIVE_ONLY_KINDS: readonly string[] = [
+  "admittedWorkspace",
+  "grant",
+  "providerEndpoint",
+];
 function assertNoNativeOnlyKinds(inputs: readonly AppendInput[]): void {
   if (inputs.some((input) => NATIVE_ONLY_KINDS.includes(input.kind)))
     throw new StoreError(
       "NATIVE_API_REQUIRED",
-      "workspace and grant records are written only through their Store APIs",
+      "workspace, grant and providerEndpoint records are written only through their Store APIs (providerEndpoint: compareAndAppend)",
     );
 }
 
@@ -2446,7 +2450,11 @@ export class Store {
     return record;
   }
 
-  /** Read-only check for a session grant at dispatch; same typed errors as consume. */
+  /**
+   * Read-only check for a session grant at dispatch; same typed errors as consume.
+   * Caller contract: this cannot verify `use.observedIdentity` under a lock, so native
+   * dispatch MUST pass `observedIdentity` on every use (and once grants re-verify at consume).
+   */
   requireGrant(use: GrantUse): GrantRecord {
     this.assertOpen();
     try {
@@ -2530,7 +2538,7 @@ export class Store {
     const row = this.db
       .prepare(
         "SELECT seq, kind, schema_version, payload FROM records WHERE kind = 'providerEndpoint' AND scope_id = ? " +
-          "AND json_extract(payload, '$.endpointId') = ? AND json_extract(payload, '$.revision') = ? LIMIT 1",
+          "AND json_extract(payload, '$.endpointId') = ? AND json_extract(payload, '$.revision') = ? ORDER BY seq DESC LIMIT 1",
       )
       .get(scopeId, endpointRef, revision);
     if (row === undefined)
