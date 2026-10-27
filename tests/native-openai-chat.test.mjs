@@ -779,3 +779,393 @@ for (const api of ["openai-completions", "openai-responses"]) {
     );
   }
 }
+
+function liveContentChunks(api, kind, first, remainder, complete) {
+  if (api === "openai-completions") {
+    const delta = (text, initial) =>
+      kind === "text"
+        ? { content: text }
+        : kind === "thinking"
+          ? { reasoning_content: text }
+          : {
+              tool_calls: [
+                {
+                  index: 0,
+                  ...(initial ? { id: "call-fixture", type: "function" } : {}),
+                  function: {
+                    ...(initial ? { name: "fixture_tool" } : {}),
+                    arguments: initial ? `{"message":"${text}` : `${text}"}`,
+                  },
+                },
+              ],
+            };
+    const chunk = (text, initial) => ({
+      id: "chat-fixture",
+      choices: [{ index: 0, delta: delta(text, initial), finish_reason: null }],
+    });
+    return [
+      [chunk(first, true)],
+      [
+        chunk(remainder, false),
+        {
+          id: "chat-fixture",
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: kind === "toolCall" ? "tool_calls" : "stop",
+            },
+          ],
+        },
+      ],
+    ];
+  }
+  if (kind === "text") {
+    return [
+      responseEvents(first).slice(0, 4),
+      [
+        { ...responseEvents(remainder)[3] },
+        ...responseEvents(complete).slice(4),
+      ],
+    ];
+  }
+  const item =
+    kind === "thinking"
+      ? { type: "reasoning", id: "rs_fixture", summary: [] }
+      : {
+          type: "function_call",
+          id: "fc_fixture",
+          call_id: "call-fixture",
+          name: "fixture_tool",
+          arguments: "",
+        };
+  const delta = (text) => ({
+    type:
+      kind === "thinking"
+        ? "response.reasoning_summary_text.delta"
+        : "response.function_call_arguments.delta",
+    item_id: item.id,
+    output_index: 0,
+    delta: text,
+  });
+  const done =
+    kind === "thinking"
+      ? { ...item, summary: [{ type: "summary_text", text: complete }] }
+      : { ...item, arguments: JSON.stringify({ message: complete }) };
+  return [
+    [
+      responseEvents()[0],
+      { type: "response.output_item.added", output_index: 0, item },
+      delta(kind === "thinking" ? first : `{"message":"${first}`),
+    ],
+    [
+      delta(kind === "thinking" ? remainder : `${remainder}"}`),
+      { type: "response.output_item.done", output_index: 0, item: done },
+      {
+        ...responseEvents()[5],
+        response: { ...responseEvents()[5].response, output: [done] },
+      },
+    ],
+  ];
+}
+
+for (const api of ["openai-completions", "openai-responses"]) {
+  for (const kind of ["text", "thinking", "toolCall"]) {
+    // Splyce #70: partial snapshots must not bypass split-delta credential protection.
+    test(
+      `${api}: live ${kind} partial snapshots withhold a split credential prefix`,
+      { timeout: 4000 },
+      async (t) => {
+        const key = "sk-live-ATTACK-synthetic-only-canary";
+        const prefix = key.slice(0, 12);
+        const complete = `hi ${key} public suffix`;
+        const chunks = liveContentChunks(
+          api,
+          kind,
+          `hi ${prefix}`,
+          `${key.slice(12)} public suffix`,
+          complete,
+        );
+        const advance = deferred();
+        let firstSnapshot;
+        let f;
+        f = fixture({
+          api,
+          fields: {
+            apiKey: key,
+            redact: (text) => {
+              assert.equal(f.state.active, true);
+              return text.replaceAll(key, REDACTED);
+            },
+          },
+          fetch: (request) =>
+            new Response(
+              new ReadableStream({
+                async start(controller) {
+                  request.signal.addEventListener(
+                    "abort",
+                    () => advance.resolve(),
+                    { once: true },
+                  );
+                  const encode = (events) =>
+                    encoder.encode(
+                      events
+                        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                        .join(""),
+                    );
+                  controller.enqueue(encode(chunks[0]));
+                  await advance.promise;
+                  controller.enqueue(encode(chunks[1]));
+                  controller.close();
+                },
+              }),
+              { headers: { "content-type": "text/event-stream" } },
+            ),
+        });
+        t.after(() => {
+          advance.resolve();
+          f.state.controller.abort();
+        });
+        const result = await f.run({
+          onEvent: (event) => {
+            assert.equal(f.state.active, true);
+            f.state.events.push(event);
+            if (event.partial) {
+              const block = event.partial.content.find(
+                (part) => part.type === kind,
+              );
+              const content =
+                kind === "text"
+                  ? block?.text
+                  : kind === "thinking"
+                    ? block?.thinking
+                    : block?.arguments.message;
+              if (content?.startsWith("hi ") && firstSnapshot === undefined) {
+                firstSnapshot = inspect(block, { depth: 20 });
+                advance.resolve();
+              }
+            }
+          },
+        });
+        assert.ok(
+          firstSnapshot,
+          "a pre-completion content snapshot was observed",
+        );
+        assert.equal(
+          firstSnapshot.includes(prefix),
+          false,
+          "live partial content must not expose the pending credential prefix",
+        );
+        for (const event of f.state.events) {
+          if (!event.partial) continue;
+          assert.equal(event.partial.api, api);
+          assert.equal(event.partial.model, model(api).id);
+          assert.equal(event.partial.role, "assistant");
+          assert.equal(
+            inspect(event.partial.content, { depth: 20 }).includes(prefix),
+            false,
+          );
+        }
+        assert.equal(f.state.calls.length, 1);
+        assert.equal(
+          result.stopReason,
+          kind === "toolCall" ? "toolUse" : "stop",
+        );
+        const block = result.content.find((part) => part.type === kind);
+        const actual =
+          kind === "text"
+            ? block.text
+            : kind === "thinking"
+              ? block.thinking
+              : block.arguments.message;
+        assert.equal(actual, `hi ${REDACTED} public suffix`);
+        const deltaType =
+          kind === "toolCall" ? "toolcall_delta" : `${kind}_delta`;
+        const delivered = f.state.events
+          .filter((event) => event.type === deltaType)
+          .map((event) => event.delta)
+          .join("");
+        assert.equal(
+          kind === "toolCall" ? JSON.parse(delivered).message : delivered,
+          `hi ${REDACTED} public suffix`,
+        );
+        assert.equal(
+          inspect({ result, events: f.state.events }).includes(key),
+          false,
+        );
+      },
+    );
+  }
+}
+
+for (const api of ["openai-completions", "openai-responses"]) {
+  test(`${api}: caller model auth headers are refused before native admission`, async () => {
+    for (const header of [
+      "Authorization",
+      "Proxy-Authorization",
+      "X-Api-Key",
+      "Api-Key",
+      "X-Goog-Api-Key",
+      "Cookie",
+    ]) {
+      const f = fixture({ api });
+      await assert.rejects(
+        f.run({
+          model: {
+            ...model(api),
+            headers: { [header]: "caller-auth-fixture" },
+          },
+        }),
+        (error) => {
+          noKey(error);
+          return true;
+        },
+      );
+      assert.equal(f.state.invocations, 0);
+      assert.equal(f.state.calls.length, 0);
+      assert.equal(f.state.events.length, 0);
+    }
+  });
+
+  test(`${api}: ambient organization and project do not reach native request headers`, async () => {
+    const previousOrg = process.env.OPENAI_ORG_ID;
+    const previousProject = process.env.OPENAI_PROJECT_ID;
+    const f = fixture({ api });
+    let result;
+    try {
+      process.env.OPENAI_ORG_ID = "fixture-ambient-org";
+      process.env.OPENAI_PROJECT_ID = "fixture-ambient-project";
+      result = await f.run();
+    } finally {
+      if (previousOrg === undefined) delete process.env.OPENAI_ORG_ID;
+      else process.env.OPENAI_ORG_ID = previousOrg;
+      if (previousProject === undefined) delete process.env.OPENAI_PROJECT_ID;
+      else process.env.OPENAI_PROJECT_ID = previousProject;
+    }
+    assert.equal(result.stopReason, "stop");
+    assert.equal(f.state.calls.length, 1);
+    assert.equal(f.state.calls[0].headers.has("openai-organization"), false);
+    assert.equal(f.state.calls[0].headers.has("openai-project"), false);
+  });
+
+  test(`${api}: a native redactor returning the raw credential is refused before sending`, async () => {
+    const f = fixture({ api, fields: { redact: (text) => text } });
+    await assert.rejects(f.run(), (error) => {
+      noKey(error);
+      return true;
+    });
+    assert.equal(f.state.invocations, 1);
+    assert.equal(f.state.calls.length, 0);
+    assert.equal(f.state.events.length, 0);
+  });
+
+  test(`${api}: failed tool calls discard pending credential-prefix deltas`, async () => {
+    const prefix = KEY.slice(0, 12);
+    const chunks = liveContentChunks(
+      api,
+      "toolCall",
+      prefix,
+      KEY.slice(12),
+      KEY,
+    );
+    const failure =
+      api === "openai-completions"
+        ? {
+            error: {
+              message: "fixture provider failure",
+              code: "fixture_error",
+            },
+          }
+        : {
+            type: "error",
+            message: "fixture provider failure",
+            code: "fixture_error",
+          };
+    const f = fixture({ api, fetch: () => response([...chunks[0], failure]) });
+    const result = await f.run();
+    assert.equal(result.stopReason, "error");
+    assert.equal(
+      result.content.some((part) => part.type === "toolCall"),
+      false,
+    );
+    assert.equal(f.state.events.at(-1).type, "error");
+    assert.ok(f.state.events.some((event) => event.type === "toolcall_delta"));
+    assert.equal(
+      f.state.events
+        .filter((event) => event.type === "toolcall_delta")
+        .map((event) => event.delta)
+        .join("")
+        .includes(prefix),
+      false,
+    );
+    noKey({ result, events: f.state.events });
+  });
+
+  test(`${api}: insecure external or credential-bearing base URLs are refused before admission`, async () => {
+    for (const baseUrl of [
+      "http://fixture-compatible.invalid/v1",
+      "https://user:fixture-password@fixture-compatible.invalid/v1",
+      "ftp://localhost/v1",
+    ]) {
+      const f = fixture({ api });
+      await assert.rejects(
+        f.run({ model: { ...model(api), baseUrl } }),
+        (error) => {
+          noKey(error);
+          assert.equal(inspect(error).includes("fixture-password"), false);
+          return true;
+        },
+      );
+      assert.equal(f.state.invocations, 0);
+      assert.equal(f.state.calls.length, 0);
+    }
+  });
+
+  test(`${api}: loopback HTTP retains native authorization and public model headers`, async () => {
+    for (const baseUrl of [
+      "http://localhost:1234/v1",
+      "http://127.0.0.1:1234/v1",
+      "http://[::1]:1234/v1",
+    ]) {
+      const f = fixture({ api });
+      const result = await f.run({
+        model: {
+          ...model(api),
+          baseUrl,
+          headers: { "X-Public-Fixture": "public-value" },
+        },
+      });
+      assert.equal(result.stopReason, "stop");
+      assert.equal(f.state.calls.length, 1);
+      assert.ok(f.state.calls[0].url.startsWith(baseUrl));
+      assert.equal(
+        f.state.calls[0].headers.get("authorization"),
+        `Bearer ${KEY}`,
+      );
+      assert.equal(
+        f.state.calls[0].headers.get("x-public-fixture"),
+        "public-value",
+      );
+    }
+  });
+
+  test(`${api}: native physical requests force manual redirects while preserving the body`, async () => {
+    let physicalRequest;
+    const f = fixture({
+      api,
+      fetch: (request) => {
+        physicalRequest = request;
+        return success(api);
+      },
+    });
+    const result = await f.run();
+    assert.equal(result.stopReason, "stop");
+    assert.equal(f.state.calls.length, 1);
+    assert.equal(physicalRequest.redirect, "manual");
+    assert.equal(physicalRequest.method, "POST");
+    const body = JSON.parse(f.state.calls[0].body);
+    assert.equal(body.model, model(api).id);
+    assert.equal(body.stream, true);
+    assert.equal(physicalRequest.headers.get("authorization"), `Bearer ${KEY}`);
+  });
+}

@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { assertNoCallerAuthHeaders } from "../splyce-credentials.ts";
 import type { Api, AssistantMessage, AssistantMessageEvent, Context, Model } from "../types.ts";
 import { normalizeContext } from "../utils/transcript.ts";
 import { streamSimple as streamChat } from "./openai-completions.ts";
@@ -77,6 +78,18 @@ export async function runNativeOpenAIChat<TScope extends object>(
 		if (model.api !== "openai-completions" && model.api !== "openai-responses") {
 			throw new Error("Native OpenAI API is unavailable");
 		}
+		assertNoCallerAuthHeaders(model.headers);
+		const endpoint = new URL(model.baseUrl);
+		const loopback =
+			endpoint.hostname === "localhost" ||
+			endpoint.hostname === "[::1]" ||
+			/^127(?:\.\d{1,3}){3}$/.test(endpoint.hostname);
+		if (
+			endpoint.username ||
+			endpoint.password ||
+			(endpoint.protocol !== "https:" && !(endpoint.protocol === "http:" && loopback))
+		)
+			throw new Error("Native OpenAI endpoint is unavailable");
 		return await input.port.withRequest(input.scope, async (request) => {
 			if (
 				typeof request.apiKey !== "string" ||
@@ -105,6 +118,22 @@ export async function runNativeOpenAIChat<TScope extends object>(
 					Buffer.from(request.apiKey).toString("base64url"),
 				]),
 			].filter((value) => value.length > 0 && redact(value) !== value);
+			const pendingSuffixLength = (text: string): number => {
+				let held = 0;
+				for (const variant of variants) {
+					for (let length = Math.min(text.length, variant.length); length > held; length--) {
+						if (text.endsWith(variant.slice(0, length))) {
+							held = length;
+							break;
+						}
+					}
+				}
+				return held;
+			};
+			const liveContent = (text: string): string => {
+				const safe = redact(text);
+				return safe.slice(0, safe.length - pendingSuffixLength(safe));
+			};
 			const channels = new Map<string, Channel>();
 			const localAbort = new AbortController();
 			const signal = AbortSignal.any([request.signal, localAbort.signal]);
@@ -173,7 +202,8 @@ export async function runNativeOpenAIChat<TScope extends object>(
 			const context = normalizeContext(redactedCopy(contextSnapshot, redact));
 			const options = {
 				apiKey: request.apiKey,
-				fetch: async (...args: Parameters<typeof request.fetch>) => trackedResponse(await request.fetch(...args)),
+				fetch: async (input: Parameters<typeof request.fetch>[0], init?: Parameters<typeof request.fetch>[1]) =>
+					trackedResponse(await request.fetch(input, { ...init, redirect: "manual" })),
 				signal,
 				transport: "sse" as const,
 				maxRetries: 0,
@@ -183,7 +213,19 @@ export async function runNativeOpenAIChat<TScope extends object>(
 				model.api === "openai-completions"
 					? streamChat(model as Model<"openai-completions">, context, options)
 					: streamResponses(model as Model<"openai-responses">, context, options);
-			const emit = async (event: AssistantMessageEvent) => input.onEvent(redactedCopy(event, redact));
+			const emit = async (event: AssistantMessageEvent) => {
+				const safe = redactedCopy(event, redact);
+				if ("partial" in safe) {
+					// Pi can populate a shared partial before its *_start observer runs.
+					// Sanitize live content independently of delta-channel registration.
+					for (const block of safe.partial.content) {
+						if (block.type === "text") block.text = liveContent(block.text);
+						else if (block.type === "thinking") block.thinking = liveContent(block.thinking);
+						else if (block.type === "toolCall") block.arguments = redactedCopy(block.arguments, liveContent);
+					}
+				}
+				await input.onEvent(safe);
+			};
 			const flush = async (key: string) => {
 				const channel = channels.get(key);
 				if (!channel) return;
@@ -198,15 +240,7 @@ export async function runNativeOpenAIChat<TScope extends object>(
 						const channel = channels.get(key) ?? { pending: "", last: event };
 						channel.last = event;
 						const text = redact(channel.pending + event.delta);
-						let held = 0;
-						for (const variant of variants) {
-							for (let length = Math.min(text.length, variant.length); length > held; length--) {
-								if (text.endsWith(variant.slice(0, length))) {
-									held = length;
-									break;
-								}
-							}
-						}
+						const held = pendingSuffixLength(text);
 						channel.pending = text.slice(text.length - held);
 						channels.set(key, channel);
 						const ready = text.slice(0, text.length - held);
