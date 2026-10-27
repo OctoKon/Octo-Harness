@@ -461,6 +461,8 @@ for (const modelId of [
   "anthropic/claude-sonnet-4-5",
   "openrouter/anthropic",
   "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+  "arn:aws:bedrock:us-east-1:123456789012:foundation-model/anthropic.claude-v2:1",
+  "模型/модель:é",
   "x".repeat(256),
 ]) {
   test(`a model reference accepts ${JSON.stringify(modelId.slice(0, 40))}`, (t) => {
@@ -497,6 +499,45 @@ for (const modelId of [
       code("PROFILE_INVALID"),
     );
     assert.deepEqual(f.store.list(scopeId), before);
+  });
+}
+
+for (const point of [
+  0x0080, 0x0085, 0x009f, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a,
+  0x2060, 0xfeff, 0x2028, 0x2029,
+]) {
+  const label = `U+${point.toString(16).toUpperCase().padStart(4, "0")}`;
+  test(`a model reference containing ${label} is rejected without changing the Store or effective selection`, (t) => {
+    const f = setup(t);
+    const profiles = f.profiles();
+    profiles.writeConnection(connection(), caller);
+    const p1 = profiles.writeProfile(
+      profile("c1", null, "org/model:version"),
+      caller,
+    );
+    profiles.select(selection(p1.profileRevision), caller);
+    const effective = profiles.effective(scopeId);
+    assert.equal(effective?.bindings[0]?.modelId, "org/model:version");
+    assert.equal(effective?.generationReady, true);
+    const before = f.store.list(scopeId);
+    const cursor = f.store.cursor(scopeId);
+    const configRevision = f.config.effectiveRevision(scopeId);
+    const modelId = `org/model${String.fromCodePoint(point)}suffix:v1`;
+    try {
+      assert.throws(
+        () =>
+          profiles.writeProfile(
+            profile("c1", p1.profileRevision, modelId),
+            caller,
+          ),
+        code("PROFILE_INVALID"),
+      );
+    } finally {
+      assert.equal(f.store.cursor(scopeId), cursor);
+      assert.deepEqual(f.store.list(scopeId), before);
+      assert.equal(f.config.effectiveRevision(scopeId), configRevision);
+      assert.deepEqual(profiles.effective(scopeId), effective);
+    }
   });
 }
 

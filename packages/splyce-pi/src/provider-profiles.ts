@@ -184,13 +184,13 @@ function id(value: unknown): asserts value is string {
   if (/\s|[\\/]/u.test(value)) invalid();
 }
 
-/** Model references keep `/` and `:`; whitespace and control characters are rejected. */
+/** Model references keep `/` and `:`; whitespace, control and format characters are rejected. */
 function modelId(value: unknown): asserts value is string {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > 256 ||
-    /[\s\u0000-\u001f\u007f-\u009f]/u.test(value)
+    /[\s\u0000-\u001f\u007f-\u009f\p{Cf}]/u.test(value)
   )
     invalid();
 }

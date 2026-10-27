@@ -933,11 +933,11 @@ function opaque(value: unknown, field: string): asserts value is string {
   text(value, field);
   requireThat(!/\s|[\\/]/u.test(value), "INVALID_SHAPE", field);
 }
-/** A model reference may contain `/` and `:` (OpenRouter, Bedrock); no whitespace or control chars. */
+/** A model reference may contain `/` and `:` (OpenRouter, Bedrock); no whitespace, control or format chars. */
 function modelRef(value: unknown, field: string): asserts value is string {
   text(value, field);
   requireThat(
-    value.length <= 256 && !/[\s\u0000-\u001f\u007f-\u009f]/u.test(value),
+    value.length <= 256 && !/[\s\u0000-\u001f\u007f-\u009f\p{Cf}]/u.test(value),
     "INVALID_SHAPE",
     field,
   );
