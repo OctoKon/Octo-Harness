@@ -108,6 +108,16 @@ describe("SubagentMerge", () => {
     expect(text()).toContain("export const retries = 3;");
   });
 
+  it("renders a path-only citation without inventing a line", async () => {
+    await render({
+      child: { ...child, citations: [{ path: "README.md", line: 0 }] },
+      diff: null,
+    });
+
+    expect(byTestId("subagent-citation").textContent?.trim()).toBe("README.md");
+    expect(text()).not.toContain("README.md:0");
+  });
+
   it("requests apply once on `a` and stays waiting without an approval", async () => {
     const onApply = vi.fn();
     await render({ child, diff, onApply });

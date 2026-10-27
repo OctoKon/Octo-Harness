@@ -250,7 +250,9 @@
         <ul>
           {#each child.citations as citation, index (index)}
             <li data-testid="subagent-citation">
-              <code>{citation.path}:{citation.line}</code>
+              <code
+                >{citation.path}{#if citation.line > 0}:{citation.line}{/if}</code
+              >
             </li>
           {/each}
         </ul>
