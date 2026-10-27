@@ -153,6 +153,7 @@ const MAX_PATTERN = 256;
 const GREP_FILE_MS = 400;
 const MATCH_WORKER = `const { parentPort, workerData } = require("node:worker_threads");
 const re = new RegExp(workerData.source, workerData.flags);
+parentPort.postMessage("ready");
 parentPort.on("message", (m) => {
   const hits = [];
   const ls = m.text.split("\\n");
@@ -202,35 +203,49 @@ function matcher(re: RegExp, signal?: AbortSignal) {
     workerData: { source: re.source, flags: re.flags },
   });
   let pending: ((r: number[] | WorkspaceToolError) => void) | undefined;
-  w.on("message", (m) => pending?.(m as number[]));
-  w.on("error", () =>
-    pending?.(new WorkspaceToolError("IO_ERROR", "search worker failed")),
-  );
+  // The time budget starts when the worker is up, not while it boots.
+  let up: () => void;
+  const ready = new Promise<void>((r) => (up = r));
+  w.on("message", (m) => (m === "ready" ? up() : pending?.(m as number[])));
+  let broken = false;
+  w.on("error", () => {
+    broken = true;
+    up();
+    pending?.(new WorkspaceToolError("IO_ERROR", "search worker failed"));
+  });
   return {
     test: (text: string, room: number, ms: number) =>
       new Promise<number[]>((done, reject) => {
         const finish = (r: number[] | WorkspaceToolError) => {
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
           signal?.removeEventListener("abort", onAbort);
           pending = undefined;
           if (r instanceof WorkspaceToolError) reject(r);
           else done(r);
         };
-        const timer = setTimeout(
-          () =>
-            finish(
-              new WorkspaceToolError(
-                "GREP_BUDGET",
-                "search exceeded its time budget",
-              ),
-            ),
-          ms,
-        );
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const onAbort = () =>
           finish(new WorkspaceToolError("ABORTED", "aborted"));
         signal?.addEventListener("abort", onAbort, { once: true });
-        pending = finish;
-        w.postMessage({ text, room, maxLine: MAX_GREP_LINE });
+        void ready.then(() => {
+          if (signal?.aborted) return;
+          if (broken)
+            return finish(
+              new WorkspaceToolError("IO_ERROR", "search worker failed"),
+            );
+          timer = setTimeout(
+            () =>
+              finish(
+                new WorkspaceToolError(
+                  "GREP_BUDGET",
+                  "search exceeded its time budget",
+                ),
+              ),
+            ms,
+          );
+          pending = finish;
+          w.postMessage({ text, room, maxLine: MAX_GREP_LINE });
+        });
       }),
     close: () => void w.terminate(),
   };
