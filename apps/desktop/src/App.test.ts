@@ -62,7 +62,11 @@ beforeEach(() => {
   });
   ipc.ready = false;
   ipc.selection = null;
-  ipc.setup = async () => ({});
+  ipc.setup = async () => ({
+    profileId: "profile_1",
+    profileRevision: "pr_1",
+    configRevision: "cfg_1",
+  });
   ipc.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
     if (cmd === "dialog_select_workspace") return ipc.selection;
     if (
@@ -390,7 +394,7 @@ describe("App wiring", () => {
     await settle();
     expect(button("Send").disabled).toBe(true);
     expect(q("#composer-status")?.textContent).toBe(
-      "Sending is not available yet",
+      "No profile is selected. Use a configured profile first.",
     );
     expect(ipc.invoke.mock.calls.filter(([c]) => c === "send")).toHaveLength(0);
   });
@@ -412,7 +416,7 @@ describe("App wiring", () => {
     // 1. Initial state: readyHandshake has generation: true -> honest wiring gap
     expect(button("Send").disabled).toBe(true);
     expect(q("#composer-status")?.textContent).toBe(
-      "Sending is not available yet",
+      "No profile is selected. Use a configured profile first.",
     );
 
     for (const missing of ["provider", "workspace"] as const) {
@@ -508,7 +512,7 @@ describe("App wiring", () => {
 
     expect(button("Send").disabled).toBe(true);
     expect(q("#composer-status")?.textContent).toBe(
-      "Sending is not available yet",
+      "No profile is selected. Use a configured profile first.",
     );
     expect(ta.value).toBe("draft preserved across exit");
 
@@ -610,7 +614,7 @@ describe("App wiring", () => {
     expect(button("Send").disabled).toBe(true);
     await chooseProject();
     expect(q("#composer-status")?.textContent).toBe(
-      "Sending is not available yet",
+      "No profile is selected. Use a configured profile first.",
     );
   });
 
