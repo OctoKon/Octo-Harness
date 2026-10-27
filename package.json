@@ -35,7 +35,7 @@
     "test:native-provider": "node --test tests/native-provider.test.mjs",
     "test:native-workspace": "node --test tests/native-workspace-host.test.mjs",
     "test:native-setup": "node --test tests/native-setup-host.test.mjs",
-    "test:native-provider-setup": "node --test tests/native-provider-setup.test.mjs tests/native-model-catalog.test.mjs",
+    "test:native-provider-setup": "node --test tests/native-provider-setup.test.mjs tests/native-model-catalog.test.mjs tests/native-provider-view-consumer.test.mjs",
     "test:revision-fence": "node --test tests/revision-fence.test.mjs",
     "test:native-entrypoints": "node --test tests/native-entrypoints.test.mjs",
     "test:native-owned-session": "node --test tests/native-owned-session.test.mjs",
@@ -77,7 +77,7 @@
     "test:native-openai": "npm run build:contracts && npm run build:pi && node --test tests/native-openai-chat.test.mjs tests/native-provider-sdk.test.mjs",
     "test:native-persistence": "node --test --test-concurrency=1 tests/native-persistence-owner.test.mjs tests/native-persistence.test.mjs tests/native-extension-persistence.test.mjs && node --import ./vendor/pi/packages/coding-agent/src/experimental/source-resolver.ts --test tests/native-session-manager-persistence.test.mjs",
     "test:native-provider-callers": "node --test tests/native-provider-callers.test.mjs",
-    "test:native-session-setup": "node --test --test-concurrency=1 tests/native-session-setup.test.mjs tests/integration/native-session-setup.ts"
+    "test:native-session-setup": "node --test --test-concurrency=1 tests/native-session-setup.test.mjs tests/integration/native-session-setup.ts tests/native-session-setup-producer.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.5",

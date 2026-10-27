@@ -470,6 +470,7 @@ interface SetupState {
   deletedRecordIds: string[];
   workspace: AdmittedWorkspace | null;
   deletionEpoch: number;
+  configRevision: string;
 }
 const NATIVE_SETUP_MEDIA = "application/vnd.splyce.native-session-setup+json";
 const NATIVE_SETUP_FAILED_MEDIA =
@@ -984,7 +985,14 @@ export class Store {
     }
     const workspace = this.currentWorkspace(workspaceId) ?? null;
     const deletionEpoch = this.deletionEpoch();
-    return { records, deletedRecordIds, workspace, deletionEpoch };
+    const configRevision = Store.readConfigRevision(this.db, workspaceId);
+    return {
+      records,
+      deletedRecordIds,
+      workspace,
+      deletionEpoch,
+      configRevision,
+    };
   }
 
   /** Native owner captures this before awaiting credential presence; the proof cannot be cloned. */
@@ -1184,6 +1192,32 @@ export class Store {
     return body;
   }
 
+  private nativeSetupArtifactReference(
+    state: SetupState,
+    scopeId: string,
+    id: string,
+  ): StoredRecord {
+    // Count the full history before checking liveness: a deleted alias must not fall back.
+    const matches = state.records.filter(
+      ({ kind, record }) =>
+        kind === "artifact" &&
+        record.scopeId === scopeId &&
+        (record.artifactId === id || record.recordId === id),
+    );
+    const exact = this.db
+      .prepare("SELECT kind FROM records WHERE scope_id = ? AND record_id = ?")
+      .get(scopeId, id) as { kind: string } | undefined;
+    const match = matches[0];
+    if (
+      matches.length !== 1 ||
+      !match ||
+      (exact && exact.kind !== "artifact") ||
+      state.deletedRecordIds.includes(match.record.recordId)
+    )
+      nativeSetupInvalid("STALE_REVISION");
+    return match;
+  }
+
   private nativeSetupBindings(
     profile: RecordByKind["profileSnapshot"],
     state: SetupState,
@@ -1197,7 +1231,7 @@ export class Store {
       return row;
     };
     const referenced = (id: string) =>
-      live(state.records.find(({ record }) => record.recordId === id));
+      this.nativeSetupArtifactReference(state, profile.scopeId, id);
     for (const ref of [profile.limitsArtifactId, ...profile.egressPolicyRefs]) {
       if (referenced(ref).kind !== "artifact") nativeSetupInvalid();
     }
@@ -1422,7 +1456,9 @@ export class Store {
         ...profile.egressPolicyRefs,
         ...bindings.map(({ connection }) => connection.accountScopeRef),
       ]),
-    ].map((id) => state.records.find(({ record }) => record.recordId === id));
+    ].map((id) =>
+      this.nativeSetupArtifactReference(state, profile.scopeId, id),
+    );
     const fingerprint = JSON.stringify({
       workspace: state.workspace,
       profile: profileRow,
