@@ -115,7 +115,10 @@ export interface ProviderProfiles {
   /** Request then apply through ConfigAuthority; the selected profile becomes effective only on apply. */
   select(input: SelectInput, caller: CallerContext): ConfigCommit;
   /** The profile that is effective now (the latest APPLIED selection), or null when none was ever applied. */
-  effective(scopeId: string): EffectiveProfile | null;
+  effective(
+    scopeId: string,
+    observation?: ReturnType<Store["readAuthority"]>,
+  ): EffectiveProfile | null;
 }
 
 export interface ProviderProfilesDeps {
@@ -197,9 +200,22 @@ export function createProviderProfiles({
   function rows<
     K extends
       "providerConnection" | "profileSnapshot" | "configurationTransition",
-  >(scopeId: string, kind: K): Array<{ seq: number; record: RecordByKind[K] }> {
+  >(
+    scopeId: string,
+    kind: K,
+    observation?: ReturnType<Store["readAuthority"]>,
+  ): Array<{ seq: number; record: RecordByKind[K] }> {
     id(scopeId);
-    const listed = store.list(scopeId);
+    const listed = observation
+      ? {
+          records: observation.records.filter(
+            ({ record }) =>
+              record.scopeId === scopeId &&
+              !observation.deletedRecordIds.includes(record.recordId),
+          ),
+          skippedUnknownSchema: 0,
+        }
+      : store.list(scopeId);
     if (listed.skippedUnknownSchema !== 0)
       throw new StoreError(
         "UNKNOWN_SCHEMA",
@@ -213,8 +229,9 @@ export function createProviderProfiles({
     scopeId: string,
     connectionId: string,
     revision: string,
+    observation?: ReturnType<Store["readAuthority"]>,
   ): ProviderConnectionRecord {
-    const candidates = rows(scopeId, "providerConnection").filter(
+    const candidates = rows(scopeId, "providerConnection", observation).filter(
       ({ record }) => record.providerConnectionId === connectionId,
     );
     if (candidates.length === 0)
@@ -236,8 +253,9 @@ export function createProviderProfiles({
     scopeId: string,
     profileId: string,
     revision: string,
+    observation?: ReturnType<Store["readAuthority"]>,
   ): ProfileSnapshotRecord {
-    const exact = rows(scopeId, "profileSnapshot").filter(
+    const exact = rows(scopeId, "profileSnapshot", observation).filter(
       ({ record }) =>
         record.profileId === profileId && record.profileRevision === revision,
     );
@@ -248,13 +266,18 @@ export function createProviderProfiles({
       );
     return exact[0]!.record;
   }
-  function checkBindings(scopeId: string, value: unknown): ProfileBinding[] {
+  function checkBindings(
+    scopeId: string,
+    value: unknown,
+    observation?: ReturnType<Store["readAuthority"]>,
+  ): ProfileBinding[] {
     const checked = bindings(value);
     for (const binding of checked)
       connection(
         scopeId,
         binding.providerConnectionId,
         binding.connectionRevision,
+        observation,
       );
     return checked;
   }
@@ -418,10 +441,22 @@ export function createProviderProfiles({
       config.request(change, caller);
       return config.apply(change, caller);
     },
-    effective(scopeId) {
-      const applied = rows(scopeId, "configurationTransition").filter(
-        ({ record }) => record.state === "applied",
+    effective(scopeId, observation = store.readAuthority(scopeId)) {
+      id(scopeId);
+      const records = observation.records.filter(
+        ({ record }) => record.scopeId === scopeId,
       );
+      const applied = records
+        .filter(
+          (
+            row,
+          ): row is {
+            seq: number;
+            kind: "configurationTransition";
+            record: RecordByKind["configurationTransition"];
+          } => row.kind === "configurationTransition",
+        )
+        .filter(({ record }) => record.state === "applied");
       // One SQLite read binds selection and config to the same observation.
       const configRevision =
         applied.at(-1)?.record.acceptedConfigRevision ??
@@ -443,16 +478,23 @@ export function createProviderProfiles({
       if (!selected) return null;
       id(selected.profileId);
       id(selected.profileRevision);
+      if (
+        observation.deletedRecordIds.includes(selected.recordId) ||
+        observation.deletedRecordIds.includes(applied.at(-1)!.record.recordId)
+      )
+        invalid();
       const value = snapshot(
         scopeId,
         selected.profileId,
         selected.profileRevision,
+        observation,
       );
+      const pinned = checkBindings(scopeId, value.bindings, observation);
       return {
         profileId: selected.profileId,
         profileRevision: selected.profileRevision,
         configRevision,
-        bindings: checkBindings(scopeId, value.bindings),
+        bindings: pinned,
       };
     },
   };

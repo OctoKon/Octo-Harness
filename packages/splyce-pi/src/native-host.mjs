@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { RevisionFence } from "../dist/admission.js";
 import { ConfigAuthority } from "../dist/config.js";
+import { createProviderProfiles } from "../dist/provider-profiles.js";
 import { Receipts } from "../dist/receipts.js";
 import { INITIAL_CONFIG_REVISION, Store } from "../dist/store.js";
 
@@ -33,6 +34,7 @@ export function createNativeHost(appDataDir) {
   const store = Store.open(join(directory, "store.db"));
   const config = new ConfigAuthority(store);
   const receipts = new Receipts(store);
+  const profiles = createProviderProfiles({ store, config });
   try {
     store.audit();
     receipts.durableCursor();
@@ -45,48 +47,53 @@ export function createNativeHost(appDataDir) {
   function fence(scopeId, profileId) {
     opaqueId(scopeId);
     if (profileId !== undefined) opaqueId(profileId);
-    const audit = store.audit();
-    const records = audit.records.filter(
-      ({ record }) => record.scopeId === scopeId,
-    );
-    const transition = records.findLast(
+    const observation = store.readAuthority(scopeId);
+    const { records, deletedRecordIds } = observation;
+    const applied = records.filter(
       ({ kind, record }) =>
         kind === "configurationTransition" && record.state === "applied",
     );
+    const latest = applied.at(-1)?.record;
+    const selected = applied.findLast(
+      ({ record }) => record.profileId !== undefined,
+    )?.record;
     if (
-      transition !== undefined &&
-      audit.deletedRecordIds.includes(transition.record.recordId)
+      [latest, selected].some(
+        (record) => record && deletedRecordIds.includes(record.recordId),
+      )
     )
       fail("NATIVE_CONFIG_UNAVAILABLE");
-    const revision = config.effectiveRevision(scopeId);
-    let profileRevision = INITIAL_CONFIG_REVISION;
-    if (profileId !== undefined) {
-      const latest = records.findLast(
+    const revision = latest?.acceptedConfigRevision ?? INITIAL_CONFIG_REVISION;
+    if (profileId !== undefined && selected?.profileId !== profileId)
+      fail(selected ? "NATIVE_PROFILE_STALE" : "NATIVE_PROFILE_UNAVAILABLE");
+    if (selected) {
+      const snapshot = records.find(
         ({ kind, record }) =>
-          kind === "profileSnapshot" && record.profileId === profileId,
+          kind === "profileSnapshot" &&
+          record.profileId === selected.profileId &&
+          record.profileRevision === selected.profileRevision,
       );
-      if (
-        latest === undefined ||
-        audit.deletedRecordIds.includes(latest.record.recordId)
-      )
+      if (!snapshot || deletedRecordIds.includes(snapshot.record.recordId))
         fail("NATIVE_PROFILE_UNAVAILABLE");
-      if (latest.record.configRevision !== revision)
-        fail("NATIVE_PROFILE_STALE");
-      profileRevision = latest.record.profileRevision;
     }
+    const effective = profiles.effective(scopeId, observation);
+    const profileRevision =
+      effective?.profileRevision ?? INITIAL_CONFIG_REVISION;
     // No policy/grant record kind exists yet; history never creates authority.
-    return new RevisionFence(config, {
-      scopeId,
-      profileRevision,
-      policyRevision: INITIAL_CONFIG_REVISION,
-      grantIds: [],
-      planMode: true,
-    });
+    return new RevisionFence(
+      { effectiveRevision: () => revision },
+      {
+        scopeId,
+        profileRevision,
+        policyRevision: INITIAL_CONFIG_REVISION,
+        grantIds: [],
+        planMode: true,
+      },
+    );
   }
 
   return Object.freeze({
     get handshakeReadiness() {
-      store.audit();
       receipts.durableCursor();
       return Object.freeze({
         state: "ready",
@@ -108,12 +115,12 @@ export function createNativeHost(appDataDir) {
       fence(scopeId, profileId).assertCurrent(queued);
     },
     listWorkspaces() {
-      store.audit();
+      store.cursor();
       return [];
     },
     resolveWorkspace(id) {
       opaqueId(id);
-      store.audit();
+      store.readAuthority(id);
       return undefined;
     },
     close() {

@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createNativeHost } from "../packages/splyce-pi/src/native-host.mjs";
+import { ConfigAuthority } from "../packages/splyce-pi/dist/config.js";
+import { createProviderProfiles } from "../packages/splyce-pi/dist/provider-profiles.js";
 import { Store } from "../packages/splyce-pi/dist/store.js";
 import { validateEvent } from "../packages/splyce-pi/dist/contracts.js";
 
@@ -87,64 +89,214 @@ test("private native factory opens persistent Store with every runnable port clo
   }
 });
 
-test("current reloads profile/config while empty authority denies effects", (t) => {
-  const { host, writer, directory } = fixture(t);
-  append(writer, "profileSnapshot", { configRevision: "cfg-0" });
-  const queued = host.current("w-demo", "p1");
-  assert.equal(queued.profileRevision, "profile1");
-  assert.throws(
-    () => host.current("w-demo", "missing"),
-    code("NATIVE_PROFILE_UNAVAILABLE"),
+function selectedProfile(writer) {
+  const config = new ConfigAuthority(writer);
+  const profiles = createProviderProfiles({ store: writer, config });
+  const scopeId = "w-demo";
+  profiles.writeConnection(
+    {
+      ...Object.fromEntries(
+        Object.entries(fixtures.providerConnection).filter(([key]) =>
+          [
+            "providerConnectionId",
+            "apiFamily",
+            "apiVersion",
+            "endpointRef",
+            "credentialRef",
+            "adapterRevision",
+            "accountScopeRef",
+            "locality",
+          ].includes(key),
+        ),
+      ),
+      scopeId,
+    },
+    caller,
   );
-  const target = join(directory, "target");
-  writeFileSync(target, "unchanged");
-  let effects = 0;
-  const dispatch = () => {
-    host.assertCurrent("w-demo", queued, "p1");
-    effects++;
-    writeFileSync(target, "changed");
-  };
-  assert.throws(dispatch, code("STALE_REVISION"));
-  append(writer, "profileSnapshot", {
-    recordId: "profile-new",
-    profileRevision: "profile2",
-    configRevision: "cfg-0",
-  });
-  assert.deepEqual(host.current("w-demo", "p1"), {
-    configRevision: "cfg-0",
-    profileRevision: "profile2",
-    policyRevision: "cfg-0",
-    grantIds: [],
-    planMode: true,
-  });
-  assert.equal(host.current("w-demo", "p1").profileRevision, "profile2");
-  append(writer, "configurationTransition", {
+  profiles.writeProfile(
+    {
+      scopeId,
+      profileId: "p1",
+      bindings: [
+        {
+          role: "chat",
+          providerConnectionId:
+            fixtures.providerConnection.providerConnectionId,
+          connectionRevision: "c1",
+        },
+      ],
+      egressPolicyRefs: [],
+      limitsArtifactId: "limits",
+      expectedProfileRevision: null,
+    },
+    caller,
+  );
+  const selection = {
+    scopeId,
+    profileId: "p1",
+    profileRevision: "p1",
     expectedConfigRevision: "cfg-0",
-  });
-  assert.equal(host.current("w-demo").configRevision, "cfg2");
+    acceptedConfigRevision: "cfg-1",
+    transitionId: "select1",
+    intentRef: "intent",
+    changedValuesArtifactId: "changes",
+  };
+  return { profiles, config, selection };
+}
+
+test("current uses the exact applied immutable profile with its selected config across reopen", (t) => {
+  const { host, writer, directory } = fixture(t);
+  const { profiles, config, selection } = selectedProfile(writer);
   assert.throws(
     () => host.current("w-demo", "p1"),
-    code("NATIVE_PROFILE_STALE"),
+    code("NATIVE_PROFILE_UNAVAILABLE"),
   );
-  append(writer, "profileSnapshot", {
-    recordId: "profile-current",
-    profileRevision: "profile3",
-    configRevision: "cfg2",
-  });
-  assert.deepEqual(host.current("w-demo", "p1"), {
-    configRevision: "cfg2",
-    profileRevision: "profile3",
+  config.request(selection, caller);
+  assert.equal(host.current("w-demo").configRevision, "cfg-0");
+  assert.equal(host.current("w-demo").profileRevision, "cfg-0");
+  config.apply(selection, caller);
+  const queued = host.current("w-demo", "p1");
+  assert.deepEqual(queued, {
+    configRevision: "cfg-1",
+    profileRevision: "p1",
     policyRevision: "cfg-0",
     grantIds: [],
     planMode: true,
   });
-  assert.equal(queued.configRevision, "cfg-0");
-  assert.equal(queued.profileRevision, "profile1");
-  assert.throws(dispatch, code("STALE_REVISION"));
+  profiles.writeProfile(
+    {
+      scopeId: "w-demo",
+      profileId: "p1",
+      bindings: [
+        {
+          role: "chat",
+          providerConnectionId:
+            fixtures.providerConnection.providerConnectionId,
+          connectionRevision: "c1",
+        },
+      ],
+      egressPolicyRefs: [],
+      limitsArtifactId: "limits",
+      expectedProfileRevision: "p1",
+    },
+    caller,
+  );
+  assert.deepEqual(host.current("w-demo"), queued);
+  assert.throws(
+    () => host.current("w-demo", "other"),
+    code("NATIVE_PROFILE_STALE"),
+  );
+  let effects = 0;
+  assert.throws(() => {
+    host.assertCurrent("w-demo", queued, "p1");
+    effects++;
+  }, code("STALE_REVISION"));
   assert.equal(effects, 0);
-  assert.equal(readFileSync(target, "utf8"), "unchanged");
-  assert.equal(writer.cursor(), 4);
-  assert.deepEqual(host.current("w-demo", "p1").grantIds, []);
+  host.close();
+  const reopened = createNativeHost(directory);
+  try {
+    assert.deepEqual(reopened.current("w-demo", "p1"), queued);
+  } finally {
+    reopened.close();
+  }
+});
+
+for (const kind of ["profileSnapshot", "configurationTransition"]) {
+  test(`selected ${kind} deletion fails closed without falling back`, (t) => {
+    const { host, writer } = fixture(t);
+    const { profiles, selection } = selectedProfile(writer);
+    profiles.select(selection, caller);
+    const row = writer.audit().records.findLast((row) => row.kind === kind);
+    writer.noteDeletion(row.record.recordId);
+    assert.throws(
+      () => host.current("w-demo", "p1"),
+      code(
+        kind === "profileSnapshot"
+          ? "NATIVE_PROFILE_UNAVAILABLE"
+          : "NATIVE_CONFIG_UNAVAILABLE",
+      ),
+    );
+  });
+}
+
+test("current binds config and profile to one read even when another handle applies immediately after it", (t) => {
+  const { host, writer } = fixture(t);
+  const { profiles, selection } = selectedProfile(writer);
+  profiles.select(selection, caller);
+  const original = Store.prototype.readAuthority;
+  let interleaved = false;
+  Store.prototype.readAuthority = function (scope) {
+    const observation = original.call(this, scope);
+    if (!interleaved) {
+      interleaved = true;
+      new ConfigAuthority(writer).apply(
+        {
+          ...selection,
+          transitionId: "select2",
+          expectedConfigRevision: "cfg-1",
+          acceptedConfigRevision: "cfg-2",
+        },
+        caller,
+      );
+    }
+    return observation;
+  };
+  try {
+    assert.equal(host.current("w-demo", "p1").configRevision, "cfg-1");
+    assert.equal(host.current("w-demo", "p1").configRevision, "cfg-2");
+  } finally {
+    Store.prototype.readAuthority = original;
+  }
+});
+
+test("scoped current avoids full audit and ignores unrelated scope and historical event payloads", (t) => {
+  const { host, writer } = fixture(t);
+  const { profiles, selection } = selectedProfile(writer);
+  profiles.select(selection, caller);
+  seedEvent(writer);
+  writer.noteDeletion("e1");
+  append(writer, "run", { recordId: "other", scopeId: "other" });
+  writer.db.exec(
+    "UPDATE records SET kind = 'futureKind' WHERE scope_id = 'other'",
+  );
+  const original = Store.prototype.audit;
+  Store.prototype.audit = () => {
+    throw new Error("full audit on hot path");
+  };
+  try {
+    assert.equal(host.current("w-demo", "p1").profileRevision, "p1");
+    assert.deepEqual(host.listWorkspaces(), []);
+    assert.equal(host.resolveWorkspace("w-demo"), undefined);
+  } finally {
+    Store.prototype.audit = original;
+  }
+  assert.throws(() => host.current("other"), code("CONTRACT_UNKNOWN_KIND"));
+});
+
+test("native authority remains bounded with 10000 unrelated historical rows", (t) => {
+  const { host, writer } = fixture(t);
+  const { profiles, selection } = selectedProfile(writer);
+  profiles.select(selection, caller);
+  writer.db
+    .prepare(
+      "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x < 10000) " +
+        "INSERT INTO records (kind, record_id, schema_version, scope_id, session_id, created_at, payload) " +
+        "SELECT 'run', 'history-' || x, 1, 'w-demo', 's1', ?, json_set(?, '$.recordId', 'history-' || x) FROM n",
+    )
+    .run(fixtures.run.createdAt, JSON.stringify(fixtures.run));
+  assert.equal(writer.readAuthority("w-demo").records.length, 4);
+  const start = performance.now();
+  assert.equal(host.current("w-demo", "p1").profileRevision, "p1");
+  assert.deepEqual(host.listWorkspaces(), []);
+  assert.equal(host.resolveWorkspace("w-demo"), undefined);
+  const elapsed = performance.now() - start;
+  assert.ok(
+    elapsed < 10000,
+    `native reads exceeded Rust timeout: ${elapsed}ms`,
+  );
+  t.diagnostic(
+    `10000 historical rows, current/list/resolve: ${elapsed.toFixed(2)}ms`,
+  );
 });
 
 test("tombstones preserve historical evidence without restoring authority", (t) => {
@@ -239,7 +391,7 @@ for (const [name, sql, expected] of [
     writer.db.exec(sql);
     const before = writer.db.prepare("SELECT * FROM records").all();
     assert.throws(() => host.current("w-demo", "p1"), code(expected));
-    assert.throws(() => host.handshakeReadiness, code(expected));
+    assert.equal(host.handshakeReadiness.store, true);
     assert.throws(() => createNativeHost(directory), code(expected));
     assert.deepEqual(writer.db.prepare("SELECT * FROM records").all(), before);
   });
@@ -260,6 +412,40 @@ test("non-SQLite appdata Store is preserved and rejected", (t) => {
   writeFileSync(path, "not a SQLite store");
   assert.throws(() => createNativeHost(directory), code("STORE_CORRUPT"));
   assert.equal(readFileSync(path, "utf8"), "not a SQLite store");
+});
+
+test("repeated readiness reports bootstrap state without auditing history again", (t) => {
+  const { host, writer, directory } = fixture(t);
+  seedEvent(writer);
+  writer.db.exec(
+    "UPDATE records SET payload = json_set(payload, '$.envelope.protocolVersion', 3) WHERE kind = 'event'",
+  );
+  const original = Store.prototype.audit;
+  let audits = 0;
+  Store.prototype.audit = () => {
+    audits++;
+    throw new Error("unexpected repeated audit");
+  };
+  try {
+    for (let i = 0; i < 3; i++) {
+      assert.equal(host.handshakeReadiness.store, true);
+      assert.deepEqual(host.handshakeReadiness.ports, {
+        generation: false,
+        provider: false,
+        workspace: false,
+        modules: false,
+      });
+    }
+    assert.equal(audits, 0);
+    host.close();
+    assert.throws(() => host.handshakeReadiness, code("STORE_CLOSED"));
+  } finally {
+    Store.prototype.audit = original;
+  }
+  assert.throws(
+    () => createNativeHost(directory),
+    code("CONTRACT_UNSUPPORTED_VERSION"),
+  );
 });
 
 test("closed host fails readiness and authority", (t) => {
@@ -354,10 +540,7 @@ for (const version of [3, "1"]) {
       .prepare("SELECT payload FROM records WHERE kind = 'event'")
       .get().payload;
     assert.throws(() => writer.audit(), code("CONTRACT_UNSUPPORTED_VERSION"));
-    assert.throws(
-      () => host.handshakeReadiness,
-      code("CONTRACT_UNSUPPORTED_VERSION"),
-    );
+    assert.equal(host.handshakeReadiness.store, true);
     assert.throws(
       () => writer.get(fixtures.event.recordId),
       code("UNSUPPORTED_VERSION"),

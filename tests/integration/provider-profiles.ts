@@ -343,18 +343,18 @@ test("effective profile and config revision come from one durable observation", 
   a.writeConnection(connection("v2"), caller);
   a.writeProfile(profile("c2", "p1"), caller);
   const other = f.open();
-  const actualRead = f.store.list.bind(f.store);
+  const actualRead = f.store.readAuthority.bind(f.store);
   let interleaved = false;
   // Schedule a real second-handle apply immediately before the SQLite read.
   // Selection and config must both reflect that single observation.
-  f.store.list = (scope, after, session) => {
+  f.store.readAuthority = (scope) => {
     if (!interleaved) {
       interleaved = true;
       other
         .profiles()
         .select(selection("p2", "cfg-1", "cfg-2", "select2"), caller);
     }
-    return actualRead(scope, after, session);
+    return actualRead(scope);
   };
   const value = a.effective(scopeId);
   assert.equal(interleaved, true);
