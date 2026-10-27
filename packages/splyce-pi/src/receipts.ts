@@ -129,6 +129,17 @@ export class Receipts {
     const got = this.store.get(recordId);
     return { seq: got.seq, record: got.record };
   }
+
+  /**
+   * Event-namespace cursor for the renderer/transport surface: the highest
+   * ALLOCATED event envelope sequence (including transient reservations).
+   * Used by DesktopBridge overflow resync `fromSeq` so `follow(after X)` is
+   * valid for `X <= highwater`. Distinct from the record-namespace
+   * `sessionDurableCursor` used by receipt replay/recovery.
+   */
+  sessionEventCursor(scopeId: string, sessionId: string): number {
+    return this.store.eventHighwater(scopeId, sessionId);
+  }
 }
 
 export { Store };

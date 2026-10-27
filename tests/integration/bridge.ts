@@ -193,17 +193,35 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
     policyRevision: "policy1",
     resolveReference: () => true,
   };
-  const run = JSON.parse(
+  const runFixtures = JSON.parse(
     readFileSync(
       new URL("../fixtures/contracts/records.json", import.meta.url),
       "utf8",
     ),
   ) as Record<string, Record<string, unknown>>;
-  const record = { ...structuredClone(run.run), scopeId: "w-demo" } as Record<
-    string,
-    unknown
-  >;
-  receipts_commit(store, caller, record);
+  const seedRecord = {
+    ...structuredClone(runFixtures.run),
+    recordId: "rec-seed",
+    scopeId: "w-demo",
+  };
+  const seedDraft = {
+    schemaVersion: CONTRACT_VERSION,
+    protocolVersion: PROTOCOL_VERSION,
+    eventId: "evt-seed",
+    recordId: "rec-seed",
+    createdAt: "2026-10-26T00:00:00.000Z",
+    sourceIds: ["rec-seed"],
+    sessionId: "s1",
+    scopeId: "w-demo",
+    durable: true,
+    kind: "engine.status",
+    payload: { state: "ready", activeWorkers: 0 },
+  };
+  store.commitEvents(
+    [{ kind: "run", record: seedRecord }],
+    [seedDraft as never],
+    caller,
+  );
 
   bridge.submit(event("turn.started", { runId: "r1", turnId: "t1" }));
   bridge.submit(
@@ -230,7 +248,7 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
   assert.ok(resync, "resync frame returned");
   assert.equal(resync.event.kind, "stream.resync");
   const payload = resync.event.payload as { fromSeq: number };
-  assert.equal(payload.fromSeq, store.sessionCursor("w-demo", "s1"));
+  assert.equal(payload.fromSeq, store.eventHighwater("w-demo", "s1"));
   assert.equal(bridge.status().pendingFrames, 0);
   assert.equal(bridge.status().paused, true);
   assert.equal(bridge.status().lastResyncFromSeq, payload.fromSeq);
@@ -254,15 +272,42 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
   assert.equal(resync2.event.kind, "stream.resync");
   assert.equal(
     (resync2.event.payload as { fromSeq: number }).fromSeq,
-    store.sessionCursor("w-demo", "s1"),
+    store.eventHighwater("w-demo", "s1"),
   );
 
   // New durable progress advances the resync cursor.
-  receipts_commit(store, caller, record);
+  store.commitEvents(
+    [
+      {
+        kind: "run",
+        record: {
+          ...structuredClone(runFixtures.run),
+          recordId: "rec-seed2",
+          scopeId: "w-demo",
+        },
+      },
+    ],
+    [
+      {
+        schemaVersion: CONTRACT_VERSION,
+        protocolVersion: PROTOCOL_VERSION,
+        eventId: "evt-seed2",
+        recordId: "rec-seed2",
+        createdAt: "2026-10-26T00:00:00.000Z",
+        sourceIds: ["rec-seed2"],
+        sessionId: "s1",
+        scopeId: "w-demo",
+        durable: true,
+        kind: "engine.status",
+        payload: { state: "ready", activeWorkers: 0 },
+      } as never,
+    ],
+    caller,
+  );
   const resync3 = bridge["resyncFrame"]();
   assert.equal(
     (resync3.event.payload as { fromSeq: number }).fromSeq,
-    store.sessionCursor("w-demo", "s1"),
+    store.eventHighwater("w-demo", "s1"),
   );
   assert.equal(
     (resync3.event.payload as { fromSeq: number }).fromSeq > payload.fromSeq,
