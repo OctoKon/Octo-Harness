@@ -1,7 +1,7 @@
-import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { createNativeHost } from "./native-host.mjs";
+import { NativeControl } from "./native-control.mjs";
 import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
@@ -107,76 +107,162 @@ export function isRequest(value) {
   );
 }
 
-export async function runHost(input = process.stdin, output = process.stdout) {
+export async function runHost(
+  input = process.stdin,
+  output = process.stdout,
+  createHost = createNativeHost,
+) {
   let host;
-  try {
-    for await (const request of readFrames(input)) {
-      if (!isRequest(request)) throw new FrameError();
-      let reply;
-      let shutdown = false;
-      if (host === undefined) {
-        // The native parent sends this before exposing any renderer command.
-        if (
-          request.id !== "native-bootstrap" ||
-          request.method !== "native.bootstrap" ||
-          Object.keys(request.params).length !== 1 ||
-          !Object.hasOwn(request.params, "appDataDir")
-        )
-          throw new FrameError();
-        host = createNativeHost(request.params.appDataDir);
-        reply = { id: request.id, ok: true, value: { state: "initialized" } };
-      } else if (request.method === "native.bootstrap") {
-        throw new FrameError();
-      } else if (
-        request.method === "handshake" &&
-        Object.keys(request.params).length === 1 &&
-        request.params.protocolVersion === PROTOCOL_VERSION
-      ) {
-        reply = { id: request.id, ok: true, value: nativeHandshake(host) };
-      } else if (
-        request.method === "shutdown" &&
-        Object.keys(request.params).length === 0
-      ) {
-        reply = { id: request.id, ok: true, value: { state: "stopped" } };
-        shutdown = true;
-      } else {
-        let code = "POLICY_DENIED";
-        if (request.method === "send") {
+  let stopped = false;
+  let failure;
+  let queued = 0;
+  let writes = Promise.resolve();
+  let operations = Promise.resolve();
+  const lifetime = new AbortController();
+  let native;
+  const fail = (error) => {
+    failure ??= error;
+    lifetime.abort();
+    native?.shutdown();
+    input.destroy?.();
+  };
+  const write = (value) => {
+    const frame = encodeFrame(value);
+    writes = writes.then(
+      () =>
+        new Promise((resolveWrite, rejectWrite) => {
+          const finish = (error) => {
+            clearTimeout(timer);
+            output.removeListener("close", closed);
+            output.removeListener("error", closed);
+            lifetime.signal.removeEventListener("abort", closed);
+            if (error) {
+              output.destroy?.();
+              rejectWrite(new FrameError());
+            } else resolveWrite();
+          };
+          const closed = () => finish(true);
+          const timer = setTimeout(closed, 10_000);
+          timer.unref();
+          output.once("close", closed);
+          output.once("error", closed);
+          lifetime.signal.addEventListener("abort", closed, { once: true });
+          if (lifetime.signal.aborted || output.destroyed) return closed();
           try {
-            host.assertCurrent(request.params.scopeId, {
-              configRevision: request.params.expectedConfigRevision,
-              profileRevision: request.params.expectedProfileRevision,
-              policyRevision: request.params.expectedPolicyRevision,
-            });
-          } catch (error) {
-            if (error?.code === "STALE_REVISION") code = error.code;
-            else if (
-              ![
-                "NATIVE_INVALID_ID",
-                "NATIVE_CONFIG_UNAVAILABLE",
-                "NATIVE_PROFILE_UNAVAILABLE",
-                "NATIVE_PROFILE_STALE",
-              ].includes(error?.code)
-            )
-              throw error;
+            output.write(frame, finish);
+          } catch {
+            closed();
           }
+        }),
+    );
+    writes.catch(fail);
+    return writes;
+  };
+  native = new NativeControl(write, fail);
+  async function handle(request) {
+    if (stopped || failure) return;
+    let reply;
+    let shutdown = false;
+    if (host === undefined) {
+      // The native parent sends this before exposing any renderer command.
+      if (
+        request.id !== "native-bootstrap" ||
+        request.method !== "native.bootstrap" ||
+        Object.keys(request.params).length !== 1 ||
+        !Object.hasOwn(request.params, "appDataDir")
+      )
+        throw new FrameError();
+      host = createHost(request.params.appDataDir, native);
+      reply = { id: request.id, ok: true, value: { state: "initialized" } };
+    } else if (request.method === "native.bootstrap") {
+      throw new FrameError();
+    } else if (
+      request.method === "handshake" &&
+      Object.keys(request.params).length === 1 &&
+      request.params.protocolVersion === PROTOCOL_VERSION
+    ) {
+      reply = { id: request.id, ok: true, value: nativeHandshake(host) };
+    } else if (
+      request.method === "shutdown" &&
+      Object.keys(request.params).length === 0
+    ) {
+      reply = { id: request.id, ok: true, value: { state: "stopped" } };
+      shutdown = true;
+    } else {
+      let code = "POLICY_DENIED";
+      if (request.method === "send") {
+        try {
+          await host.assertCurrent(request.params.scopeId, {
+            configRevision: request.params.expectedConfigRevision,
+            profileRevision: request.params.expectedProfileRevision,
+            policyRevision: request.params.expectedPolicyRevision,
+          });
+        } catch (error) {
+          if (error?.code === "STALE_REVISION") code = error.code;
+          else if (
+            ![
+              "NATIVE_INVALID_ID",
+              "NATIVE_CONFIG_UNAVAILABLE",
+              "NATIVE_PROFILE_UNAVAILABLE",
+              "NATIVE_PROFILE_STALE",
+            ].includes(error?.code)
+          )
+            throw error;
         }
-        reply = {
-          id: request.id,
-          ok: false,
-          error: {
-            code,
-            message:
-              "Generation unconfigured; native runnable ports are unavailable",
-            correlationId: request.id,
-            retryable: false,
-          },
-        };
       }
-      if (!output.write(encodeFrame(reply))) await once(output, "drain");
-      if (shutdown) return;
+      reply = {
+        id: request.id,
+        ok: false,
+        error: {
+          code,
+          message:
+            "Generation unconfigured; native runnable ports are unavailable",
+          correlationId: request.id,
+          retryable: false,
+        },
+      };
     }
+    await write(reply);
+    if (shutdown) {
+      stopped = true;
+      input.destroy?.();
+    }
+  }
+  try {
+    try {
+      // Private responses must keep moving while an ordinary operation awaits a credential.
+      for await (const request of readFrames(input)) {
+        if (
+          request &&
+          typeof request === "object" &&
+          Object.hasOwn(request, "native")
+        ) {
+          native.accept(request);
+          continue;
+        }
+        if (!isRequest(request) || queued >= 8) throw new FrameError();
+        queued += 1;
+        operations = operations
+          .then(() => handle(request))
+          .catch(fail)
+          .finally(() => {
+            queued -= 1;
+          });
+      }
+    } catch (error) {
+      if (!stopped && !failure) fail(error);
+    }
+    // EOF revokes pending native reads; late responses cannot outlive this host.
+    native.shutdown();
+    await operations;
+    try {
+      await writes;
+    } catch (error) {
+      fail(error);
+    }
+    if (failure) throw failure;
   } finally {
+    native.shutdown();
     host?.close();
   }
 }

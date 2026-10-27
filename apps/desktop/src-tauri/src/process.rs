@@ -335,17 +335,17 @@ pub use windows::{EngineChild, EngineEvents};
 mod windows {
     use super::*;
     use std::collections::VecDeque;
-    use std::ffi::{c_void, OsStr};
+    use std::ffi::{OsStr, c_void};
     use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::ptr::{null, null_mut};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc, Condvar, Mutex};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::System::JobObjects::*;
@@ -495,6 +495,7 @@ mod windows {
 
     struct EventQueue {
         frames: VecDeque<(Value, usize)>,
+        controls: VecDeque<(Value, usize)>,
         bytes: usize,
         terminal: Option<(&'static str, &'static str)>,
     }
@@ -514,6 +515,21 @@ mod windows {
             let mut queue = mutex.lock().map_err(|_| {
                 EngineError::new("ENGINE_CLEANUP", "Engine event queue is unavailable")
             })?;
+            if !queue.controls.is_empty() {
+                let mut controls = Vec::new();
+                let mut bytes = 0;
+                while let Some((_, size)) = queue.controls.front() {
+                    if controls.len() == self.renderer_max_frames
+                        || bytes + size > self.renderer_max_bytes
+                    {
+                        break;
+                    }
+                    let (control, size) = queue.controls.pop_front().expect("front was present");
+                    bytes += size;
+                    controls.push(control);
+                }
+                return Ok(controls);
+            }
             let mut frames = Vec::new();
             let mut bytes = 0;
             while let Some((_, size)) = queue.frames.front() {
@@ -538,6 +554,23 @@ mod windows {
         }
 
         #[cfg(test)]
+        pub fn renderer_limits_for_test(&mut self, frames: usize, bytes: usize) {
+            assert!(frames > 0 && bytes >= MAX_FRAME_BYTES);
+            self.renderer_max_frames = frames;
+            self.renderer_max_bytes = bytes;
+        }
+
+        #[cfg(test)]
+        pub fn terminal_for_test(&self) -> Option<&'static str> {
+            self.shared
+                .0
+                .lock()
+                .expect("event queue is available")
+                .terminal
+                .map(|(code, _)| code)
+        }
+
+        #[cfg(test)]
         pub fn pending_for_test(&self) -> (usize, usize) {
             let queue = self.shared.0.lock().expect("event queue is available");
             (queue.frames.len(), queue.bytes)
@@ -552,12 +585,246 @@ mod windows {
         }
     }
 
+    #[derive(Deserialize, PartialEq, Eq)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct CredentialScope {
+        scope_id: String,
+        target: String,
+        action_id: String,
+        profile_revision: String,
+        connection_revision: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(tag = "method", deny_unknown_fields)]
+    enum NativeOperation {
+        #[serde(rename = "credential.scope.open")]
+        Open { id: String, params: CredentialScope },
+        #[serde(rename = "credential.read")]
+        Read { id: String, params: CredentialScope },
+        #[serde(rename = "credential.scope.close")]
+        Close { id: String, params: CloseScope },
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct CloseScope {
+        scope_id: String,
+    }
+
+    fn opaque_id(value: &str) -> bool {
+        !value.is_empty()
+            && value.len() <= 128
+            && !value
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control() || matches!(c, '/' | '\\'))
+    }
+
+    fn native_reply(
+        frame: Value,
+        scopes: &mut std::collections::HashMap<String, (CredentialScope, Instant, bool)>,
+    ) -> Result<Vec<u8>, EngineError> {
+        use crate::credentials::{CredentialError, CredentialRef, read_owned};
+        let invalid = || EngineError::new("ENGINE_FRAME", "Invalid native control frame");
+        let object = frame
+            .as_object()
+            .filter(|object| object.len() == 1)
+            .ok_or_else(invalid)?;
+        let operation: NativeOperation =
+            serde_json::from_value(object.get("native").ok_or_else(invalid)?.clone())
+                .map_err(|_| invalid())?;
+        scopes.retain(|_, (_, deadline, consumed)| *consumed || Instant::now() < *deadline);
+        let (id, result) = match operation {
+            NativeOperation::Open { id, params } => {
+                if !opaque_id(&id)
+                    || !opaque_id(&params.scope_id)
+                    || !opaque_id(&params.action_id)
+                    || !opaque_id(&params.profile_revision)
+                    || !opaque_id(&params.connection_revision)
+                    || CredentialRef::parse(&params.target).is_err()
+                {
+                    return Err(invalid());
+                }
+                let allowed = scopes.len() < 8 && !scopes.contains_key(&params.scope_id);
+                if allowed {
+                    scopes.insert(
+                        params.scope_id.clone(),
+                        (params, Instant::now() + Duration::from_secs(10), false),
+                    );
+                }
+                (
+                    id,
+                    if allowed {
+                        Ok(())
+                    } else {
+                        Err(CredentialError::Unavailable)
+                    },
+                )
+            }
+            NativeOperation::Read { id, params } => {
+                if !opaque_id(&id)
+                    || !opaque_id(&params.scope_id)
+                    || !opaque_id(&params.action_id)
+                    || !opaque_id(&params.profile_revision)
+                    || !opaque_id(&params.connection_revision)
+                {
+                    return Err(invalid());
+                }
+                let reference = CredentialRef::parse(&params.target).map_err(|_| invalid())?;
+                let result = match scopes.get_mut(&params.scope_id) {
+                    Some((expected, _, consumed)) if *expected == params && !*consumed => {
+                        *consumed = true;
+                        read_owned(&reference).map(Some)
+                    }
+                    _ => Err(CredentialError::Unavailable),
+                };
+                return encode_native_reply(
+                    &id,
+                    result
+                        .as_ref()
+                        .map(|secret| secret.as_ref().map(|secret| secret.as_str()))
+                        .map_err(|_| ()),
+                );
+            }
+            NativeOperation::Close { id, params } => {
+                if !opaque_id(&id) || !opaque_id(&params.scope_id) {
+                    return Err(invalid());
+                }
+                (
+                    id,
+                    if scopes.remove(&params.scope_id).is_some() {
+                        Ok(())
+                    } else {
+                        Err(CredentialError::Unavailable)
+                    },
+                )
+            }
+        };
+        let value = match result {
+            Ok(_) => serde_json::json!({"native":{"id":id,"ok":true,"value":{}}}),
+            Err(_) => {
+                serde_json::json!({"native":{"id":id,"ok":false,"error":{"code":"CREDENTIAL_UNAVAILABLE"}}})
+            }
+        };
+        encode_frame(&value)
+    }
+
+    fn encode_native_reply(
+        id: &str,
+        result: Result<Option<&str>, ()>,
+    ) -> Result<Vec<u8>, EngineError> {
+        #[derive(serde::Serialize)]
+        struct Secret<'a> {
+            secret: Option<&'a str>,
+        }
+        #[derive(serde::Serialize)]
+        struct Reply<'a> {
+            id: &'a str,
+            ok: bool,
+            value: Secret<'a>,
+        }
+        #[derive(serde::Serialize)]
+        struct Envelope<'a> {
+            native: Reply<'a>,
+        }
+        match result {
+            Ok(secret) => {
+                let limit_error =
+                    || EngineError::new("ENGINE_FRAME", "Native control response exceeds limit");
+                let capacity = id
+                    .len()
+                    .checked_add(secret.map_or(0, str::len))
+                    .and_then(|bytes| bytes.checked_mul(6))
+                    .and_then(|bytes| bytes.checked_add(128))
+                    .filter(|bytes| *bytes <= MAX_FRAME_BYTES)
+                    .ok_or_else(limit_error)?;
+                let mut frame = Vec::with_capacity(capacity);
+                frame.extend_from_slice(&[0; 4]);
+                let allocated = frame.capacity();
+                let serialized = serde_json::to_writer(
+                    &mut frame,
+                    &Envelope {
+                        native: Reply {
+                            id,
+                            ok: true,
+                            value: Secret { secret },
+                        },
+                    },
+                );
+                debug_assert_eq!(
+                    frame.capacity(),
+                    allocated,
+                    "Secret frame must never reallocate"
+                );
+                if serialized.is_err() {
+                    wipe_frame(&mut frame);
+                    return Err(EngineError::new(
+                        "ENGINE_FRAME",
+                        "Invalid native control response",
+                    ));
+                }
+                let length = frame.len() - 4;
+                if length > MAX_FRAME_BYTES - 4 {
+                    wipe_frame(&mut frame);
+                    return Err(EngineError::new(
+                        "ENGINE_FRAME",
+                        "Native control response exceeds limit",
+                    ));
+                }
+                frame[..4].copy_from_slice(&(length as u32).to_be_bytes());
+                Ok(frame)
+            }
+            Err(()) => encode_frame(
+                &serde_json::json!({"native":{"id":id,"ok":false,"error":{"code":"CREDENTIAL_UNAVAILABLE"}}}),
+            ),
+        }
+    }
+
+    struct WriteJob {
+        frame: Vec<u8>,
+        acknowledge: mpsc::SyncSender<Result<(), EngineError>>,
+    }
+
+    fn wipe_frame(frame: &mut [u8]) {
+        // Best effort for this owned transport buffer; other runtime copies may remain.
+        for byte in frame {
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        std::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+
+    impl Drop for WriteJob {
+        fn drop(&mut self) {
+            wipe_frame(&mut self.frame);
+        }
+    }
+
+    fn write_bounded(
+        writes: &mpsc::SyncSender<WriteJob>,
+        frame: Vec<u8>,
+        deadline: Instant,
+    ) -> Result<(), EngineError> {
+        let (acknowledge, acknowledgement) = mpsc::sync_channel(1);
+        writes
+            .try_send(WriteJob { frame, acknowledge })
+            .map_err(|_| {
+                EngineError::new("ENGINE_BACKPRESSURE", "Engine request queue is unavailable")
+            })?;
+        acknowledgement
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|_| {
+                EngineError::new(
+                    "ENGINE_TIMEOUT",
+                    "Engine write did not complete before its deadline",
+                )
+            })?
+    }
+
     pub struct EngineChild {
         process: OwnedHandle,
         job: OwnedHandle,
         pid: u32,
-        writes: Option<mpsc::SyncSender<Vec<u8>>>,
-        acknowledgements: mpsc::Receiver<Result<(), EngineError>>,
+        writes: Option<mpsc::SyncSender<WriteJob>>,
         responses: mpsc::Receiver<Result<Value, EngineError>>,
         read_resume: Option<mpsc::Sender<()>>,
         events: EngineEvents,
@@ -657,8 +924,7 @@ mod windows {
             drop(stdin_read);
             drop(stdout_write);
             drop(stderr);
-            let (writes, write_queue) = mpsc::sync_channel::<Vec<u8>>(1);
-            let (acknowledge, acknowledgements) = mpsc::sync_channel(1);
+            let (writes, write_queue) = mpsc::sync_channel::<WriteJob>(1);
             let (reply, responses) = mpsc::sync_channel(1);
             let (read_resume, resume_reads) = mpsc::channel();
             let protocol: BridgeProtocol = serde_json::from_str(include_str!(concat!(
@@ -681,6 +947,7 @@ mod windows {
                 shared: Arc::new((
                     Mutex::new(EventQueue {
                         frames: VecDeque::new(),
+                        controls: VecDeque::new(),
                         bytes: 0,
                         terminal: None,
                     }),
@@ -692,12 +959,74 @@ mod windows {
             let reader_events = events.shared.clone();
             let failed = Arc::new(AtomicBool::new(false));
             let reader_failed = failed.clone();
+            let native_writes = writes.clone();
             let reader = std::thread::Builder::new()
                 .name("splyce-engine-read".into())
                 .spawn(move || {
                     let mut output = File::from(stdout_read);
+                    let mut scopes = std::collections::HashMap::new();
                     loop {
                         match read_frame(&mut output) {
+                            Ok((frame, _)) if frame.get("native").is_some() => {
+                                let result = native_reply(frame, &mut scopes).and_then(|frame| {
+                                    write_bounded(
+                                        &native_writes,
+                                        frame,
+                                        Instant::now() + Duration::from_secs(10),
+                                    )
+                                });
+                                if let Err(error) = result {
+                                    close_events(&reader_events, error.code, error.message);
+                                    let _ = reply.try_send(Err(error));
+                                    reader_failed.store(true, Ordering::Release);
+                                    break;
+                                }
+                            }
+                            Ok((frame, size))
+                                if frame.get("event").and_then(|event| event.get("frame"))
+                                    == Some(&Value::String("control".into())) =>
+                            {
+                                let control = &frame["event"];
+                                let valid = frame.as_object().is_some_and(|o| o.len() == 1)
+                                    && control.as_object().is_some_and(|o| o.len() == 4)
+                                    && control["kind"] == "stream.resync"
+                                    && control["sessionId"].as_str().is_some_and(opaque_id)
+                                    && control["fromSeq"]
+                                        .as_u64()
+                                        .is_some_and(|seq| seq <= 9_007_199_254_740_991);
+                                let result = if !valid {
+                                    Err(EngineError::new(
+                                        "ENGINE_FRAME",
+                                        "Invalid native control event",
+                                    ))
+                                } else {
+                                    reader_events
+                                        .0
+                                        .lock()
+                                        .map_err(|_| {
+                                            EngineError::new(
+                                                "ENGINE_CLEANUP",
+                                                "Engine event queue is unavailable",
+                                            )
+                                        })
+                                        .and_then(|mut queue| {
+                                            if queue.controls.len() == 8 {
+                                                return Err(EngineError::new(
+                                                    "ENGINE_BACKPRESSURE",
+                                                    "Engine control events require reconciliation",
+                                                ));
+                                            }
+                                            queue.controls.push_back((control.clone(), size));
+                                            Ok(())
+                                        })
+                                };
+                                if let Err(error) = result {
+                                    close_events(&reader_events, error.code, error.message);
+                                    let _ = reply.try_send(Err(error));
+                                    reader_failed.store(true, Ordering::Release);
+                                    break;
+                                }
+                            }
                             Ok((frame, size))
                                 if frame.as_object().is_some_and(|object| {
                                     object.len() == 1
@@ -709,17 +1038,19 @@ mod windows {
                                     Ok(queue) => queue,
                                     Err(_) => break,
                                 };
-                                while queue.terminal.is_none()
-                                    && (queue.frames.len() >= bounds.pending_queue_max_frames
-                                        || queue.bytes + size > bounds.pending_queue_max_bytes)
-                                {
-                                    queue = match wake.wait(queue) {
-                                        Ok(queue) => queue,
-                                        Err(_) => return,
-                                    };
-                                }
                                 if queue.terminal.is_some() {
-                                    break;
+                                    continue;
+                                }
+                                if queue.frames.len() >= bounds.pending_queue_max_frames
+                                    || queue.bytes + size > bounds.pending_queue_max_bytes
+                                {
+                                    // No acknowledged cursor is owned here; restart and replay must reconcile delivery.
+                                    queue.terminal = Some((
+                                        "ENGINE_BACKPRESSURE",
+                                        "Engine events require reconciliation",
+                                    ));
+                                    wake.notify_all();
+                                    continue;
                                 }
                                 queue.frames.push_back((frame["event"].clone(), size));
                                 queue.bytes += size;
@@ -762,13 +1093,13 @@ mod windows {
                 .name("splyce-engine-write".into())
                 .spawn(move || {
                     let mut input = File::from(stdin_write);
-                    while let Ok(frame) = write_queue.recv() {
+                    while let Ok(job) = write_queue.recv() {
                         let result = input
-                            .write_all(&frame)
+                            .write_all(&job.frame)
                             .and_then(|_| input.flush())
                             .map_err(io_error);
                         let terminal = result.is_err();
-                        if acknowledge.try_send(result).is_err() || terminal {
+                        if job.acknowledge.try_send(result).is_err() || terminal {
                             break;
                         }
                     }
@@ -779,7 +1110,6 @@ mod windows {
                 job,
                 pid: information.dwProcessId,
                 writes: Some(writes),
-                acknowledgements,
                 responses,
                 read_resume: Some(read_resume),
                 events,
@@ -840,24 +1170,13 @@ mod windows {
             }
             let deadline = Instant::now() + Duration::from_secs(10);
             let result = (|| {
-                self.writes
-                    .as_ref()
-                    .ok_or_else(|| EngineError::new("ENGINE_EXITED", "Engine is disconnected"))?
-                    .try_send(frame)
-                    .map_err(|_| {
-                        EngineError::new(
-                            "ENGINE_BACKPRESSURE",
-                            "Engine request queue is unavailable",
-                        )
-                    })?;
-                self.acknowledgements
-                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                    .map_err(|_| {
-                        EngineError::new(
-                            "ENGINE_TIMEOUT",
-                            "Engine request did not complete before its deadline",
-                        )
-                    })??;
+                write_bounded(
+                    self.writes.as_ref().ok_or_else(|| {
+                        EngineError::new("ENGINE_EXITED", "Engine is disconnected")
+                    })?,
+                    frame,
+                    deadline,
+                )?;
                 let response = self
                     .responses
                     .recv_timeout(deadline.saturating_duration_since(Instant::now()))
@@ -973,6 +1292,146 @@ mod windows {
             // Closing the owned kill-on-close job remains the final containment backstop.
         }
     }
+    #[cfg(test)]
+    mod native_tests {
+        use super::*;
+        use serde_json::json;
+
+        fn scope(target: &str) -> Value {
+            json!({"scopeId":"scope1","target":target,"actionId":"action1","profileRevision":"p1","connectionRevision":"c1"})
+        }
+        fn call(method: &str, params: Value) -> Value {
+            json!({"native":{"id":"native1","method":method,"params":params}})
+        }
+        fn reply(frame: Vec<u8>) -> Value {
+            read_frame(&mut frame.as_slice()).unwrap().0
+        }
+
+        #[test]
+        fn private_credentials_require_live_exact_single_use_scope() {
+            let reference =
+                crate::credentials::write_generated("private-transport-fixture").unwrap();
+            struct Cleanup(crate::credentials::CredentialRef);
+            impl Drop for Cleanup {
+                fn drop(&mut self) {
+                    crate::credentials::delete_owned(&self.0).unwrap();
+                }
+            }
+            let cleanup = Cleanup(reference);
+            let params = scope(cleanup.0.as_str());
+            let mut scopes = std::collections::HashMap::new();
+            let denied = |value: Value| {
+                assert_eq!(value["native"]["error"]["code"], "CREDENTIAL_UNAVAILABLE")
+            };
+            denied(reply(
+                native_reply(call("credential.read", params.clone()), &mut scopes).unwrap(),
+            ));
+            assert_eq!(
+                reply(
+                    native_reply(call("credential.scope.open", params.clone()), &mut scopes)
+                        .unwrap()
+                )["native"]["ok"],
+                true
+            );
+            let mut mismatch = params.clone();
+            mismatch["connectionRevision"] = json!("c2");
+            denied(reply(
+                native_reply(call("credential.read", mismatch), &mut scopes).unwrap(),
+            ));
+            let value =
+                reply(native_reply(call("credential.read", params.clone()), &mut scopes).unwrap());
+            assert_eq!(
+                value,
+                json!({"native":{"id":"native1","ok":true,"value":{"secret":"private-transport-fixture"}}})
+            );
+            denied(reply(
+                native_reply(call("credential.read", params.clone()), &mut scopes).unwrap(),
+            ));
+            native_reply(
+                call("credential.scope.close", json!({"scopeId":"scope1"})),
+                &mut scopes,
+            )
+            .unwrap();
+            denied(reply(
+                native_reply(call("credential.read", params.clone()), &mut scopes).unwrap(),
+            ));
+            native_reply(call("credential.scope.open", params.clone()), &mut scopes).unwrap();
+            scopes.get_mut("scope1").unwrap().1 = Instant::now();
+            denied(reply(
+                native_reply(call("credential.read", params), &mut scopes).unwrap(),
+            ));
+        }
+
+        #[test]
+        fn secret_frame_reserves_complete_worst_case_encoding_before_copy() {
+            let maximum = crate::credentials::MAX_SECRET_BYTES;
+            for fragment in ["\"", "\\", "\u{e9}", "\"\\\u{e9}"] {
+                let mut secret = fragment.repeat(maximum / fragment.len());
+                secret.push_str(&"x".repeat(maximum - secret.len()));
+                assert_eq!(secret.len(), maximum);
+                let id = "\"".repeat(128);
+                let frame = encode_native_reply(&id, Ok(Some(&secret))).unwrap();
+                assert!(frame.capacity() >= (id.len() + secret.len()) * 6 + 128);
+                assert_eq!(
+                    reply(frame),
+                    json!({"native":{"id":id,"ok":true,"value":{"secret":secret}}})
+                );
+            }
+            assert!(encode_native_reply("id", Ok(Some(&"x".repeat(MAX_FRAME_BYTES)))).is_err());
+        }
+
+        #[test]
+        fn private_scope_registry_has_a_hard_eight_scope_bound() {
+            let target = format!("splyce-credential:v1:{}", "0".repeat(64));
+            let mut scopes = std::collections::HashMap::new();
+            for index in 0..9 {
+                let mut params = scope(&target);
+                params["scopeId"] = json!(format!("scope{index}"));
+                let value = reply(
+                    native_reply(call("credential.scope.open", params), &mut scopes).unwrap(),
+                );
+                assert_eq!(value["native"]["ok"], index < 8);
+            }
+            assert_eq!(scopes.len(), 8);
+        }
+
+        #[test]
+        fn private_schema_and_absent_reference_fail_closed() {
+            let target = format!("splyce-credential:v1:{}", "0".repeat(64));
+            let params = scope(&target);
+            let mut scopes = std::collections::HashMap::new();
+            native_reply(call("credential.scope.open", params.clone()), &mut scopes).unwrap();
+            assert_eq!(
+                reply(native_reply(call("credential.read", params.clone()), &mut scopes).unwrap())
+                    ["native"]["error"]["code"],
+                "CREDENTIAL_UNAVAILABLE"
+            );
+            for invalid in [
+                json!({"native":{"id":"n","method":"credential.read","params":params},"extra":true}),
+                call("unknown", params.clone()),
+                call("credential.read", json!({"target":target,"actionId":"a"})),
+                call(
+                    "credential.scope.close",
+                    json!({"scopeId":"s","extra":true}),
+                ),
+            ] {
+                assert!(native_reply(invalid, &mut scopes).is_err());
+            }
+            for field in [
+                "scopeId",
+                "actionId",
+                "profileRevision",
+                "connectionRevision",
+                "target",
+            ] {
+                for bad in ["", "x/y", " "] {
+                    let mut invalid = params.clone();
+                    invalid[field] = json!(bad);
+                    assert!(native_reply(call("credential.read", invalid), &mut scopes).is_err());
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1043,10 +1502,12 @@ mod tests {
         assert!(digest_matches(bytes, &digest));
         assert!(!digest_matches(br#"{}"#, &digest));
         assert!(!digest_matches(bytes, ""));
-        assert!(serde_json::from_slice::<Manifest>(
-            br#"{"schemaVersion":1,"piRevision":"pin","files":[],"extra":true}"#
-        )
-        .is_err());
+        assert!(
+            serde_json::from_slice::<Manifest>(
+                br#"{"schemaVersion":1,"piRevision":"pin","files":[],"extra":true}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]
