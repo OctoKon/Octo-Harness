@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 import {
   assertDriverProvenance,
   assertUnavailable,
@@ -87,6 +88,38 @@ test(
       assert.match(inheritedElevation, /^(True|False)$/);
       assert.equal(observed.elevated, inheritedElevation === "True");
       assert.deepEqual(Object.keys(observed).sort(), ["elevated", "status"]);
+      const details = JSON.parse(
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            fileURLToPath(new URL("./process-elevation.ps1", import.meta.url)),
+            "-ProcessId",
+            String(candidate.ProcessId),
+            "-CreationTimeMs",
+            candidate.CreationDate.match(/\d+/)[0],
+            "-Details",
+          ],
+          { encoding: "utf8", windowsHide: true, timeout: 15000 },
+        ),
+      );
+      assert.equal(details.status, "observed");
+      assert.equal(details.elevated, observed.elevated);
+      assert([1, 2, 3].includes(details.elevationType));
+      assert(
+        details.linkedTokenAvailable === null ||
+          typeof details.linkedTokenAvailable === "boolean",
+      );
+      if (details.elevationType === 1)
+        assert.equal(details.linkedTokenAvailable, false);
+      assert.deepEqual(Object.keys(details).sort(), [
+        "elevated",
+        "elevationType",
+        "linkedTokenAvailable",
+        "status",
+      ]);
       assert.deepEqual(
         processElevation({ ...candidate, CreationDate: "/Date(0)/" }),
         { status: "unknown", elevated: null },

@@ -14,6 +14,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  windows-token-observation:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/sreerevanth/td11-ci-portability'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Observe current process token without changing it
+        shell: pwsh
+        run: |
+          $created = [DateTimeOffset](Get-Process -Id $PID).StartTime
+          $result = & ./tests/bootstrap/process-elevation.ps1 -ProcessId $PID -CreationTimeMs $created.ToUnixTimeMilliseconds() -Details | ConvertFrom-Json
+          $result | ConvertTo-Json -Compress
+          if ($result.status -ne 'observed' -or $null -eq $result.elevationType) {
+            throw 'Token observation unavailable; this is not a non-elevated launch test.'
+          }
+
   documentation-quality:
     name: Documentation quality
     runs-on: ubuntu-latest
