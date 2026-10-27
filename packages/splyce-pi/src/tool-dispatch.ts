@@ -81,6 +81,7 @@ export class ToolDispatchError extends Error {
 /** Shape of one tool as the Pi session consumes it (the factory adds label/schema typing). */
 export interface DispatchTool {
   name: string;
+  label: string;
   description: string;
   parameters: Record<string, unknown>;
   execute(
@@ -155,6 +156,8 @@ export interface PiSessionLike {
   setActiveToolsByName?: unknown;
   _setActiveTools?: unknown;
   _applyToolLoadout?: unknown;
+  /** Pi's AgentSession.getToolDefinition: the definition the registry (and so Pi's wrapper) runs. */
+  getToolDefinition?: (name: string) => unknown;
 }
 
 /** Never needed by an owned session: denied outright. */
@@ -347,66 +350,102 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     }
     return value;
   };
-  const redactSummary = async (
-    summary: ToolSummary,
-    signal?: AbortSignal,
-  ): Promise<ToolSummary> => ({
-    ...summary,
-    preview: (await redactFinal(summary.preview, signal)).slice(0, PREVIEW_MAX),
-  });
-
-  const tools: DispatchTool[] = [...impls.values()].map((impl) => {
-    const parameters = deepFreeze(
-      JSON.parse(JSON.stringify(impl.parameters)) as Record<string, unknown>,
+  /**
+   * A tool caps its own output (preview 2048, text 50 KiB) before this adapter sees it, so a credential
+   * can straddle the cut. When the text may have been cut, drop its trailing partial token BEFORE the
+   * native lane runs; all previews are then derived from the already-redacted full text.
+   */
+  const cutSafe = (text: string, maybeCut: boolean): string => {
+    if (!maybeCut) return text;
+    // keep trailing tool notes such as "[output truncated]"; drop the partial token before them
+    const notes = /(?:\n\[[^\]\n]*\])*$/u.exec(text)?.[0] ?? "";
+    return (
+      text.slice(0, text.length - notes.length).replace(/\S*$/u, "") + notes
     );
-    brand.set(parameters, impl.name);
-    return {
-      name: impl.name,
-      description: impl.description,
-      parameters,
-      async execute(toolCallId, args, signal) {
-        const call = calls.get(toolCallId);
-        // Defense in depth: Pi bound tool.execute is a thrower; this refuses
-        // anything that did not come through ToolAdmission.execute.
-        if (!call?.admitted || call.name !== impl.name)
-          throw new AdmissionError("POLICY_DENIED");
-        call.ownImpl = true;
-        try {
-          const r = await impl.result(args, signal, call.actionId);
-          // Everything Pi (and so the model and transcript) sees is redacted fail-closed.
-          return {
-            content: [
-              { type: "text", text: await redactFinal(r.text, signal) },
-            ],
-            details: { summary: await redactSummary(r.summary, signal) },
-          };
-        } catch (error) {
-          if (
-            error instanceof WorkspaceToolError ||
-            error instanceof ContextToolError
-          ) {
-            const summary = (error as WorkspaceToolError).summary;
+  };
+  const owned = new WeakSet<object>();
+
+  const tools: readonly DispatchTool[] = Object.freeze(
+    [...impls.values()].map((impl) => {
+      const parameters = deepFreeze(
+        JSON.parse(JSON.stringify(impl.parameters)) as Record<string, unknown>,
+      );
+      brand.set(parameters, impl.name);
+      const definition: DispatchTool = Object.freeze({
+        name: impl.name,
+        label: impl.name,
+        description: impl.description,
+        parameters,
+        async execute(
+          toolCallId: string,
+          args: Record<string, unknown>,
+          signal?: AbortSignal,
+        ): Promise<DispatchResult> {
+          const call = calls.get(toolCallId);
+          // Defense in depth: Pi bound tool.execute is a thrower; this refuses
+          // anything that did not come through ToolAdmission.execute.
+          if (!call?.admitted || call.name !== impl.name)
+            throw new AdmissionError("POLICY_DENIED");
+          call.ownImpl = true;
+          try {
+            const r = await impl.result(args, signal, call.actionId);
+            // Redact the FULL text first, then derive the preview from the redacted text.
+            const body = await redactFinal(
+              cutSafe(r.text, r.summary.truncated),
+              signal,
+            );
             return {
-              content: [
-                {
-                  type: "text",
-                  text: `${error.code}: ${await redactFinal(error.message, signal)}`,
-                },
-              ],
+              content: [{ type: "text", text: body }],
               details: {
-                code: error.code,
-                ...(summary
-                  ? { summary: await redactSummary(summary, signal) }
-                  : {}),
+                summary: { ...r.summary, preview: body.slice(0, PREVIEW_MAX) },
               },
+            };
+          } catch (error) {
+            // Every exception becomes a typed, redacted result: no raw message, stack or cause.
+            if (
+              error instanceof WorkspaceToolError ||
+              error instanceof ContextToolError
+            ) {
+              const summary = (error as WorkspaceToolError).summary;
+              const preview = summary
+                ? (
+                    await redactFinal(
+                      cutSafe(
+                        summary.preview,
+                        summary.truncated ||
+                          summary.preview.length >= PREVIEW_MAX,
+                      ),
+                      signal,
+                    )
+                  ).slice(0, PREVIEW_MAX)
+                : "";
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `${error.code}: ${await redactFinal(error.message, signal)}`,
+                  },
+                ],
+                details: {
+                  code: error.code,
+                  ...(summary ? { summary: { ...summary, preview } } : {}),
+                },
+                isError: true,
+              };
+            }
+            if (error instanceof AdmissionError) throw error;
+            return {
+              content: [{ type: "text", text: "TOOL_FAILED" }],
+              details: { code: "TOOL_FAILED" },
               isError: true,
             };
           }
-          throw error;
-        }
-      },
-    };
-  });
+        },
+      });
+      owned.add(definition);
+      return definition;
+    }),
+  );
 
   const draft = <K extends "turn.tool_intent" | "turn.tool_outcome">(
     kind: K,
@@ -439,7 +478,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     return call;
   };
 
-  const admission: ToolAdmission = {
+  const rawAdmission: ToolAdmission = {
     check(toolCallId, toolName, signal, phase) {
       if (calls.has(toolCallId))
         policy.check(toolCallId, toolName, signal, phase);
@@ -640,6 +679,63 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     },
   };
 
+  // Every exception through the adapter (tool, redactor, native lane, policy, store) is typed and
+  // generic: nothing raw (message, stack, cause) reaches Pi, the model or the transcript.
+  const clean = (error: unknown): Error =>
+    error instanceof AdmissionError || error instanceof ToolDispatchError
+      ? error
+      : new AdmissionError("ADAPTER_FAILURE");
+  const admission: ToolAdmission = {
+    check(...a) {
+      try {
+        rawAdmission.check(...a);
+      } catch (error) {
+        throw clean(error);
+      }
+    },
+    reserve(...a) {
+      try {
+        rawAdmission.reserve(...a);
+      } catch (error) {
+        throw clean(error);
+      }
+    },
+    async prepare(...a) {
+      try {
+        await rawAdmission.prepare(...a);
+      } catch (error) {
+        throw clean(error);
+      }
+    },
+    finish(...a) {
+      try {
+        rawAdmission.finish(...a);
+      } catch (error) {
+        throw clean(error);
+      }
+    },
+    discard(...a) {
+      try {
+        rawAdmission.discard(...a);
+      } catch (error) {
+        throw clean(error);
+      }
+    },
+    async execute(toolCallId, toolName, args, invoke, signal) {
+      try {
+        return await rawAdmission.execute(
+          toolCallId,
+          toolName,
+          args,
+          invoke,
+          signal,
+        );
+      } catch (error) {
+        throw clean(error);
+      }
+    },
+  };
+
   const memory = deps.context?.memory;
   const memoryScope = deps.context?.scopeId;
   return {
@@ -653,20 +749,33 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
         throw new ToolDispatchError("SESSION_REGISTRATION_FAILED");
       }
       const live = session.agent.state.tools;
-      // Provenance, never the name: only a tool Pi built from one of OUR definitions carries the
-      // frozen parameters object this adapter created (Pi copies it by reference).
+      // Provenance, never the name: Pi's registry must hold, for every tool, one of OUR frozen
+      // definition objects (the one Pi's wrapper delegates to) and the AgentTool must carry that
+      // definition's parameters object. A genuine schema on a foreign executor is not enough.
+      const defs = new Map<string, object>();
       for (const tool of live) {
         const { name, parameters } = tool as {
           name?: string;
           parameters?: unknown;
         };
+        const definition =
+          typeof name === "string"
+            ? (session.getToolDefinition?.(name) as
+                { parameters?: unknown; name?: unknown } | undefined)
+            : undefined;
         if (
           typeof name !== "string" ||
+          definition === undefined ||
+          typeof definition !== "object" ||
+          !owned.has(definition) ||
+          definition.name !== name ||
+          definition.parameters !== parameters ||
           typeof parameters !== "object" ||
           parameters === null ||
           brand.get(parameters) !== name
         )
           throw new ToolDispatchError("TOOL_REGISTRY_FOREIGN");
+        defs.set(name, definition);
       }
       const bound = new WeakSet<object>(live);
       const snapshot = [...live];
@@ -682,6 +791,9 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
           current.some((tool) => !bound.has(tool))
         )
           frozen();
+        // the executor Pi would run is still exactly ours (registry definitions are immutable)
+        for (const [name, definition] of defs)
+          if (session.getToolDefinition?.(name) !== definition) frozen();
       };
       const unbind = live.map((tool) => {
         const guarded: ToolAdmission = {
@@ -703,13 +815,19 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
           },
           // cleanup must always work
           discard: (...a) => admission.discard(...a),
-          execute(toolCallId, toolName, args, invoke, signal) {
+          async execute(toolCallId, toolName, args, invoke, signal) {
             registryIntact();
             return admission.execute(
               toolCallId,
               toolName,
               args,
-              invoke,
+              // verified again immediately before the effect and right after it
+              async (admitted) => {
+                registryIntact();
+                const out = await invoke(admitted);
+                registryIntact();
+                return out;
+              },
               signal,
             );
           },
