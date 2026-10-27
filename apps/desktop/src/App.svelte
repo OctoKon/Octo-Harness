@@ -38,8 +38,17 @@
     type SelectedWorkspace,
   } from "./stores/engine";
   import {
+    configuredProfileResult,
+    profileSelectPayload,
     providerConfigurePayload,
+    sessionStartPayload,
+    setupErrorCopy,
+    validateProfileSelectionResult,
+    validateSessionStartResult,
+    type ConfiguredProfile,
+    type ProfileSelectionResult,
     type ProviderSetupDraft,
+    type SessionStartResult,
   } from "./stores/profiles";
   import {
     bindSelection,
@@ -134,13 +143,32 @@
   let workspace = $state<SelectedWorkspace | null>(null);
   let choosing = $state(false);
   let chooserError = $state<string | null>(null);
+  let profiles = $state<ConfiguredProfile[]>([]);
+  let profileSelection = $state<ProfileSelectionResult | null>(null);
+  let startedSession = $state<SessionStartResult | null>(null);
+  let profilePending = $state(false);
+  let configuring = $state(false);
+  let profileStatus = $state<string | null>(null);
+  let setupEpoch = 0;
+
+  function invalidateSetup() {
+    setupEpoch++;
+    profiles = [];
+    profileSelection = null;
+    startedSession = null;
+    profilePending = false;
+    configuring = false;
+    profileStatus = null;
+  }
   const chooserReason = $derived(
     readiness?.state === "ready"
       ? null
       : "The engine is not connected. A project cannot be chosen yet.",
   );
   const providerUnavailable = $derived(
-    !ports?.provider
+    profilePending || configuring
+      ? "Provider setup is already in progress."
+      : !ports?.provider
       ? "The engine reports provider setup unavailable. Nothing can be saved."
       : workspace === null
         ? "Choose a project first. Provider setup is saved for a project."
@@ -154,7 +182,11 @@
     try {
       const chosen = await selectWorkspace();
       // Cancel (null) keeps the current project.
-      if (chosen) workspace = chosen;
+      if (chosen && chosen.workspaceId !== workspace?.workspaceId) {
+        invalidateSetup();
+        clearSession();
+        workspace = chosen;
+      }
     } catch {
       chooserError = "Could not open the project. Nothing changed.";
     } finally {
@@ -164,13 +196,89 @@
 
   // The secret lives only in this one send; the payload object is not kept.
   async function configureProvider(draft: ProviderSetupDraft) {
-    if (!workspace) throw new Error("No project selected");
+    if (!workspace || configuring || profilePending)
+      throw new Error("Setup unavailable");
+    const project = workspace;
+    const epoch = ++setupEpoch;
+    configuring = true;
+    profileSelection = null;
+    startedSession = null;
+    profileStatus = null;
     const requestId = crypto.randomUUID();
+    try {
+      const result = configuredProfileResult(
     await sendSetup(
       "provider.configure",
       requestId,
-      providerConfigurePayload(draft, workspace.workspaceId, requestId),
+          providerConfigurePayload(draft, project.workspaceId, requestId),
+        ),
     );
+      if (epoch !== setupEpoch) throw { code: "WORKSPACE_SUPERSEDED" };
+      profiles = [
+        ...profiles
+          .filter((p) => p.profileId !== result.profileId)
+          .map((p) => ({ ...p, configRevision: result.configRevision })),
+        result,
+      ];
+    } finally {
+      if (epoch === setupEpoch) configuring = false;
+    }
+  }
+
+  async function useProfile(profile: ConfiguredProfile) {
+    if (!workspace || profilePending || configuring || !ports?.provider) return;
+    const project = workspace;
+    const epoch = ++setupEpoch;
+    profilePending = true;
+    profileSelection = null;
+    startedSession = null;
+    clearSession();
+    profileStatus = "Selecting profile…";
+    try {
+      const requestId = crypto.randomUUID();
+      const selected = validateProfileSelectionResult(
+        await sendSetup(
+          "profile.select",
+          requestId,
+          profileSelectPayload(profile, project.workspaceId, requestId),
+        ),
+      );
+      if (epoch !== setupEpoch) return;
+      if (selected.selectedProfileId !== profile.profileId)
+        throw new Error("Invalid selection");
+      profileSelection = selected;
+      profiles = profiles.map((p) => ({
+        ...p,
+        configRevision: selected.configRevision,
+        ...(p.profileId === selected.selectedProfileId && {
+          profileRevision: selected.profileRevision,
+        }),
+      }));
+      // A saved profile never proves session readiness. Only this native receipt can.
+      profileStatus = "Starting session…";
+      const startRequestId = crypto.randomUUID();
+      const started = validateSessionStartResult(
+        await sendSetup(
+          "session.start",
+          startRequestId,
+          sessionStartPayload(selected, project.workspaceId, startRequestId),
+        ),
+      );
+      if (epoch !== setupEpoch) return;
+      startedSession = started;
+      profileStatus =
+        started.readiness.state === "ready"
+          ? "Profile selected. Session ready."
+          : "Profile selected. The session is unavailable. Sending stays blocked.";
+    } catch (error) {
+      if (epoch === setupEpoch) {
+        profileSelection = null;
+        startedSession = null;
+        profileStatus = setupErrorCopy(error);
+      }
+    } finally {
+      if (epoch === setupEpoch) profilePending = false;
+    }
   }
   let stopped = $derived(engineConnected && status === "disconnected");
   let mounted = false;
@@ -253,6 +361,11 @@
     dispatchNav({ type: "select", key });
     const node = visibleNodes(nav).find((n) => n.key === key);
     const scopeId = node && scopes.get(node.sessionId);
+    if (node && startedSession && node.sessionId !== startedSession.sessionId) {
+      startedSession = null;
+      profileStatus =
+        "Readiness has not been reported for the selected session.";
+    }
     if (node && scopeId) selectSession({ sessionId: node.sessionId, scopeId });
   }
 
@@ -266,6 +379,7 @@
   }
 
   async function connect() {
+    invalidateSetup();
     readiness = null;
     try {
       const verified = await handshake();
@@ -292,6 +406,7 @@
     const unsubState = connectionState.subscribe((val) => {
       status = val;
       if (val === "disconnected") {
+        invalidateSetup();
         readiness = null;
         ports = null;
       }
@@ -312,6 +427,7 @@
 
     return () => {
       mounted = false;
+      setupEpoch++;
       unsubState();
       unsubPorts();
       unsubEvents();
@@ -393,6 +509,12 @@
       <Providers
         connections={[]}
         families={[]}
+        {profiles}
+        workspaceSelected={workspace !== null}
+        selectedProfileId={profileSelection?.selectedProfileId ?? null}
+        selectProfile={useProfile}
+        {profilePending}
+        {profileStatus}
         credentialSubmit={providerUnavailable ? undefined : configureProvider}
         credentialUnavailable={providerUnavailable}
       />
@@ -454,9 +576,11 @@
        when false or unreported. -->
   <Composer
     connection={status}
-    sessionId={$selectedSession?.sessionId ?? null}
+    sessionId={startedSession?.sessionId ?? $selectedSession?.sessionId ?? null}
     {generationReady}
     workspaceSelected={workspace !== null}
+    profileSelected={profileSelection !== null}
+    sessionReadiness={startedSession?.readiness.state}
     unavailable="Sending is not available yet"
     send={async () => {
       throw new Error("Sending is unavailable: session revisions are not wired.");
