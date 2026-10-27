@@ -15,6 +15,10 @@ import {
 import { NativeControl } from "../packages/splyce-pi/src/native-control.mjs";
 import { Store } from "../packages/splyce-pi/dist/store.js";
 import { createNativeModelProvider } from "../packages/splyce-pi/src/native-model-provider.mjs";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { createSplyceOwner } from "../vendor/pi/packages/agent/dist/splyce-readiness.js";
+import { AuthStorage } from "../vendor/pi/packages/coding-agent/dist/core/auth-storage.js";
+import { InMemoryCodingAgentModelsStore } from "../vendor/pi/packages/coding-agent/dist/core/models-store.js";
 const records = JSON.parse(
   await readFile(
     new URL("./fixtures/contracts/records.json", import.meta.url),
@@ -49,6 +53,7 @@ async function fixture(t, options = {}) {
     },
   };
   if (options.model) semantic.options.model = options.model;
+  if (options.context) semantic.context = options.context;
   const controller = new AbortController();
   let connection = {
     ...records.providerConnection,
@@ -734,4 +739,96 @@ test("native provider status uses private control and cancellation prevents admi
     provider.auth.apiKey.check({ signal: f.controller.signal }),
     { message: "Native OpenAI request failed" },
   );
+});
+
+test("sealed ModelRuntime composes the native provider with real policy, credentials and HTTP", async (t) => {
+  const model = {
+    api: "openai-completions",
+    id: "fixture-model",
+    name: "Fixture",
+    provider: "openai",
+    baseUrl: "http://127.0.0.1",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 8192,
+    maxTokens: 1024,
+  };
+  const messages = [
+    { role: "system", content: "fixture instruction", timestamp: 0 },
+    { role: "user", content: "hello", timestamp: 0 },
+  ];
+  const f = await fixture(t, {
+    model,
+    present: true,
+    context: { messages, tools: [] },
+  });
+  const owner = createSplyceOwner(() => {});
+  t.after(() => owner.dispose());
+  const options = {
+    credentials: AuthStorage.inMemory(),
+    modelsStore: new InMemoryCodingAgentModelsStore(),
+    modelsPath: null,
+    allowModelNetwork: false,
+    refreshOnCreate: false,
+  };
+  owner.bind(options, "model-runtime-options");
+  const runtime = await ModelRuntime.create(options);
+  const provider = createNativeModelProvider({
+    model,
+    credentialRef: target,
+    control: f.control,
+    requests: f.owner,
+    admit: async () => f.scope,
+    assertCurrent() {},
+  });
+  const previous = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "ambient-unrelated";
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previous;
+  });
+  await runtime.registerNativeProvider(provider);
+  assert.deepEqual(await runtime.checkAuth("openai"), {
+    type: "api_key",
+    source: "Windows Credential Manager",
+  });
+  assert.deepEqual(await runtime.getAvailable(), [model]);
+  const context = {
+    systemPrompt: "fixture instruction",
+    tools: [],
+    messages: [messages[1]],
+  };
+  for (const candidate of [
+    { ...model, id: "another-model" },
+    { ...model, api: "openai-responses" },
+    { ...model, baseUrl: "http://127.0.0.1:1" },
+  ]) {
+    assert.equal(
+      (
+        await runtime
+          .streamSimple(candidate, context, { signal: f.controller.signal })
+          .result()
+      ).stopReason,
+      "error",
+    );
+    assert.equal(f.received, 0);
+  }
+  const stream = runtime.streamSimple(model, context, {
+    signal: f.controller.signal,
+  });
+  const events = [];
+  for await (const event of stream) events.push(event);
+  assert.equal(events.at(-1).type, "done");
+  assert.equal((await stream.result()).content[0].text, "hello");
+  assert.deepEqual(JSON.parse(f.bodies[0]).messages, [
+    { role: "system", content: "fixture instruction" },
+    { role: "user", content: "hello" },
+  ]);
+  assert.equal(f.received, 1);
+  assert.equal(
+    f.frames.filter((frame) => frame === "credential.scope.close").length,
+    1,
+  );
+  assert.equal(outcomes(f)[0].record.effectState, "observed-success");
 });

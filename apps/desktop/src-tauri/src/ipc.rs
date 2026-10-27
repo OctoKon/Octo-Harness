@@ -22,6 +22,20 @@ pub struct BridgeError {
 }
 
 impl BridgeError {
+    fn selection(code: Option<&str>) -> Self {
+        let code = match code {
+            Some("STALE_REVISION") => "STALE_REVISION",
+            Some("WORKSPACE_SUPERSEDED") => "WORKSPACE_SUPERSEDED",
+            Some("SETUP_REQUEST_CONFLICT") => "SETUP_REQUEST_CONFLICT",
+            _ => "POLICY_DENIED",
+        };
+        Self {
+            code,
+            message: "Setup unavailable",
+            ..Self::denied()
+        }
+    }
+
     fn setup(code: &'static str) -> Self {
         Self {
             code,
@@ -287,6 +301,12 @@ impl BridgeState {
         params: Value,
         accept_response: impl FnOnce(&Value) -> bool,
     ) -> Result<Value, BridgeError> {
+        let selection = method == "send"
+            && matches!(
+                params["command"].as_str(),
+                Some("profile.select" | "session.start")
+            )
+            && valid_setup(params["command"].as_str().unwrap(), &params);
         let mut inner = self.inner.try_lock().map_err(|_| BridgeError::denied())?;
         if inner.closed {
             return Err(BridgeError::engine());
@@ -306,6 +326,9 @@ impl BridgeState {
         match reply["ok"].as_bool() {
             Some(true) if object.contains_key("value") => Ok(reply["value"].clone()),
             Some(false) if object.contains_key("error") => {
+                if selection {
+                    return Err(BridgeError::selection(reply["error"]["code"].as_str()));
+                }
                 if method.starts_with("native.provider.") {
                     let code = match reply["error"]["code"].as_str() {
                         Some("SETUP_INVALID") => "SETUP_INVALID",
@@ -315,6 +338,9 @@ impl BridgeState {
                         }
                         Some("SETUP_WORKSPACE_UNAVAILABLE") => "SETUP_WORKSPACE_UNAVAILABLE",
                         Some("SETUP_CREDENTIAL_UNAVAILABLE") => "SETUP_CREDENTIAL_UNAVAILABLE",
+                        Some("SETUP_CREDENTIAL_RESERVATION_ORPHANED") => {
+                            "SETUP_CREDENTIAL_RESERVATION_ORPHANED"
+                        }
                         Some("SETUP_DESCRIPTOR_UNAVAILABLE") => "SETUP_DESCRIPTOR_UNAVAILABLE",
                         Some("SETUP_UNAVAILABLE") => "SETUP_UNAVAILABLE",
                         Some("SETUP_MODEL_METADATA_REQUIRED") => "SETUP_MODEL_METADATA_REQUIRED",
@@ -520,7 +546,29 @@ fn valid_setup(op: &str, value: &Value) -> bool {
                 .as_object()
                 .is_some_and(|payload| payload.is_empty()))
             || (op == "provider.configure"
-                && valid_provider_setup(&value["payload"], &value["requestId"])))
+                && valid_provider_setup(&value["payload"], &value["requestId"]))
+            || (matches!(op, "profile.select" | "session.start") && {
+                let fields: &[&str] = if op == "profile.select" {
+                    &[
+                        "requestId",
+                        "workspaceId",
+                        "profileId",
+                        "expectedProfileRevision",
+                        "expectedConfigRevision",
+                    ]
+                } else {
+                    &[
+                        "requestId",
+                        "workspaceId",
+                        "profileId",
+                        "expectedConfigRevision",
+                    ]
+                };
+                let payload = &value["payload"];
+                exact_fields(payload, fields)
+                    && payload["requestId"] == value["requestId"]
+                    && fields.iter().all(|field| setup_id(&payload[*field]))
+            }))
 }
 
 fn exact_fields(value: &Value, fields: &[&str]) -> bool {
@@ -726,6 +774,9 @@ fn setup_metadata(
         json!(if secret.is_some() { "new" } else { "keep" }),
     );
     if let Some(secret) = &secret {
+        if secret.as_bytes().len() < 8 {
+            return Err(BridgeError::setup("SETUP_INVALID"));
+        }
         let metadata = setup_text(&payload);
         if crate::credentials::contains_secret_form(&metadata, secret) {
             return Err(BridgeError::setup("SETUP_INVALID"));
@@ -854,7 +905,10 @@ fn configure_provider(
     payload: Value,
     call: impl Fn(&str, Value) -> Result<Value, BridgeError>,
 ) -> Result<Value, BridgeError> {
-    use crate::credentials::{CredentialRef, read_owned, write_generated};
+    use crate::credentials::{
+        CredentialError, CredentialRef, ensure_reserved, read_owned, secret_bytes_equal,
+    };
+    use sha2::{Digest, Sha256};
     let (metadata, secret) = setup_metadata(payload)?;
     let encoded = setup_text(&metadata);
     let (_, redacted) = crate::credentials::redact_owned(&encoded)
@@ -868,28 +922,61 @@ fn configure_provider(
         exact_fields(&prepared, &["state", "credentialRef", "view"])
             && valid_setup_view(&prepared["view"], &metadata)
     } else {
-        prepared["state"] == "prepared" && exact_fields(&prepared, &["state", "credentialRef"])
+        prepared["state"] == "prepared"
+            && exact_fields(&prepared, &["state", "credentialRef", "reservation"])
     }) {
         return Err(BridgeError::setup("SETUP_OUTCOME_UNKNOWN"));
     }
-    let reference = match (replay, secret.as_ref()) {
-        (false, Some(secret)) => {
-            if !prepared["credentialRef"].is_null() {
-                return Err(BridgeError::setup("SETUP_OUTCOME_UNKNOWN"));
-            }
-            write_generated(secret.as_str())
+    let reference = prepared["credentialRef"]
+        .as_str()
+        .and_then(|value| CredentialRef::parse(value).ok())
+        .ok_or_else(|| BridgeError::setup("SETUP_OUTCOME_UNKNOWN"))?;
+    let present = if !replay {
+        let reservation = &prepared["reservation"];
+        let hash: String = Sha256::digest(metadata["requestId"].as_str().unwrap().as_bytes())
+            .iter()
+            .take(16)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let expected_id = format!("setup:{hash}:credres");
+        let digest = reservation["digest"].as_str().unwrap_or("");
+        if !exact_fields(reservation, &["recordId", "digest", "created"])
+            || reservation["recordId"] != expected_id
+            || !digest.strip_prefix("sha256:").is_some_and(|value| {
+                value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            })
+            || !reservation["created"].is_boolean()
+        {
+            return Err(BridgeError::setup("SETUP_OUTCOME_UNKNOWN"));
+        }
+        if let Some(secret) = secret.as_ref() {
+            ensure_reserved(
+                &reference,
+                &expected_id,
+                digest,
+                secret.as_str(),
+                reservation["created"].as_bool().unwrap(),
+            )
+            .map_err(|error| {
+                BridgeError::setup(match error {
+                    CredentialError::ReservationConflict => "SETUP_REQUEST_CONFLICT",
+                    CredentialError::ReservationOrphaned => "SETUP_CREDENTIAL_RESERVATION_ORPHANED",
+                    _ => "SETUP_CREDENTIAL_UNAVAILABLE",
+                })
+            })?
+        } else {
+            read_owned(&reference)
                 .map_err(|_| BridgeError::setup("SETUP_CREDENTIAL_UNAVAILABLE"))?
         }
-        _ => prepared["credentialRef"]
-            .as_str()
-            .and_then(|value| CredentialRef::parse(value).ok())
-            .ok_or_else(|| BridgeError::setup("SETUP_CREDENTIAL_UNAVAILABLE"))?,
+    } else {
+        read_owned(&reference).map_err(|_| BridgeError::setup("SETUP_CREDENTIAL_UNAVAILABLE"))?
     };
-    let present =
-        read_owned(&reference).map_err(|_| BridgeError::setup("SETUP_CREDENTIAL_UNAVAILABLE"))?;
     if secret
         .as_ref()
-        .is_some_and(|secret| secret.as_bytes() != present.as_bytes())
+        .is_some_and(|secret| !secret_bytes_equal(secret.as_bytes(), present.as_bytes()))
     {
         return Err(BridgeError::setup("SETUP_REQUEST_CONFLICT"));
     }
@@ -924,7 +1011,7 @@ fn configure_provider(
         read_owned(&reference).map_err(|_| BridgeError::setup("SETUP_OUTCOME_UNKNOWN"))?;
     if secret
         .as_ref()
-        .is_some_and(|secret| secret.as_bytes() != present.as_bytes())
+        .is_some_and(|secret| !secret_bytes_equal(secret.as_bytes(), present.as_bytes()))
     {
         return Err(BridgeError::setup("SETUP_OUTCOME_UNKNOWN"));
     }
@@ -1339,35 +1426,86 @@ mod tests {
 
     #[test]
     fn provider_setup_transport_loss_preserves_actual_wincred_key() {
-        let _inventory = crate::credentials::fixture_guard();
         use crate::credentials::{CredentialRef, delete_owned, read_owned};
-        let reference = std::cell::RefCell::new(None);
-        let result = configure_provider(provider_setup_fixture(), |method, params| {
+        use sha2::{Digest, Sha256};
+        use windows_sys::Win32::Security::Cryptography::{
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+        };
+        let _inventory = crate::credentials::fixture_guard();
+        let mut id = [0_u8; 32];
+        assert!(
+            unsafe {
+                BCryptGenRandom(
+                    std::ptr::null_mut(),
+                    id.as_mut_ptr(),
+                    32,
+                    BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+                )
+            } >= 0
+        );
+        let reference = CredentialRef::parse(&format!(
+            "splyce-credential:v1:{}",
+            id.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        ))
+        .unwrap();
+        struct Cleanup(Option<CredentialRef>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                if let Some(reference) = &self.0 {
+                    let _ = delete_owned(reference);
+                }
+            }
+        }
+        let cleanup = std::cell::RefCell::new(Cleanup(None));
+        let input = provider_setup_fixture();
+        let hash: String = Sha256::digest(input["requestId"].as_str().unwrap().as_bytes())
+            .iter()
+            .take(16)
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let reservation = json!({"recordId":format!("setup:{}:credres", &hash[..32]),"digest":format!("sha256:{}", "a".repeat(64)),"created":true});
+        let attempts = std::cell::Cell::new(0);
+        let transport = |method: &str, params: Value| {
             assert!(
                 !serde_json::to_string(&params)
                     .unwrap()
                     .contains("synthetic-setup-value")
             );
             match method {
-                "native.provider.prepare" => Ok(json!({"state":"prepared","credentialRef":null})),
+                "native.provider.prepare" => {
+                    let mut reservation = reservation.clone();
+                    reservation["created"] = json!(attempts.get() == 0);
+                    attempts.set(attempts.get() + 1);
+                    Ok(
+                        json!({"state":"prepared","credentialRef":reference.as_str(),"reservation":reservation}),
+                    )
+                }
                 "native.provider.commit" => {
-                    let parsed = CredentialRef::parse(params["credentialRef"].as_str().unwrap())
-                        .ok()
-                        .unwrap();
+                    cleanup.borrow_mut().0 = Some(reference.clone());
+                    assert_eq!(params["credentialRef"], reference.as_str());
                     assert_eq!(
-                        read_owned(&parsed).unwrap().as_str(),
+                        read_owned(&reference).unwrap().as_str(),
                         "synthetic-setup-value"
                     );
-                    *reference.borrow_mut() = Some(parsed);
                     Err(BridgeError::engine())
                 }
                 _ => panic!("unexpected transport call"),
             }
-        });
-        assert_eq!(result.err().unwrap().code, "SETUP_OUTCOME_UNKNOWN");
-        let reference = reference.borrow_mut().take().unwrap();
-        assert!(read_owned(&reference).is_ok());
-        delete_owned(&reference).unwrap();
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                configure_provider(input.clone(), transport)
+                    .err()
+                    .unwrap()
+                    .code,
+                "SETUP_OUTCOME_UNKNOWN"
+            );
+            assert_eq!(
+                read_owned(&reference).unwrap().as_str(),
+                "synthetic-setup-value"
+            );
+        }
+        assert_eq!(attempts.get(), 2);
     }
 
     #[test]
@@ -1624,6 +1762,23 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
         let workspace = source.call("native.workspace.admit", json!({"canonicalPath":admitted.path(),"volumeSerial":identity.volume_serial.to_string(),"fileId":identity.file_id.to_string()})).ok().unwrap();
         let source = std::cell::RefCell::new(source);
         let references = std::cell::RefCell::new(Vec::new());
+        let interrupted = std::cell::RefCell::new(None);
+        struct Cleanup<'a>(
+            &'a std::cell::RefCell<Vec<CredentialRef>>,
+            &'a std::cell::RefCell<Option<CredentialRef>>,
+        );
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let mut unique = Vec::new();
+                for reference in self.0.borrow().iter().chain(self.1.borrow().iter()) {
+                    if !unique.contains(reference) {
+                        let _ = delete_owned(reference);
+                        unique.push(reference.clone());
+                    }
+                }
+            }
+        }
+        let _cleanup = Cleanup(&references, &interrupted);
         let transport = |method: &str, params: Value| {
             if method == "native.provider.commit" {
                 references.borrow_mut().push(
@@ -1636,7 +1791,17 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
         };
         let mut input = provider_setup_fixture();
         input["workspaceId"] = workspace["workspaceId"].clone();
+        let first_attempt = configure_provider(input.clone(), |method, params| {
+            if method == "native.provider.commit" {
+                *interrupted.borrow_mut() =
+                    Some(CredentialRef::parse(params["credentialRef"].as_str().unwrap()).unwrap());
+                return Err(BridgeError::engine());
+            }
+            source.borrow_mut().call(method, params)
+        });
+        assert_eq!(first_attempt.err().unwrap().code, "SETUP_OUTCOME_UNKNOWN");
         let first = configure_provider(input.clone(), transport).ok().unwrap();
+        assert!(interrupted.borrow().as_ref() == references.borrow().first());
         assert_eq!(first["connectionRevision"], "c1");
         assert_eq!(first["profileRevision"], "p1");
         assert_eq!(first["endpointRevision"], "r1");
@@ -1778,12 +1943,6 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
         );
         drop(source);
         drop(admitted);
-        for (index, reference) in references.borrow().iter().enumerate() {
-            if index == 1 {
-                continue;
-            }
-            delete_owned(reference).unwrap();
-        }
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -2136,6 +2295,81 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
             let mut invalid = valid.clone();
             invalid[key] = value;
             assert!(!valid_setup("metadata", &invalid));
+        }
+    }
+
+    #[test]
+    fn selection_and_session_setup_require_exact_payloads_without_authority() {
+        for op in ["profile.select", "session.start"] {
+            let mut payload = json!({
+                "requestId":"request1", "workspaceId":"workspace1",
+                "profileId":"profile1", "expectedConfigRevision":"cfg-0"
+            });
+            if op == "profile.select" {
+                payload["expectedProfileRevision"] = json!("p1");
+            }
+            let valid =
+                json!({"frame":"setup","command":op,"requestId":"request1","payload":payload});
+            assert!(valid_setup(op, &valid));
+            assert!(!valid_setup("other", &valid));
+            for field in payload.as_object().unwrap().keys() {
+                for value in [
+                    json!(null),
+                    json!(""),
+                    json!("bad/id"),
+                    json!("bad\nvalue"),
+                    json!("x".repeat(129)),
+                ] {
+                    let mut invalid = valid.clone();
+                    invalid["payload"][field] = value;
+                    assert!(!valid_setup(op, &invalid), "{op}: {field}");
+                }
+                let mut missing = valid.clone();
+                missing["payload"].as_object_mut().unwrap().remove(field);
+                assert!(!valid_setup(op, &missing));
+            }
+            let mut mismatched = valid.clone();
+            mismatched["payload"]["requestId"] = json!("other-request");
+            assert!(!valid_setup(op, &mismatched));
+            for field in [
+                "sessionId",
+                "scopeId",
+                "grantIds",
+                "credentialRef",
+                "path",
+                "extra",
+            ] {
+                let mut invalid = valid.clone();
+                invalid["payload"][field] = json!("untrusted");
+                assert!(!valid_setup(op, &invalid));
+                invalid = valid.clone();
+                invalid[field] = json!("untrusted");
+                assert!(!valid_setup(op, &invalid));
+            }
+            if op == "session.start" {
+                let mut invalid = valid.clone();
+                invalid["payload"]["expectedProfileRevision"] = json!("p1");
+                assert!(!valid_setup(op, &invalid));
+            }
+        }
+    }
+
+    #[test]
+    fn selection_errors_preserve_only_the_frozen_codes_and_fixed_copy() {
+        for code in [
+            "STALE_REVISION",
+            "WORKSPACE_SUPERSEDED",
+            "SETUP_REQUEST_CONFLICT",
+        ] {
+            let error = BridgeError::selection(Some(code));
+            assert_eq!(error.code, code);
+            assert_eq!(error.message, "Setup unavailable");
+            assert!(!error.retryable);
+        }
+        for code in [None, Some("unknown"), Some("private-value")] {
+            let error = BridgeError::selection(code);
+            assert_eq!(error.code, "POLICY_DENIED");
+            assert_eq!(error.message, "Setup unavailable");
         }
     }
 

@@ -4,7 +4,7 @@
 mod credentials;
 
 use credentials::{
-    delete_owned, read_owned, write_generated, CredentialError, CredentialRef, MAX_SECRET_BYTES,
+    CredentialError, CredentialRef, MAX_SECRET_BYTES, delete_owned, read_owned, write_generated,
 };
 use std::ptr::null_mut;
 use std::sync::MutexGuard;
@@ -311,4 +311,99 @@ fn diagnostics_are_fixed_and_do_not_contain_input() {
         assert!(error.to_string().len() < 64);
         assert!(!error.to_string().contains("splyce-credential:"));
     }
+}
+
+#[test]
+fn reserved_credentials_are_idempotent_and_fail_closed() {
+    use credentials::ensure_reserved;
+    use windows_sys::Win32::Security::Cryptography::{
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+    };
+    let mut fixtures = Fixtures::default();
+    let mut id = [0u8; 32];
+    assert!(
+        unsafe {
+            BCryptGenRandom(
+                null_mut(),
+                id.as_mut_ptr(),
+                32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        } >= 0
+    );
+    let reference = CredentialRef::parse(&format!(
+        "splyce-credential:v1:{}",
+        id.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    ))
+    .unwrap();
+    let record = format!("setup:{}:credres", "a".repeat(32));
+    let digest = format!("sha256:{}", "b".repeat(64));
+    assert!(matches!(
+        ensure_reserved(&reference, &record, &digest, "synthetic-reservation", false),
+        Err(CredentialError::ReservationOrphaned)
+    ));
+    assert_eq!(
+        ensure_reserved(&reference, &record, &digest, "synthetic-reservation", true)
+            .unwrap()
+            .as_str(),
+        "synthetic-reservation"
+    );
+    fixtures.references.push(reference.clone());
+    assert_eq!(
+        ensure_reserved(&reference, &record, &digest, "synthetic-reservation", false)
+            .unwrap()
+            .as_str(),
+        "synthetic-reservation"
+    );
+    assert!(matches!(
+        ensure_reserved(&reference, &record, &digest, "synthetic-different", true),
+        Err(CredentialError::ReservationConflict)
+    ));
+    assert!(matches!(
+        ensure_reserved(
+            &reference,
+            &record,
+            &format!("sha256:{}", "c".repeat(64)),
+            "synthetic-reservation",
+            true
+        ),
+        Err(CredentialError::ReservationConflict)
+    ));
+    assert_eq!(
+        read_owned(&reference).unwrap().as_str(),
+        "synthetic-reservation"
+    );
+    let mutex_name = credentials::fixture_reservation_name(&reference).unwrap();
+    let abandoned = std::thread::spawn(move || {
+        use windows_sys::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
+        assert!(!handle.is_null());
+        assert_eq!(
+            unsafe { WaitForSingleObject(handle, 10_000) },
+            windows_sys::Win32::Foundation::WAIT_OBJECT_0
+        );
+        handle as usize
+    })
+    .join()
+    .unwrap();
+    assert!(ensure_reserved(&reference, &record, &digest, "synthetic-reservation", false).is_ok());
+    unsafe {
+        windows_sys::Win32::Foundation::CloseHandle(abandoned as _);
+    }
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                assert!(
+                    ensure_reserved(&reference, &record, &digest, "synthetic-reservation", false)
+                        .is_ok()
+                )
+            });
+        }
+    });
+    let unowned = fixtures.write("synthetic-unowned").clone();
+    assert!(matches!(
+        ensure_reserved(&unowned, &record, &digest, "synthetic-unowned", true),
+        Err(CredentialError::ReservationConflict)
+    ));
+    assert_eq!(read_owned(&unowned).unwrap().as_str(), "synthetic-unowned");
 }

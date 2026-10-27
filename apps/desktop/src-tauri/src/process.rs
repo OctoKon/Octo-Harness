@@ -335,17 +335,17 @@ pub use windows::{EngineChild, EngineEvents};
 mod windows {
     use super::*;
     use std::collections::VecDeque;
-    use std::ffi::{c_void, OsStr};
+    use std::ffi::{OsStr, c_void};
     use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::ptr::{null, null_mut};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc, Condvar, Mutex};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::System::JobObjects::*;
@@ -658,7 +658,7 @@ mod windows {
         frame: Value,
         scopes: &mut std::collections::HashMap<String, (CredentialScope, Instant, bool)>,
     ) -> Result<Vec<u8>, EngineError> {
-        use crate::credentials::{read_owned, CredentialError, CredentialRef};
+        use crate::credentials::{CredentialError, CredentialRef, read_owned};
         let invalid = || EngineError::new("ENGINE_FRAME", "Invalid native control frame");
         let object = frame
             .as_object()
@@ -1771,10 +1771,12 @@ mod tests {
         assert!(digest_matches(bytes, &digest));
         assert!(!digest_matches(br#"{}"#, &digest));
         assert!(!digest_matches(bytes, ""));
-        assert!(serde_json::from_slice::<Manifest>(
-            br#"{"schemaVersion":1,"piRevision":"pin","files":[],"extra":true}"#
-        )
-        .is_err());
+        assert!(
+            serde_json::from_slice::<Manifest>(
+                br#"{"schemaVersion":1,"piRevision":"pin","files":[],"extra":true}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -3,17 +3,20 @@
 
 use std::fmt;
 use std::ptr::{null_mut, write_volatile};
-use std::sync::atomic::{compiler_fence, Ordering};
+use std::sync::atomic::{Ordering, compiler_fence};
 use windows_sys::Win32::Foundation::{
-    GetLastError, ERROR_ACCESS_DENIED, ERROR_NOT_FOUND, ERROR_NO_SUCH_LOGON_SESSION, ERROR_NO_TOKEN,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_NO_SUCH_LOGON_SESSION, ERROR_NO_TOKEN, ERROR_NOT_FOUND,
+    GetLastError, WAIT_ABANDONED, WAIT_OBJECT_0,
 };
 use windows_sys::Win32::Security::Credentials::{
     CRED_MAX_CREDENTIAL_BLOB_SIZE, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW,
     CredDeleteW, CredEnumerateW, CredFree, CredReadW, CredWriteW,
 };
 use windows_sys::Win32::Security::Cryptography::{
-    BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+    BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
 };
+
+use windows_sys::Win32::System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject};
 
 const REFERENCE_PREFIX: &str = "splyce-credential:v1:";
 const TARGET_PREFIX: &str = "Splyce/credentials/v1/";
@@ -94,6 +97,8 @@ pub enum CredentialError {
     Unavailable,
     PlatformFailure,
     CorruptCredential,
+    ReservationConflict,
+    ReservationOrphaned,
 }
 
 impl fmt::Display for CredentialError {
@@ -106,6 +111,8 @@ impl fmt::Display for CredentialError {
             Self::Unavailable => "Credential facility unavailable",
             Self::PlatformFailure => "Credential operation failed",
             Self::CorruptCredential => "Invalid stored credential",
+            Self::ReservationConflict => "Credential reservation conflict",
+            Self::ReservationOrphaned => "Credential reservation unavailable",
         })
     }
 }
@@ -216,6 +223,194 @@ pub fn read_owned(reference: &CredentialRef) -> Result<SecretBuffer, CredentialE
     let secret = std::str::from_utf8(bytes).map_err(|_| CredentialError::CorruptCredential)?;
     validate_secret(secret).map_err(|_| CredentialError::CorruptCredential)?;
     Ok(SecretBuffer(bytes.to_vec()))
+}
+
+struct ReservationLock(windows_sys::Win32::Foundation::HANDLE);
+
+impl Drop for ReservationLock {
+    fn drop(&mut self) {
+        unsafe {
+            ReleaseMutex(self.0);
+            CloseHandle(self.0);
+        }
+    }
+}
+
+fn reservation_name(reference: &CredentialRef) -> Result<Vec<u16>, CredentialError> {
+    use windows_sys::Win32::Security::{
+        GetLengthSid, GetTokenInformation, IsValidSid, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let mut token = null_mut();
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err(last_error());
+    }
+    struct Token(windows_sys::Win32::Foundation::HANDLE);
+    impl Drop for Token {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+    let token = Token(token);
+    let mut buffer = [0_usize; 128];
+    let mut length = 0;
+    if unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            std::mem::size_of_val(&buffer) as u32,
+            &mut length,
+        )
+    } == 0
+    {
+        return Err(last_error());
+    }
+    let sid = unsafe { (*(buffer.as_ptr() as *const TOKEN_USER)).User.Sid };
+    if sid.is_null() || unsafe { IsValidSid(sid) } == 0 {
+        return Err(CredentialError::Unavailable);
+    }
+    let size = unsafe { GetLengthSid(sid) } as usize;
+    if size == 0 || size > 68 {
+        return Err(CredentialError::Unavailable);
+    }
+    let sid = unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), size) };
+    let user = sid
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!(
+        "Global\\Splyce-Credential-{user}-{}",
+        &reference.as_str()[REFERENCE_PREFIX.len()..]
+    )
+    .encode_utf16()
+    .chain(Some(0))
+    .collect())
+}
+
+#[cfg(test)]
+pub fn fixture_reservation_name(reference: &CredentialRef) -> Result<Vec<u16>, CredentialError> {
+    reservation_name(reference)
+}
+
+fn reservation_lock(reference: &CredentialRef) -> Result<ReservationLock, CredentialError> {
+    let name = reservation_name(reference)?;
+    let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+    if handle.is_null() {
+        return Err(last_error());
+    }
+    let wait = unsafe { WaitForSingleObject(handle, 10_000) };
+    if wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED {
+        unsafe {
+            CloseHandle(handle);
+        }
+        return Err(CredentialError::Unavailable);
+    }
+    Ok(ReservationLock(handle))
+}
+
+pub fn secret_bytes_equal(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
+        == 0
+}
+
+pub fn ensure_reserved(
+    reference: &CredentialRef,
+    record_id: &str,
+    digest: &str,
+    secret: &str,
+    creation_allowed: bool,
+) -> Result<SecretBuffer, CredentialError> {
+    fn lower_hex(value: &str, length: usize) -> bool {
+        value.len() == length
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
+    if !record_id
+        .strip_prefix("setup:")
+        .and_then(|v| v.strip_suffix(":credres"))
+        .is_some_and(|v| lower_hex(v, 32))
+        || !digest
+            .strip_prefix("sha256:")
+            .is_some_and(|v| lower_hex(v, 64))
+    {
+        return Err(CredentialError::ReservationConflict);
+    }
+    validate_secret(secret)?;
+    if secret.len() < 8 {
+        return Err(CredentialError::InvalidSecret);
+    }
+    let _lock = reservation_lock(reference)?;
+    let mut target = reference.target();
+    let target_ptr = target.as_mut_ptr();
+    let marker: Vec<u16> = format!("splyce-reservation:v1:{record_id}:{digest}")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let read = || -> Result<SecretBuffer, CredentialError> {
+        let mut pointer = null_mut();
+        if unsafe { CredReadW(target_ptr, CRED_TYPE_GENERIC, 0, &mut pointer) } == 0 {
+            return Err(last_error());
+        }
+        if pointer.is_null() {
+            return Err(CredentialError::CorruptCredential);
+        }
+        let native = NativeCredential(pointer);
+        let c = unsafe { &*native.0 };
+        if c.Comment.is_null()
+            || !marker
+                .iter()
+                .enumerate()
+                .all(|(i, unit)| unsafe { *c.Comment.add(i) == *unit })
+        {
+            return Err(CredentialError::ReservationConflict);
+        }
+        let size = c.CredentialBlobSize as usize;
+        if c.Type != CRED_TYPE_GENERIC
+            || c.Persist != CRED_PERSIST_LOCAL_MACHINE
+            || size == 0
+            || size > MAX_SECRET_BYTES
+            || c.CredentialBlob.is_null()
+        {
+            return Err(CredentialError::CorruptCredential);
+        }
+        let bytes = unsafe { std::slice::from_raw_parts(c.CredentialBlob, size) };
+        let text = std::str::from_utf8(bytes).map_err(|_| CredentialError::CorruptCredential)?;
+        validate_secret(text).map_err(|_| CredentialError::CorruptCredential)?;
+        if !secret_bytes_equal(bytes, secret.as_bytes()) {
+            return Err(CredentialError::ReservationConflict);
+        }
+        Ok(SecretBuffer(bytes.to_vec()))
+    };
+    match read() {
+        Ok(value) => return Ok(value),
+        Err(CredentialError::NotFound) if !creation_allowed => {
+            return Err(CredentialError::ReservationOrphaned);
+        }
+        Err(CredentialError::NotFound) => {}
+        Err(error) => return Err(error),
+    }
+    let credential = CREDENTIALW {
+        Type: CRED_TYPE_GENERIC,
+        TargetName: target_ptr,
+        Comment: marker.as_ptr() as *mut u16,
+        CredentialBlobSize: secret.len() as u32,
+        CredentialBlob: secret.as_ptr() as *mut u8,
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        ..CREDENTIALW::default()
+    };
+    if unsafe { CredWriteW(&credential, 0) } == 0 {
+        return Err(last_error());
+    }
+    read()
 }
 
 pub fn delete_owned(reference: &CredentialRef) -> Result<(), CredentialError> {

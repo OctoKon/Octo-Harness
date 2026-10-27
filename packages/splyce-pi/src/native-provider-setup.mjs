@@ -283,11 +283,14 @@ export function createNativeProviderSetup(store, directory) {
     if (actual !== descriptor.bytes) fail("SETUP_REQUEST_CONFLICT");
     return true;
   }
-  function reserveDescriptor(descriptor, metadata, rows) {
+  function reserveDescriptor(descriptor, metadata, rows, append = true) {
     const existing = rows.find(
       ({ record }) => record.recordId === descriptor.recordId,
     );
-    if (existing) return verifyDescriptor(descriptor, metadata, rows);
+    if (existing) {
+      verifyDescriptor(descriptor, metadata, rows);
+      return existing.record;
+    }
     mkdirSync(descriptorDirectory, { recursive: true });
     try {
       writeFileSync(descriptor.path, descriptor.bytes, { flag: "wx" });
@@ -296,24 +299,30 @@ export function createNativeProviderSetup(store, directory) {
       if (readFileSync(descriptor.path, "utf8") !== descriptor.bytes)
         fail("SETUP_REQUEST_CONFLICT");
     }
-    store.append(
-      {
-        kind: "artifact",
-        record: {
-          schemaVersion: CONTRACT_VERSION,
-          recordId: descriptor.recordId,
-          scopeId: metadata.workspaceId,
-          sourceIds: [],
-          createdAt: new Date().toISOString(),
-          artifactId: descriptor.artifactId,
-          digest: descriptor.digest,
-          mediaType: "application/json",
-          byteLength: Buffer.byteLength(descriptor.bytes),
-          retentionClass: "workspace",
-        },
-      },
-      caller,
-    );
+    const record = {
+      schemaVersion: CONTRACT_VERSION,
+      recordId: descriptor.recordId,
+      scopeId: metadata.workspaceId,
+      sourceIds: [],
+      createdAt: new Date().toISOString(),
+      artifactId: descriptor.artifactId,
+      digest: descriptor.digest,
+      mediaType: "application/json",
+      byteLength: Buffer.byteLength(descriptor.bytes),
+      retentionClass: "workspace",
+    };
+    if (!append) return record;
+    try {
+      store.append({ kind: "artifact", record }, caller);
+    } catch (error) {
+      const fresh = observe(metadata);
+      const row = fresh.rows.find(
+        ({ record }) => record.recordId === descriptor.recordId,
+      );
+      if (!row) throw error;
+      verifyDescriptor(descriptor, metadata, fresh.rows);
+    }
+    return record;
   }
   function setupInput(metadata, credentialRef) {
     const [account, limits, egress] = descriptors(metadata);
@@ -480,6 +489,33 @@ export function createNativeProviderSetup(store, directory) {
         credentialRef: replay.connection.credentialRef,
         view: view(metadata, replay),
       };
+    const owned = descriptors(metadata);
+    const intentId = owned[3].recordId;
+    const reservationId = `setup:${hash(metadata.requestId).slice(0, 32)}:credres`;
+    const hasIntent = observation.records.some(
+      ({ record }) => record.recordId === intentId,
+    );
+    const hasReservation = observation.records.some(
+      ({ record }) => record.recordId === reservationId,
+    );
+    if (hasIntent && !hasReservation) fail("SETUP_REQUEST_CONFLICT");
+    for (const descriptor of owned) {
+      if (
+        observation.records.some(
+          ({ record }) => record.recordId === descriptor.recordId,
+        )
+      )
+        verifyDescriptor(descriptor, metadata, rows);
+      try {
+        if (readFileSync(descriptor.path, "utf8") !== descriptor.bytes)
+          fail("SETUP_REQUEST_CONFLICT");
+      } catch (error) {
+        if (error?.code !== "ENOENT") {
+          if (error?.code === "SETUP_REQUEST_CONFLICT") throw error;
+          fail("SETUP_DESCRIPTOR_UNAVAILABLE");
+        }
+      }
+    }
     const wanted = setupInput(metadata, "pending");
     for (const [kind, idKey, entityId, revisionKey, expected] of [
       [
@@ -518,28 +554,38 @@ export function createNativeProviderSetup(store, directory) {
       metadata.credentialKind === "keep" ? existing?.credentialRef : null;
     if (metadata.credentialKind === "keep" && typeof credentialRef !== "string")
       fail("SETUP_CREDENTIAL_UNAVAILABLE");
-    const owned = descriptors(metadata);
-    for (const descriptor of owned) {
-      if (
-        observation.records.some(
-          ({ record }) => record.recordId === descriptor.recordId,
-        )
-      )
-        verifyDescriptor(descriptor, metadata, rows);
-      try {
-        if (readFileSync(descriptor.path, "utf8") !== descriptor.bytes)
-          fail("SETUP_REQUEST_CONFLICT");
-      } catch (error) {
-        if (error?.code !== "ENOENT") {
-          if (error?.code === "SETUP_REQUEST_CONFLICT") throw error;
-          fail("SETUP_DESCRIPTOR_UNAVAILABLE");
-        }
-      }
-    }
-    // Reserve intent before new descriptors; a reused request cannot append changed metadata.
-    for (const descriptor of [owned[3], ...owned.slice(0, 3)])
+    // The intent file can precede the atomic intent and reservation rows.
+    const intent = owned[3];
+    const intentRecord = reserveDescriptor(intent, metadata, rows, false);
+    for (const descriptor of owned.slice(0, 3))
       reserveDescriptor(descriptor, metadata, rows);
-    return { state: "prepared", credentialRef };
+    const fresh = observe(metadata);
+    const reserved = store.reserveSetupCredential(
+      setupInput(metadata, credentialRef ?? "pending"),
+      {
+        metadataHash: hash(
+          JSON.stringify({
+            metadata,
+            modelDescriptor: selectedModel(metadata),
+          }),
+        ),
+        intentId: intent.recordId,
+        modelDescriptorHash: hash(JSON.stringify(selectedModel(metadata))),
+        kind: metadata.credentialKind,
+        credentialRef,
+      },
+      caller,
+      fresh.observation.deletionEpoch,
+      () =>
+        owned
+          .slice(0, 3)
+          .every((descriptor) =>
+            verifyDescriptor(descriptor, metadata, fresh.rows),
+          ) && readFileSync(intent.path, "utf8") === intent.bytes,
+      owned.slice(0, 3),
+      intentRecord,
+    );
+    return { state: "prepared", ...reserved };
   }
   function read(raw) {
     if (
@@ -568,10 +614,7 @@ export function createNativeProviderSetup(store, directory) {
       fail();
     const metadata = validateProviderSetup(raw.metadata);
     const prepared = prepare(metadata);
-    if (
-      metadata.credentialKind === "keep" &&
-      prepared.credentialRef !== raw.credentialRef
-    )
+    if (prepared.credentialRef !== raw.credentialRef)
       fail("SETUP_REQUEST_CONFLICT");
     if (
       prepared.state === "replayed" &&
@@ -580,6 +623,19 @@ export function createNativeProviderSetup(store, directory) {
       fail("SETUP_REQUEST_CONFLICT");
     const checkedDescriptors = descriptors(metadata);
     const { rows, observation } = observe(metadata);
+    const reservationId = `setup:${hash(metadata.requestId).slice(0, 32)}:credres`;
+    const connectionId = `setup:${hash(metadata.requestId).slice(0, 32)}:connection`;
+    const connection = rows.find(
+      ({ record }) => record.recordId === connectionId,
+    )?.record;
+    const linkedReservation = connection?.sourceIds.includes(reservationId);
+    const reservation =
+      prepared.state === "prepared"
+        ? prepared.reservation
+        : linkedReservation
+          ? rows.find(({ record }) => record.recordId === reservationId)?.record
+          : undefined;
+    if (linkedReservation && !reservation) fail("SETUP_REQUEST_CONFLICT");
     store.commitSetup(
       setupInput(metadata, raw.credentialRef),
       {
@@ -595,6 +651,22 @@ export function createNativeProviderSetup(store, directory) {
             )),
       },
       observation.deletionEpoch,
+      reservation
+        ? {
+            recordId: reservationId,
+            digest: reservation.digest,
+            credentialRef: raw.credentialRef,
+            metadataHash: hash(
+              JSON.stringify({
+                metadata,
+                modelDescriptor: selectedModel(metadata),
+              }),
+            ),
+            intentId: checkedDescriptors[3].recordId,
+            modelDescriptorHash: hash(JSON.stringify(selectedModel(metadata))),
+            kind: metadata.credentialKind,
+          }
+        : undefined,
     );
     try {
       return read(raw);

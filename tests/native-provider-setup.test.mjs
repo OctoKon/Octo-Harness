@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
+  copyFileSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -12,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import {
   createNativeProviderSetup,
   validateProviderSetup,
@@ -472,14 +474,21 @@ test("real Store prepare reserves only owned nonsecret descriptors and survives 
     "function",
     "requires the real coherent Store API",
   );
-  assert.deepEqual(host.prepareProviderSetup(metadata), {
-    state: "prepared",
-    credentialRef: null,
-  });
+  const first = host.prepareProviderSetup(metadata);
+  assert.equal(first.state, "prepared");
+  assert.match(first.credentialRef, /^splyce-credential:v1:[a-f0-9]{64}$/u);
+  assert.equal(first.reservation.created, true);
   const observation = writer.readSetupState(metadata.workspaceId);
   assert.deepEqual(
     observation.records.map(({ kind }) => kind),
-    ["admittedWorkspace", "artifact", "artifact", "artifact", "artifact"],
+    [
+      "admittedWorkspace",
+      "artifact",
+      "artifact",
+      "artifact",
+      "artifact",
+      "artifact",
+    ],
   );
   const descriptorPath = join(directory, "splyce", "setup-descriptors");
   const definitions = readdirSync(descriptorPath).map((name) =>
@@ -516,7 +525,7 @@ test("real Store prepare reserves only owned nonsecret descriptors and survives 
       ...metadata,
       chat: { modelId: metadata.chat.modelId, model: limits },
     }),
-    { state: "prepared", credentialRef: null },
+    { ...first, reservation: { ...first.reservation, created: false } },
   );
   assert.equal(
     writer.cursor(),
@@ -527,8 +536,8 @@ test("real Store prepare reserves only owned nonsecret descriptors and survives 
   const reopened = createNativeHost(directory);
   try {
     assert.deepEqual(reopened.prepareProviderSetup(metadata), {
-      state: "prepared",
-      credentialRef: null,
+      ...first,
+      reservation: { ...first.reservation, created: false },
     });
     assert.equal(writer.cursor(), cursor);
     assert.equal(reopened.handshakeReadiness.ports.generation, false);
@@ -585,10 +594,8 @@ test("omitted model settings resolve only an exact pinned catalog tuple and bind
     endpoint: "https://api.openai.com/v1",
     chat: { modelId: "gpt-4" },
   };
-  assert.deepEqual(host.prepareProviderSetup(selected), {
-    state: "prepared",
-    credentialRef: null,
-  });
+  const first = host.prepareProviderSetup(selected);
+  assert.equal(first.reservation.created, true);
   const descriptorPath = join(directory, "splyce", "setup-descriptors");
   const intent = readdirSync(descriptorPath)
     .map((name) => JSON.parse(readFileSync(join(descriptorPath, name), "utf8")))
@@ -606,8 +613,8 @@ test("omitted model settings resolve only an exact pinned catalog tuple and bind
   });
   const cursor = writer.cursor();
   assert.deepEqual(host.prepareProviderSetup(selected), {
-    state: "prepared",
-    credentialRef: null,
+    ...first,
+    reservation: { ...first.reservation, created: false },
   });
   assert.throws(
     () =>
@@ -653,10 +660,7 @@ test("catalog misses cannot inherit a model from another endpoint, API or model 
 test("shared metadata preflight supports 128-byte opaque request IDs and blocks credential-shaped IDs", (t) => {
   const { host, writer, metadata } = admittedFixture(t);
   const input = { ...metadata, requestId: "q".repeat(128) };
-  assert.deepEqual(host.prepareProviderSetup(input), {
-    state: "prepared",
-    credentialRef: null,
-  });
+  assert.equal(host.prepareProviderSetup(input).reservation.created, true);
   assert.ok(
     writer
       .readSetupState(metadata.workspaceId)
@@ -727,9 +731,8 @@ test("descriptor deletion between observation and commit cannot append or replay
     const setup = createNativeProviderSetup(writer, join(directory, "splyce"));
     const input = {
       metadata,
-      credentialRef: `splyce-credential:v1:${"a".repeat(64)}`,
+      credentialRef: setup.prepare(metadata).credentialRef,
     };
-    setup.prepare(metadata);
     if (replay) {
       const committed = setup.commit(input);
       assert.deepEqual(setup.commit(input), committed);
@@ -764,4 +767,284 @@ test("descriptor deletion between observation and commit cannot append or replay
       );
     other.close();
   }
+});
+
+test("reservation survives reopen and backup, refuses rollback and changed backup", (t) => {
+  const { directory, host, writer, metadata } = admittedFixture(t);
+  host.close();
+  const rootDir = join(directory, "splyce");
+  const old = join(directory, "before.db");
+  writer.backup(old);
+  const setup = createNativeProviderSetup(writer, rootDir);
+  const first = setup.prepare(metadata);
+  const fresh = join(directory, "after.db");
+  writer.backup(fresh);
+  assert.throws(
+    () => writer.restore(old),
+    (error) => error.code === "RESTORE_RESERVATION_MISMATCH",
+  );
+  const changed = join(directory, "changed.db");
+  writer.backup(changed);
+  const db = new DatabaseSync(changed);
+  db.prepare(
+    "UPDATE records SET payload = replace(payload, ?, ?) WHERE record_id = ?",
+  ).run(
+    first.reservation.digest,
+    `sha256:${"0".repeat(64)}`,
+    first.reservation.recordId,
+  );
+  db.close();
+  assert.throws(
+    () => writer.restore(changed),
+    (error) => error.code === "RESTORE_RESERVATION_MISMATCH",
+  );
+  writer.restore(fresh);
+  assert.deepEqual(setup.prepare(metadata), {
+    ...first,
+    reservation: { ...first.reservation, created: false },
+  });
+  const stored = writer.get(first.reservation.recordId).record;
+  assert.equal(stored.reservation.credentialRef, first.credentialRef);
+  assert.equal(JSON.stringify(stored).includes("secret"), false);
+});
+
+test("two Store handles reuse an immutable reservation and deletion prevents reuse", (t) => {
+  const { directory, writer, metadata } = admittedFixture(t);
+  const rootDir = join(directory, "splyce");
+  const other = Store.open(join(rootDir, "store.db"));
+  const firstSetup = createNativeProviderSetup(writer, rootDir);
+  const secondSetup = createNativeProviderSetup(other, rootDir);
+  const first = firstSetup.prepare(metadata);
+  assert.deepEqual(secondSetup.prepare(metadata), {
+    ...first,
+    reservation: { ...first.reservation, created: false },
+  });
+  assert.throws(
+    () =>
+      secondSetup.prepare({ ...metadata, endpoint: "https://other.test/v1" }),
+    (error) => error.code === "SETUP_REQUEST_CONFLICT",
+  );
+  assert.throws(
+    () =>
+      secondSetup.prepare({
+        ...metadata,
+        credentialKind: "keep",
+        expectedConnectionRevision: "c1",
+      }),
+    (error) => error.code === "SETUP_REQUEST_CONFLICT",
+  );
+  writer.noteDeletion(first.reservation.recordId);
+  assert.throws(
+    () => secondSetup.prepare(metadata),
+    (error) => error.code === "SETUP_DELETED",
+  );
+  other.close();
+});
+
+test("reservation is rechecked under commit lock and linked to connection", (t) => {
+  const { directory, writer, metadata } = admittedFixture(t);
+  const rootDir = join(directory, "splyce");
+  const other = Store.open(join(rootDir, "store.db"));
+  const setup = createNativeProviderSetup(writer, rootDir);
+  const first = setup.prepare(metadata);
+  const original = writer.commitSetup.bind(writer);
+  writer.commitSetup = (...args) => {
+    other.noteDeletion(first.reservation.recordId);
+    return original(...args);
+  };
+  assert.throws(
+    () => setup.commit({ metadata, credentialRef: first.credentialRef }),
+    (error) => ["SETUP_INVALID", "SETUP_DELETED"].includes(error.code),
+  );
+  assert.equal(
+    writer
+      .readSetupState(metadata.workspaceId)
+      .records.some(({ kind }) => kind === "providerConnection"),
+    false,
+  );
+  other.close();
+});
+
+test("concurrent processes reserve one reference for the same intent", async (t) => {
+  const { directory, writer, metadata } = admittedFixture(t);
+  const rootDir = join(directory, "splyce");
+  const setup = createNativeProviderSetup(writer, rootDir);
+  const original = writer.reserveSetupCredential;
+  writer.reserveSetupCredential = () => {
+    throw new Error("pause before reservation");
+  };
+  assert.throws(() => setup.prepare(metadata), /pause before reservation/u);
+  writer.reserveSetupCredential = original;
+  const code = `import { Store } from './packages/splyce-pi/dist/store.js'; import { createNativeProviderSetup } from './packages/splyce-pi/src/native-provider-setup.mjs'; import { join } from 'node:path'; const [dir, json] = process.argv.slice(1); const store = Store.open(join(dir, 'store.db')); try { console.log(JSON.stringify(createNativeProviderSetup(store, dir).prepare(JSON.parse(json)))); } finally { store.close(); }`;
+  const run = () =>
+    new Promise((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        ["--input-type=module", "-e", code, rootDir, JSON.stringify(metadata)],
+        { cwd: root },
+      );
+      let out = "",
+        err = "";
+      child.stdout.on("data", (part) => {
+        out += part;
+      });
+      child.stderr.on("data", (part) => {
+        err += part;
+      });
+      child.on("error", reject);
+      child.on("exit", (status) =>
+        status === 0 ? resolve(JSON.parse(out)) : reject(new Error(err)),
+      );
+    });
+  const [a, b] = await Promise.all([run(), run()]);
+  assert.equal(a.credentialRef, b.credentialRef);
+  assert.equal(a.reservation.digest, b.reservation.digest);
+  assert.deepEqual([a.reservation.created, b.reservation.created].sort(), [
+    false,
+    true,
+  ]);
+});
+
+test("committed connection links reservation and replay rejects a deleted reservation", (t) => {
+  const { directory, writer, metadata } = admittedFixture(t);
+  const setup = createNativeProviderSetup(writer, join(directory, "splyce"));
+  const first = setup.prepare(metadata);
+  const input = { metadata, credentialRef: first.credentialRef };
+  assert.equal(setup.commit(input).state, "committed");
+  const connection = writer
+    .readSetupState(metadata.workspaceId)
+    .records.find(({ kind }) => kind === "providerConnection").record;
+  assert.ok(connection.sourceIds.includes(first.reservation.recordId));
+  writer.noteDeletion(first.reservation.recordId);
+  assert.throws(
+    () => setup.commit(input),
+    (error) => ["SETUP_DELETED", "SETUP_REQUEST_CONFLICT"].includes(error.code),
+  );
+});
+
+test("pre-change Store can read and export a committed reservation record", (t) => {
+  const { directory, host, writer, metadata } = admittedFixture(t);
+  const setup = createNativeProviderSetup(writer, join(directory, "splyce"));
+  const prepared = setup.prepare(metadata);
+  setup.commit({ metadata, credentialRef: prepared.credentialRef });
+  host.close();
+  writer.close();
+  const oldSource = spawnSync(
+    "git",
+    [
+      "show",
+      "f8ac9bddd8b14336ba28c5e2ffc5f89816657d40:packages/splyce-pi/src/store.ts",
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(oldSource.status, 0, oldSource.stderr);
+  const fixture = join(directory, "old-reader");
+  mkdirSync(fixture);
+  writeFileSync(join(fixture, "package.json"), '{"type":"module"}');
+  for (const name of ["contracts.js", "setup-metadata.js"])
+    copyFileSync(
+      join(root, "packages/splyce-pi/dist", name),
+      join(fixture, name),
+    );
+  writeFileSync(join(fixture, "store.ts"), oldSource.stdout);
+  const compile = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `import ts from 'typescript'; import {readFileSync,writeFileSync} from 'node:fs'; writeFileSync(process.argv[2], ts.transpileModule(readFileSync(process.argv[1], 'utf8'), {compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText);`,
+      join(fixture, "store.ts"),
+      join(fixture, "store.js"),
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(compile.status, 0, compile.stderr);
+  const runner = `import { Store } from ${JSON.stringify(new URL("file:///" + join(fixture, "store.js").replaceAll("\\", "/")).href)}; const s = Store.open(process.argv[1], {readOnly:true}); try { const row=s.get(process.argv[2]); if (row.record.recordId !== process.argv[2]) process.exitCode=2; s.exportJSONL(process.argv[3]); } finally { s.close(); }`;
+  const output = join(fixture, "old-export.jsonl");
+  const read = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      runner,
+      join(directory, "splyce", "store.db"),
+      prepared.reservation.recordId,
+      output,
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(read.status, 0, read.stderr);
+  assert.ok(
+    readFileSync(output, "utf8").includes(prepared.reservation.recordId),
+  );
+});
+
+test("intent and reservation commit atomically and can retry after a failed transaction", (t) => {
+  const { directory, writer, metadata } = admittedFixture(t);
+  const rootDir = join(directory, "splyce");
+  const db = new DatabaseSync(join(rootDir, "store.db"));
+  db.exec(
+    "CREATE TRIGGER fail_reservation BEFORE INSERT ON records WHEN NEW.record_id GLOB 'setup:*:credres' BEGIN SELECT RAISE(ABORT, 'injected reservation failure'); END",
+  );
+  const setup = createNativeProviderSetup(writer, rootDir);
+  assert.throws(() => setup.prepare(metadata));
+  const rows = writer.readSetupState(metadata.workspaceId).records;
+  assert.equal(
+    rows.some(({ record }) =>
+      record.artifactId?.startsWith("native-setup:request:"),
+    ),
+    false,
+  );
+  assert.equal(
+    rows.some(({ record }) => record.recordId.endsWith(":credres")),
+    false,
+  );
+  db.exec("DROP TRIGGER fail_reservation");
+  db.close();
+  assert.equal(setup.prepare(metadata).reservation.created, true);
+});
+
+test("a surviving intent with a physically missing reservation fails closed", (t) => {
+  const { directory, host, writer, metadata } = admittedFixture(t);
+  const rootDir = join(directory, "splyce");
+  const setup = createNativeProviderSetup(writer, rootDir);
+  const first = setup.prepare(metadata);
+  host.close();
+  writer.close();
+  const db = new DatabaseSync(join(rootDir, "store.db"));
+  db.prepare("DELETE FROM records WHERE record_id = ?").run(
+    first.reservation.recordId,
+  );
+  db.close();
+  const reopened = Store.open(join(rootDir, "store.db"));
+  const retry = createNativeProviderSetup(reopened, rootDir);
+  const cursor = reopened.cursor();
+  assert.throws(
+    () => retry.prepare(metadata),
+    (error) => error.code === "SETUP_REQUEST_CONFLICT",
+  );
+  assert.equal(reopened.cursor(), cursor);
+  reopened.close();
+});
+
+test("keep reserves the actual current connection reference", (t) => {
+  const { directory, writer, metadata } = admittedFixture(t);
+  const setup = createNativeProviderSetup(writer, join(directory, "splyce"));
+  const first = setup.prepare(metadata);
+  setup.commit({ metadata, credentialRef: first.credentialRef });
+  const next = {
+    ...metadata,
+    requestId: "request2",
+    credentialKind: "keep",
+    expectedConnectionRevision: "c1",
+    expectedEndpointRevision: "r1",
+    expectedProfileRevision: "p1",
+  };
+  const kept = setup.prepare(next);
+  assert.equal(kept.credentialRef, first.credentialRef);
+  assert.equal(kept.reservation.created, true);
+  assert.equal(
+    setup.commit({ metadata: next, credentialRef: kept.credentialRef }).state,
+    "committed",
+  );
 });

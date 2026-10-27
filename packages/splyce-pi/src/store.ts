@@ -1118,6 +1118,316 @@ export class Store {
     };
   }
 
+  reserveSetupCredential(
+    setup: SetupInput,
+    binding: {
+      metadataHash: string;
+      intentId: string;
+      modelDescriptorHash: string;
+      kind: "new" | "keep";
+      credentialRef: string | null;
+    },
+    caller: CallerContext,
+    expectedDeletionEpoch: number,
+    checkDescriptors: () => boolean,
+    descriptors: readonly { recordId: string; digest: string }[],
+    intentRecord: RecordByKind["artifact"],
+  ): {
+    credentialRef: string;
+    reservation: { recordId: string; digest: string; created: boolean };
+  } {
+    const recordId = `setup:${createHash("sha256").update(setup.requestId).digest("hex").slice(0, 32)}:credres`;
+    const credentialRef =
+      binding.kind === "new"
+        ? `splyce-credential:v1:${Array.from(crypto.getRandomValues(new Uint8Array(32)), (byte) => byte.toString(16).padStart(2, "0")).join("")}`
+        : binding.credentialRef;
+    if (
+      credentialRef === null ||
+      !/^splyce-credential:v1:[a-f0-9]{64}$/u.test(credentialRef)
+    )
+      throw new StoreError(
+        "SETUP_CREDENTIAL_UNAVAILABLE",
+        "credential reference unavailable",
+      );
+    const body = {
+      workspaceId: setup.workspaceId,
+      metadataHash: binding.metadataHash,
+      intentId: binding.intentId,
+      modelDescriptorHash: binding.modelDescriptorHash,
+      kind: binding.kind,
+      credentialRef,
+    };
+    const json = JSON.stringify(body);
+    const digest = `sha256:${createHash("sha256").update(json).digest("hex")}`;
+    const record = {
+      schemaVersion: CONTRACT_VERSION,
+      recordId,
+      createdAt: new Date().toISOString(),
+      scopeId: setup.workspaceId,
+      sourceIds: [],
+      artifactId: recordId,
+      digest,
+      mediaType: "application/vnd.splyce.credential-reservation+json",
+      byteLength: new TextEncoder().encode(json).length,
+      retentionClass: "workspace",
+      reservation: body,
+    };
+    let existing: typeof record | undefined;
+    try {
+      this.commitBatch(
+        [
+          { kind: "artifact", record: intentRecord },
+          { kind: "artifact", record },
+        ],
+        [],
+        caller,
+        {
+          reservationCheck: () => {
+            if (
+              this.deletionEpoch() !== expectedDeletionEpoch ||
+              this.currentWorkspace(setup.workspaceId) === undefined
+            )
+              throw new StoreError(
+                "SETUP_INVALID",
+                "setup workspace or deletion epoch changed",
+              );
+            for (const [kind, field, id, rev, expected] of [
+              [
+                "providerEndpoint",
+                "endpointId",
+                setup.endpoint.endpointId,
+                "revision",
+                setup.expected.endpointRevision,
+              ],
+              [
+                "providerConnection",
+                "providerConnectionId",
+                setup.connection.providerConnectionId,
+                "revision",
+                setup.expected.connectionRevision,
+              ],
+              [
+                "profileSnapshot",
+                "profileId",
+                setup.profile.profileId,
+                "profileRevision",
+                setup.expected.profileRevision,
+              ],
+            ] as const) {
+              const latest = this.db
+                .prepare(
+                  `SELECT payload, schema_version, EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = records.record_id) AS deleted FROM records WHERE kind = ? AND scope_id = ? AND json_extract(payload, '$.${field}') = ? ORDER BY seq DESC LIMIT 1`,
+                )
+                .get(kind, setup.workspaceId, id) as
+                | { payload: string; schema_version: number; deleted: number }
+                | undefined;
+              if (
+                latest &&
+                (Number(latest.schema_version) !== CONTRACT_VERSION ||
+                  Number(latest.deleted) !== 0)
+              )
+                throw new StoreError(
+                  "SETUP_STALE_REVISION",
+                  "entity unavailable",
+                );
+              const current = latest
+                ? (JSON.parse(latest.payload) as Record<string, unknown>)
+                : undefined;
+              if ((current?.[rev] ?? null) !== expected)
+                throw new StoreError(
+                  "SETUP_STALE_REVISION",
+                  "entity revision changed",
+                );
+              if (
+                kind === "providerConnection" &&
+                binding.kind === "keep" &&
+                current?.credentialRef !== credentialRef
+              )
+                throw new StoreError(
+                  "SETUP_REQUEST_CONFLICT",
+                  "credential changed",
+                );
+            }
+            for (const descriptor of descriptors) {
+              const current = this.db
+                .prepare(
+                  "SELECT kind, schema_version, payload, EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = records.record_id) AS deleted FROM records WHERE record_id = ?",
+                )
+                .get(descriptor.recordId) as
+                | {
+                    kind: string;
+                    schema_version: number;
+                    payload: string;
+                    deleted: number;
+                  }
+                | undefined;
+              if (
+                !current ||
+                current.kind !== "artifact" ||
+                Number(current.schema_version) !== CONTRACT_VERSION ||
+                Number(current.deleted) !== 0 ||
+                (JSON.parse(current.payload) as { digest?: string }).digest !==
+                  descriptor.digest
+              )
+                throw new StoreError(
+                  "SETUP_DESCRIPTOR_UNAVAILABLE",
+                  "descriptor changed",
+                );
+            }
+            if (!checkDescriptors())
+              throw new StoreError(
+                "SETUP_DESCRIPTOR_UNAVAILABLE",
+                "descriptor changed",
+              );
+            const intent = this.db
+              .prepare(
+                "SELECT kind, schema_version, payload, EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = records.record_id) AS deleted FROM records WHERE record_id = ?",
+              )
+              .get(binding.intentId) as
+              | {
+                  kind: string;
+                  schema_version: number;
+                  payload: string;
+                  deleted: number;
+                }
+              | undefined;
+            const currentIntent = intent
+              ? (JSON.parse(intent.payload) as Record<string, unknown>)
+              : undefined;
+            if (
+              intent &&
+              (intent.kind !== "artifact" ||
+                Number(intent.schema_version) !== CONTRACT_VERSION ||
+                Number(intent.deleted) !== 0 ||
+                [
+                  "recordId",
+                  "scopeId",
+                  "artifactId",
+                  "digest",
+                  "mediaType",
+                  "byteLength",
+                  "retentionClass",
+                ].some(
+                  (key) =>
+                    currentIntent?.[key] !==
+                    (intentRecord as unknown as Record<string, unknown>)[key],
+                ))
+            )
+              throw new StoreError(
+                "SETUP_REQUEST_CONFLICT",
+                "intent unavailable or changed",
+              );
+            const row = this.reservationRow(recordId);
+            if (Boolean(intent) !== Boolean(row))
+              throw new StoreError(
+                "SETUP_REQUEST_CONFLICT",
+                "intent and reservation must both exist",
+              );
+            if (row !== undefined) {
+              const stored = row as typeof record;
+              const prior = stored.reservation;
+              if (
+                !prior ||
+                prior.workspaceId !== body.workspaceId ||
+                prior.metadataHash !== body.metadataHash ||
+                prior.intentId !== body.intentId ||
+                prior.modelDescriptorHash !== body.modelDescriptorHash ||
+                prior.kind !== body.kind ||
+                (body.kind === "keep" &&
+                  prior.credentialRef !== body.credentialRef)
+              )
+                throw new StoreError(
+                  "SETUP_REQUEST_CONFLICT",
+                  "reservation binding changed",
+                );
+              existing = stored;
+              throw new StoreError(
+                "SETUP_RESERVATION_REPLAY",
+                "reservation already exists",
+              );
+            }
+          },
+        },
+      );
+    } catch (error) {
+      if (!(
+        error instanceof StoreError &&
+        error.code === "SETUP_RESERVATION_REPLAY" &&
+        existing
+      ))
+        throw error;
+      return {
+        credentialRef: existing.reservation.credentialRef,
+        reservation: { recordId, digest: existing.digest, created: false },
+      };
+    }
+    return { credentialRef, reservation: { recordId, digest, created: true } };
+  }
+
+  private reservationRow(recordId: string): Record<string, any> | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT seq, kind, schema_version, payload, EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = records.record_id) AS deleted FROM records WHERE record_id = ?",
+      )
+      .get(recordId) as
+      | {
+          seq: number;
+          kind: string;
+          schema_version: number;
+          payload: string;
+          deleted: number;
+        }
+      | undefined;
+    if (!row) {
+      if (
+        this.db
+          .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+          .get(recordId)
+      )
+        throw new StoreError("SETUP_DELETED", "reservation deleted");
+      return undefined;
+    }
+    if (Number(row.deleted) !== 0)
+      throw new StoreError("SETUP_DELETED", "reservation deleted");
+    const record = this.readRow(row).record as unknown as Record<string, any>;
+    const body = record.reservation;
+    const json = JSON.stringify(body);
+    if (
+      row.kind !== "artifact" ||
+      record.recordId !== recordId ||
+      record.artifactId !== recordId ||
+      record.mediaType !==
+        "application/vnd.splyce.credential-reservation+json" ||
+      record.retentionClass !== "workspace" ||
+      !body ||
+      typeof body !== "object" ||
+      JSON.stringify(Object.keys(body).sort()) !==
+        JSON.stringify([
+          "credentialRef",
+          "intentId",
+          "kind",
+          "metadataHash",
+          "modelDescriptorHash",
+          "workspaceId",
+        ]) ||
+      typeof body.metadataHash !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(body.metadataHash) ||
+      typeof body.modelDescriptorHash !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(body.modelDescriptorHash) ||
+      typeof body.intentId !== "string" ||
+      !body.intentId.startsWith("native-descriptor:") ||
+      !["new", "keep"].includes(body.kind) ||
+      record.scopeId !== body.workspaceId ||
+      typeof body.credentialRef !== "string" ||
+      !/^splyce-credential:v1:[a-f0-9]{64}$/u.test(body.credentialRef) ||
+      record.digest !==
+        `sha256:${createHash("sha256").update(json).digest("hex")}` ||
+      record.byteLength !== new TextEncoder().encode(json).length
+    )
+      throw new StoreError("SETUP_REQUEST_CONFLICT", "reservation corrupt");
+    return record;
+  }
+
   /**
    * TD-26 first-run setup: endpoint, connection and profile revisions commit in
    * ONE transaction with per-entity CAS under the same lock. Record ids derive
@@ -1129,6 +1439,15 @@ export class Store {
     input: unknown,
     caller: CallerContext,
     expectedDeletionEpoch?: number,
+    reservation?: {
+      recordId: string;
+      digest: string;
+      credentialRef: string;
+      metadataHash: string;
+      intentId: string;
+      modelDescriptorHash: string;
+      kind: "new" | "keep";
+    },
   ): SetupResult {
     let setup: SetupInput;
     try {
@@ -1176,6 +1495,7 @@ export class Store {
     // displayName is rejected as an unknown field: the connection record has no such field.
     const connection = {
       ...base(ids.connection),
+      sourceIds: reservation ? [digestRef, reservation.recordId] : [digestRef],
       providerConnectionId: setup.connection.providerConnectionId,
       revision: setup.connection.revision,
       apiFamily: setup.connection.apiFamily,
@@ -1248,6 +1568,7 @@ export class Store {
         (refScope === scopeId &&
           (ref === connection.endpointRef ||
             ref === digestRef ||
+            ref === reservation?.recordId ||
             descriptorArtifacts.some((a) => a.recordId === ref))) ||
         resolve(ref),
     };
@@ -1268,6 +1589,7 @@ export class Store {
         {
           expectedSetup: {
             workspaceId: scopeId,
+            ...(reservation ? { reservation } : {}),
             expectedDeletionEpoch,
             recordIds: [
               ...Object.values(ids),
@@ -1417,6 +1739,7 @@ export class Store {
       expectedSessionCursor,
       expectedEntityRevision,
       expectedSetup,
+      reservationCheck,
       expectedOnceGrant,
       expectedGrantMint,
       expectedActiveGrants,
@@ -1424,8 +1747,18 @@ export class Store {
     }: EventPreconditions & {
       expectedEntityRevision?:
         EntityRevisionExpectation | readonly EntityRevisionExpectation[];
+      reservationCheck?: () => void;
       expectedSetup?: {
         workspaceId: string;
+        reservation?: {
+          recordId: string;
+          digest: string;
+          credentialRef: string;
+          metadataHash: string;
+          intentId: string;
+          modelDescriptorHash: string;
+          kind: "new" | "keep";
+        };
         expectedDeletionEpoch: number | undefined;
         recordIds: readonly string[];
         digestRef: string;
@@ -1493,6 +1826,7 @@ export class Store {
     }
     try {
       this.db.exec("BEGIN IMMEDIATE;");
+      reservationCheck?.();
       if (expectedSetup !== undefined) {
         if (
           expectedSetup.expectedDeletionEpoch !== undefined &&
@@ -1510,6 +1844,31 @@ export class Store {
             "SETUP_INVALID",
             "setup reference does not resolve: workspace",
           );
+        if (expectedSetup.reservation) {
+          const expected = expectedSetup.reservation;
+          const stored = this.reservationRow(expected.recordId);
+          if (
+            !stored ||
+            stored.digest !== expected.digest ||
+            stored.scopeId !== expectedSetup.workspaceId ||
+            stored.reservation.credentialRef !== expected.credentialRef ||
+            stored.reservation.metadataHash !== expected.metadataHash ||
+            stored.reservation.intentId !== expected.intentId ||
+            stored.reservation.modelDescriptorHash !==
+              expected.modelDescriptorHash ||
+            stored.reservation.kind !== expected.kind ||
+            !prepared.some(
+              ([kind, record]) =>
+                kind === "providerConnection" &&
+                record.credentialRef === expected.credentialRef &&
+                record.sourceIds.includes(expected.recordId),
+            )
+          )
+            throw new StoreError(
+              "SETUP_REQUEST_CONFLICT",
+              "reservation changed before setup commit",
+            );
+        }
         // One observation of all participating rows (tombstones included) under the lock.
         const rows = expectedSetup.recordIds.map(
           (id) =>
@@ -2386,6 +2745,39 @@ export class Store {
         `backup ownership epoch ${String(backup.ownershipEpoch)} is older than current ${String(liveOwnershipEpoch)}; restoring would roll back the workspace writer state`,
       );
 
+    const reservationRows = (db: DatabaseSync) =>
+      db
+        .prepare(
+          "SELECT record_id, kind, scope_id, schema_version, payload FROM records WHERE record_id GLOB 'setup:*:credres' ORDER BY record_id",
+        )
+        .all() as Array<{
+        record_id: string;
+        kind: string;
+        scope_id: string;
+        schema_version: number;
+        payload: string;
+      }>;
+    const liveReservations = reservationRows(this.db);
+    const assertReservations = (path: string) => {
+      const snapshot = new DatabaseSync(path, { readOnly: true });
+      try {
+        const restored = new Map(
+          reservationRows(snapshot).map((row) => [row.record_id, row]),
+        );
+        for (const live of liveReservations) {
+          const candidate = restored.get(live.record_id);
+          if (!candidate || JSON.stringify(candidate) !== JSON.stringify(live))
+            throw new StoreError(
+              "RESTORE_RESERVATION_MISMATCH",
+              "restore would change a credential reservation",
+            );
+        }
+      } finally {
+        snapshot.close();
+      }
+    };
+    assertReservations(backupPath);
+
     const liveWatermarks = Store.eventWatermarks(this.db);
     const assertEventRecovery = (watermarks: readonly EventWatermark[]) => {
       for (const live of liveWatermarks) {
@@ -2410,6 +2802,7 @@ export class Store {
     try {
       copyFileSync(backupPath, staging);
       assertEventRecovery(Store.validateBackup(staging).eventWatermarks);
+      assertReservations(staging);
     } catch (error) {
       try {
         // The staging path is store-reserved; clear any blocking artifact so
