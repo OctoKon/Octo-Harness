@@ -266,6 +266,14 @@ const IMPORT_W = 1;
 const DEF_W = 1;
 const REF_W = 0.5;
 const MIN_REF_NAME = 3;
+/** A name defined in more files than this (`main`, `handler`) is too generic to link by reference. */
+const MAX_REF_DEFS = 50;
+
+const push = <V>(m: Map<string, V[]>, k: string, v: V) => {
+  const l = m.get(k);
+  if (l) l.push(v);
+  else m.set(k, [v]);
+};
 
 export const fileNode = (p: string) => `f:${p}`;
 export const symbolNode = (d: { path: string; name: string }) =>
@@ -282,7 +290,7 @@ export function buildGraph(
   for (const p of paths)
     if (p.endsWith(".go") && !p.endsWith("_test.go")) {
       const d = dirOf(p);
-      goDirs.set(d, [...(goDirs.get(d) ?? []), p]);
+      push(goDirs, d, p);
     }
   const ctx: ResolveContext = { files: paths, goModule, goDirs };
   const adj = new Map<string, Map<string, number>>();
@@ -303,7 +311,7 @@ export function buildGraph(
     adj.set(fileNode(path), adj.get(fileNode(path)) ?? new Map());
     for (const s of f.symbols ?? []) {
       const d = { path, name: s.name, kind: s.kind, line: s.line };
-      defs.set(s.name, [...(defs.get(s.name) ?? []), d]);
+      push(defs, s.name, d);
       link(symbolNode(d), fileNode(path), DEF_W);
     }
     if (!f.imports) continue;
@@ -316,14 +324,16 @@ export function buildGraph(
     }
     deps.set(path, { resolved: [...resolved].sort(), unresolved });
     for (const r of resolved) {
-      dependents.set(r, [...(dependents.get(r) ?? []), path]);
+      push(dependents, r, path);
       link(fileNode(path), fileNode(r), IMPORT_W);
     }
   }
   for (const [path, f] of files)
     for (const id of f.idents) {
       if (id.length < MIN_REF_NAME) continue;
-      for (const d of defs.get(id) ?? [])
+      const ds = defs.get(id);
+      if (!ds || ds.length > MAX_REF_DEFS) continue;
+      for (const d of ds)
         if (d.path !== path) link(fileNode(path), symbolNode(d), REF_W);
     }
   const degree = new Map<string, number>();

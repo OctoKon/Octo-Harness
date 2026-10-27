@@ -492,3 +492,160 @@ test("dense vectors persist under a model stamp; a model swap re-embeds everythi
   await CodeIndex.open({ root, cacheDir: cache, embedding: b2 });
   assert.equal(b2.texts, 0);
 });
+
+// ---- review hardening: glob ReDoS, secret files, graph/output bounds ----
+
+test("pathGlob is linear: a crafted glob cannot backtrack; semantics hold", async () => {
+  const { root, cache } = fresh({
+    [`${"a".repeat(60)}.ts`]: "export const globAnchor = 1;\n",
+    "src/a+b.ts": "export const globAnchor = 2;\n",
+    "src/deep/x.ts": "export const globAnchor = 3;\n",
+    "top.ts": "export const globAnchor = 4;\n",
+  });
+  const index = await CodeIndex.open({ root, cacheDir: cache });
+  const started = Date.now();
+  const none = await index.search({
+    query: "globAnchor",
+    pathGlob: `${"*a".repeat(60)}*b`,
+  });
+  assert.deepEqual(none, []);
+  const stars = await index.search({
+    query: "globAnchor",
+    pathGlob: `${"**/".repeat(40)}*${"*".repeat(40)}b`,
+  });
+  assert.deepEqual(stars, []);
+  assert.ok(Date.now() - started < 1500, "crafted globs must not backtrack");
+  const g = async (pathGlob: string) =>
+    (await index.search({ query: "globAnchor", pathGlob }))
+      .map((h) => h.path)
+      .sort();
+  assert.deepEqual(await g("src/*.ts"), ["src/a+b.ts"]);
+  assert.deepEqual(await g("**/x.ts"), ["src/deep/x.ts"]);
+  assert.deepEqual(await g("src/**"), ["src/a+b.ts", "src/deep/x.ts"]);
+  assert.deepEqual(await g("t?p.ts"), ["top.ts"]);
+  assert.deepEqual(await g("src/a+b.ts"), ["src/a+b.ts"]);
+  assert.deepEqual(await g("src/a??b.ts"), []);
+  assert.deepEqual(await g("src/a?b.ts"), ["src/a+b.ts"]);
+  await assert.rejects(
+    index.search({ query: "x", pathGlob: "a".repeat(257) }),
+    { code: "INVALID_ARGUMENT" },
+  );
+});
+
+test("secret-shaped files are never indexed, read or cached", async () => {
+  const marker = ["secret", "marker", "quebec"].join("");
+  const pemHead = `-----BEGIN ${"RSA"} PRIVATE ${"KEY"}-----`;
+  const secretPaths = [
+    ".env",
+    ".env.production",
+    "server.pem",
+    "deploy.key",
+    "id_rsa",
+    "id_ed25519",
+    "store.p12",
+    "store.pfx",
+    "credentials.json",
+    "gcp-credentials-prod.json",
+    ".npmrc",
+    ".netrc",
+    ".aws/config",
+  ];
+  for (const git of [true, false]) {
+    const files: Record<string, string> = {
+      "notes/innocent.txt": `${pemHead}\n${marker}\n-----END KEY-----\n`,
+      ".env.example": `TOKEN=exampleOk${marker}\n`,
+      "id_rsa.pub": `pubOk${marker}\n`,
+      "src/keys.ts": `export const keyboardOk${marker} = 1;\n`,
+    };
+    for (const p of secretPaths) files[p] = `value ${marker}\n`;
+    const { root, cache } = fresh(files, git);
+    const index = await CodeIndex.open({ root, cacheDir: cache });
+    const report = await index.refresh();
+    assert.deepEqual(
+      await paths(index, marker),
+      [],
+      `git=${String(git)}: bare marker only occurs in secret files`,
+    );
+    const ok = (
+      await Promise.all(
+        ["exampleOk", "pubOk", "keyboardOk"].map((p) =>
+          paths(index, `${p}${marker}`),
+        ),
+      )
+    ).flat();
+    assert.deepEqual([...new Set(ok)].sort(), [
+      ".env.example",
+      "id_rsa.pub",
+      "src/keys.ts",
+    ]);
+    assert.equal(index.fileCount, 3);
+    for (const p of [...secretPaths, "notes/innocent.txt"])
+      assert.ok(report.skipped.includes(p), `${p} must be skipped`);
+    const cached = readFileSync(index.cacheFile, "utf8");
+    assert.ok(!cached.includes("PRIVATE"), "PEM content never reaches cache");
+    assert.ok(!cached.includes("value "), "secret files never reach cache");
+  }
+});
+
+const bigRepo = (n: number) => {
+  const files: Record<string, string> = {
+    "hub.ts": "export const hubValue = 1;\n",
+  };
+  for (let i = 0; i < n; i++)
+    files[`m/f${String(i)}.ts`] =
+      'import { hubValue } from "../hub.js";\nexport function handler() { return hubValue; }\nhandler();\n';
+  return files;
+};
+
+test("graph build is near-linear and output is bounded on a large repo", async () => {
+  const { root, cache } = fresh(bigRepo(6000));
+  const index = await CodeIndex.open({ root, cacheDir: cache });
+  const t0 = Date.now();
+  await index.refresh(); // every file reused: this times the graph rebuild
+  const took = Date.now() - t0;
+  assert.ok(took < 1500, `graph rebuild took ${String(took)}ms`);
+  const related = index.related("hub.ts");
+  assert.ok(related.status === "ok" && related.results.length === 50);
+  const dep = index.dependents("hub.ts");
+  assert.ok(dep.status === "ok");
+  assert.equal(dep.dependents.length, 200);
+  assert.equal((dep as { truncated?: boolean }).truncated, true);
+  const sym = index.symbol("handler");
+  assert.equal(sym.definitions.length, 200);
+  assert.equal(sym.truncated, true);
+});
+
+test("result limits: default 50, max 200, bounded tool output, file cap flagged", async () => {
+  const long = "d".repeat(90);
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 260; i++)
+    files[`${long}/${long}/f${String(i)}.ts`] =
+      `// ${"commonWord ".repeat(30)}\nexport const v${String(i)} = 1;\n`;
+  const { root, cache } = fresh(files);
+  const index = await CodeIndex.open({ root, cacheDir: cache });
+  assert.equal((await index.search({ query: "commonWord" })).length, 50);
+  assert.equal(
+    (await index.search({ query: "commonWord", limit: 200 })).length,
+    200,
+  );
+  await assert.rejects(index.search({ query: "commonWord", limit: 201 }), {
+    code: "INVALID_ARGUMENT",
+  });
+  const [search] = codeIndexTools(index);
+  const out = (await search!.execute({ query: "commonWord", limit: 200 })) as {
+    results: unknown[];
+    truncated?: boolean;
+  };
+  assert.ok(JSON.stringify(out).length <= 64 * 1024, "tool output is capped");
+  assert.ok(out.results.length < 200 && out.truncated === true);
+
+  const capped = await CodeIndex.open({
+    root,
+    cacheDir: join(cache, "capped"),
+    maxFiles: 25,
+  });
+  assert.equal(capped.fileCount, 25);
+  assert.equal(capped.truncated, true);
+  assert.equal((await capped.refresh()).truncated, true);
+  assert.equal(index.truncated, false);
+});

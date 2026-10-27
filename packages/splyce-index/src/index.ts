@@ -49,13 +49,20 @@ import {
 export type { EmbeddingPort } from "./dense.js";
 export type { Definition, OutlineSymbol } from "./graph.js";
 
-export const CACHE_VERSION = 2;
+// v3: secret-shaped files are never cached; a v2 cache may hold their text.
+export const CACHE_VERSION = 3;
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8192;
 const K1 = 1.2;
 const B = 0.75;
 const DENSE_CANDIDATES = 100;
 const MAX_REFERENCES = 200;
+const MAX_LIST = 200;
+const MAX_GLOB = 256;
+const DEFAULT_MAX_FILES = 50_000;
+const MAX_OUTPUT_BYTES = 64 * 1024;
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
 
 export class CodeIndexError extends Error {
   readonly code:
@@ -89,15 +96,26 @@ export interface SearchHit {
   signals: { bm25?: SignalScore; dense?: SignalScore };
 }
 export type OutlineResult =
-  | { status: "ok"; language: string; symbols: OutlineSymbol[] }
+  | {
+      status: "ok";
+      language: string;
+      symbols: OutlineSymbol[];
+      truncated?: true;
+    }
   | { status: "unsupported"; language: string }
   | { status: "not_indexed" };
 export type DependenciesResult =
-  | { status: "ok"; resolved: string[]; unresolved: string[] }
+  | {
+      status: "ok";
+      resolved: string[];
+      unresolved: string[];
+      truncated?: true;
+    }
   | { status: "unsupported"; language: string }
   | { status: "not_indexed" };
 export type DependentsResult =
-  { status: "ok"; dependents: string[] } | { status: "not_indexed" };
+  | { status: "ok"; dependents: string[]; truncated?: true }
+  | { status: "not_indexed" };
 export interface Reference {
   path: string;
   line: number;
@@ -125,6 +143,8 @@ export interface RefreshReport {
   links: readonly IndexedLink[];
   /** Chunks sent to the embedding port in this refresh. */
   embedded: number;
+  /** True when the file cap stopped indexing before every candidate. */
+  truncated: boolean;
 }
 export type CacheLoad = "loaded" | "absent" | "discarded";
 
@@ -169,22 +189,81 @@ export function tokenize(text: string): string[] {
   return out;
 }
 
-/** `*` within a segment, `**` across segments, `?` one char. */
-export function globRegExp(glob: string): RegExp {
-  let re = "";
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i]!;
-    if (c === "*" && glob[i + 1] === "*") {
-      i++;
-      if (glob[i + 1] === "/") {
-        i++;
-        re += "(?:.*/)?";
-      } else re += ".*";
-    } else if (c === "*") re += "[^/]*";
-    else if (c === "?") re += "[^/]";
-    else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+function segMatch(p: string, s: string): boolean {
+  let pi = 0;
+  let si = 0;
+  let star = -1;
+  let mark = 0;
+  while (si < s.length) {
+    const c = p[pi];
+    if (c === "*") {
+      star = pi++;
+      mark = si;
+    } else if (pi < p.length && (c === "?" || c === s[si])) {
+      pi++;
+      si++;
+    } else if (star >= 0) {
+      pi = star + 1;
+      si = ++mark;
+    } else return false;
   }
-  return new RegExp(`^${re}$`);
+  while (p[pi] === "*") pi++;
+  return pi === p.length;
+}
+
+/**
+ * `*` within a segment, `**` (a whole segment) across segments, `?` one char.
+ * Matches segment by segment with greedy last-star backtracking: no regular
+ * expression, so no catastrophic backtracking; cost is polynomial in the
+ * (capped) glob and path lengths.
+ */
+export function globMatcher(glob: string): (path: string) => boolean {
+  if (glob.length > MAX_GLOB)
+    throw new CodeIndexError(
+      "INVALID_ARGUMENT",
+      `glob must be at most ${String(MAX_GLOB)} characters`,
+    );
+  const segs: string[] = [];
+  for (const raw of glob.split("/")) {
+    const seg = /^\*{2,}$/.test(raw) ? "**" : raw.replace(/\*+/g, "*");
+    if (seg !== "**" || segs.at(-1) !== "**") segs.push(seg);
+  }
+  return (path) => {
+    const ps = path.split("/");
+    let gi = 0;
+    let pi = 0;
+    let star = -1;
+    let mark = 0;
+    while (pi < ps.length) {
+      const g = segs[gi];
+      if (g === "**") {
+        star = gi++;
+        mark = pi;
+      } else if (g !== undefined && segMatch(g, ps[pi]!)) {
+        gi++;
+        pi++;
+      } else if (star >= 0) {
+        gi = star + 1;
+        pi = ++mark;
+      } else return false;
+    }
+    while (segs[gi] === "**") gi++;
+    return gi === segs.length;
+  };
+}
+
+const SECRET_NAME =
+  /^(?:\.env(?:\.(?!(?:example|sample|template|dist)$).+)?|.+\.(?:pem|key|p12|pfx|jks|keystore|ppk)|id_(?:rsa|dsa|ecdsa|ed25519)(?!.*\.pub$).*|.*credentials.*\.json|\.npmrc|\.netrc|_netrc|\.pypirc|\.git-credentials|\.htpasswd)$/i;
+const SECRET_DIRS = new Set([".ssh", ".aws", ".gnupg"]);
+const PEM_PRIVATE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/;
+
+/** Secret-shaped path: decided from the name alone, so it is never read. */
+export function isSecretPath(rel: string): boolean {
+  const parts = rel.toLowerCase().split("/");
+  return (
+    parts.slice(0, -1).some((d) => SECRET_DIRS.has(d)) ||
+    SECRET_NAME.test(parts.at(-1)!)
+  );
 }
 
 function makeDoc(
@@ -305,19 +384,22 @@ function rootIgnore(root: string): (rel: string, dir: boolean) => boolean {
   const rules = (existsSync(file) ? readFileSync(file, "utf8") : "")
     .split(/\r?\n/)
     .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#") && !l.startsWith("!"))
+    .filter(
+      (l) =>
+        l && l.length <= MAX_GLOB && !l.startsWith("#") && !l.startsWith("!"),
+    )
     .map((l) => {
       const dirOnly = l.endsWith("/");
       let p = dirOnly ? l.slice(0, -1) : l;
       const anchored = p.includes("/");
       if (p.startsWith("/")) p = p.slice(1);
-      return { dirOnly, anchored, re: globRegExp(p) };
+      return { dirOnly, anchored, match: globMatcher(p) };
     });
   return (rel, dir) =>
     rules.some(
       (r) =>
         (!r.dirOnly || dir) &&
-        r.re.test(r.anchored ? rel : rel.slice(rel.lastIndexOf("/") + 1)),
+        r.match(r.anchored ? rel : rel.slice(rel.lastIndexOf("/") + 1)),
     );
 }
 
@@ -493,6 +575,8 @@ export interface CodeIndexOptions {
   /** Absolute cache directory under app data. */
   cacheDir: string;
   maxFileBytes?: number;
+  /** Most files indexed (default 50 000); the rest are left out and flagged. */
+  maxFiles?: number;
   /** Enables the dense signal; absent = lexical + graph only. */
   embedding?: EmbeddingPort;
 }
@@ -501,22 +585,26 @@ export class CodeIndex {
   readonly root: string;
   readonly cacheFile: string;
   readonly maxFileBytes: number;
+  readonly maxFiles: number;
   /** What happened to the persisted cache when this index was opened. */
   readonly cacheLoad: CacheLoad;
   readonly #port: EmbeddingPort | null;
   #gen: Generation;
+  #truncated = false;
   #queue: Promise<unknown> = Promise.resolve();
 
   private constructor(
     root: string,
     cacheFile: string,
     maxFileBytes: number,
+    maxFiles: number,
     port: EmbeddingPort | null,
     loaded: ReturnType<typeof loadCache>,
   ) {
     this.root = root;
     this.cacheFile = cacheFile;
     this.maxFileBytes = maxFileBytes;
+    this.maxFiles = maxFiles;
     this.#port = port;
     this.cacheLoad = loaded.status;
     this.#gen = finalize(loaded.files, [], loaded.dense);
@@ -541,6 +629,12 @@ export class CodeIndex {
         "embedding port needs a modelId and positive dimensions",
       );
     const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+    const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
+    if (!Number.isInteger(maxFiles) || maxFiles < 1)
+      throw new CodeIndexError(
+        "INVALID_ARGUMENT",
+        "maxFiles must be a positive integer",
+      );
     mkdirSync(options.cacheDir, { recursive: true });
     const key = createHash("sha256").update(root).digest("hex").slice(0, 16);
     const cacheFile = join(options.cacheDir, `code-index-${key}.json`);
@@ -548,6 +642,7 @@ export class CodeIndex {
       root,
       cacheFile,
       maxFileBytes,
+      maxFiles,
       port,
       loadCache(cacheFile, root, port),
     );
@@ -557,6 +652,10 @@ export class CodeIndex {
 
   get links(): readonly IndexedLink[] {
     return this.#gen.links;
+  }
+  /** True when the last refresh hit `maxFiles` and left files out. */
+  get truncated(): boolean {
+    return this.#truncated;
   }
   get fileCount(): number {
     return this.#gen.files.size;
@@ -581,7 +680,16 @@ export class CodeIndex {
     const reindexed: string[] = [];
     const skipped: string[] = [];
     let reused = 0;
+    let truncated = false;
     for (const { rel, size, mtimeMs } of files) {
+      if (isSecretPath(rel)) {
+        skipped.push(rel); // by name: never read
+        continue;
+      }
+      if (next.size >= this.maxFiles) {
+        truncated = true;
+        break;
+      }
       if (size > this.maxFileBytes) {
         skipped.push(rel);
         continue;
@@ -605,12 +713,18 @@ export class CodeIndex {
         skipped.push(rel);
         continue;
       }
-      next.set(rel, makeDoc(rel, buf.toString("utf8"), mtimeMs, size));
+      const text = buf.toString("utf8");
+      if (PEM_PRIVATE.test(text)) {
+        skipped.push(rel); // private key material under an innocent name
+        continue;
+      }
+      next.set(rel, makeDoc(rel, text, mtimeMs, size));
       reindexed.push(rel);
     }
     const removed = [...old.files.keys()].filter((p) => !next.has(p));
     const { dense, embedded } = await this.#embed(old, next);
     this.#gen = finalize(next, links, dense); // atomic cutover
+    this.#truncated = truncated;
     this.#save();
     return {
       reindexed,
@@ -619,6 +733,7 @@ export class CodeIndex {
       skipped,
       links: this.#gen.links,
       embedded,
+      truncated,
     };
   }
 
@@ -634,6 +749,7 @@ export class CodeIndex {
         ? old.dense
         : null;
     const chunks = new Map<string, readonly Chunk[]>();
+    const added = new Map<string, Chunk[]>();
     const pending: {
       path: string;
       start: number;
@@ -655,11 +771,12 @@ export class CodeIndex {
       pending.map((p) => p.text),
     );
     pending.forEach((p, i) => {
-      chunks.set(p.path, [
-        ...(chunks.get(p.path) ?? []),
-        { start: p.start, end: p.end, vec: vecs[i]! },
-      ]);
+      const c = { start: p.start, end: p.end, vec: vecs[i]! };
+      const list = added.get(p.path);
+      if (list) list.push(c);
+      else added.set(p.path, [c]);
     });
+    for (const [path, list] of added) chunks.set(path, list);
     return {
       dense: { modelId: port.modelId, dimensions: port.dimensions, chunks },
       embedded: pending.length,
@@ -712,14 +829,14 @@ export class CodeIndex {
     const glob =
       i.pathGlob === undefined
         ? null
-        : globRegExp(str(i.pathGlob, 256, "pathGlob"));
-    const limit = intIn(i.limit, 20, 100, "limit");
+        : globMatcher(str(i.pathGlob, MAX_GLOB, "pathGlob"));
+    const limit = intIn(i.limit, DEFAULT_LIMIT, MAX_LIMIT, "limit");
     const phrases = [...query.matchAll(/"([^"]+)"/g)].map((m) =>
       m[1]!.toLowerCase(),
     );
     const terms = [...new Set(tokenize(query.replace(/"/g, " ")))];
     const allowed = (path: string) => {
-      if (glob && !glob.test(path)) return false;
+      if (glob && !glob(path)) return false;
       if (!phrases.length) return true;
       const text = g.files.get(path)!.text.toLowerCase();
       return phrases.every((p) => text.includes(p));
@@ -815,10 +932,14 @@ export class CodeIndex {
     if (!doc) return { status: "not_indexed" };
     if (!doc.symbols)
       return { status: "unsupported", language: extOf(rel) || "none" };
+    const symbols = doc.symbols.slice(0, MAX_LIST);
     return {
       status: "ok",
       language: languageOf(rel)!,
-      symbols: [...doc.symbols],
+      symbols,
+      ...(symbols.length < doc.symbols.length
+        ? { truncated: true as const }
+        : {}),
     };
   }
 
@@ -829,10 +950,16 @@ export class CodeIndex {
     if (!g.files.has(rel)) return { status: "not_indexed" };
     const d = g.graph.deps.get(rel);
     if (!d) return { status: "unsupported", language: extOf(rel) || "none" };
+    const resolved = d.resolved.slice(0, MAX_LIST);
+    const unresolved = d.unresolved.slice(0, MAX_LIST);
     return {
       status: "ok",
-      resolved: [...d.resolved],
-      unresolved: [...d.unresolved],
+      resolved,
+      unresolved,
+      ...(resolved.length < d.resolved.length ||
+      unresolved.length < d.unresolved.length
+        ? { truncated: true as const }
+        : {}),
     };
   }
 
@@ -841,9 +968,12 @@ export class CodeIndex {
     const rel = relPath(path);
     const g = this.#gen;
     if (!g.files.has(rel)) return { status: "not_indexed" };
+    const all = g.graph.dependents.get(rel) ?? [];
+    const dependents = all.slice(0, MAX_LIST);
     return {
       status: "ok",
-      dependents: [...(g.graph.dependents.get(rel) ?? [])],
+      dependents,
+      ...(dependents.length < all.length ? { truncated: true as const } : {}),
     };
   }
 
@@ -851,7 +981,8 @@ export class CodeIndex {
   symbol(name: unknown): SymbolResult {
     const id = str(name, 256, "name");
     const g = this.#gen;
-    const definitions = [...(g.graph.defs.get(id) ?? [])];
+    const allDefs = g.graph.defs.get(id) ?? [];
+    const definitions = allDefs.slice(0, MAX_LIST);
     const defLines = new Set(
       definitions.map((d) => `${d.path}:${String(d.line)}`),
     );
@@ -859,7 +990,7 @@ export class CodeIndex {
       `(?<![\\w$])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w$])`,
     );
     const references: Reference[] = [];
-    let truncated = false;
+    let truncated = definitions.length < allDefs.length;
     for (const [path, doc] of [...g.files].sort((a, b) =>
       a[0] < b[0] ? -1 : 1,
     )) {
@@ -889,7 +1020,7 @@ export class CodeIndex {
    */
   related(target: unknown, limit?: unknown): RelatedResult {
     const t = str(target, 1024, "target").replace(/\\/g, "/");
-    const max = intIn(limit, 10, 100, "limit");
+    const max = intIn(limit, DEFAULT_LIMIT, MAX_LIMIT, "limit");
     const g = this.#gen;
     const seeds = g.files.has(t)
       ? [fileNode(t)]
@@ -948,6 +1079,30 @@ export interface CodeIndexTool {
   execute(args: unknown): Promise<unknown>;
 }
 
+/**
+ * Keeps a tool response under MAX_OUTPUT_BYTES by halving its longest array
+ * until it fits, flagging `truncated`; adds `indexTruncated` when the index
+ * hit its file cap.
+ */
+function capOutput(result: unknown, indexTruncated: boolean): unknown {
+  if (!result || typeof result !== "object" || Array.isArray(result))
+    return result;
+  const out: Record<string, unknown> = {
+    ...(result as Record<string, unknown>),
+  };
+  if (indexTruncated) out.indexTruncated = true;
+  while (Buffer.byteLength(JSON.stringify(out)) > MAX_OUTPUT_BYTES) {
+    let key: string | null = null;
+    let len = 0;
+    for (const [k, v] of Object.entries(out))
+      if (Array.isArray(v) && v.length > len) [key, len] = [k, v.length];
+    if (key === null) break; // nothing left to trim
+    out[key] = (out[key] as unknown[]).slice(0, len >> 1);
+    out.truncated = true;
+  }
+  return out;
+}
+
 const obj = (args: unknown): Record<string, unknown> => {
   if (!args || typeof args !== "object" || Array.isArray(args))
     throw new CodeIndexError(
@@ -984,7 +1139,7 @@ export function codeIndexTools(index: CodeIndex): readonly CodeIndexTool[] {
     async execute(args: unknown) {
       const a = obj(args);
       await index.refresh();
-      return run(a);
+      return capOutput(await run(a), index.truncated);
     },
   });
   return Object.freeze([
@@ -994,7 +1149,7 @@ export function codeIndexTools(index: CodeIndex): readonly CodeIndexTool[] {
       schema(["query"], {
         query: { type: "string", minLength: 1, maxLength: 512 },
         pathGlob: { type: "string", minLength: 1, maxLength: 256 },
-        limit: { type: "integer", minimum: 1, maximum: 100 },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
       }),
       async (a) => ({
         results: await index.search(a as unknown as SearchInput),
@@ -1011,7 +1166,7 @@ export function codeIndexTools(index: CodeIndex): readonly CodeIndexTool[] {
       "Files and symbols most related to a file path or symbol name, ranked by Personalized PageRank over imports, definitions and references.",
       schema(["target"], {
         target: PATH,
-        limit: { type: "integer", minimum: 1, maximum: 100 },
+        limit: { type: "integer", minimum: 1, maximum: 200 },
       }),
       (a) => index.related(a.target, a.limit),
     ),
