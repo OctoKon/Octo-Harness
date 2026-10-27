@@ -24,14 +24,6 @@ export interface ComposerAvailability {
   unavailable?: string;
 }
 
-const CONNECTION_REASONS: Partial<Record<EngineConnectionState, string>> = {
-  disconnected: "Engine is not connected.",
-  connecting: "Engine is still connecting.",
-  unavailable: "Engine is unavailable.",
-  error: "Engine reported an error.",
-  busy: "A turn is running. Press Esc to cancel it.",
-};
-
 /** Honest reason sending is blocked, or null when allowed. */
 export function sendBlockedReason(a: ComposerAvailability): string | null {
   if (a.pending) return "Sending the previous message.";
