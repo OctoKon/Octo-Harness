@@ -43,7 +43,9 @@ async function fixture(t, options = {}) {
       messages: [{ role: "user", content: "hello", timestamp: 0 }],
       tools: [],
     },
-    options: {},
+    options: {
+      model: { maxTokens: 1024, compat: { maxTokensField: "max_tokens" } },
+    },
   };
   const controller = new AbortController();
   let connection = {
@@ -266,8 +268,11 @@ function sse(text, terminal = true) {
       choices: [{ index: 0, delta, finish_reason }],
     })}\n\n`;
   return (
-    chunk({ role: "assistant", content: text }) +
-    (terminal ? chunk({}, "stop") + "data: [DONE]\n\n" : "")
+    (Array.isArray(text) ? text : [text])
+      .map((content, index) =>
+        chunk({ ...(index === 0 ? { role: "assistant" } : {}), content }),
+      )
+      .join("") + (terminal ? chunk({}, "stop") + "data: [DONE]\n\n" : "")
   );
 }
 function deferred() {
@@ -294,6 +299,7 @@ function run(f, events, onEvent = () => {}) {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 8192,
       maxTokens: 1024,
+      ...snapshot.options.model,
     },
     context: snapshot.context,
     onEvent: async (event) => {
@@ -316,18 +322,72 @@ const outcomes = (f) =>
 test("actual SDK terminal and reader cancel precede native credential close and durable success", async (t) => {
   const closing = deferred(),
     release = deferred(),
-    disconnected = deferred();
+    disconnected = deferred(),
+    cancelEntered = deferred(),
+    cancelRelease = deferred();
+  let cancelCompleted = false;
+  const physicalFetch = globalThis.fetch;
+  globalThis.fetch = async (...args) => {
+    const response = await physicalFetch(...args);
+    const body = response.body;
+    const observedBody = new Proxy(body, {
+      get(target, property) {
+        if (property === "getReader")
+          return (...args) => {
+            const reader = target.getReader(...args);
+            return new Proxy(reader, {
+              get(active, key) {
+                if (key === "cancel")
+                  return async (...args) => {
+                    cancelEntered.resolve();
+                    await cancelRelease.promise;
+                    const result = await active.cancel(...args);
+                    cancelCompleted = true;
+                    return result;
+                  };
+                const value = Reflect.get(active, key, active);
+                return typeof value === "function" ? value.bind(active) : value;
+              },
+            });
+          };
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    return new Proxy(response, {
+      get(target, property) {
+        if (property === "body") return observedBody;
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = physicalFetch;
+    cancelRelease.resolve();
+    release.resolve();
+  });
   const f = await fixture(t, {
     finish: (res) => {
       res.once("close", disconnected.resolve);
     },
     close: async () => {
+      assert.equal(
+        cancelCompleted,
+        true,
+        "physical reader cancellation must settle before credential close",
+      );
       closing.resolve();
       await release.promise;
     },
   });
   const events = [];
   const operation = run(f, events);
+  await cancelEntered.promise;
+  assert.equal(cancelCompleted, false);
+  assert.equal(f.frames.includes("credential.scope.close"), false);
+  assert.equal(outcomes(f).length, 0);
+  cancelRelease.resolve();
   await closing.promise;
   assert.equal(events.filter((e) => e.type === "done").length, 1);
   assert.equal(outcomes(f).length, 0);
@@ -355,6 +415,33 @@ test("actual SDK terminal and reader cancel precede native credential close and 
   ]);
   assert.equal(outcomes(f)[0].record.effectState, "observed-success");
   assert.equal(f.resolver.redact(secret).includes(secret), true);
+});
+
+test("actual SDK uses the original native semantic snapshot after caller mutation", async (t) => {
+  const f = await fixture(t);
+  f.semantic.context.messages[0].content = "changed by caller";
+  f.semantic.context.messages[0].timestamp = 999;
+  f.semantic.options.model.maxTokens = 7;
+  f.semantic.options.model.compat.maxTokensField = "max_completion_tokens";
+  f.semantic.model = "changed-model";
+  const snapshot = f.owner.semantic(f.scope);
+  assert.deepEqual(snapshot.context.messages, [
+    { role: "user", content: "hello", timestamp: 0 },
+  ]);
+  assert.deepEqual(snapshot.options, {
+    model: { maxTokens: 1024, compat: { maxTokensField: "max_tokens" } },
+  });
+  assert.equal(snapshot.model, "fixture-model");
+  const events = [];
+  const result = await run(f, events);
+  const wire = JSON.parse(f.bodies[0]);
+  assert.deepEqual(wire.messages, [{ role: "user", content: "hello" }]);
+  assert.equal(wire.model, "fixture-model");
+  assert.equal(wire.max_tokens, 1024);
+  assert.equal(wire.max_completion_tokens, undefined);
+  assert.equal(wire.stream, true);
+  assert.equal(result.content[0].text, "hello");
+  assert.equal(outcomes(f)[0].record.effectState, "observed-success");
 });
 
 test("actual SDK stream abort without provider terminal cannot record success", async (t) => {
@@ -398,7 +485,16 @@ const encodings = {
 for (const [name, encoding] of Object.entries(encodings)) {
   test(`genuine resolver and actual SDK keep ${name} credential fixture unrecoverable`, async (t) => {
     const encoded = encoding.encode(secret);
-    const f = await fixture(t, { text: encoded });
+    const sentinel = "harmless sentinel";
+    const midpoint = Math.floor(encoded.length / 2);
+    const f = await fixture(t, {
+      text: [
+        sentinel + " ",
+        encoded.slice(0, midpoint),
+        encoded.slice(midpoint),
+        " end sentinel",
+      ],
+    });
     const events = [];
     let rawProbe, variantProbe;
     const result = await run(f, events, () => {
@@ -438,6 +534,42 @@ for (const [name, encoding] of Object.entries(encodings)) {
       false,
       "encoded fixture recovered from observer output",
     );
+    const observedText = events
+      .filter((event) => event.type === "text_delta")
+      .map((event) => event.delta)
+      .join("");
+    const finalText = result.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("");
+    for (const text of [observedText, finalText]) {
+      assert.equal(
+        text.startsWith(sentinel),
+        true,
+        "harmless prefix must survive",
+      );
+      assert.equal(
+        text.endsWith("end sentinel"),
+        true,
+        "harmless suffix must survive",
+      );
+      assert.equal(
+        text.includes(encoded),
+        false,
+        "encoded fixture recovered from ordered text",
+      );
+      let reconstructed = text;
+      try {
+        reconstructed = encoding.decode(
+          text.slice(sentinel.length + 1, -" end sentinel".length),
+        );
+      } catch {}
+      assert.equal(
+        reconstructed.includes(secret),
+        false,
+        "encoded fixture recovered after ordered decoding",
+      );
+    }
     const resultRecovered = result.content.some((part) => {
       try {
         return (
