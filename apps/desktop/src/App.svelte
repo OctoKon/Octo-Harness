@@ -301,8 +301,7 @@
       onConfigureProvider={() => (view = "providers")}
     />
   {:else if view === "usage"}
-    <UsageView usage={null} />
-    <p role="status" data-testid="usage-unavailable-note">Usage unavailable - no engine usage report.</p>
+    <UsageView usage={null} status="unavailable" />
   {:else}
     <div class="app-content" class:conversation={currentRun !== undefined}>
       {#if currentRun}
