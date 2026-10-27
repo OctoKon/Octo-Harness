@@ -1045,7 +1045,7 @@ class ChildAdmission implements ToolAdmission {
     const path = isObject(validatedArgs) ? validatedArgs.path : undefined;
     if (path !== undefined) {
       const rel =
-        typeof path === "string" ? confine(this.root, path) : undefined;
+        typeof path === "string" ? (confine(this.root, path) ?? path) : undefined;
       if (rel === undefined)
         this.deny(
           "PATH_OUTSIDE_WORKSPACE",
