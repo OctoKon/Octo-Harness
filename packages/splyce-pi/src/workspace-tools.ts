@@ -13,6 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
+  open,
   rename,
   rm,
   readdir,
@@ -712,9 +713,15 @@ export function createWorkspaceTools(
         const { abs, rel } = await confine(str(args.path, "path"));
         gate("fs.read", rel, a);
         const text = await io(rel, async () => {
-          if ((await lstat(abs)).size > MAX_READ_BYTES)
-            fail("IO_ERROR", `too large: ${rel}`);
-          return readFile(abs, "utf8");
+          // One handle for stat and read: a path swap cannot change what is measured.
+          const handle = await open(abs, "r");
+          try {
+            if ((await handle.stat()).size > MAX_READ_BYTES)
+              fail("IO_ERROR", `too large: ${rel}`);
+            return await handle.readFile({ encoding: "utf8" });
+          } finally {
+            await handle.close();
+          }
         });
         const all = text.split("\n");
         const start = optNum(args.offset, 1) - 1;
