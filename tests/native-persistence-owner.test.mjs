@@ -6,6 +6,22 @@ const unavailable = (error) =>
   error?.code === "PERSIST_REDACTION_UNAVAILABLE" &&
   error.message === "PERSIST_REDACTION_UNAVAILABLE";
 
+test("the native oversized-entry code propagates with fixed public text", async () => {
+  const owner = core.createSplyceOwner(() => {});
+  const manager = {};
+  owner.bindPersistence(manager, async () => {
+    throw Object.assign(new Error("fixture-private-detail"), {
+      code: "PERSIST_ENTRY_TOO_LARGE",
+    });
+  });
+  await assert.rejects(
+    core.sanitizeSplycePersistence(manager, "entry"),
+    (error) =>
+      error?.code === "PERSIST_ENTRY_TOO_LARGE" &&
+      error.message === "PERSIST_ENTRY_TOO_LARGE",
+  );
+});
+
 test("persistence requires a sealed same-owner sanitizer, not a readiness binding alone", async () => {
   const owner = core.createSplyceOwner(() => {});
   const manager = {};

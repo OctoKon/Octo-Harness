@@ -277,6 +277,12 @@ function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["t
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
 }
 
+function rethrowPersistenceError(error: unknown): void {
+	const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+	if (code === "PERSIST_REDACTION_UNAVAILABLE" || code === "PERSIST_ENTRY_TOO_LARGE")
+		throw Object.assign(new Error(code), { code });
+}
+
 function sameMessages(left: AgentMessage[], right: AgentMessage[]): boolean {
 	return left.length === right.length && left.every((message, index) => message === right[index]);
 }
@@ -316,6 +322,7 @@ export async function emitProjectTrustEvent(
 				}
 				return { result: handlerResult, errors };
 			} catch (error) {
+				rethrowPersistenceError(error);
 				errors.push({
 					extensionPath: ext.path,
 					event: event.type,
@@ -476,6 +483,7 @@ export class ExtensionRunner {
 					this.modelRegistry.registerProvider(name, config);
 				}
 			} catch (err) {
+				rethrowPersistenceError(err);
 				this.emitError({
 					extensionPath,
 					event: "register_provider",
@@ -493,6 +501,7 @@ export class ExtensionRunner {
 					this.modelRegistry.registerProvider(provider);
 				}
 			} catch (err) {
+				rethrowPersistenceError(err);
 				this.emitError({
 					extensionPath,
 					event: "register_provider",
@@ -510,6 +519,7 @@ export class ExtensionRunner {
 			try {
 				registerVirtualModel(definition);
 			} catch (err) {
+				rethrowPersistenceError(err);
 				this.emitError({
 					extensionPath,
 					event: "register_virtual_model",
@@ -611,6 +621,7 @@ export class ExtensionRunner {
 			return run().finally(finish);
 		} catch (err) {
 			finish();
+			rethrowPersistenceError(err);
 			throw err;
 		}
 	}
@@ -1056,6 +1067,7 @@ export class ExtensionRunner {
 					if (handlerResult?.entries !== undefined) entries = handlerResult.entries;
 					if (handlerResult?.continue !== undefined) shouldContinue = handlerResult.continue;
 				} catch (err) {
+					rethrowPersistenceError(err);
 					this.emitError({
 						extensionPath: ext.path,
 						event: baseEvent.type,
@@ -1068,6 +1080,7 @@ export class ExtensionRunner {
 					context = await buildContext(entries);
 					valid = true;
 				} catch (err) {
+					rethrowPersistenceError(err);
 					valid = false;
 					this.emitError({
 						extensionPath: ext.path,
@@ -1109,6 +1122,7 @@ export class ExtensionRunner {
 						}
 					}
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1135,6 +1149,7 @@ export class ExtensionRunner {
 					const result = (await handler(event, ctx)) as CacheWarmingDecisionEventResult | undefined;
 					if (result?.action !== undefined) action = result.action;
 				} catch (err) {
+					rethrowPersistenceError(err);
 					this.emitError({
 						extensionPath: ext.path,
 						event: event.type,
@@ -1172,6 +1187,7 @@ export class ExtensionRunner {
 					currentMessage = handlerResult.message;
 					modified = true;
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1221,6 +1237,7 @@ export class ExtensionRunner {
 						modified = true;
 					}
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1281,6 +1298,7 @@ export class ExtensionRunner {
 					}
 					return handlerResult;
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1321,6 +1339,7 @@ export class ExtensionRunner {
 					if (!returned) continue;
 					currentMessages = restoreSystemMessages(currentMessages, visibleSnapshot, returned);
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1350,6 +1369,7 @@ export class ExtensionRunner {
 						});
 					}
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1381,6 +1401,7 @@ export class ExtensionRunner {
 						currentPayload = handlerResult;
 					}
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1409,6 +1430,7 @@ export class ExtensionRunner {
 					};
 					await handler(event, ctx);
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1461,6 +1483,7 @@ export class ExtensionRunner {
 						}
 					}
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1506,6 +1529,7 @@ export class ExtensionRunner {
 						themePaths.push(...result.themePaths.map((path) => ({ path, extensionPath: ext.path })));
 					}
 				} catch (err) {
+					rethrowPersistenceError(err);
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
 					this.emitError({
@@ -1549,6 +1573,7 @@ export class ExtensionRunner {
 						currentImages = result.images ?? currentImages;
 					}
 				} catch (err) {
+					rethrowPersistenceError(err);
 					this.emitError({
 						extensionPath: ext.path,
 						event: "input",

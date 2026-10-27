@@ -30,10 +30,16 @@ const bindings = new WeakMap<object, Binding>();
 export type SplycePersistenceSanitizer = (serialized: string, signal?: AbortSignal) => Promise<string>;
 const persistence = new WeakMap<object, { owner: Owner; sanitize: SplycePersistenceSanitizer }>();
 
-function persistenceUnavailable(): never {
-	throw Object.assign(new Error("PERSIST_REDACTION_UNAVAILABLE"), {
-		code: "PERSIST_REDACTION_UNAVAILABLE" as const,
-	});
+function persistenceUnavailable(
+	code: "PERSIST_REDACTION_UNAVAILABLE" | "PERSIST_ENTRY_TOO_LARGE" = "PERSIST_REDACTION_UNAVAILABLE",
+): never {
+	throw Object.assign(new Error(code), { code });
+}
+
+/** Persistence refusal must not become an ordinary model/tool fallback response. */
+export function rethrowSplycePersistenceError(error: unknown): void {
+	const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+	if (code === "PERSIST_REDACTION_UNAVAILABLE" || code === "PERSIST_ENTRY_TOO_LARGE") persistenceUnavailable(code);
 }
 
 /** A disposed identity stays owned: it must never fall back to donor synchronous writes. */
@@ -66,7 +72,8 @@ export async function sanitizeSplycePersistence(
 		assertSplycePersistence(subject);
 		if (typeof sanitized !== "string") persistenceUnavailable();
 		return sanitized;
-	} catch {
+	} catch (error) {
+		rethrowSplycePersistenceError(error);
 		return persistenceUnavailable();
 	}
 }

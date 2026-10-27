@@ -1,4 +1,9 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+	type AgentMessage,
+	assertSplycePersistence,
+	isSplyceOwned,
+	sanitizeSplycePersistence,
+} from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
 	getCurrentSystemMessage,
@@ -21,12 +26,14 @@ import {
 	openSync,
 	readdirSync,
 	readSync,
+	renameSync,
 	type Stats,
 	statSync,
+	unlinkSync,
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
-import { basename, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -594,6 +601,7 @@ function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgen
 }
 
 export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultAgentDir()): string {
+	if (ownedPersistenceStageDepth > 0) persistenceUnavailable();
 	const sessionDir = getDefaultSessionDirPath(cwd, agentDir);
 	if (!existsSync(sessionDir)) {
 		mkdirSync(sessionDir, { recursive: true });
@@ -625,6 +633,10 @@ function parseSessionEntryLine(line: string): FileEntry | null {
 
 /** Exported for testing */
 export function loadEntriesFromFile(filePath: string): FileEntry[] {
+	return readEntriesFromFile(filePath, true);
+}
+
+function readEntriesFromFile(filePath: string, repair: boolean): FileEntry[] {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
@@ -665,7 +677,10 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
 		return [];
 	}
 
-	if (pending) appendFileSync(resolvedFilePath, "\n");
+	if (pending && repair) {
+		if (ownedPersistenceStageDepth > 0) persistenceUnavailable();
+		appendFileSync(resolvedFilePath, "\n");
+	}
 	return entries;
 }
 
@@ -984,6 +999,198 @@ async function listSessionsFromDir(
  * Use buildSessionContext() to get the resolved message list for the LLM, which
  * handles compaction summaries and follows the path from root to current leaf.
  */
+interface PersistenceStage {
+	active: boolean;
+	write: "none" | "append" | "rewrite";
+	existingFile: boolean;
+	target?: string;
+}
+const persistenceStages = new WeakMap<SessionManager, PersistenceStage>();
+let ownedPersistenceStageDepth = 0;
+
+/** Donor exporters cannot publish either a native manager or a pending/revoked draft. */
+export function assertUnownedSessionExport(manager: SessionManager): void {
+	if (ownedPersistenceStageDepth > 0 || isSplyceOwned(manager) || persistenceStages.has(manager))
+		persistenceUnavailable();
+}
+
+function persistenceUnavailable(): never {
+	throw Object.assign(new Error("PERSIST_REDACTION_UNAVAILABLE"), { code: "PERSIST_REDACTION_UNAVAILABLE" });
+}
+
+function persistenceTooLarge(): never {
+	throw Object.assign(new Error("PERSIST_ENTRY_TOO_LARGE"), { code: "PERSIST_ENTRY_TOO_LARGE" });
+}
+
+function persistenceFailure(error: unknown): never {
+	let tooLarge = false;
+	try {
+		tooLarge =
+			!!error &&
+			typeof error === "object" &&
+			Object.getOwnPropertyDescriptor(error, "code")?.value === "PERSIST_ENTRY_TOO_LARGE";
+	} catch {
+		/* An error descriptor is untrusted data too. */
+	}
+	return tooLarge ? persistenceTooLarge() : persistenceUnavailable();
+}
+
+function assertPersistenceEntrySize(serialized: string): void {
+	// The native callback also checks its complete envelope; this is only a definite lower bound.
+	if (Buffer.byteLength(JSON.stringify(serialized), "utf8") > 256 * 1024) persistenceTooLarge();
+}
+
+/** Detach data without invoking accessors or serialization methods. */
+function persistenceSnapshot<T>(value: T): T {
+	const ancestors = new Set<object>();
+	const copy = (item: unknown, arrayItem = false): unknown => {
+		if (item === undefined) return arrayItem ? null : undefined;
+		if (item === null || typeof item === "string" || typeof item === "boolean") return item;
+		if (typeof item === "number") {
+			if (!Number.isFinite(item)) persistenceUnavailable();
+			return item;
+		}
+		if (typeof item !== "object" || ancestors.has(item)) persistenceUnavailable();
+		const array = Array.isArray(item);
+		const prototype = Object.getPrototypeOf(item);
+		if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null)
+			persistenceUnavailable();
+		ancestors.add(item);
+		const result: unknown[] | Record<string, unknown> = array ? [] : {};
+		for (const key of Reflect.ownKeys(item)) {
+			if (array && key === "length") continue;
+			if (typeof key !== "string") persistenceUnavailable();
+			const descriptor = Object.getOwnPropertyDescriptor(item, key);
+			if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) persistenceUnavailable();
+			if (array && (!/^(?:0|[1-9]\d*)$/.test(key) || Number(key) >= item.length)) persistenceUnavailable();
+			const child = copy(descriptor.value, array);
+			if (child !== undefined)
+				Object.defineProperty(result, key, { value: child, enumerable: true, writable: true, configurable: true });
+		}
+		if (array && Reflect.ownKeys(item).length !== item.length + 1) persistenceUnavailable();
+		ancestors.delete(item);
+		return result;
+	};
+	return copy(value) as T;
+}
+
+function serializePersistence(entries: readonly FileEntry[]): string {
+	return entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+}
+
+function assertSanitizedShape(original: unknown, sanitized: unknown): void {
+	if (typeof original === "string") {
+		if (typeof sanitized !== "string") persistenceUnavailable();
+		return;
+	}
+	if (original === null || typeof original !== "object") {
+		if (original !== sanitized) persistenceUnavailable();
+		return;
+	}
+	if (!sanitized || typeof sanitized !== "object" || Array.isArray(original) !== Array.isArray(sanitized))
+		persistenceUnavailable();
+	const keys = Object.keys(original);
+	if (keys.length !== Object.keys(sanitized).length || !keys.every((key) => Object.hasOwn(sanitized, key)))
+		persistenceUnavailable();
+	for (const key of keys)
+		assertSanitizedShape((original as Record<string, unknown>)[key], (sanitized as Record<string, unknown>)[key]);
+}
+
+function assertMessageIdentity(original: unknown, sanitized: unknown): void {
+	if (!original || typeof original !== "object" || !sanitized || typeof sanitized !== "object") return;
+	const before = original as Record<string, unknown>;
+	const after = sanitized as Record<string, unknown>;
+	for (const key of ["role", "toolCallId", "toolName", "api", "provider", "model", "timestamp", "stopReason"])
+		if (before[key] !== after[key]) persistenceUnavailable();
+	if (Array.isArray(before.content) && Array.isArray(after.content)) {
+		for (const [index, block] of before.content.entries()) {
+			if (!block || typeof block !== "object") continue;
+			const replacement = after.content[index] as Record<string, unknown>;
+			if (block.type !== replacement?.type) persistenceUnavailable();
+			if (block.type === "toolCall" && (block.id !== replacement.id || block.name !== replacement.name))
+				persistenceUnavailable();
+		}
+	}
+}
+
+function mapPersistenceResult<T>(original: T, sanitized: T, entries: readonly FileEntry[]): T {
+	const byId = new Map(entries.map((entry) => [entry.id, entry]));
+	const copy = (before: unknown, after: unknown): unknown => {
+		if (typeof before === "string" && byId.has(before) && before !== after) persistenceUnavailable();
+		if (!before || typeof before !== "object") return after;
+		if (Array.isArray(before)) return before.map((child, index) => copy(child, (after as unknown[])[index]));
+		const record = before as Record<string, unknown>;
+		if (typeof record.id === "string") {
+			const entry = byId.get(record.id);
+			if (entry && entry.type === record.type) return persistenceSnapshot(entry);
+		}
+		return Object.fromEntries(
+			Object.keys(record).map((key) => [key, copy(record[key], (after as Record<string, unknown>)[key])]),
+		);
+	};
+	return copy(original, sanitized) as T;
+}
+
+/** Entry results use their committed rows, never an aggregate history-sized redaction frame. */
+function projectPersistenceResult<T>(result: T, entries: readonly FileEntry[]): T {
+	const byId = new Map(entries.map((entry) => [entry.id, entry]));
+	const project = (value: unknown): unknown => {
+		if (!value || typeof value !== "object") return value;
+		if (Array.isArray(value)) return value.map(project);
+		const record = value as Record<string, unknown>;
+		if (typeof record.id === "string" && byId.get(record.id)?.type === record.type) return null;
+		return Object.fromEntries(Object.keys(record).map((key) => [key, project(record[key])]));
+	};
+	return project(result) as T;
+}
+
+function isCommittedEntryResult(result: unknown, entries: readonly FileEntry[]): boolean {
+	const byId = new Map(entries.map((entry) => [entry.id, entry]));
+	const known = (value: unknown): boolean => {
+		if (Array.isArray(value)) return value.every(known);
+		if (!value || typeof value !== "object") return false;
+		const record = value as Record<string, unknown>;
+		return typeof record.id === "string" && byId.get(record.id)?.type === record.type;
+	};
+	return known(result);
+}
+
+function parseSanitizedPersistence(serialized: string, expected: readonly FileEntry[]): FileEntry[] {
+	if (typeof serialized !== "string" || !serialized.endsWith("\n")) persistenceUnavailable();
+	const lines = serialized.slice(0, -1).split("\n");
+	if (lines.length !== expected.length) persistenceUnavailable();
+	const entries = lines.map((line) => JSON.parse(line) as FileEntry);
+	assertSanitizedShape(expected, entries);
+	const ids = new Set<string>();
+	for (const [index, entry] of entries.entries()) {
+		const original = expected[index];
+		if (!entry || typeof entry !== "object" || Array.isArray(entry) || entry.type !== original.type)
+			persistenceUnavailable();
+		if (index === 0) {
+			if (entry.type !== "session" || original.type !== "session") persistenceUnavailable();
+			for (const key of ["type", "version", "id", "timestamp", "cwd", "parentSession"] as const)
+				if (entry[key] !== original[key]) persistenceUnavailable();
+		} else {
+			if (entry.type === "session" || original.type === "session") persistenceUnavailable();
+			if (typeof entry.id !== "string" || ids.has(entry.id)) persistenceUnavailable();
+			for (const key of ["id", "parentId", "timestamp"] as const)
+				if (entry[key] !== original[key]) persistenceUnavailable();
+			for (const key of ["targetId", "firstKeptEntryId", "fromId"] as const)
+				if (
+					(entry as unknown as Record<string, unknown>)[key] !==
+					(original as unknown as Record<string, unknown>)[key]
+				)
+					persistenceUnavailable();
+			if (entry.type === "message" && original.type === "message")
+				assertMessageIdentity(original.message, entry.message);
+			if (entry.type === "custom_message" && original.type === "custom_message")
+				assertMessageIdentity({ content: original.content }, { content: entry.content });
+			ids.add(entry.id);
+		}
+	}
+	return entries;
+}
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -996,6 +1203,10 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private _persistenceTail: Promise<void> = Promise.resolve();
+	private _persistenceUncertain = false;
+	private _persistenceQualified = false;
+	private _persistenceBytes: string | undefined;
 
 	private constructor(
 		cwd: string,
@@ -1004,10 +1215,13 @@ export class SessionManager {
 		persist: boolean,
 		newSessionOptions?: NewSessionOptions,
 		preloadedFileEntries?: FileEntry[],
+		inert = false,
 	) {
 		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePath(sessionDir);
 		this.persist = persist;
+		if (inert) return;
+		if (ownedPersistenceStageDepth > 0 && persist) persistenceUnavailable();
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
 			mkdirSync(this.sessionDir, { recursive: true });
 		}
@@ -1021,15 +1235,229 @@ export class SessionManager {
 		}
 	}
 
+	private _assertMutationAllowed(): void {
+		const staged = persistenceStages.get(this);
+		if (this._persistenceUncertain || (staged ? !staged.active : isSplyceOwned(this))) persistenceUnavailable();
+	}
+
+	private _readSnapshot<T>(value: T): T {
+		return isSplyceOwned(this) ? persistenceSnapshot(value) : value;
+	}
+
+	private _planWrite(mode: "append" | "rewrite"): void {
+		const staged = persistenceStages.get(this);
+		if (!staged || !this.sessionFile) persistenceUnavailable();
+		if (staged.target !== undefined && staged.target !== this.sessionFile) persistenceUnavailable();
+		staged.target = this.sessionFile;
+		if (staged.write !== "rewrite") staged.write = mode;
+	}
+
+	/** Native persistence is awaited; the synchronous callback only edits a detached draft. */
+	withPersistence<T>(stage: (manager: SessionManager) => T, signal?: AbortSignal): Promise<T> {
+		if (persistenceStages.has(this)) persistenceUnavailable();
+		const operation = this._persistenceTail.then(() => this._withPersistence(stage, signal));
+		this._persistenceTail = operation.then(
+			() => undefined,
+			() => undefined,
+		);
+		return operation;
+	}
+
+	private async _withPersistence<T>(stage: (manager: SessionManager) => T, signal?: AbortSignal): Promise<T> {
+		const owned = isSplyceOwned(this);
+		const check = () => {
+			if (this._persistenceUncertain) persistenceUnavailable();
+			signal?.throwIfAborted();
+			if (owned) assertSplycePersistence(this);
+		};
+		try {
+			check();
+			const previous = persistenceSnapshot(this.fileEntries);
+			const previousSerialized = previous.length ? serializePersistence(previous) : "";
+			const previousBytes = this._persistenceBytes ?? previousSerialized;
+			const draft = new SessionManager(
+				this.cwd,
+				this.sessionDir,
+				undefined,
+				this.persist,
+				undefined,
+				undefined,
+				true,
+			);
+			const plan: PersistenceStage = { active: true, write: "none", existingFile: false };
+			persistenceStages.set(draft, plan);
+			draft.fileEntries = persistenceSnapshot(previous);
+			draft.sessionId = this.sessionId;
+			draft.sessionFile = this.sessionFile;
+			draft.flushed = this.flushed;
+			draft._buildIndex();
+			draft.leafId = this.leafId;
+			const revocable = Proxy.revocable(draft, {});
+			persistenceStages.set(revocable.proxy, plan);
+			let result: T;
+			let entries: FileEntry[];
+			let resultSnapshot: T;
+			try {
+				if (owned) ownedPersistenceStageDepth++;
+				result = stage(revocable.proxy);
+				if (result && (typeof result === "object" || typeof result === "function") && "then" in result) {
+					if (result instanceof Promise) void Promise.prototype.then.call(result, undefined, () => undefined);
+					persistenceUnavailable();
+				}
+				entries = persistenceSnapshot(draft.fileEntries);
+				resultSnapshot = persistenceSnapshot(result);
+			} finally {
+				if (owned) ownedPersistenceStageDepth--;
+				plan.active = false;
+				revocable.revoke();
+			}
+			if (entries.length === 0 || entries[0]?.type !== "session") persistenceUnavailable();
+			const serialized = serializePersistence(entries);
+			const finalState = persistenceSnapshot({
+				sessionFile: draft.sessionFile,
+				sessionDir: draft.sessionDir,
+				sessionId: draft.sessionId,
+				cwd: draft.cwd,
+				persist: draft.persist,
+				leafId: draft.leafId,
+				flushed: draft.flushed,
+				write: plan.write,
+				existingFile: plan.existingFile,
+				target: plan.target,
+			});
+			const { sessionFile, sessionDir, sessionId, cwd, persist, leafId, existingFile } = finalState;
+			if (
+				(sessionFile !== undefined && typeof sessionFile !== "string") ||
+				typeof sessionDir !== "string" ||
+				typeof sessionId !== "string" ||
+				typeof cwd !== "string" ||
+				typeof persist !== "boolean" ||
+				typeof finalState.flushed !== "boolean" ||
+				(leafId !== null && !entries.some((entry) => entry.id === leafId)) ||
+				(finalState.target !== undefined && finalState.target !== sessionFile)
+			)
+				persistenceUnavailable();
+			let write = finalState.write;
+			let flushed = finalState.flushed;
+			if (persist && flushed && serialized !== previousSerialized && write === "none") write = "rewrite";
+			const appendOnly =
+				owned &&
+				this._persistenceQualified &&
+				this.flushed &&
+				write === "append" &&
+				sessionFile === this.sessionFile &&
+				entries.length > previous.length &&
+				serializePersistence(entries.slice(0, previous.length)) === previousSerialized;
+			const safeEntryLines = appendOnly ? previousBytes.slice(0, -1).split("\n") : [];
+			if (appendOnly && safeEntryLines.length !== previous.length) persistenceUnavailable();
+			for (const entry of entries.slice(appendOnly ? previous.length : 0)) {
+				const line = JSON.stringify(entry);
+				if (owned) assertPersistenceEntrySize(line);
+				safeEntryLines.push(owned ? await sanitizeSplycePersistence(this, line, signal) : line);
+				check();
+			}
+			const safe = safeEntryLines.join("\n") + "\n";
+			check();
+			const safeEntries = parseSanitizedPersistence(safe, entries);
+			if (persist && flushed && safe !== previousSerialized && write === "none") write = "rewrite";
+			let safeResult = resultSnapshot;
+			if (resultSnapshot !== undefined) {
+				const projection = projectPersistenceResult(resultSnapshot, safeEntries);
+				if (isCommittedEntryResult(resultSnapshot, safeEntries)) {
+					safeResult = mapPersistenceResult(resultSnapshot, projection, safeEntries);
+				} else {
+					const resultJson = JSON.stringify(projection);
+					if (owned) assertPersistenceEntrySize(resultJson);
+					const safeResultJson = owned ? await sanitizeSplycePersistence(this, resultJson, signal) : resultJson;
+					check();
+					safeResult = JSON.parse(safeResultJson) as T;
+					assertSanitizedShape(projection, safeResult);
+					safeResult = mapPersistenceResult(resultSnapshot, safeResult, safeEntries);
+				}
+			}
+			const sameFile = sessionFile === this.sessionFile;
+			const safeLines = safe.split("\n");
+			const safePrefix = safeLines.slice(0, previous.length).join("\n") + "\n";
+			check();
+			if (persist && sessionDir && !existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+			if (persist && sessionFile && write !== "none") {
+				if (write === "append" && sameFile && this.flushed && safePrefix === previousBytes) {
+					try {
+						appendFileSync(sessionFile, safeLines.slice(previous.length).join("\n"));
+					} catch {
+						// An append may have reached disk partially; never retry it on this state.
+						this._persistenceUncertain = true;
+						persistenceUnavailable();
+					}
+				} else if ((sameFile && this.flushed) || existingFile) {
+					const temporary = join(dirname(sessionFile), `.splyce-persistence-${randomUUID()}.tmp`);
+					let created = false;
+					let replacing = false;
+					try {
+						const fd = openSync(temporary, "wx");
+						created = true;
+						try {
+							writeFileSync(fd, safe);
+						} finally {
+							closeSync(fd);
+						}
+						check();
+						replacing = true;
+						renameSync(temporary, sessionFile);
+						created = false;
+					} catch {
+						if (replacing) this._persistenceUncertain = true;
+						persistenceUnavailable();
+					} finally {
+						if (created) unlinkSync(temporary);
+					}
+				} else {
+					let fd: number | undefined;
+					try {
+						fd = openSync(sessionFile, "wx");
+						try {
+							writeFileSync(fd, safe);
+						} finally {
+							closeSync(fd);
+						}
+					} catch {
+						if (fd !== undefined) this._persistenceUncertain = true;
+						persistenceUnavailable();
+					}
+				}
+				flushed = true;
+			}
+			this.fileEntries = safeEntries;
+			this.sessionId = sessionId;
+			this.sessionFile = sessionFile;
+			this.sessionDir = sessionDir;
+			this.cwd = cwd;
+			this.persist = persist;
+			this.flushed = flushed;
+			this._persistenceQualified = owned;
+			this._persistenceBytes = safe;
+			this._publishIndex();
+			this.leafId = leafId;
+			return safeResult;
+		} catch (error) {
+			return persistenceFailure(error);
+		}
+	}
+
 	/** Switch to a different session file (used for resume and branching) */
 	setSessionFile(sessionFile: string): void {
+		this._assertMutationAllowed();
 		this._setSessionFile(sessionFile);
 	}
 
 	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
+		this._assertMutationAllowed();
+		const staged = persistenceStages.get(this);
+		if (staged?.target !== undefined && staged.target !== resolvePath(sessionFile)) persistenceUnavailable();
 		this.sessionFile = resolvePath(sessionFile);
 		if (existsSync(this.sessionFile)) {
-			const entries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
+			if (staged) staged.existingFile = true;
+			const entries = preloadedFileEntries ?? readEntriesFromFile(this.sessionFile, !staged);
 
 			// If file was empty, initialize it with a valid session header. If it was
 			// non-empty but did not parse as a pi session, fail without modifying it.
@@ -1040,6 +1468,7 @@ export class SessionManager {
 				}
 				this.newSession();
 				this.sessionFile = explicitPath;
+				if (staged) staged.existingFile = true;
 				this._rewriteFile();
 				this.flushed = true;
 				return;
@@ -1047,6 +1476,7 @@ export class SessionManager {
 
 			this._loadEntries(entries);
 			this.flushed = true;
+			if (staged) this._planWrite("rewrite");
 		} else {
 			const explicitPath = this.sessionFile;
 			this.newSession();
@@ -1055,6 +1485,13 @@ export class SessionManager {
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		this._assertMutationAllowed();
+		const staged = persistenceStages.get(this);
+		if (staged) {
+			if (staged.target !== undefined) persistenceUnavailable();
+			staged.write = "none";
+			staged.existingFile = false;
+		}
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
@@ -1083,6 +1520,7 @@ export class SessionManager {
 	}
 
 	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
+		this._assertMutationAllowed();
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
 
 		if (header) {
@@ -1101,6 +1539,11 @@ export class SessionManager {
 	}
 
 	private _buildIndex(): void {
+		this._assertMutationAllowed();
+		this._publishIndex();
+	}
+
+	private _publishIndex(): void {
 		this.byId.clear();
 		this.labelsById.clear();
 		this.labelTimestampsById.clear();
@@ -1122,7 +1565,13 @@ export class SessionManager {
 	}
 
 	private _rewriteFile(): void {
+		this._assertMutationAllowed();
 		if (!this.persist || !this.sessionFile) return;
+		const staged = persistenceStages.get(this);
+		if (staged) {
+			this._planWrite("rewrite");
+			return;
+		}
 		const fd = openSync(this.sessionFile, "w");
 		try {
 			for (const entry of this.fileEntries) {
@@ -1170,7 +1619,17 @@ export class SessionManager {
 	}
 
 	_persist(entry: SessionEntry): void {
+		this._assertMutationAllowed();
 		if (!this.persist || !this.sessionFile) return;
+		const staged = persistenceStages.get(this);
+		if (staged) {
+			if (!this.flushed) {
+				if (!this._hasConversation()) return;
+				this._planWrite("rewrite");
+				this.flushed = true;
+			} else this._planWrite("append");
+			return;
+		}
 
 		if (!this.flushed) {
 			if (!this._hasConversation()) return;
@@ -1189,6 +1648,7 @@ export class SessionManager {
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
+		this._assertMutationAllowed();
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
@@ -1406,11 +1866,11 @@ export class SessionManager {
 	}
 
 	getLeafEntry(): SessionEntry | undefined {
-		return this.leafId ? this.byId.get(this.leafId) : undefined;
+		return this._readSnapshot(this.leafId ? this.byId.get(this.leafId) : undefined);
 	}
 
 	getEntry(id: string): SessionEntry | undefined {
-		return this.byId.get(id);
+		return this._readSnapshot(this.byId.get(id));
 	}
 
 	/**
@@ -1423,7 +1883,7 @@ export class SessionManager {
 				children.push(entry);
 			}
 		}
-		return children;
+		return this._readSnapshot(children);
 	}
 
 	/**
@@ -1475,7 +1935,7 @@ export class SessionManager {
 			current = current.parentId ? this.byId.get(current.parentId) : undefined;
 		}
 		path.reverse();
-		return path;
+		return this._readSnapshot(path);
 	}
 
 	/**
@@ -1483,7 +1943,7 @@ export class SessionManager {
 	 * Uses tree traversal from current leaf.
 	 */
 	buildContextEntries(): SessionEntry[] {
-		return buildContextEntries(this.getEntries(), this.leafId, this.byId);
+		return this._readSnapshot(buildContextEntries(this.getEntries(), this.leafId, this.byId));
 	}
 
 	/**
@@ -1491,7 +1951,7 @@ export class SessionManager {
 	 * Uses tree traversal from current leaf.
 	 */
 	buildSessionProjection(): SessionProjection {
-		return buildSessionProjection(this.getEntries(), this.leafId, this.byId);
+		return this._readSnapshot(buildSessionProjection(this.getEntries(), this.leafId, this.byId));
 	}
 
 	buildSessionContext(): SessionContext {
@@ -1504,7 +1964,7 @@ export class SessionManager {
 	 */
 	getHeader(): SessionHeader | null {
 		const h = this.fileEntries.find((e) => e.type === "session");
-		return h ? (h as SessionHeader) : null;
+		return this._readSnapshot(h ? (h as SessionHeader) : null);
 	}
 
 	/** Number of session entries (excludes header), without copying them like `getEntries()`. */
@@ -1518,7 +1978,7 @@ export class SessionManager {
 	 * change the leaf pointer. Entries cannot be modified or deleted.
 	 */
 	getEntries(): SessionEntry[] {
-		return this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
+		return this._readSnapshot(this.fileEntries.filter((e): e is SessionEntry => e.type !== "session"));
 	}
 
 	/**
@@ -1577,6 +2037,7 @@ export class SessionManager {
 	 * are not modified or deleted.
 	 */
 	branch(branchFromId: string): void {
+		this._assertMutationAllowed();
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -1589,6 +2050,7 @@ export class SessionManager {
 	 * Use this when navigating to re-edit the first user message.
 	 */
 	resetLeaf(): void {
+		this._assertMutationAllowed();
 		this.leafId = null;
 	}
 
@@ -1604,6 +2066,7 @@ export class SessionManager {
 		fromHook?: boolean,
 		usage?: Usage,
 	): string {
+		this._assertMutationAllowed();
 		if (branchFromId !== null && !this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -1630,6 +2093,8 @@ export class SessionManager {
 	 * Returns the new session file path, or undefined if not persisting.
 	 */
 	createBranchedSession(leafId: string): string | undefined {
+		this._assertMutationAllowed();
+		if (persistenceStages.get(this)?.target !== undefined) persistenceUnavailable();
 		const previousSessionFile = this.sessionFile;
 		const path = this.getBranch(leafId);
 		if (path.length === 0) {
@@ -1712,6 +2177,11 @@ export class SessionManager {
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
+			const staged = persistenceStages.get(this);
+			if (staged) {
+				staged.write = "none";
+				staged.existingFile = false;
+			}
 			this._buildIndex();
 
 			// Use the same rule as _persist(): write now if the branched path already
@@ -1752,7 +2222,61 @@ export class SessionManager {
 	 * @param cwd Working directory (stored in session header)
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
 	 */
+	static async createOwned(
+		cwd: string,
+		bind: (manager: SessionManager) => void,
+		sessionDir?: string,
+		options?: NewSessionOptions,
+	): Promise<SessionManager> {
+		if (ownedPersistenceStageDepth > 0) persistenceUnavailable();
+		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDirPath(cwd);
+		const manager = new SessionManager(cwd, dir, undefined, true, undefined, undefined, true);
+		try {
+			bind(manager);
+			assertSplycePersistence(manager);
+			await manager.withPersistence((draft) => draft.newSession(options));
+			return manager;
+		} catch (error) {
+			return persistenceFailure(error);
+		}
+	}
+
+	/** Open and migrate only after native ownership is bound; loading never repairs ahead of redaction. */
+	static async openOwned(
+		path: string,
+		bind: (manager: SessionManager) => void,
+		sessionDir?: string,
+		cwdOverride?: string,
+	): Promise<SessionManager> {
+		if (ownedPersistenceStageDepth > 0) persistenceUnavailable();
+		const resolvedPath = resolvePath(path);
+		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
+		const manager = new SessionManager(
+			cwdOverride ?? process.cwd(),
+			dir,
+			undefined,
+			true,
+			undefined,
+			undefined,
+			true,
+		);
+		try {
+			bind(manager);
+			assertSplycePersistence(manager);
+			await manager.withPersistence((draft) => {
+				const entries = readEntriesFromFile(resolvedPath, false);
+				const header = entries.find((entry): entry is SessionHeader => entry.type === "session");
+				draft.cwd = resolvePath(cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd());
+				draft._setSessionFile(resolvedPath, entries);
+			});
+			return manager;
+		} catch (error) {
+			return persistenceFailure(error);
+		}
+	}
+
 	static create(cwd: string, sessionDir?: string, options?: NewSessionOptions): SessionManager {
+		if (ownedPersistenceStageDepth > 0) persistenceUnavailable();
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		return new SessionManager(cwd, dir, undefined, true, options);
 	}
@@ -1764,6 +2288,7 @@ export class SessionManager {
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+		if (ownedPersistenceStageDepth > 0) persistenceUnavailable();
 		const resolvedPath = resolvePath(path);
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
@@ -1791,6 +2316,7 @@ export class SessionManager {
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
 	 */
 	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
+		if (ownedPersistenceStageDepth > 0) persistenceUnavailable();
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
 		const mostRecent = findMostRecentSession(dir, filterCwd ? cwd : undefined);
@@ -1818,6 +2344,7 @@ export class SessionManager {
 		sessionDir?: string,
 		options?: NewSessionOptions,
 	): SessionManager {
+		if (ownedPersistenceStageDepth > 0) persistenceUnavailable();
 		const resolvedSourcePath = resolvePath(sourcePath);
 		const resolvedTargetCwd = resolvePath(targetCwd);
 		const sourceEntries = loadEntriesFromFile(resolvedSourcePath);

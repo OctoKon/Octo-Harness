@@ -199,6 +199,15 @@ async function services(t) {
     [selectedModel, "model"],
   ])
     fixture.owner.bind(value, role);
+  const persistence = {
+    calls: 0,
+    // Synthetic fixture lane only; no native credentials or matcher state.
+    sanitize: async (serialized) => serialized,
+  };
+  fixture.owner.bindPersistence(sessionManager, async (serialized, signal) => {
+    persistence.calls++;
+    return persistence.sanitize(serialized, signal);
+  });
   const options = {
     cwd,
     agentDir,
@@ -210,8 +219,271 @@ async function services(t) {
     tools: [],
   };
   fixture.owner.bind(options, "sdk-options");
-  return { ...fixture, options, cwd, agentDir };
+  return { ...fixture, options, cwd, agentDir, persistence };
 }
+
+const persistenceUnavailable = { code: "PERSIST_REDACTION_UNAVAILABLE" };
+const persistenceDraft = (serialized) =>
+  serialized
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+
+test("owned SDK waits for setup persistence and exposes no session or state on sanitizer refusal", async (t) => {
+  const fixture = await services(t);
+  const manager = fixture.options.sessionManager;
+  const before = {
+    entries: manager.getEntries(),
+    header: manager.getHeader(),
+    leaf: manager.getLeafId(),
+  };
+  let entered;
+  let refuse;
+  const reached = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise((_, reject) => {
+    refuse = reject;
+  });
+  fixture.persistence.sanitize = async () => {
+    entered();
+    return gate;
+  };
+  let exposed;
+  let refusal;
+  const creation = createAgentSession(fixture.options).then(
+    (result) => {
+      exposed = result;
+    },
+    (error) => {
+      refusal = error;
+    },
+  );
+  await Promise.race([
+    reached,
+    creation.then(() =>
+      assert.fail(
+        "actual SDK setup must reach the sanitizer before it settles",
+      ),
+    ),
+  ]);
+  try {
+    assert.equal(
+      exposed,
+      undefined,
+      "setup must not expose an AgentSession before persistence resolves",
+    );
+    assert.deepEqual(manager.getEntries(), before.entries);
+    assert.deepEqual(manager.getHeader(), before.header);
+    assert.equal(manager.getLeafId(), before.leaf);
+  } finally {
+    refuse(new Error("synthetic setup sanitizer refusal"));
+  }
+  await creation;
+  assert.equal(refusal?.code, persistenceUnavailable.code);
+  assert.equal(exposed, undefined);
+  assert.deepEqual(manager.getEntries(), before.entries);
+  assert.deepEqual(manager.getHeader(), before.header);
+  assert.equal(manager.getLeafId(), before.leaf);
+  assert.deepEqual(await readdir(fixture.agentDir), []);
+  fixture.persistence.sanitize = async (serialized) => serialized;
+  const { session } = await createAgentSession(fixture.options);
+  t.after(() => session.dispose());
+  assert.deepEqual(
+    manager.getEntries().map((entry) => entry.type),
+    ["model_change", "thinking_level_change"],
+  );
+});
+
+for (const role of ["user", "assistant"]) {
+  for (const failureCode of [
+    "PERSIST_REDACTION_UNAVAILABLE",
+    "PERSIST_ENTRY_TOO_LARGE",
+  ]) {
+    test(`owned SDK ${role} persistence refusal ${failureCode} rejects the actual prompt without final event or entry identity`, async (t) => {
+      const fixture = await services(t);
+      const { session } = await createAgentSession(fixture.options);
+      t.after(() => session.dispose());
+      await session.agent.prompt("synthetic persistence positive precondition");
+      const manager = session.sessionManager;
+      const before = manager.getEntries();
+      const priorCount = before.filter(
+        (entry) => entry.type === "message" && entry.message.role === role,
+      ).length;
+      assert.ok(
+        priorCount > 0,
+        `the real owned SDK must persist a ${role} message before its rejection is tested`,
+      );
+      assert.ok(fixture.persistence.calls > 0);
+      const events = [];
+      session.subscribe((event) => events.push(event));
+      let refused = false;
+      fixture.persistence.sanitize = async (serialized) => {
+        const newTarget = persistenceDraft(serialized).some(
+          (entry) =>
+            entry?.type === "message" &&
+            entry.message.role === role &&
+            !before.some((prior) => prior.id === entry.id),
+        );
+        if (newTarget) {
+          refused = true;
+          throw Object.assign(
+            new Error(`synthetic ${role} sanitizer refusal`),
+            { code: failureCode },
+          );
+        }
+        return serialized;
+      };
+      await assert.rejects(
+        () => session.agent.prompt(`synthetic blocked ${role}`),
+        { code: failureCode },
+      );
+      assert.equal(
+        refused,
+        true,
+        "the sanitizer must reject the actual finalized-message stage",
+      );
+      assert.equal(
+        manager
+          .getEntries()
+          .filter(
+            (entry) => entry.type === "message" && entry.message.role === role,
+          ).length,
+        priorCount,
+      );
+      assert.equal(
+        events.some(
+          (event) =>
+            event.type === "message_end" && event.message.role === role,
+        ),
+        false,
+      );
+      assert.equal(
+        events.some(
+          (event) => event.type === "auto_retry_end" && event.success,
+        ),
+        false,
+      );
+      assert.ok(session._entryIdsByMessage instanceof WeakMap);
+      const uncommitted = session.agent.state.messages.filter(
+        (message) =>
+          message.role === role &&
+          !before.some(
+            (entry) =>
+              entry.type === "message" &&
+              JSON.stringify(entry.message) === JSON.stringify(message),
+          ),
+      );
+      for (const message of uncommitted)
+        assert.equal(
+          session._entryIdsByMessage.has(message),
+          false,
+          "a rejected finalized message must not publish an entry identity",
+        );
+      assert.equal(session.agent.state.isStreaming, false);
+    });
+  }
+}
+
+test("owned SDK run lifecycle preserves a refused late custom-message batch without opening public auth", async (t) => {
+  const fixture = await services(t);
+  const { session } = await createAgentSession(fixture.options);
+  t.after(() => session.dispose());
+  await assert.rejects(
+    () => session.prompt("unqualified public auth stays denied"),
+    unavailable,
+  );
+  // Exercise the real run/drain seam; native auth/factory qualification belongs to its owner.
+  const startRun = (prompt) =>
+    session._startRun({ messageType: "user", prompt });
+  await startRun("synthetic queue positive precondition");
+  assert.ok(
+    session.sessionManager
+      .getEntries()
+      .some(
+        (entry) =>
+          entry.type === "message" && entry.message.role === "assistant",
+      ),
+  );
+  const pending = [];
+  let queued = false;
+  let streamingWhenQueued = false;
+  session.subscribe((event) => {
+    if (
+      event.type !== "message_start" ||
+      event.message.role !== "user" ||
+      queued
+    )
+      return;
+    queued = true;
+    streamingWhenQueued = session.isStreaming;
+    for (const suffix of ["one", "two"])
+      pending.push(
+        session.sendCustomMessage(
+          {
+            customType: `synthetic-late-${suffix}`,
+            content: suffix,
+            display: false,
+          },
+          { triggerTurn: false },
+        ),
+      );
+  });
+  let refused = false;
+  fixture.persistence.sanitize = async (serialized) => {
+    if (
+      persistenceDraft(serialized).some(
+        (entry) =>
+          entry?.type === "custom_message" &&
+          entry.customType.startsWith("synthetic-late-"),
+      )
+    ) {
+      refused = true;
+      throw new Error("synthetic late-batch sanitizer refusal");
+    }
+    return serialized;
+  };
+  await assert.rejects(
+    () => startRun("synthetic queue refusal"),
+    persistenceUnavailable,
+  );
+  await Promise.all(pending);
+  assert.equal(queued, true);
+  assert.equal(
+    streamingWhenQueued,
+    true,
+    "exercise the Session run lifecycle that owns late drains",
+  );
+  assert.equal(
+    refused,
+    true,
+    "the real turn-end drain must reach the sanitizer",
+  );
+  assert.equal(
+    session.sessionManager
+      .getEntries()
+      .some(
+        (entry) =>
+          entry.type === "custom_message" &&
+          entry.customType.startsWith("synthetic-late-"),
+      ),
+    false,
+  );
+  fixture.persistence.sanitize = async (serialized) => serialized;
+  await startRun("synthetic queue retry");
+  assert.deepEqual(
+    session.sessionManager
+      .getEntries()
+      .filter(
+        (entry) =>
+          entry.type === "custom_message" &&
+          entry.customType.startsWith("synthetic-late-"),
+      )
+      .map((entry) => entry.customType),
+    ["synthetic-late-one", "synthetic-late-two"],
+  );
+  assert.equal(session.agent.state.isStreaming, false);
+});
 
 test("actual loaded SDK creates only the explicitly owned session and keeps bare startup denied", async (t) => {
   const fixture = await services(t);
