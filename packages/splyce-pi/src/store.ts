@@ -13,6 +13,7 @@ import {
   type SplyceEventDraft,
   validateEvent,
   validateRecord,
+  snapshotPersistedJson,
 } from "./contracts.js";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -87,6 +88,13 @@ export interface AppendInput {
 export interface Appended {
   seq: number;
   recordId: string;
+}
+
+export interface EntityRevisionExpectation {
+  kind: "providerConnection" | "profileSnapshot";
+  scopeId: string;
+  entityId: string;
+  expectedRevision: string | null;
 }
 
 export interface StoredRecord {
@@ -654,6 +662,33 @@ export class Store {
     }
   }
 
+  /** Atomic CAS for profile writers; ordinary append APIs retain their existing semantics. */
+  compareAndAppend(
+    input: AppendInput,
+    caller: CallerContext,
+    expected: EntityRevisionExpectation,
+  ): Appended {
+    let record: unknown;
+    try {
+      // Reference callbacks can mutate their original input, never this copy.
+      record = snapshotPersistedJson(input.record);
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+    const { seqs } = this.commitBatch(
+      [{ kind: input.kind, record }],
+      [],
+      caller,
+      {
+        expectedEntityRevision: { ...expected },
+      },
+    );
+    return {
+      seq: seqs[0]!,
+      recordId: (record as Record<string, unknown>).recordId as string,
+    };
+  }
+
   /**
    * Ordered, atomic receipt commits: every input is validated first, then all
    * are committed in input order in one transaction. Any failure — including a
@@ -736,7 +771,10 @@ export class Store {
       expectedConfigRevision,
       expectedActionReservation,
       expectedDeletionEpoch,
-    }: EventPreconditions,
+      expectedEntityRevision,
+    }: EventPreconditions & {
+      expectedEntityRevision?: EntityRevisionExpectation;
+    },
     importedWatermarks: readonly EventWatermark[] = [],
   ): AppendBatchResult & { events: SplyceEvent[] } {
     this.assertWritable();
@@ -748,7 +786,8 @@ export class Store {
       expectedOwnershipEpoch === undefined &&
       expectedConfigRevision === undefined &&
       expectedActionReservation === undefined &&
-      expectedDeletionEpoch === undefined
+      expectedDeletionEpoch === undefined &&
+      expectedEntityRevision === undefined
     )
       return { seqs: [], events: [] };
     const prepared: Array<[RecordKind, RecordByKind[RecordKind]]> = [];
@@ -792,6 +831,68 @@ export class Store {
     }
     try {
       this.db.exec("BEGIN IMMEDIATE;");
+      if (expectedEntityRevision !== undefined) {
+        const { kind, scopeId, entityId, expectedRevision } =
+          expectedEntityRevision;
+        const entityField =
+          kind === "providerConnection" ? "providerConnectionId" : "profileId";
+        const revisionField =
+          kind === "providerConnection" ? "revision" : "profileRevision";
+        const input = prepared[0];
+        const opaque = (value: unknown) =>
+          typeof value === "string" &&
+          value.length > 0 &&
+          !/\s|[\\/]/u.test(value);
+        if (
+          !["providerConnection", "profileSnapshot"].includes(kind) ||
+          prepared.length !== 1 ||
+          input?.[0] !== kind ||
+          !opaque(scopeId) ||
+          !opaque(entityId) ||
+          (expectedRevision !== null && !opaque(expectedRevision)) ||
+          input[1].scopeId !== scopeId ||
+          input[1][entityField] !== entityId ||
+          !opaque(input[1][revisionField])
+        )
+          throw new StoreError(
+            "ENTITY_GUARD_MISMATCH",
+            "entity guard must match the inserted kind, scope, identity and revision",
+          );
+        // A future writer may have changed the entity shape, so even an
+        // unidentifiable future row in this kind/scope makes "latest" unknown.
+        const unreadable = this.db
+          .prepare(
+            "SELECT 1 FROM records WHERE kind = ? AND scope_id = ? AND schema_version != ? LIMIT 1",
+          )
+          .get(kind, scopeId, CONTRACT_VERSION);
+        if (unreadable !== undefined)
+          throw new StoreError(
+            "UNKNOWN_SCHEMA",
+            "entity revision is unknowable for this schema",
+          );
+        const latest = this.db
+          .prepare(
+            `SELECT json_extract(payload, '$.${revisionField}') AS revision FROM records WHERE kind = ? AND scope_id = ? AND json_extract(payload, '$.${entityField}') = ? ORDER BY seq DESC LIMIT 1`,
+          )
+          .get(kind, scopeId, entityId) as { revision: unknown } | undefined;
+        const revision = latest === undefined ? null : latest.revision;
+        if (revision !== expectedRevision)
+          throw new StoreError(
+            "ENTITY_STALE_REVISION",
+            "entity revision changed; nothing appended",
+          );
+        const nextRevision = prepared[0]![1][revisionField];
+        const reused = this.db
+          .prepare(
+            `SELECT 1 FROM records WHERE kind = ? AND scope_id = ? AND json_extract(payload, '$.${entityField}') = ? AND json_extract(payload, '$.${revisionField}') = ? LIMIT 1`,
+          )
+          .get(kind, scopeId, entityId, nextRevision as string);
+        if (reused !== undefined)
+          throw new StoreError(
+            "ENTITY_REVISION_REUSED",
+            "entity revision is immutable; nothing appended",
+          );
+      }
       if (
         expectedDeletionEpoch !== undefined &&
         (!Number.isSafeInteger(expectedDeletionEpoch) ||
