@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { validateSetupMetadata } from "../../packages/splyce-pi/dist/setup-metadata.js";
 import { Store, StoreError } from "../../packages/splyce-pi/dist/store.js";
 
 // Every setup targets a real admitted workspace; fixture() sets it.
@@ -32,6 +33,9 @@ const artifact = (recordId: string) => ({
   byteLength: 2,
   retentionClass: "workspace",
 });
+// The pure validator is Store-independent: it throws its own SETUP_INVALID error.
+const invalid = (error: unknown) =>
+  (error as { code?: string } | null)?.code === "SETUP_INVALID";
 const code = (expected: string) => (error: unknown) =>
   error instanceof StoreError && error.code === expected;
 
@@ -595,4 +599,121 @@ test("readSetupState reports no workspace once it is superseded", (t) => {
   const state = store.readSetupState(W);
   assert.equal(state.workspace, null);
   assert.equal(store.readSetupState("ws-unknown").workspace, null);
+});
+
+// Shared fixtures: the pure validator and commitSetup must agree on every case.
+const clone = () => structuredClone(input());
+type Case = [string, (value: ReturnType<typeof input>) => void, boolean];
+const secretLike = ["s", "k-ant-api03-abcdefghijklmnop"].join("");
+const METADATA_CASES: Case[] = [
+  ["baseline", () => {}, true],
+  ["requestId 128", (v) => void (v.requestId = "r".repeat(128)), true],
+  [
+    "bedrock arn model",
+    (v) =>
+      void (v.profile.bindings[0]!.modelId =
+        "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-v2:1"),
+    true,
+  ],
+  ["requestId 129", (v) => void (v.requestId = "r".repeat(129)), false],
+  ["requestId secret shape", (v) => void (v.requestId = secretLike), false],
+  [
+    "non-canonical url",
+    (v) => void (v.endpoint.canonicalUrl = "https://API.example.com/v1/"),
+    false,
+  ],
+  [
+    "unknown api family",
+    (v) => {
+      v.endpoint.apiFamily = "anthropic";
+      v.connection.apiFamily = "anthropic";
+    },
+    false,
+  ],
+  ["locality mismatch", (v) => void (v.connection.locality = "local"), false],
+  [
+    "model with format char",
+    (v) => void (v.profile.bindings[0]!.modelId = "gpt​x"),
+    false,
+  ],
+  [
+    "binding wrong connection revision",
+    (v) => void (v.profile.bindings[0]!.connectionRevision = "c9"),
+    false,
+  ],
+  [
+    "endpointRef mismatch",
+    (v) => void (v.connection.endpointRef = "ep1@e9"),
+    false,
+  ],
+  [
+    "apiVersion with space",
+    (v) => void (v.descriptors.apiVersion = "v 1"),
+    false,
+  ],
+  [
+    "adapterRevision too long",
+    (v) => void (v.descriptors.adapterRevision = "a".repeat(65)),
+    false,
+  ],
+  [
+    "adapterRevision secret shape",
+    (v) => void (v.descriptors.adapterRevision = secretLike),
+    false,
+  ],
+  [
+    "raw key field",
+    (v) => void ((v.connection as Record<string, unknown>).apiKey = secretLike),
+    false,
+  ],
+  [
+    "displayName",
+    (v) => void ((v.connection as Record<string, unknown>).displayName = "x"),
+    false,
+  ],
+];
+
+test("validateSetupMetadata and commitSetup accept and reject the same cases", (t) => {
+  for (const [name, mutate, valid] of METADATA_CASES) {
+    const { store, caller } = fixture(t);
+    const value = clone();
+    mutate(value);
+    if (valid) {
+      assert.doesNotThrow(() => validateSetupMetadata(value), name);
+      assert.doesNotThrow(() => store.commitSetup(value, caller), name);
+    } else {
+      assert.throws(() => validateSetupMetadata(value), invalid, name);
+      assert.throws(
+        () => store.commitSetup(value, caller),
+        code("SETUP_INVALID"),
+        name,
+      );
+    }
+  }
+});
+
+test("the pure validator accepts a pending credential slot; commitSetup still requires one", (t) => {
+  const { store, caller } = fixture(t);
+  const omitted = clone();
+  delete (omitted.connection as Record<string, unknown>).credentialRef;
+  const nulled = clone();
+  (nulled.connection as Record<string, unknown>).credentialRef = null;
+  for (const value of [omitted, nulled]) {
+    const meta = validateSetupMetadata(value, { credentialPending: true });
+    assert.equal(meta.connection.credentialRef, null);
+    assert.throws(() => validateSetupMetadata(value), invalid);
+    assert.throws(
+      () => store.commitSetup(value, caller),
+      code("SETUP_INVALID"),
+    );
+  }
+  // Pending still validates everything else.
+  const bad = clone();
+  delete (bad.connection as Record<string, unknown>).credentialRef;
+  bad.profile.bindings[0]!.modelId = "gpt​x";
+  assert.throws(
+    () => validateSetupMetadata(bad, { credentialPending: true }),
+    invalid,
+  );
+  assert.deepEqual(kinds(store), []);
 });
