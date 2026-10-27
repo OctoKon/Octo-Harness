@@ -113,7 +113,7 @@ index 69e3f1d..ca3e33d 100644
  	if (!response.ok) {
  		const body = await response.text();
 diff --git a/vendor/pi/packages/ai/src/api/pi-messages.ts b/vendor/pi/packages/ai/src/api/pi-messages.ts
-index 59b5456..38019a8 100644
+index 59b5456..3afa646 100644
 --- a/vendor/pi/packages/ai/src/api/pi-messages.ts
 +++ b/vendor/pi/packages/ai/src/api/pi-messages.ts
 @@ -9,6 +9,16 @@
@@ -274,18 +274,20 @@ index 59b5456..38019a8 100644
  
  			if (!response.ok) {
  				const body = await response.text();
-@@ -424,7 +489,10 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
+@@ -424,8 +489,11 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
  			}
  
  			for await (const piEvent of readPiMessagesEvents(response.body)) {
 -				await options?.onProviderStreamEvent?.(piEvent, model);
-+				await options?.onProviderStreamEvent?.(
-+					(await redactEventWithLease(leasedCredentials, piEvent)) as typeof piEvent,
-+					model,
-+				);
- 				const event = convertEvent(piEvent);
+-				const event = convertEvent(piEvent);
++				// Sanitized once inside the lease and used for BOTH the observer and the conversion: a provider error
++				// event's errorMessage and rewrite diagnostic must not carry the credential into the message.
++				const safeEvent = (await redactEventWithLease(leasedCredentials, piEvent)) as typeof piEvent;
++				await options?.onProviderStreamEvent?.(safeEvent, model);
++				const event = convertEvent(safeEvent);
  				eventStream.push(event);
  				if (event.type === "done" || event.type === "error") {
+ 					return;
 @@ -434,7 +502,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
  
  			throw new Error(`${model.provider} stream ended without a terminal event`);

@@ -715,7 +715,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					appendAssistantMessageDiagnostic(output, {
 						type: "anthropic_strict_tools_fallback",
 						timestamp: Date.now(),
-						error: { message: error.message },
+						// The provider text may echo the credential and this diagnostic persists on a successful response.
+						error: { message: await redactWithLease(leasedCredentials, error.message) },
 						details: { reason: "strict_tool_limits_exceeded" },
 					});
 				}
