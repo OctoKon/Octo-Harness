@@ -85,6 +85,25 @@ impl Subscriptions {
     }
 
     fn forward(&mut self, event: Value) -> Result<(), BridgeError> {
+        if event["frame"] == "control" {
+            if event.as_object().is_none_or(|fields| {
+                fields.len() != 4
+                    || !["frame", "kind", "sessionId", "fromSeq"]
+                        .iter()
+                        .all(|key| fields.contains_key(*key))
+            }) || event["kind"] != "stream.resync"
+                || !opaque(&event["sessionId"])
+                || !matches_rule(&event["fromSeq"], &json!("uint"))
+            {
+                return Err(BridgeError::engine());
+            }
+            let session_id = event["sessionId"].as_str().unwrap();
+            let subscription = self.0.get(session_id).ok_or_else(BridgeError::engine)?;
+            if subscription.events.send(event.clone()).is_err() {
+                self.0.remove(session_id);
+            }
+            return Ok(());
+        }
         let session_id = event["sessionId"]
             .as_str()
             .ok_or_else(BridgeError::engine)?
@@ -674,6 +693,60 @@ mod tests {
         wrong_durability["durable"] = json!(true);
         assert!(subscriptions.forward(wrong_durability).is_err());
         assert_eq!(received.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn native_channel_forwards_only_valid_resync_controls_to_current_subscription() {
+        let mut subscriptions = Subscriptions::default();
+        let ack = json!({"sessionId":"s1","scopeId":"w1","afterSeq":0});
+        let (old_events, old_received) = recording_channel();
+        assert!(
+            subscriptions
+                .install("s1", 0, &ack, old_events, recording_channel().0)
+                .is_ok()
+        );
+        let (events, received) = recording_channel();
+        assert!(
+            subscriptions
+                .install("s1", 0, &ack, events, recording_channel().0)
+                .is_ok()
+        );
+        let control =
+            json!({"frame":"control","kind":"stream.resync","sessionId":"s1","fromSeq":0});
+        let mut nonzero = control.clone();
+        nonzero["fromSeq"] = json!(9_007_199_254_740_991_u64);
+        assert!(subscriptions.forward(control.clone()).is_ok());
+        assert!(subscriptions.forward(nonzero.clone()).is_ok());
+        assert!(subscriptions.forward(event()).is_ok());
+        assert!(old_received.lock().unwrap().is_empty());
+        assert_eq!(
+            received.lock().unwrap().as_slice(),
+            &[control.clone(), nonzero, event()]
+        );
+        let mut invalid = Vec::new();
+        for (key, value) in [
+            ("kind", json!("other")),
+            ("sessionId", json!("s2")),
+            ("sessionId", json!("../s1")),
+            ("fromSeq", json!(-1)),
+            ("fromSeq", json!(1.5)),
+            ("fromSeq", json!(9_007_199_254_740_992_u64)),
+            ("scopeId", json!("w1")),
+            ("seq", json!(1)),
+            ("durable", json!(true)),
+            ("recordId", json!("r1")),
+        ] {
+            let mut candidate = control.clone();
+            candidate[key] = value;
+            invalid.push(candidate);
+        }
+        let mut missing = control;
+        missing.as_object_mut().unwrap().remove("fromSeq");
+        invalid.push(missing);
+        for candidate in invalid {
+            assert!(subscriptions.forward(candidate).is_err());
+        }
+        assert_eq!(received.lock().unwrap().len(), 3);
     }
 
     #[test]
