@@ -40,7 +40,10 @@ interface Grant {
   revoked?: boolean;
 }
 
-function harness(limits?: { timeoutMs?: number; maxOutputBytes?: number }) {
+function harness(
+  limits?: { timeoutMs?: number; maxOutputBytes?: number },
+  redact?: (t: string) => string,
+) {
   const dir = mkdtempSync(join(base, "case-"));
   const root = join(dir, "root");
   const outside = join(dir, "outside");
@@ -99,6 +102,7 @@ function harness(limits?: { timeoutMs?: number; maxOutputBytes?: number }) {
     receipts,
     sessionId: "s1",
     workspaceId: "w1",
+    ...(redact ? { redact } : {}),
     ...(limits
       ? { limits: { timeoutMs: 20000, maxOutputBytes: 1 << 20, ...limits } }
       : {}),
@@ -1036,4 +1040,55 @@ test("more windows device spellings are denied", winOnly, async () => {
     "CONOUT$",
     "sub/conin$.x",
   ]);
+});
+
+// Secret-shaped values are assembled at runtime so no literal lives in the repo.
+const apiKey = ["sk", "proj", "A1b2C3d4E5f6G7h8I9j0"].join("-");
+const passwd = ["hunt", "er2"].join("");
+const planted = `OPENAI_API_KEY=${apiKey}\npassword=${passwd}\nNAME=plain\n`;
+const leaks = (t: string) => t.includes(apiKey) || t.includes(passwd);
+
+test("read, grep and shell results never carry secrets in text or preview", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, ".env"), planted);
+  const r = await result(h, "read", { path: ".env" });
+  assert.ok(!leaks(r.text) && !leaks(r.summary.preview), "read");
+  assert.match(r.summary.preview, /NAME=plain/);
+  const g = await result(h, "grep", { pattern: "OPENAI|password" });
+  assert.ok(!leaks(g.text) && !leaks(g.summary.preview), "grep");
+  const cmd = win ? "Get-Content .env" : "cat .env";
+  approveSh(h, cmd);
+  const s = await result(h, sh, { command: cmd });
+  assert.ok(!leaks(s.text) && !leaks(s.summary.preview), "shell");
+  assert.match(s.summary.preview, /NAME=plain/);
+});
+
+test("a secret straddling the preview cut is redacted, not half-kept", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "big.txt"), `${"a".repeat(2040)} ${apiKey}\n`);
+  const r = await result(h, "read", { path: "big.txt" });
+  assert.ok(!r.summary.preview.includes(apiKey.slice(0, 12)));
+  assert.ok(!r.text.includes(apiKey));
+});
+
+test("injected redactor runs on text, preview and error messages", async () => {
+  const custom = ["zq", "custom", "7731"].join("-");
+  const h = harness(undefined, (t) => t.split(custom).join("[REDACTED]"));
+  writeFileSync(join(h.root, "a.txt"), `v ${custom}`);
+  const r = await result(h, "read", { path: "a.txt" });
+  assert.ok(!r.text.includes(custom) && !r.summary.preview.includes(custom));
+  const code = await run(h, "read", { path: `missing-${custom}` }).then(
+    () => "",
+    (e: Error) => e.message,
+  );
+  assert.ok(code !== "" && !code.includes(custom));
+});
+
+test("ordinary text passes through unchanged", async () => {
+  const h = harness();
+  const text = "const keys = ['a'];\nhello world\n";
+  writeFileSync(join(h.root, "n.txt"), text);
+  const r = await result(h, "read", { path: "n.txt" });
+  assert.equal(r.text, text);
+  assert.equal(r.summary.preview, text);
 });

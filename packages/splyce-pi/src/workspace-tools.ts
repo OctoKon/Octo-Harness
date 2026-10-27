@@ -29,6 +29,7 @@ import {
   resolve,
   sep,
 } from "node:path";
+import type { Redactor } from "./provider-auth.js";
 
 export type Capability = "fs.read" | "fs.write" | "shell.run";
 export type GrantDenial = "GRANT_REQUIRED" | "GRANT_CONSUMED" | "GRANT_REVOKED";
@@ -136,7 +137,31 @@ export interface WorkspaceToolsOptions {
   sessionId: string;
   workspaceId: string;
   limits?: { timeoutMs: number; maxOutputBytes: number };
+  /** TD-16 redactor for active credentials; applied before the built-in scrub. */
+  redact?: Redactor;
 }
+
+const MASK = "[REDACTED]";
+// Built-in scrub for secret-shaped text in tool output (previews, model text, errors).
+// shortcut: pattern list, not entropy detection; a bare unlabeled secret is not caught.
+const SECRET_PATTERNS: readonly [RegExp, string][] = [
+  [
+    /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+    MASK,
+  ],
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, `Bearer ${MASK}`],
+  [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g, MASK],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})/g, MASK],
+  [/\bxox[a-z]-[A-Za-z0-9-]{8,}/g, MASK],
+  [/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, MASK],
+  [/\beyJ[\w-]{5,}\.eyJ[\w-]{5,}\.[\w-]*/g, MASK],
+  [
+    /([\w.-]*(?:key|secret|token|passw(?:or)?d|pwd)[\w.-]*["']?[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;]+)/gi,
+    `$1${MASK}`,
+  ],
+];
+export const scrubSecrets = (text: string): string =>
+  SECRET_PATTERNS.reduce((t, [re, to]) => t.replace(re, to), text);
 
 const ENV_ALLOW = new Set(
   "PATH PATHEXT SYSTEMROOT WINDIR COMSPEC TEMP TMP TMPDIR HOME LANG TERM OS PROCESSOR_ARCHITECTURE NUMBER_OF_PROCESSORS".split(
@@ -489,22 +514,27 @@ export function createWorkspaceTools(
   }
 
   const PREVIEW = 2048;
+  // Redact the whole text first so a secret straddling the preview cut is never half-kept.
+  const clean = (t: string) => scrubSecrets(opts.redact ? opts.redact(t) : t);
   const done = (
     text: string,
     started: number,
     bytes: number,
     truncated: boolean,
     exitCode?: number | null,
-  ): ToolResult => ({
-    text,
-    summary: {
-      ...(exitCode === undefined ? {} : { exitCode }),
-      durationMs: Date.now() - started,
-      bytes,
-      truncated,
-      preview: text.slice(0, PREVIEW),
-    },
-  });
+  ): ToolResult => {
+    const safe = clean(text);
+    return {
+      text: safe,
+      summary: {
+        ...(exitCode === undefined ? {} : { exitCode }),
+        durationMs: Date.now() - started,
+        bytes,
+        truncated,
+        preview: safe.slice(0, PREVIEW),
+      },
+    };
+  };
   const lines = (text: string, started: number, more: string) => {
     const c = cap(text, maxBytes);
     return done(
@@ -973,9 +1003,20 @@ export function createWorkspaceTools(
     shell("powershell", "PowerShell"),
   ];
   return Object.fromEntries(
-    tools.map((t) => [
-      t.name,
-      { ...t, execute: async (...a) => (await t.result(...a)).text },
-    ]),
+    tools.map((t) => {
+      const result: WorkspaceTool["result"] = async (...a) => {
+        try {
+          return await t.result(...a);
+        } catch (e) {
+          if (e instanceof WorkspaceToolError)
+            throw new WorkspaceToolError(e.code, clean(e.message), e.summary);
+          throw e;
+        }
+      };
+      return [
+        t.name,
+        { ...t, result, execute: async (...a) => (await result(...a)).text },
+      ];
+    }),
   );
 }
