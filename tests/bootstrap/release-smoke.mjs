@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants, createWriteStream } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { finished } from "node:stream/promises";
@@ -52,6 +52,7 @@ export function sanitizeSmokeDiagnostics(report, driverLog) {
     "failedRequest",
     "sessionRequestElapsedMs",
     "webviewDebugging",
+    "applicationElevation",
     "runnerProfile",
     "nativeSessionObservation",
     "failureProcesses",
@@ -119,6 +120,94 @@ export function webviewDebuggingFlags(commandLine) {
   };
 }
 
+export function webviewOverrideFlags(commandLine, requestedFolder) {
+  // Respect Windows quoting so a switch inside another argument's value is not evidence.
+  const args = [];
+  let arg = "",
+    quoted = false,
+    started = false;
+  for (let i = 0; i < commandLine.length; i++) {
+    let slashes = 0;
+    while (commandLine[i] === "\\") {
+      slashes++;
+      i++;
+    }
+    if (commandLine[i] === '"') {
+      arg += "\\".repeat(Math.floor(slashes / 2));
+      if (slashes % 2) arg += '"';
+      else if (quoted && commandLine[i + 1] === '"') {
+        arg += '"';
+        i++;
+      } else quoted = !quoted;
+      started = true;
+    } else {
+      arg += "\\".repeat(slashes);
+      if (i === commandLine.length) break;
+      if (/\s/.test(commandLine[i]) && !quoted) {
+        if (started) args.push(arg);
+        arg = "";
+        started = false;
+      } else {
+        arg += commandLine[i];
+        started = true;
+      }
+    }
+  }
+  if (started) args.push(arg);
+  const folderIndex = args.indexOf("--user-data-dir");
+  const actualFolder =
+    args.find((value) => value.startsWith("--user-data-dir="))?.slice(16) ??
+    (folderIndex >= 0 ? args[folderIndex + 1] : undefined);
+  return {
+    disableGpu: args.includes("--disable-gpu"),
+    requestedFolderMatch: requestedFolder
+      ? Boolean(actualFolder) &&
+        win32.normalize(actualFolder).toLowerCase() ===
+          win32.normalize(requestedFolder).toLowerCase()
+      : null,
+  };
+}
+
+export function processElevation(candidate) {
+  const unknown = { status: "unknown", elevated: null };
+  const serializedDate = candidate?.CreationDate;
+  const legacyDate =
+    typeof serializedDate === "string" &&
+    serializedDate.match(/^\/Date\((\d+)\)\/$/);
+  const creationMs = legacyDate
+    ? Number(legacyDate[1])
+    : Date.parse(serializedDate);
+  if (
+    !Number.isSafeInteger(candidate?.ProcessId) ||
+    candidate.ProcessId <= 0 ||
+    !Number.isSafeInteger(creationMs)
+  )
+    return unknown;
+  try {
+    const result = JSON.parse(
+      execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-File",
+          resolve(root, "tests/bootstrap/process-elevation.ps1"),
+          "-ProcessId",
+          String(candidate.ProcessId),
+          "-CreationTimeMs",
+          String(creationMs),
+        ],
+        { encoding: "utf8", windowsHide: true, timeout: 15000 },
+      ),
+    );
+    return result.status === "observed" && typeof result.elevated === "boolean"
+      ? { status: "observed", elevated: result.elevated }
+      : unknown;
+  } catch {
+    return unknown;
+  }
+}
+
 async function webviewDebuggingState(owned) {
   const ids = owned
     .filter((candidate) => webViewVersionFromProcess(candidate))
@@ -140,6 +229,18 @@ async function webviewDebuggingState(owned) {
   const flags = commands.map((candidate) =>
     webviewDebuggingFlags(candidate.CommandLine || ""),
   );
+  const overrides = commands
+    .filter(
+      (candidate) =>
+        typeof candidate.CommandLine === "string" &&
+        candidate.CommandLine.length > 0,
+    )
+    .map((candidate) =>
+      webviewOverrideFlags(
+        candidate.CommandLine,
+        process.env.WEBVIEW2_USER_DATA_FOLDER,
+      ),
+    );
   const sockets = JSON.parse(
     powershell(
       "ConvertTo-Json -Compress -InputObject @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -in @(" +
@@ -183,6 +284,14 @@ async function webviewDebuggingState(owned) {
       ),
     ],
     pipe: flags.some((flag) => flag.pipe),
+    observedCommandCount: overrides.length,
+    disableGpu: overrides.length
+      ? overrides.some((flag) => flag.disableGpu)
+      : null,
+    requestedFolderMatch:
+      overrides.length && process.env.WEBVIEW2_USER_DATA_FOLDER
+        ? overrides.some((flag) => flag.requestedFolderMatch)
+        : null,
     endpoints,
   };
 }
@@ -567,6 +676,7 @@ export async function runSmoke() {
       console.error("Owned process state:", report.failureProcesses);
       // Pinned tauri-driver discards native stdout; native stderr inherits our log pipe.
       report.nativeDriverStdout = "suppressed by tauri-driver 2.1.0";
+      report.applicationElevation = applications.map(processElevation);
       report.webviewDebugging = await webviewDebuggingState(owned);
       console.error("Owned WebView debugging state:", report.webviewDebugging);
       const profile = process.env.USERPROFILE;

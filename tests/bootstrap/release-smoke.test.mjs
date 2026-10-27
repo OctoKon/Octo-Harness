@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   assertDriverProvenance,
   assertUnavailable,
@@ -7,7 +9,103 @@ import {
   sameProcess,
   sanitizeSmokeDiagnostics,
   webviewDebuggingFlags,
+  webviewOverrideFlags,
+  processElevation,
 } from "./release-smoke.mjs";
+
+test("WebView override observations distinguish requested from effective flags", () => {
+  const folder = "C:\\private-profile\\fresh folder";
+  for (const argument of [
+    `--user-data-dir="${folder}"`,
+    `"--user-data-dir=${folder}"`,
+  ]) {
+    assert.deepEqual(
+      webviewOverrideFlags(`${argument} --disable-gpu`, folder.toUpperCase()),
+      {
+        disableGpu: true,
+        requestedFolderMatch: true,
+      },
+    );
+  }
+  for (const command of [
+    "",
+    "--disable-gpu-sandbox",
+    "--unrelated-disable-gpu",
+    '--user-data-dir="C:\\different"',
+    '--log-file="--disable-gpu"',
+    '--log-file="prefix --disable-gpu suffix"',
+    '--log-file="prefix \\" --disable-gpu suffix"',
+    '--log-file="prefix --user-data-dir=C:\\private-profile\\fresh folder"',
+  ]) {
+    assert.deepEqual(webviewOverrideFlags(command, folder), {
+      disableGpu: false,
+      requestedFolderMatch: false,
+    });
+  }
+  assert.equal(
+    webviewOverrideFlags("--disable-gpu", undefined).requestedFolderMatch,
+    null,
+  );
+});
+
+test(
+  "elevation inspection binds an owned child to its creation time",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      { windowsHide: true, stdio: "ignore" },
+    );
+    try {
+      await once(child, "spawn");
+      const candidate = JSON.parse(
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `Get-CimInstance Win32_Process -Filter 'ProcessId=${child.pid}' | Select-Object ProcessId,CreationDate | ConvertTo-Json -Compress`,
+          ],
+          { encoding: "utf8", windowsHide: true, timeout: 15000 },
+        ),
+      );
+      const observed = processElevation(candidate);
+      assert.equal(observed.status, "observed");
+      assert.equal(typeof observed.elevated, "boolean");
+      const inheritedElevation = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+        ],
+        { encoding: "utf8", windowsHide: true, timeout: 15000 },
+      ).trim();
+      assert.match(inheritedElevation, /^(True|False)$/);
+      assert.equal(observed.elevated, inheritedElevation === "True");
+      assert.deepEqual(Object.keys(observed).sort(), ["elevated", "status"]);
+      assert.deepEqual(
+        processElevation({ ...candidate, CreationDate: "/Date(0)/" }),
+        { status: "unknown", elevated: null },
+      );
+      assert.deepEqual(processElevation({ ...candidate, ProcessId: -1 }), {
+        status: "unknown",
+        elevated: null,
+      });
+      assert.deepEqual(
+        processElevation({ ...candidate, CreationDate: "invalid" }),
+        { status: "unknown", elevated: null },
+      );
+    } finally {
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+    }
+  },
+);
 
 test("WebView debugging diagnostics expose only valid ports and pipe flags", () => {
   assert.deepEqual(
@@ -39,6 +137,10 @@ test("public smoke diagnostics retain the failed request and omit private data",
     {
       case: "bootstrap-unavailable-release",
       passed: false,
+      applicationElevation: [
+        { status: "observed", elevated: true },
+        { status: "unknown", elevated: null },
+      ],
       sessionRequestElapsedMs: 20001,
       webviewDebugging: {
         declaredPorts: [9222],
@@ -67,6 +169,10 @@ test("public smoke diagnostics retain the failed request and omit private data",
   );
   const result = JSON.parse(diagnostic.result);
   assert.equal(result.passed, false);
+  assert.deepEqual(result.applicationElevation, [
+    { status: "observed", elevated: true },
+    { status: "unknown", elevated: null },
+  ]);
   assert.equal(result.sessionRequestElapsedMs, 20001);
   assert.equal(result.webviewDebugging.endpoints[0].devtools, true);
   assert.deepEqual(result.failureProcesses, {

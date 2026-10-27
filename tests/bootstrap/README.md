@@ -89,6 +89,15 @@ labels each run and contains only the existing sanitized result and driver log.
 These runs do not change the primary failure or establish final acceptance; a
 passing fresh-profile baseline would also leave GPU causality unresolved.
 
+On failure, a read-only helper observes token elevation for each owned app process,
+checking its creation timestamp on the same process handle before reading its token.
+Inspection failure is `unknown`, never an unelevated result. The WebView diagnostic
+also records command count and booleans for `--disable-gpu` and an exact requested
+profile-folder match, without exporting command lines, process IDs or folder paths.
+Requested environment overrides alone do not prove uptake:
+[Microsoft documents that elevated hosts ignore WebView2 environment overrides](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags).
+These observations do not change launch settings or establish the failure's cause.
+
 Self-check the fail-closed readiness assertions:
 
 ```powershell
