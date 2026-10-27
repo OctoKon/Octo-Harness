@@ -1082,6 +1082,74 @@ describe("TD-15 stream.resync control frame", () => {
     expect(after.lastDurableSeq).toBe(before.lastDurableSeq);
   });
 
+  it("B1 recovering accepts the plain durable replay at expectedNext (no snapshot)", () => {
+    const { transport, resyncs } = setup();
+    transport.enqueue(resyncControl(0));
+    expect(resyncs).toEqual([0]);
+    transport.enqueue(startedAt(1));
+    const state = transport.flush();
+    expect(state.needsResync).toBe(false);
+    expect(state.resyncCount).toBe(1);
+    expect(state.lastDurableSeq).toBe(1);
+    expect(state.runs.run_a?.turnId).toBe("turn_1");
+  });
+
+  it("B1 seq beyond expectedNext keeps waiting; seq <= applied is a duplicate", () => {
+    const { transport, resyncs } = setup();
+    transport.enqueue(startedAt(1));
+    transport.flush();
+    transport.enqueue(resyncControl(1));
+    transport.enqueue(startedAt(3));
+    expect(transport.current().needsResync).toBe(true);
+    transport.enqueue({ ...startedAt(1), eventId: "evt_1_replay" });
+    expect(transport.current().duplicateCount).toBe(1);
+    expect(transport.current().needsResync).toBe(true);
+    transport.enqueue(startedAt(2));
+    transport.enqueue(startedAt(3));
+    const state = transport.flush();
+    expect(resyncs).toEqual([1]);
+    expect(state.needsResync).toBe(false);
+    expect(state.lastDurableSeq).toBe(3);
+  });
+
+  it("B1 a reconnect snapshot at the applied cursor completes recovery", () => {
+    const { transport } = setup();
+    for (const seq of [1, 2]) transport.enqueue(startedAt(seq));
+    transport.flush();
+    transport.enqueue(resyncControl(2));
+    expect(transport.current().needsResync).toBe(true);
+    transport.enqueue({ ...snapshot(2), eventId: "evt_snap_2" });
+    const state = transport.flush();
+    expect(state.needsResync).toBe(false);
+    expect(state.duplicateCount).toBe(0);
+    transport.enqueue(startedAt(3));
+    expect(transport.flush().lastDurableSeq).toBe(3);
+  });
+
+  it("N1 clamps the replay request to the applied cursor (applied 1, fromSeq 3)", () => {
+    const { transport, resyncs } = setup();
+    transport.enqueue(startedAt(1));
+    transport.flush();
+    transport.enqueue(resyncControl(3));
+    expect(resyncs).toEqual([1]);
+    expect(transport.current().resyncAfterSeq).toBe(1);
+    transport.enqueue(startedAt(2));
+    const state = transport.flush();
+    expect(state.needsResync).toBe(false);
+    expect(state.lastDurableSeq).toBe(2);
+  });
+
+  it("N3 a malformed control counts on the named session's channel", () => {
+    const { transport } = setup();
+    transport.follow("ses_b", "scope_spec");
+    transport.enqueue(startedAt(1));
+    transport.flush();
+    transport.enqueue(resyncControl(-1, { sessionId: "ses_b" }));
+    expect(transport.current("ses_b").protocolErrors).toBe(1);
+    expect(transport.current().protocolErrors).toBe(0);
+    expect(transport.rejectedCount()).toBe(0);
+  });
+
   it("rejects a control frame for an unfollowed session", () => {
     const { transport, resyncs } = setup();
     transport.enqueue(resyncControl(0, { sessionId: "ses_other" }));

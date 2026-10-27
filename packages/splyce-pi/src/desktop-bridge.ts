@@ -317,17 +317,17 @@ export class DesktopBridge {
     };
   }
 
-  /** Client's last applied event seq: the base of the next overflow resync. */
-  get clientAppliedSeq(): number {
-    return this._clientAppliedSeq;
-  }
-  set clientAppliedSeq(value: number) {
-    if (!Number.isSafeInteger(value) || value < 0)
+  /**
+   * (Re)subscribe at the client's last applied event seq: the base of every
+   * later overflow resync on this subscription.
+   */
+  resubscribe(afterSeq: number): void {
+    if (!Number.isSafeInteger(afterSeq) || afterSeq < 0)
       throw new BridgeError(
         "INVALID_CURSOR",
         "client-applied seq must be a non-negative safe integer",
       );
-    this._clientAppliedSeq = value;
+    this._clientAppliedSeq = afterSeq;
   }
 
   /** Highest queued durable seq — the renderer's next afterSeq base. */

@@ -799,38 +799,40 @@ export function createTurnStreamTransport(
     options.onResync?.(afterSeq, channel.state.sessionId ?? "");
   }
 
-  // Unsequenced engine control: replay strictly after the engine's fromSeq.
-  // It is not data, so no seq, duplicate, applied or durable cursor moves.
+  // Unsequenced engine control. It is not data, so no seq, duplicate, applied
+  // or durable cursor moves; replay is requested after
+  // min(fromSeq, applied durable cursor) so no unseen seq is ever skipped.
   function applyControl(event: unknown) {
-    let control;
-    try {
-      control = validateControlFrame(event);
-    } catch {
-      const channel = selectedChannel();
-      if (channel) {
-        channel.state = {
-          ...channel.state,
-          protocolErrors: channel.state.protocolErrors + 1,
-        };
-        emit(channel);
-      }
-      return;
-    }
-    const scopeId = followed.get(control.sessionId);
+    const named = (event as { sessionId?: unknown }).sessionId;
+    const scopeId = typeof named === "string" ? followed.get(named) : undefined;
     if (scopeId === undefined) {
       rejected += 1;
       return;
     }
-    const channel = channelFor(scopeId, control.sessionId);
+    const channel = channelFor(scopeId, named as string);
+    let control;
+    try {
+      control = validateControlFrame(event);
+    } catch {
+      channel.state = {
+        ...channel.state,
+        protocolErrors: channel.state.protocolErrors + 1,
+      };
+      emit(channel);
+      return;
+    }
+    // Reduce queued frames first so the clamp sees the true applied cursor.
+    applyPending(channel);
+    const afterSeq = Math.min(control.fromSeq, channel.state.lastDurableSeq);
     channel.state = {
       ...channel.state,
       needsResync: true,
       resyncFromSeq: control.fromSeq,
-      resyncAfterSeq: control.fromSeq,
+      resyncAfterSeq: afterSeq,
     };
     // Each engine resync is its own replay request.
     channel.resyncNotified = false;
-    notifyResync(channel, control.fromSeq);
+    notifyResync(channel, afterSeq);
     emit(channel);
   }
 
