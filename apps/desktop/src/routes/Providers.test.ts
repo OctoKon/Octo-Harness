@@ -102,6 +102,17 @@ describe("provider grouping", () => {
     expect(card.textContent).toContain("Configured");
   });
 
+  it("never prints a credential or endpoint reference and only the sanitised origin", () => {
+    render([conn("a", "openai-completions", "configured")]);
+    const text = document.querySelector(
+      "[data-testid=connection]",
+    )!.textContent!;
+    expect(text).not.toContain("credential:");
+    expect(text).not.toContain("/v1");
+    expect(text).toContain("https://a.example.test");
+    expect(text).toContain("openai-completions connection");
+  });
+
   it("shows local egress as staying on the device", () => {
     expect(
       toConnectionView(

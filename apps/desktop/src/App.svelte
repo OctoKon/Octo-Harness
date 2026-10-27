@@ -301,8 +301,7 @@
       onConfigureProvider={() => (view = "providers")}
     />
   {:else if view === "usage"}
-    <UsageView usage={null} />
-    <p role="status" data-testid="usage-unavailable-note">Usage unavailable - no engine usage report.</p>
+    <UsageView usage={null} status="unavailable" />
   {:else}
     <div class="app-content" class:conversation={currentRun !== undefined}>
       {#if currentRun}
@@ -330,7 +329,10 @@
 {/snippet}
 
 {#snippet composer()}
-  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so sending is disabled. -->
+  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so
+       sending is disabled. generationReady is deliberately omitted: the engine does not
+       report readiness.ports.generation yet, and an omitted flag means "not reported",
+       not "unconfigured". Wire it the moment the parser lands in stores/engine.ts. -->
   <Composer
     connection={status}
     sessionId={$selectedSession?.sessionId ?? null}
