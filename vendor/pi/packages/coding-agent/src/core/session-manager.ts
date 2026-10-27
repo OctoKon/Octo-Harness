@@ -1075,7 +1075,7 @@ function persistenceSnapshot<T>(value: T): T {
 }
 
 function serializePersistence(entries: readonly FileEntry[]): string {
-	return entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
+	return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 }
 
 function assertSanitizedShape(original: unknown, sanitized: unknown): void {
@@ -1356,7 +1356,7 @@ export class SessionManager {
 				safeEntryLines.push(owned ? await sanitizeSplycePersistence(this, line, signal) : line);
 				check();
 			}
-			const safe = safeEntryLines.join("\n") + "\n";
+			const safe = `${safeEntryLines.join("\n")}\n`;
 			check();
 			const safeEntries = parseSanitizedPersistence(safe, entries);
 			if (persist && flushed && safe !== previousSerialized && write === "none") write = "rewrite";
@@ -1377,7 +1377,7 @@ export class SessionManager {
 			}
 			const sameFile = sessionFile === this.sessionFile;
 			const safeLines = safe.split("\n");
-			const safePrefix = safeLines.slice(0, previous.length).join("\n") + "\n";
+			const safePrefix = `${safeLines.slice(0, previous.length).join("\n")}\n`;
 			check();
 			if (persist && sessionDir && !existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
 			if (persist && sessionFile && write !== "none") {

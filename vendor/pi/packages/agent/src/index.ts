@@ -9,9 +9,9 @@ export {
 	disposeSplyceOwner,
 	inheritSplyceOwner,
 	isSplyceOwned,
+	type SplycePersistenceSanitizer,
 	sanitizeSplycePersistence,
 	sealSplyceAgentCallbacks,
-	type SplycePersistenceSanitizer,
 } from "./splyce-readiness.ts";
 export { setDefaultStreamFn } from "./stream-fn.ts";
 export * from "./types.ts";
