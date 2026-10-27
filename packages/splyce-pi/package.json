@@ -3,7 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "file:../../vendor/pi/packages/coding-agent"
+    "@earendil-works/pi-coding-agent": "file:../../vendor/pi/packages/coding-agent",
+    "@splyce/index": "file:../splyce-index",
+    "@splyce/memory": "file:../splyce-memory"
   },
   "type": "module",
   "exports": {
