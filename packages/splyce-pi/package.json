@@ -46,6 +46,10 @@
     "./agent-context-tools": {
       "types": "./dist/agent-context-tools.d.ts",
       "import": "./dist/agent-context-tools.js"
+    },
+    "./tool-dispatch": {
+      "types": "./dist/tool-dispatch.d.ts",
+      "import": "./dist/tool-dispatch.js"
     }
   },
   "files": [
