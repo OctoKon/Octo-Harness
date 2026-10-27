@@ -5,6 +5,7 @@
 
 import {
   CONTRACT_VERSION,
+  canonicalEndpointUrl,
   PROTOCOL_VERSION,
   RECORD_SCHEMAS,
   ContractError,
@@ -345,6 +346,208 @@ function mapSqliteError(error: unknown): StoreError {
     "STORE_UNKNOWN",
     error instanceof Error ? error.message : String(error),
   );
+}
+
+export interface SetupInput {
+  workspaceId: string;
+  requestId: string;
+  endpoint: {
+    endpointId: string;
+    canonicalUrl: string;
+    apiFamily: string;
+    locality: "loopback" | "hosted";
+    revision: string;
+  };
+  connection: {
+    providerConnectionId: string;
+    revision: string;
+    displayName: string;
+    apiFamily: string;
+    locality: "local" | "hosted";
+    endpointRef: string;
+    credentialRef: string;
+  };
+  profile: {
+    profileId: string;
+    profileRevision: string;
+    bindings: {
+      role: string;
+      providerConnectionId: string;
+      connectionRevision: string;
+      modelId: string;
+    }[];
+  };
+  expected: {
+    endpointRevision: string | null;
+    connectionRevision: string | null;
+    profileRevision: string | null;
+  };
+}
+
+export interface SetupResult {
+  endpoint: RecordByKind["providerEndpoint"];
+  connection: RecordByKind["providerConnection"];
+  profile: RecordByKind["profileSnapshot"];
+}
+
+function setupInvalid(field: string): never {
+  throw new StoreError("SETUP_INVALID", `invalid setup input: ${field}`);
+}
+function setupObject(
+  value: unknown,
+  field: string,
+  keys: readonly string[],
+): Record<string, unknown> {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).length !== keys.length ||
+    !keys.every((key) => Object.hasOwn(value, key))
+  )
+    setupInvalid(field);
+  return value as Record<string, unknown>;
+}
+function setupId(value: unknown, field: string, max = 128): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > max ||
+    /[\s\\/\u0000-\u001f\u007f]/u.test(value)
+  )
+    setupInvalid(field);
+  return value;
+}
+function setupRevision(value: unknown, field: string): string | null {
+  return value === null ? null : setupId(value, field);
+}
+
+function parseSetup(raw: unknown): SetupInput {
+  const top = setupObject(raw, "input", [
+    "workspaceId",
+    "requestId",
+    "endpoint",
+    "connection",
+    "profile",
+    "expected",
+  ]);
+  const e = setupObject(top.endpoint, "endpoint", [
+    "endpointId",
+    "canonicalUrl",
+    "apiFamily",
+    "locality",
+    "revision",
+  ]);
+  const c = setupObject(top.connection, "connection", [
+    "providerConnectionId",
+    "revision",
+    "displayName",
+    "apiFamily",
+    "locality",
+    "endpointRef",
+    "credentialRef",
+  ]);
+  const p = setupObject(top.profile, "profile", [
+    "profileId",
+    "profileRevision",
+    "bindings",
+  ]);
+  const x = setupObject(top.expected, "expected", [
+    "endpointRevision",
+    "connectionRevision",
+    "profileRevision",
+  ]);
+  const endpointId = setupId(e.endpointId, "endpoint.endpointId");
+  const endpointRevision = setupId(e.revision, "endpoint.revision");
+  const locality = e.locality;
+  if (locality !== "loopback" && locality !== "hosted")
+    setupInvalid("endpoint.locality");
+  const canonicalUrl = e.canonicalUrl;
+  let canonical: string;
+  try {
+    canonical = canonicalEndpointUrl(canonicalUrl, locality);
+  } catch {
+    return setupInvalid("endpoint.canonicalUrl");
+  }
+  if (canonical !== canonicalUrl) setupInvalid("endpoint.canonicalUrl");
+  const apiFamily = setupId(e.apiFamily, "endpoint.apiFamily");
+  const connectionId = setupId(
+    c.providerConnectionId,
+    "connection.providerConnectionId",
+  );
+  const connectionRevision = setupId(c.revision, "connection.revision");
+  if (
+    typeof c.displayName !== "string" ||
+    c.displayName.trim().length === 0 ||
+    c.displayName.length > 128
+  )
+    setupInvalid("connection.displayName");
+  if (c.apiFamily !== apiFamily) setupInvalid("connection.apiFamily");
+  if (c.locality !== (locality === "loopback" ? "local" : "hosted"))
+    setupInvalid("connection.locality");
+  if (c.endpointRef !== `${endpointId}@${endpointRevision}`)
+    setupInvalid("connection.endpointRef");
+  const credentialRef = setupId(c.credentialRef, "connection.credentialRef");
+  if (!Array.isArray(p.bindings) || p.bindings.length === 0)
+    setupInvalid("profile.bindings");
+  const bindings = p.bindings.map((value: unknown, index: number) => {
+    const b = setupObject(value, `profile.bindings[${index}]`, [
+      "role",
+      "providerConnectionId",
+      "connectionRevision",
+      "modelId",
+    ]);
+    if (
+      b.providerConnectionId !== connectionId ||
+      b.connectionRevision !== connectionRevision
+    )
+      setupInvalid(`profile.bindings[${index}] connection`);
+    return {
+      role: setupId(b.role, `profile.bindings[${index}].role`),
+      providerConnectionId: connectionId,
+      connectionRevision,
+      modelId: setupId(b.modelId, `profile.bindings[${index}].modelId`, 256),
+    };
+  });
+  return {
+    workspaceId: setupId(top.workspaceId, "workspaceId"),
+    requestId: setupId(top.requestId, "requestId"),
+    endpoint: {
+      endpointId,
+      canonicalUrl: canonical,
+      apiFamily,
+      locality,
+      revision: endpointRevision,
+    },
+    connection: {
+      providerConnectionId: connectionId,
+      revision: connectionRevision,
+      displayName: c.displayName,
+      apiFamily,
+      locality: c.locality as "local" | "hosted",
+      endpointRef: c.endpointRef as string,
+      credentialRef,
+    },
+    profile: {
+      profileId: setupId(p.profileId, "profile.profileId"),
+      profileRevision: setupId(p.profileRevision, "profile.profileRevision"),
+      bindings,
+    },
+    expected: {
+      endpointRevision: setupRevision(
+        x.endpointRevision,
+        "expected.endpointRevision",
+      ),
+      connectionRevision: setupRevision(
+        x.connectionRevision,
+        "expected.connectionRevision",
+      ),
+      profileRevision: setupRevision(
+        x.profileRevision,
+        "expected.profileRevision",
+      ),
+    },
+  };
 }
 
 export class Store {
@@ -1014,6 +1217,152 @@ export class Store {
   }
 
   /**
+   * TD-26 first-run setup: endpoint, connection and profile revisions commit in
+   * ONE transaction with per-entity CAS under the same lock. Record ids derive
+   * from requestId, so an identical retry returns the stored result and appends
+   * nothing; the same requestId with a different payload is SETUP_REQUEST_CONFLICT.
+   * Only a credentialRef is accepted: unknown fields (apiKey, ...) are rejected.
+   */
+  commitSetup(input: unknown, caller: CallerContext): SetupResult {
+    const setup = parseSetup(input);
+    const scopeId = setup.workspaceId;
+    const ids = {
+      endpoint: `setup:${setup.requestId}:endpoint`,
+      connection: `setup:${setup.requestId}:connection`,
+      profile: `setup:${setup.requestId}:profile`,
+    };
+    const base = (recordId: string) => ({
+      schemaVersion: CONTRACT_VERSION,
+      recordId,
+      createdAt: new Date().toISOString(),
+      scopeId,
+      sourceIds: [] as string[],
+    });
+    const endpoint = {
+      ...base(ids.endpoint),
+      endpointId: setup.endpoint.endpointId,
+      canonicalUrl: setup.endpoint.canonicalUrl,
+      apiFamily: setup.endpoint.apiFamily,
+      locality: setup.endpoint.locality,
+      revision: setup.endpoint.revision,
+    };
+    // ponytail: the contract has no displayName, apiVersion, adapterRevision or
+    // accountScopeRef inputs for setup, so they are fixed (displayName not persisted).
+    const connection = {
+      ...base(ids.connection),
+      providerConnectionId: setup.connection.providerConnectionId,
+      revision: setup.connection.revision,
+      apiFamily: setup.connection.apiFamily,
+      apiVersion: "setup-1",
+      endpointRef: setup.connection.endpointRef,
+      credentialRef: setup.connection.credentialRef,
+      adapterRevision: "setup-1",
+      accountScopeRef: scopeId,
+      locality: setup.connection.locality,
+    };
+    const profile = {
+      ...base(ids.profile),
+      profileId: setup.profile.profileId,
+      profileRevision: setup.profile.profileRevision,
+      configRevision: this.configRevision(scopeId),
+      roleBindingRefs: [] as string[],
+      installedModuleRefs: [] as string[],
+      bindings: setup.profile.bindings,
+      egressPolicyRefs: [] as string[],
+      limitsArtifactId: "limits-default",
+    };
+    const replay = (): SetupResult | undefined => {
+      const stored = [ids.endpoint, ids.connection, ids.profile].map((id) =>
+        this.findRecord(id),
+      );
+      if (stored.every((row) => row === undefined)) return undefined;
+      // createdAt and the observed configRevision are not part of the request.
+      const same = (a: unknown, b: unknown) =>
+        JSON.stringify({
+          ...(a as object),
+          createdAt: 0,
+          configRevision: 0,
+        }) ===
+        JSON.stringify({ ...(b as object), createdAt: 0, configRevision: 0 });
+      const wanted = [endpoint, connection, profile];
+      if (
+        !stored.every(
+          (row, i) => row !== undefined && same(row.record, wanted[i]),
+        )
+      )
+        throw new StoreError(
+          "SETUP_REQUEST_CONFLICT",
+          "requestId was already used with a different setup payload; nothing appended",
+        );
+      return {
+        endpoint: stored[0]!.record as RecordByKind["providerEndpoint"],
+        connection: stored[1]!.record as RecordByKind["providerConnection"],
+        profile: stored[2]!.record as RecordByKind["profileSnapshot"],
+      };
+    };
+    const replayed = replay();
+    if (replayed !== undefined) return replayed;
+    try {
+      this.commitBatch(
+        [
+          { kind: "providerEndpoint", record: endpoint },
+          { kind: "providerConnection", record: connection },
+          { kind: "profileSnapshot", record: profile },
+        ],
+        [],
+        caller,
+        {
+          expectedEntityRevision: [
+            {
+              kind: "providerEndpoint",
+              scopeId,
+              entityId: endpoint.endpointId,
+              expectedRevision: setup.expected.endpointRevision,
+            },
+            {
+              kind: "providerConnection",
+              scopeId,
+              entityId: connection.providerConnectionId,
+              expectedRevision: setup.expected.connectionRevision,
+            },
+            {
+              kind: "profileSnapshot",
+              scopeId,
+              entityId: profile.profileId,
+              expectedRevision: setup.expected.profileRevision,
+            },
+          ],
+        },
+      );
+    } catch (error) {
+      // A concurrent identical retry that won the lock is a replay, not a conflict.
+      if (
+        error instanceof StoreError &&
+        error.code === "ENTITY_STALE_REVISION"
+      ) {
+        const raced = replay();
+        if (raced !== undefined) return raced;
+      }
+      throw error;
+    }
+    return {
+      endpoint: endpoint as RecordByKind["providerEndpoint"],
+      connection: connection as RecordByKind["providerConnection"],
+      profile: profile as RecordByKind["profileSnapshot"],
+    };
+  }
+
+  private findRecord(recordId: string): StoredRecord | undefined {
+    try {
+      return this.get(recordId);
+    } catch (error) {
+      if (error instanceof StoreError && error.code === "STORE_NOT_FOUND")
+        return undefined;
+      throw error;
+    }
+  }
+
+  /**
    * Ordered, atomic receipt commits: every input is validated first, then all
    * are committed in input order in one transaction. Any failure — including a
    * mid-batch constraint violation — rolls the whole batch back: the cursor
@@ -1103,7 +1452,8 @@ export class Store {
       expectedActiveGrants,
       workspaceAdmission,
     }: EventPreconditions & {
-      expectedEntityRevision?: EntityRevisionExpectation;
+      expectedEntityRevision?:
+        EntityRevisionExpectation | readonly EntityRevisionExpectation[];
     } & NativeGrantPreconditions,
     importedWatermarks: readonly EventWatermark[] = [],
   ): AppendBatchResult & { events: SplyceEvent[] } {
@@ -1161,9 +1511,23 @@ export class Store {
     }
     try {
       this.db.exec("BEGIN IMMEDIATE;");
-      if (expectedEntityRevision !== undefined) {
-        const { kind, scopeId, entityId, expectedRevision } =
-          expectedEntityRevision;
+      const expectations: readonly EntityRevisionExpectation[] =
+        expectedEntityRevision === undefined
+          ? []
+          : Array.isArray(expectedEntityRevision)
+            ? expectedEntityRevision
+            : [expectedEntityRevision as EntityRevisionExpectation];
+      // Every prepared record is guarded exactly once: one expectation per kind.
+      if (
+        expectedEntityRevision !== undefined &&
+        prepared.length !== expectations.length
+      )
+        throw new StoreError(
+          "ENTITY_GUARD_MISMATCH",
+          "entity guard must match the inserted kind, scope, identity and revision",
+        );
+      for (const expectation of expectations) {
+        const { kind, scopeId, entityId, expectedRevision } = expectation;
         const [entityField, revisionField] = (
           {
             providerConnection: ["providerConnectionId", "revision"],
@@ -1171,7 +1535,7 @@ export class Store {
             providerEndpoint: ["endpointId", "revision"],
           } as const
         )[kind] ?? ["", ""];
-        const input = prepared[0];
+        const input = prepared.find(([k]) => k === kind);
         const opaque = (value: unknown) =>
           typeof value === "string" &&
           value.length > 0 &&
@@ -1182,8 +1546,8 @@ export class Store {
             "profileSnapshot",
             "providerEndpoint",
           ].includes(kind) ||
-          prepared.length !== 1 ||
-          input?.[0] !== kind ||
+          prepared.filter(([k]) => k === kind).length !== 1 ||
+          input === undefined ||
           !opaque(scopeId) ||
           !opaque(entityId) ||
           (expectedRevision !== null && !opaque(expectedRevision)) ||
@@ -1218,7 +1582,7 @@ export class Store {
             "ENTITY_STALE_REVISION",
             "entity revision changed; nothing appended",
           );
-        const nextRevision = prepared[0]![1][revisionField];
+        const nextRevision = input[1][revisionField];
         const reused = this.db
           .prepare(
             `SELECT 1 FROM records WHERE kind = ? AND scope_id = ? AND json_extract(payload, '$.${entityField}') = ? AND json_extract(payload, '$.${revisionField}') = ? LIMIT 1`,
