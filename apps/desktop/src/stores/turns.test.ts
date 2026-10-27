@@ -170,6 +170,67 @@ describe("FUI-W4 stream & backpressure semantics", () => {
     });
   });
 
+  it("retains the optional outcome summary without inventing absent fields", () => {
+    const state = applyAll(createTurnsState(), [
+      started(),
+      toolIntent(2),
+      event(3, "turn.tool_outcome", {
+        runId: "run_a",
+        actionId: "act_1",
+        status: "success",
+        outcomeRef: "ref_1",
+        summary: {
+          exitCode: 1,
+          durationMs: 42,
+          bytes: 64,
+          truncated: true,
+          preview: "first line\nsecond line",
+        },
+      } as unknown as EventPayloads["turn.tool_outcome"]),
+    ]);
+
+    expect(state.runs.run_a.actions[0].summary).toEqual({
+      exitCode: 1,
+      durationMs: 42,
+      bytes: 64,
+      truncated: true,
+      preview: "first line\nsecond line",
+    });
+
+    const current = applyAll(createTurnsState(), [
+      started(),
+      toolIntent(2),
+      event(3, "turn.tool_outcome", {
+        runId: "run_a",
+        actionId: "act_1",
+        status: "success",
+        outcomeRef: "ref_1",
+      }),
+    ]);
+    expect(current.runs.run_a.actions[0].summary).toBeUndefined();
+  });
+
+  it("drops malformed optional summary fields instead of displaying them", () => {
+    const state = applyAll(createTurnsState(), [
+      started(),
+      toolIntent(2),
+      event(3, "turn.tool_outcome", {
+        runId: "run_a",
+        actionId: "act_1",
+        status: "success",
+        summary: {
+          exitCode: "0",
+          durationMs: -1,
+          bytes: 1.5,
+          truncated: "yes",
+          preview: 42,
+        },
+      } as unknown as EventPayloads["turn.tool_outcome"]),
+    ]);
+
+    expect(state.runs.run_a.actions[0].summary).toBeUndefined();
+  });
+
   it("keeps a 10x render-rate burst lossless and requests no resync", () => {
     const burst = Array.from({ length: 10_000 }, (_, index) =>
       delta(index + 2, "x"),

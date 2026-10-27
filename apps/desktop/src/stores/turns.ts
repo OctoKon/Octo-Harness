@@ -24,6 +24,14 @@ export interface ApprovalView {
 export type ToolCallStatus =
   "pending" | "success" | "error" | "uncertain" | "canceled";
 
+export interface ToolOutcomeSummary {
+  exitCode?: number;
+  durationMs?: number;
+  bytes?: number;
+  truncated?: boolean;
+  preview?: string;
+}
+
 export interface ToolCallView {
   actionId: string;
   capabilityId: string;
@@ -33,6 +41,7 @@ export interface ToolCallView {
   outcomeRef?: string;
   error?: string;
   approval?: ApprovalView;
+  summary?: ToolOutcomeSummary;
 }
 
 export type TurnStatus =
@@ -255,6 +264,50 @@ function missingPayload(state: TurnsState): TurnsState {
   return { ...state, protocolErrors: state.protocolErrors + 1 };
 }
 
+// The optional summary is additive to the frozen event; read it defensively so
+// an older engine and a malformed field both keep the current card shape.
+function toolSummaryOf(
+  payload: EventPayloads["turn.tool_outcome"],
+): ToolOutcomeSummary | undefined {
+  const source = (payload as { summary?: unknown }).summary;
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    return undefined;
+  }
+  const value = source as Record<string, unknown>;
+  const summary: ToolOutcomeSummary = {};
+  if (
+    typeof value.exitCode === "number" &&
+    Number.isSafeInteger(value.exitCode)
+  ) {
+    summary.exitCode = value.exitCode;
+  }
+  if (
+    typeof value.durationMs === "number" &&
+    Number.isSafeInteger(value.durationMs) &&
+    value.durationMs >= 0
+  ) {
+    summary.durationMs = value.durationMs;
+  }
+  if (
+    typeof value.bytes === "number" &&
+    Number.isSafeInteger(value.bytes) &&
+    value.bytes >= 0
+  ) {
+    summary.bytes = value.bytes;
+  }
+  if (typeof value.truncated === "boolean") {
+    summary.truncated = value.truncated;
+  }
+  if (
+    typeof value.preview === "string" &&
+    value.preview.length > 0 &&
+    value.preview.length <= 2048
+  ) {
+    summary.preview = value.preview;
+  }
+  return Object.keys(summary).length > 0 ? summary : undefined;
+}
+
 const EVENT_ID_WINDOW = 4096;
 
 /**
@@ -393,11 +446,13 @@ export function reduceTurns(
       if (!payload) return missingPayload(next);
       const { runId, actionId, status, outcomeRef, error } = payload;
       if (!next.runs[runId]) return missingPayload(next);
+      const summary = toolSummaryOf(payload);
       return updateAction(next, runId, actionId, (action) => ({
         ...action,
         status,
         ...(outcomeRef !== undefined ? { outcomeRef } : {}),
         ...(error !== undefined ? { error } : {}),
+        ...(summary ? { summary } : {}),
       }));
     }
 
