@@ -184,12 +184,13 @@ export function createAgentContextTools(
       if (!args || typeof args !== "object" || Array.isArray(args))
         fail("BAD_ARGS", "tool arguments must be an object");
       const started = Date.now();
-      const value = await run(args, signal).catch((error: unknown) => {
-        throw generic(name, error);
-      });
       // Redact string fields before JSON escaping, then the whole text, and only then cap:
-      // a secret straddling the cut is never half-kept.
-      const out = cap(redact(JSON.stringify(redactDeep(value, redact))));
+      // a secret straddling the cut is never half-kept. A throwing redactor is generic too.
+      const out = await run(args, signal)
+        .then((value) => cap(redact(JSON.stringify(redactDeep(value, redact)))))
+        .catch((error: unknown) => {
+          throw generic(name, error);
+        });
       return {
         text: out.text,
         summary: {
