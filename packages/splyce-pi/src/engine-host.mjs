@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { createNativeHost } from "./native-host.mjs";
 import { NativeControl } from "./native-control.mjs";
+import { validateNativeSessionSetup } from "./native-session-setup.mjs";
 import { StoreError } from "../dist/store.js";
 import {
   CONTRACT_VERSION,
@@ -288,6 +289,53 @@ export async function runHost(
             readiness: host.handshakeReadiness,
           },
         };
+      } else if (
+        Object.keys(params).length === 4 &&
+        ["frame", "command", "requestId", "payload"].every((key) =>
+          Object.hasOwn(params, key),
+        ) &&
+        ["profile.select", "session.start"].includes(params.command) &&
+        validId
+      ) {
+        try {
+          const input = validateNativeSessionSetup(
+            params.command,
+            params.payload,
+            params.requestId,
+          );
+          const method =
+            params.command === "profile.select"
+              ? "selectProfile"
+              : "startSession";
+          const value = await host[method](
+            input,
+            params.requestId,
+            lifetime.signal,
+          );
+          reply = { id: request.id, ok: true, value };
+        } catch (error) {
+          const codes = [
+            "SETUP_INVALID",
+            "SETUP_UNAVAILABLE",
+            "SETUP_REQUEST_CONFLICT",
+            "STALE_REVISION",
+            "WORKSPACE_SUPERSEDED",
+            "CREDENTIAL_UNAVAILABLE",
+            "SETUP_OUTCOME_UNKNOWN",
+          ];
+          reply = {
+            id: request.id,
+            ok: false,
+            error: {
+              code: codes.includes(error?.code)
+                ? error.code
+                : "SETUP_UNAVAILABLE",
+              message: "Native setup unavailable",
+              correlationId: params.requestId,
+              retryable: false,
+            },
+          };
+        }
       } else {
         reply = {
           id: request.id,
@@ -375,7 +423,8 @@ export async function runHost(
     if (failure) throw failure;
   } finally {
     native.shutdown();
-    host?.close();
+    if (host?.shutdown) await host.shutdown();
+    else await host?.close();
   }
 }
 

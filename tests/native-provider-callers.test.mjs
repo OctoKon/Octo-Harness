@@ -28,6 +28,11 @@ const deferred = () => {
   return { promise, resolve };
 };
 const turn = () => new Promise((resolve) => setImmediate(resolve));
+const credentialUnavailable = (error) => {
+  assert.equal(error.code, "CREDENTIAL_UNAVAILABLE");
+  assert.equal(error.message, "Credential unavailable");
+  return true;
+};
 
 // Protocol fixture only: actual Pi callers and NativeControl, no installed credential or provider claim.
 async function fixture(t) {
@@ -272,7 +277,7 @@ test("native caller SDK rejection preserves registration failure before startup 
     createAgentSession(f.options).then(() => {
       exposed = true;
     }),
-    /CREDENTIAL_UNAVAILABLE/,
+    credentialUnavailable,
   );
   assert.equal(exposed, false);
   assert.equal(startups, 0);
@@ -324,7 +329,7 @@ test("native caller constructor stays synchronous and initialization retains its
   let failure;
   await assert.rejects(session.initialize(), (error) => {
     failure = error;
-    assert.match(error.message, /CREDENTIAL_UNAVAILABLE/);
+    credentialUnavailable(error);
     return true;
   });
   const frames = f.frames.length;
@@ -347,7 +352,7 @@ test("native caller ModelRegistry returns and propagates the actual registration
   f.state.fail = true;
   const pending = registry.registerProvider(f.provider);
   assert.equal(typeof pending?.then, "function");
-  const rejected = assert.rejects(pending, /CREDENTIAL_UNAVAILABLE/);
+  const rejected = assert.rejects(pending, credentialUnavailable);
   await entered.promise;
   assert.equal(registry.getRegisteredNativeProvider("openai"), f.provider);
   assert.equal(f.modelRuntime.hasConfiguredAuth("openai"), false);
@@ -368,7 +373,7 @@ test("native caller live extension rejection cannot refresh the selected model",
   f.state.fail = true;
   const pending = api.registerProvider(f.makeProvider("Replacement"));
   assert.equal(typeof pending?.then, "function");
-  const rejected = assert.rejects(pending, /CREDENTIAL_UNAVAILABLE/);
+  const rejected = assert.rejects(pending, credentialUnavailable);
   await entered.promise;
   assert.equal(session.model, selected);
   release.resolve();
