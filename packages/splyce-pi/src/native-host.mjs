@@ -220,6 +220,9 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
     prepareProviderSetup: providerSetup.prepare,
     commitProviderSetup: providerSetup.commit,
     readProviderSetup: providerSetup.read,
+    readSetup(input, requestId, signal) {
+      return sessions.handle("setup.read", input, requestId, signal);
+    },
     selectProfile(input, requestId, signal) {
       return sessions.handle("profile.select", input, requestId, signal);
     },

@@ -698,6 +698,32 @@ test(
       ).ok,
       true,
     );
+    const readCursor = f.store.cursor();
+    const recovered = await rpc("read-rpc", "send", {
+      frame: "setup",
+      command: "setup.read",
+      requestId: "framed-read",
+      payload: { requestId: "framed-read", workspaceId: f.workspaceId },
+    });
+    assert.equal(recovered.ok, true);
+    assert.equal(
+      recovered.value.configRevision,
+      f.store.configRevision(f.workspaceId),
+    );
+    assert.equal(recovered.value.selectedProfileId, null);
+    assert.deepEqual(
+      recovered.value.profiles,
+      ["a", "b"].map((name) => ({
+        profileId: `profile-${name}`,
+        profileRevision: "p1",
+        apiFamily: "openai-completions",
+        modelId: "fixture-model",
+        endpointOrigin: `https://${name}.example.test`,
+        credential: "configured",
+      })),
+    );
+    assert.equal(f.store.cursor(), readCursor);
+    assert.deepEqual(f.trace, []);
     const selection = f.select("framed-select");
     const selected = await rpc("select-rpc", "send", {
       frame: "setup",

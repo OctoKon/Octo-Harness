@@ -1,7 +1,9 @@
 import { Store, INITIAL_CONFIG_REVISION } from "../dist/store.js";
 import { NativeControl } from "./native-control.mjs";
+import { createNativeSetupReader } from "./native-setup-read.mjs";
 
 const commandFields = new Map([
+  ["setup.read", ["requestId", "workspaceId"]],
   [
     "profile.select",
     [
@@ -73,6 +75,7 @@ export function createNativeSessionSetup({ store, control, factory }) {
     policyRevision: INITIAL_CONFIG_REVISION,
   });
   const bound = new Map();
+  const readSetup = createNativeSetupReader({ store, control });
   let operations = Promise.resolve();
   let closed = false;
   const check = (signal) => {
@@ -273,6 +276,11 @@ export function createNativeSessionSetup({ store, control, factory }) {
       const operation = operations
         .then(async () => {
           check(signal);
+          if (command === "setup.read") {
+            const result = await readSetup(input, signal);
+            check(signal);
+            return result;
+          }
           return command === "profile.select"
             ? select(input, signal)
             : start(input, signal);

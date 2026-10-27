@@ -374,7 +374,9 @@ export async function runHost(
         ["frame", "command", "requestId", "payload"].every((key) =>
           Object.hasOwn(params, key),
         ) &&
-        ["profile.select", "session.start"].includes(params.command) &&
+        ["profile.select", "session.start", "setup.read"].includes(
+          params.command,
+        ) &&
         validId
       ) {
         try {
@@ -383,10 +385,11 @@ export async function runHost(
             params.payload,
             params.requestId,
           );
-          const method =
-            params.command === "profile.select"
-              ? "selectProfile"
-              : "startSession";
+          const method = {
+            "profile.select": "selectProfile",
+            "session.start": "startSession",
+            "setup.read": "readSetup",
+          }[params.command];
           const value = await host[method](
             input,
             params.requestId,
