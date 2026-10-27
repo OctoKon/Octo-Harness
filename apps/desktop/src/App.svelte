@@ -272,7 +272,10 @@
 {/snippet}
 
 {#snippet composer()}
-  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so sending is disabled. -->
+  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so
+       sending is disabled. generationReady is deliberately omitted: the engine does not
+       report readiness.ports.generation yet, and an omitted flag means "not reported",
+       not "unconfigured". Wire it the moment the parser lands in stores/engine.ts. -->
   <Composer
     connection={status}
     sessionId={$selectedSession?.sessionId ?? null}

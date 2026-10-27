@@ -307,7 +307,7 @@ describe("App wiring", () => {
     await settle();
     expect(button("Send").disabled).toBe(true);
     expect(q("#composer-status")?.textContent).toBe(
-      "Sending is not available yet",
+      "Generation readiness has not been reported yet. Sending stays blocked.",
     );
     expect(ipc.invoke.mock.calls.filter(([c]) => c === "send")).toHaveLength(0);
   });
