@@ -29,7 +29,7 @@ const caller = {
   resolveReference: () => true,
 };
 const PATH = "C:\\Users\\dev\\project-alpha";
-const IDENTITY = { volumeSerial: "A1B2C3D4", fileId: "0x0001000000000abc" };
+const IDENTITY = { volumeSerial: "2712847316", fileId: "281474976713404" };
 const DIGEST = actionArgumentsDigest({ path: "src/a.ts", content: "x" });
 const code = (expected: string) => (error: unknown) =>
   error instanceof StoreError && error.code === expected;
@@ -190,7 +190,7 @@ test("same path with a changed directory identity is denied until re-admitted", 
   const changed = {
     canonicalPath: PATH,
     volumeSerial: IDENTITY.volumeSerial,
-    fileId: "0x02",
+    fileId: "2",
   };
   const before = a.cursor();
   assert.throws(
@@ -202,7 +202,7 @@ test("same path with a changed directory identity is denied until re-admitted", 
   assert.throws(
     () =>
       a.consumeOnceGrant(
-        { ...use, observedIdentity: { ...IDENTITY, fileId: "0x02" } },
+        { ...use, observedIdentity: { ...IDENTITY, fileId: "2" } },
         approvedRunning(),
         caller,
       ),
@@ -525,6 +525,43 @@ test("a crash before commit leaves neither the running receipt nor the consumpti
   );
 });
 
+test("providerEndpoint is writable only through compareAndAppend", (t) => {
+  const { a } = fixture(t);
+  const record = {
+    schemaVersion: 1,
+    recordId: "ex",
+    createdAt: "2026-10-27T00:00:00.000Z",
+    scopeId: "w1",
+    sourceIds: [],
+    endpointId: "endpoint1",
+    canonicalUrl: "https://api.example.com/v1",
+    apiFamily: "openai-completions",
+    locality: "hosted",
+    revision: "r1",
+  };
+  const input = { kind: "providerEndpoint" as const, record };
+  const before = a.cursor();
+  assert.throws(() => a.append(input, caller), code("NATIVE_API_REQUIRED"));
+  assert.throws(
+    () => a.appendBatch([input], caller),
+    code("NATIVE_API_REQUIRED"),
+  );
+  assert.throws(
+    () => a.commitEvents([input], [], caller),
+    code("NATIVE_API_REQUIRED"),
+  );
+  assert.equal(a.cursor(), before);
+  a.compareAndAppend(input, caller, {
+    kind: "providerEndpoint",
+    scopeId: "w1",
+    entityId: "endpoint1",
+    expectedRevision: null,
+  });
+  assert.equal(
+    a.resolveEndpoint("w1", "endpoint1", "r1"),
+    "https://api.example.com/v1",
+  );
+});
 test("grant and workspace records are written only through their Store APIs", (t) => {
   const { a } = fixture(t);
   const { once } = setup(a);
@@ -807,5 +844,116 @@ test("providerEndpoint records are canonical, CAS-revisioned and resolve at a pi
   assert.throws(
     () => a.resolveEndpoint("w1", "endpoint1", "r9"),
     code("ENDPOINT_UNKNOWN"),
+  );
+});
+
+test("listWorkspaces returns current workspaces only, ordered, with path-free views", (t) => {
+  const { a, b } = fixture(t);
+  assert.deepEqual(a.listWorkspaces(), [], "an empty store lists nothing");
+  assert.deepEqual(a.listWorkspaceViews(), []);
+  const first = a.admitWorkspace({ canonicalPath: PATH, ...IDENTITY }, caller);
+  const second = a.admitWorkspace(
+    { canonicalPath: "C:\\Users\\dev\\project-beta", ...IDENTITY },
+    caller,
+  );
+  const readmitted = a.admitWorkspace(
+    { canonicalPath: PATH, ...IDENTITY, fileId: "3" },
+    caller,
+    { readmit: true },
+  );
+  const deleted = a.admitWorkspace(
+    { canonicalPath: "C:\\Users\\dev\\project-gamma", ...IDENTITY },
+    caller,
+  );
+  a.noteDeletion(`${deleted.workspaceId}.admitted`);
+  const listed = b.listWorkspaces();
+  const ids = listed.map((workspace) => workspace.workspaceId);
+  assert.ok(
+    !ids.includes(first.workspaceId),
+    "superseded workspaces are not listed",
+  );
+  assert.ok(
+    !ids.includes(deleted.workspaceId),
+    "deleted workspaces are not listed",
+  );
+  const expected = [second, readmitted].sort((x, y) =>
+    x.admittedAt < y.admittedAt
+      ? -1
+      : x.admittedAt > y.admittedAt
+        ? 1
+        : x.workspaceId < y.workspaceId
+          ? -1
+          : 1,
+  );
+  assert.deepEqual(listed, expected);
+  const views = b.listWorkspaceViews();
+  assert.deepEqual(views, expected.map(workspaceView));
+  for (const view of views)
+    for (const key of ["canonicalPath", "volumeSerial", "fileId"])
+      assert.equal(Object.hasOwn(view, key), false, key);
+});
+
+test("directory identity must be canonical decimal u32 volumeSerial and u64 fileId", (t) => {
+  const { a } = fixture(t);
+  const admit = (identity: Record<string, unknown>) =>
+    a.admitWorkspace(
+      { canonicalPath: PATH, ...IDENTITY, ...identity } as never,
+      caller,
+      { readmit: true },
+    );
+  for (const identity of [
+    { volumeSerial: "A1B2C3D4" },
+    { volumeSerial: "0x1" },
+    { volumeSerial: "01" },
+    { volumeSerial: "-1" },
+    { volumeSerial: " 1" },
+    { volumeSerial: "4294967296" },
+    { volumeSerial: 1 },
+    { fileId: "0x02" },
+    { fileId: "007" },
+    { fileId: "" },
+    { fileId: "18446744073709551616" },
+  ])
+    assert.throws(
+      () => admit(identity),
+      code("WORKSPACE_INPUT"),
+      JSON.stringify(identity),
+    );
+  assert.equal(a.listWorkspaces().length, 0);
+  assert.equal(
+    admit({ volumeSerial: "4294967295", fileId: "18446744073709551615" })
+      .fileId,
+    "18446744073709551615",
+  );
+  assert.equal(admit({ volumeSerial: "0", fileId: "0" }).volumeSerial, "0");
+});
+
+test("a legacy non-decimal identity row is never equated with input and needs re-admission", (t) => {
+  const { a } = fixture(t);
+  const legacy = a.admitWorkspace({ canonicalPath: PATH, ...IDENTITY }, caller);
+  const hex = { volumeSerial: "A1B2C3D4", fileId: "0x0001000000000abc" };
+  a.db
+    .prepare(
+      "UPDATE records SET payload = json_set(payload, '$.volumeSerial', ?, '$.fileId', ?) WHERE record_id = ?",
+    )
+    .run(hex.volumeSerial, hex.fileId, `${legacy.workspaceId}.admitted`);
+  assert.throws(
+    () => a.admitWorkspace({ canonicalPath: PATH, ...hex }, caller),
+    code("WORKSPACE_INPUT"),
+    "same legacy encoding is not equated",
+  );
+  assert.throws(
+    () => a.admitWorkspace({ canonicalPath: PATH, ...IDENTITY }, caller),
+    code("WORKSPACE_IDENTITY_CHANGED"),
+  );
+  const readmitted = a.admitWorkspace(
+    { canonicalPath: PATH, ...IDENTITY },
+    caller,
+    { readmit: true },
+  );
+  assert.notEqual(readmitted.workspaceId, legacy.workspaceId);
+  assert.deepEqual(
+    a.listWorkspaces().map((workspace) => workspace.workspaceId),
+    [readmitted.workspaceId],
   );
 });

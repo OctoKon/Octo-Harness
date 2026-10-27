@@ -29,6 +29,7 @@ import {
   actionArgumentsDigest,
 } from "../packages/splyce-pi/dist/policy.js";
 import { Store } from "../packages/splyce-pi/dist/store.js";
+import { admitAndGrant } from "./fixtures/native-grants.mjs";
 
 const { Agent, assertSplyceReady, assertSameSplyceOwner, inheritSplyceOwner } =
   agentApi;
@@ -362,7 +363,7 @@ async function admittedWriteFixture(t) {
     profileRevision: "profile1",
     policyRevision: "policy1",
     resolveReference: (id, scope) =>
-      scope === "w-demo" &&
+      (scope === "w-demo" || refs.has(scope)) &&
       (refs.has(id) ||
         store
           .list(scope)
@@ -373,23 +374,31 @@ async function admittedWriteFixture(t) {
               record.actionId === id,
           )),
   };
+  const args = { path: canary, content: "admitted" };
+  const granted = admitAndGrant(store, caller, refs, records, {
+    actionId: "a1",
+    argumentsDigest: actionArgumentsDigest(args),
+  });
   store.append(
-    { kind: "run", record: { ...records.run, piSessionId: session.sessionId } },
+    { kind: "run", record: { ...granted.run, piSessionId: session.sessionId } },
     caller,
   );
-  const ownership = store.acquireWorkspace("w-demo", session.sessionId);
-  const policy = new NativePolicy(store, caller, () => ({
-    ...caller,
-    grantIds: ["grant1"],
-    planMode: false,
-  }));
-  const args = { path: canary, content: "admitted" };
+  const ownership = store.acquireWorkspace(
+    granted.workspaceId,
+    session.sessionId,
+  );
+  const policy = new NativePolicy(
+    store,
+    caller,
+    () => ({ ...caller, grantIds: [granted.grantId], planMode: false }),
+    granted.identity,
+  );
   policy.authorize({
     toolCallId: "owned-write",
     toolName: "write",
     actionId: "a1",
     runRecordId: "rec-run",
-    grantId: "grant1",
+    grantId: granted.grantId,
     parentActionId: null,
     capabilityId: "cap1",
     capabilityVersion: "1",
@@ -398,6 +407,7 @@ async function admittedWriteFixture(t) {
     targetScopeId: "w-demo",
     idempotencyKey: "owned-effect",
     ownership,
+    capability: "fs.write",
   });
   t.after(agentApi.bindSplyceToolAdmission(tool, policy));
   return { fixture, session, tool, canary, store, args, policy };
