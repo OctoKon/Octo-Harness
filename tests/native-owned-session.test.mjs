@@ -75,6 +75,93 @@ function ownerFixture() {
   return { owner, current, checks: () => checks };
 }
 
+test(
+  "removing late-queue drain guards fails actual SDK persistence assertions",
+  { skip: process.env.SPLYCE_LATE_DRAIN_MUTANT === "1" },
+  async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), "splyce-late-drain-mutant-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const hook = join(dir, "late-drain-mutant.mjs");
+    await writeFile(
+      hook,
+      [
+        'import { registerHooks } from "node:module";',
+        "registerHooks({ load(url, context, next) {",
+        "  const loaded = next(url, context);",
+        '  if (!url.endsWith("/coding-agent/dist/core/agent-session.js")) return loaded;',
+        "  const source = String(loaded.source);",
+        "  let mutated = source;",
+        '  if (process.env.SPLYCE_LATE_DRAIN_TARGET === "single-pass") {',
+        "    let count = 0;",
+        "    for (const guard of [",
+        '      "this._pendingCustomMessages.length > 0",',
+        '      "this._pendingBashMessages.length > 0",',
+        '      "this._pendingBashMessages.length > 0 || this._pendingCustomMessages.length > 0",',
+        "    ]) {",
+        '      const target = "while (" + guard + ") {";',
+        "      count += mutated.split(target).length - 1;",
+        '      mutated = mutated.replaceAll(target, "if (" + guard + ") {");',
+        "    }",
+        '    if (count !== 4) throw new Error("late drain mutation targets missing");',
+        "  } else {",
+        '    const begin = source.indexOf("async _emitAgentSettled() {");',
+        '    const end = source.indexOf("async _persistFinalizedMessage", begin);',
+        "    const section = source.slice(begin, end);",
+        '    const target = "while (this._pendingBashMessages.length > 0 || this._pendingCustomMessages.length > 0) {";',
+        '    if (begin < 0 || end < 0 || !section.includes(target)) throw new Error("settlement mutation target missing");',
+        '    mutated = source.slice(0, begin) + section.replace(target, "if (false) {") + source.slice(end);',
+        "  }",
+        "  return { ...loaded, source: mutated };",
+        "} });",
+        "",
+      ].join("\n"),
+    );
+    for (const [target, pattern] of [
+      [
+        "single-pass",
+        "owned SDK drains.*arrivals during awaited late persistence",
+      ],
+      ["settlement", "owned SDK closes the final late-queue settlement window"],
+    ]) {
+      const env = Object.fromEntries(
+        ["SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "PATHEXT"]
+          .filter((key) => process.env[key])
+          .map((key) => [key, process.env[key]]),
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          pathToFileURL(hook).href,
+          "--test",
+          "--test-name-pattern=" + pattern,
+          fileURLToPath(import.meta.url),
+        ],
+        {
+          env: {
+            ...env,
+            HOME: dir,
+            USERPROFILE: dir,
+            PI_CODING_AGENT_DIR: dir,
+            SPLYCE_LATE_DRAIN_MUTANT: "1",
+            SPLYCE_LATE_DRAIN_TARGET: target,
+          },
+          encoding: "utf8",
+          timeout: 60000,
+          windowsHide: true,
+        },
+      );
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(
+        result.stdout + result.stderr,
+        /persist every queued late message before settlement/,
+        target,
+      );
+    }
+  },
+);
+
 // Run unchanged subprocess mutations before SDK fixtures accumulate memory on the 8GB host.
 test(
   "removing native identity, role, current-state or disposal guards fails their independent behavioral assertions",
@@ -588,6 +675,283 @@ test("owned SDK run lifecycle preserves a refused late custom-message batch with
   );
   assert.equal(session.agent.state.isStreaming, false);
 });
+
+function queueLateMessage(session, kind, label) {
+  if (kind === "custom")
+    return session.sendCustomMessage(
+      { customType: label, content: label, display: false },
+      { triggerTurn: false },
+    );
+  return session.recordBashResultAsync(label, {
+    output: label,
+    exitCode: 0,
+    cancelled: false,
+    truncated: false,
+  });
+}
+
+function lateMessageLabel(message) {
+  return message.role === "custom"
+    ? message.customType
+    : message.role === "bashExecution"
+      ? message.command
+      : undefined;
+}
+
+function persistedLateLabels(session, prefix) {
+  return session.sessionManager.getEntries().flatMap((entry) => {
+    const label =
+      entry.type === "custom_message"
+        ? entry.customType
+        : entry.type === "message"
+          ? lateMessageLabel(entry.message)
+          : undefined;
+    return label?.startsWith(prefix) ? [label] : [];
+  });
+}
+
+for (const [firstKind, secondKind] of [
+  ["custom", "custom"],
+  ["bash", "bash"],
+  ["custom", "bash"],
+]) {
+  for (const refuse of [false, true]) {
+    test(
+      "owned SDK " +
+        (refuse ? "recovers " : "drains ") +
+        firstKind +
+        "-to-" +
+        secondKind +
+        " arrivals during awaited late persistence",
+      { timeout: 15000 },
+      async (t) => {
+        const fixture = await services(t);
+        const { session } = await createAgentSession(fixture.options);
+        t.after(() => session.dispose());
+        await assert.rejects(
+          () => session.prompt("public auth remains denied"),
+          unavailable,
+        );
+        const prefix =
+          "late-drain-" + firstKind + "-" + secondKind + "-" + refuse + "-";
+        const labels = [prefix + "one", prefix + "two"];
+        const successive =
+          firstKind === "custom" && secondKind === "custom" && !refuse;
+        if (successive) labels.push(prefix + "three", prefix + "four");
+        const entered = Promise.withResolvers();
+        const release = Promise.withResolvers();
+        const producers = [];
+        let queued = false;
+        let paused = false;
+        const settled = [];
+        session.subscribe((event) => {
+          if (event.type === "agent_settled")
+            settled.push(persistedLateLabels(session, prefix));
+          if (successive && event.type === "message_end") {
+            const label = lateMessageLabel(event.message);
+            const next =
+              label === labels[0]
+                ? labels[2]
+                : label === labels[1]
+                  ? labels[3]
+                  : undefined;
+            if (next) {
+              const producer = queueLateMessage(session, "custom", next);
+              producer.catch(() => {});
+              producers.push(producer);
+            }
+          }
+          if (event.type !== "agent_end" || queued) return;
+          queued = true;
+          const producer = queueLateMessage(session, firstKind, labels[0]);
+          producer.catch(() => {});
+          producers.push(producer);
+        });
+        fixture.persistence.sanitize = async (serialized) => {
+          const entry = JSON.parse(serialized);
+          const label =
+            entry.type === "custom_message"
+              ? entry.customType
+              : entry.type === "message"
+                ? lateMessageLabel(entry.message)
+                : undefined;
+          if (!paused && label === labels[0]) {
+            paused = true;
+            entered.resolve();
+            await release.promise;
+            if (refuse) throw new Error("synthetic late drain refusal");
+          }
+          return serialized;
+        };
+        const running = session._startRun({
+          messageType: "user",
+          prompt: "actual late drain lifecycle",
+        });
+        const observed = running.then(
+          () => ({ ok: true }),
+          (error) => ({ ok: false, error }),
+        );
+        t.after(async () => {
+          release.resolve();
+          await observed;
+        });
+        await Promise.race([
+          entered.promise,
+          observed.then(() =>
+            assert.fail(
+              "the real run must reach the deferred late-message sanitizer",
+            ),
+          ),
+        ]);
+        assert.equal(session.isStreaming, true);
+        const before = session.sessionManager.getEntries();
+        assert.deepEqual(persistedLateLabels(session, prefix), []);
+        await queueLateMessage(session, secondKind, labels[1]);
+        assert.equal(session.isStreaming, true);
+        release.resolve();
+        const outcome = await observed;
+        await Promise.all(producers);
+        if (refuse) {
+          assert.equal(outcome.ok, false);
+          assert.equal(outcome.error?.code, persistenceUnavailable.code);
+          assert.deepEqual(session.sessionManager.getEntries(), before);
+          assert.deepEqual(settled, []);
+          const pending = [
+            ...session._pendingCustomMessages.map(lateMessageLabel),
+            ...session._pendingBashMessages.map(lateMessageLabel),
+          ].sort();
+          assert.deepEqual(
+            pending,
+            labels.slice().sort(),
+            "a refused batch must retain every late arrival",
+          );
+          fixture.persistence.sanitize = async (serialized) => serialized;
+          await session._startRun({
+            messageType: "user",
+            prompt: "actual late drain recovery",
+          });
+        } else {
+          assert.equal(outcome.ok, true, outcome.error?.message);
+        }
+        assert.deepEqual(
+          persistedLateLabels(session, prefix).sort(),
+          labels.slice().sort(),
+          "persist every queued late message before settlement",
+        );
+        assert.deepEqual(
+          session.agent.state.messages
+            .map(lateMessageLabel)
+            .filter((label) => label?.startsWith(prefix))
+            .sort(),
+          labels.slice().sort(),
+          "publish every committed late message to canonical Agent state exactly once",
+        );
+        assert.deepEqual(session._pendingCustomMessages, []);
+        assert.deepEqual(session._pendingBashMessages, []);
+        assert.equal(session.isStreaming, false);
+        assert.equal(settled.length, 1);
+        assert.deepEqual(settled[0].sort(), labels.slice().sort());
+      },
+    );
+  }
+}
+
+test(
+  "owned SDK closes the final late-queue settlement window",
+  { timeout: 15000 },
+  async (t) => {
+    const fixture = await services(t);
+    const { session } = await createAgentSession(fixture.options);
+    t.after(() => session.dispose());
+    await assert.rejects(
+      () => session.prompt("public auth remains denied"),
+      unavailable,
+    );
+    const prefix = "late-settlement-window-";
+    const labels = [prefix + "one", prefix + "two"];
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const arrived = Promise.withResolvers();
+    arrived.promise.catch(() => {});
+    let queued = false;
+    let paused = false;
+    let activeOnArrival;
+    const producers = [];
+    session.subscribe((event) => {
+      if (event.type === "agent_end" && !queued) {
+        queued = true;
+        const producer = queueLateMessage(session, "custom", labels[0]);
+        producer.catch(() => {});
+        producers.push(producer);
+      }
+      if (
+        event.type !== "message_end" ||
+        lateMessageLabel(event.message) !== labels[0]
+      )
+        return;
+      queueMicrotask(() =>
+        queueMicrotask(() =>
+          queueMicrotask(() => {
+            activeOnArrival = session.isStreaming;
+            const producer = queueLateMessage(session, "bash", labels[1]);
+            producer.then(arrived.resolve, arrived.reject);
+            producers.push(producer);
+          }),
+        ),
+      );
+    });
+    fixture.persistence.sanitize = async (serialized) => {
+      const entry = JSON.parse(serialized);
+      if (
+        !paused &&
+        entry.type === "custom_message" &&
+        entry.customType === labels[0]
+      ) {
+        paused = true;
+        entered.resolve();
+        await release.promise;
+      }
+      return serialized;
+    };
+    const running = session._startRun({
+      messageType: "user",
+      prompt: "actual final drain window",
+    });
+    const observed = running.then(
+      () => ({ ok: true }),
+      (error) => ({ ok: false, error }),
+    );
+    t.after(async () => {
+      release.resolve();
+      await observed;
+    });
+    await Promise.race([
+      entered.promise,
+      observed.then(() =>
+        assert.fail(
+          "the real run must reach the deferred late-message sanitizer",
+        ),
+      ),
+    ]);
+    release.resolve();
+    const outcome = await observed;
+    await arrived.promise;
+    await Promise.all(producers);
+    assert.equal(outcome.ok, true, outcome.error?.message);
+    assert.equal(
+      activeOnArrival,
+      true,
+      "the producer must run before the actual settlement flag transition",
+    );
+    assert.deepEqual(
+      persistedLateLabels(session, prefix).sort(),
+      labels.slice().sort(),
+      "persist every queued late message before settlement",
+    );
+    assert.deepEqual(session._pendingCustomMessages, []);
+    assert.deepEqual(session._pendingBashMessages, []);
+  },
+);
 
 test("actual loaded SDK creates only the explicitly owned session and keeps bare startup denied", async (t) => {
   const fixture = await services(t);

@@ -7,6 +7,7 @@ import {
   renameSync,
   rmSync,
   rmdirSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -49,6 +50,23 @@ function deferred() {
     resolve = finish;
   });
   return { promise, resolve };
+}
+
+async function settledWithin(promise) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise.then(
+        (value) => ({ state: "fulfilled", value }),
+        (error) => ({ state: "rejected", error }),
+      ),
+      new Promise((finish) => {
+        timer = setTimeout(() => finish({ state: "timed-out" }), 1000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 for (const change of ["id", "shape", "role"]) {
@@ -335,4 +353,240 @@ test("one entry above the encoded frame lower bound has no file or state effect 
   );
   assert.equal(readFileSync(manager.getSessionFile(), "utf8"), before);
   assert.deepEqual(manager.getEntries(), entries);
+});
+
+test("sanitizer same-chain reentry rejects without deadlocking or publishing state", async (t) => {
+  const directory = temporary(t);
+  const owner = createSplyceOwner(() => {});
+  let reenter = false;
+  const manager = await SessionManager.createOwned(
+    directory,
+    (subject) =>
+      owner.bindPersistence(subject, async (text) => {
+        if (reenter && JSON.parse(text)?.type === "message") {
+          reenter = false;
+          await manager.withPersistence((draft) =>
+            draft.appendMessage(user("nested reentry")),
+          );
+        }
+        return text;
+      }),
+    join(directory, "sessions"),
+  );
+  const before = manager.getEntries();
+  reenter = true;
+  const outcome = await settledWithin(
+    manager.withPersistence((draft) =>
+      draft.appendMessage(user("outer entry")),
+    ),
+  );
+  assert.equal(
+    outcome.state,
+    "rejected",
+    "same-chain persistence must reject instead of waiting for its own queue",
+  );
+  assert.deepEqual(
+    { code: outcome.error.code, message: outcome.error.message },
+    unavailable,
+  );
+  assert.deepEqual(manager.getEntries(), before);
+  assert.equal(existsSync(manager.getSessionFile()), false);
+  await manager.withPersistence((draft) =>
+    draft.appendMessage(user("recovered after reentry")),
+  );
+  assert.equal(manager.getEntries().length, 1);
+});
+
+test("sanitizer two-manager cycles reject in the inherited async chain", async (t) => {
+  const directory = temporary(t);
+  const owner = createSplyceOwner(() => {});
+  let cycle = false;
+  const first = await SessionManager.createOwned(
+    directory,
+    (subject) =>
+      owner.bindPersistence(subject, async (text) => {
+        if (cycle && JSON.parse(text)?.type === "message")
+          await second.withPersistence((draft) =>
+            draft.appendMessage(user("second in cycle")),
+          );
+        return text;
+      }),
+    join(directory, "first"),
+  );
+  const second = await SessionManager.createOwned(
+    directory,
+    (subject) =>
+      owner.bindPersistence(subject, async (text) => {
+        if (cycle && JSON.parse(text)?.type === "message")
+          await first.withPersistence((draft) =>
+            draft.appendMessage(user("first in cycle")),
+          );
+        return text;
+      }),
+    join(directory, "second"),
+  );
+  cycle = true;
+  const outcome = await settledWithin(
+    first.withPersistence((draft) => draft.appendMessage(user("outer cycle"))),
+  );
+  assert.equal(
+    outcome.state,
+    "rejected",
+    "the inherited chain must reject a cycle back to the first manager",
+  );
+  assert.deepEqual(
+    { code: outcome.error.code, message: outcome.error.message },
+    unavailable,
+  );
+  assert.deepEqual(first.getEntries(), []);
+  assert.deepEqual(second.getEntries(), []);
+  assert.equal(existsSync(first.getSessionFile()), false);
+  assert.equal(existsSync(second.getSessionFile()), false);
+});
+
+test("an unrelated caller remains queued while another caller awaits its sanitizer", async (t) => {
+  const directory = temporary(t);
+  const owner = createSplyceOwner(() => {});
+  const entered = deferred(),
+    release = deferred();
+  let block = false;
+  const manager = await SessionManager.createOwned(
+    directory,
+    (subject) =>
+      owner.bindPersistence(subject, async (text) => {
+        if (block && JSON.parse(text)?.type === "message") {
+          block = false;
+          entered.resolve();
+          await release.promise;
+        }
+        return text;
+      }),
+    join(directory, "sessions"),
+  );
+  block = true;
+  const first = manager.withPersistence((draft) =>
+    draft.appendMessage(user("first queued caller")),
+  );
+  await entered.promise;
+  let secondStages = 0;
+  const second = manager.withPersistence((draft) => {
+    secondStages++;
+    return draft.appendMessage(user("unrelated queued caller"));
+  });
+  assert.equal(secondStages, 0);
+  release.resolve();
+  const ids = await Promise.all([first, second]);
+  assert.equal(secondStages, 1);
+  assert.equal(manager.getEntries().length, 2);
+  for (const id of ids) assert.ok(manager.getEntry(id));
+  const bytes = readFileSync(manager.getSessionFile(), "utf8");
+  assert.ok(bytes.includes("first queued caller"));
+  assert.ok(bytes.includes("unrelated queued caller"));
+});
+
+test("a paused owned open cannot overwrite another manager's acknowledged append through canonical or junction paths", async (t) => {
+  for (const alias of [false, true]) {
+    const directory = temporary(t);
+    const owner = createSplyceOwner(() => {});
+    const bind = (subject) =>
+      owner.bindPersistence(subject, async (text) => text);
+    const first = await SessionManager.createOwned(
+      directory,
+      bind,
+      join(directory, "sessions"),
+    );
+    await first.withPersistence((draft) =>
+      draft.appendMessage(user("physical baseline")),
+    );
+    const path = first.getSessionFile();
+    let openedPath = path;
+    if (alias) {
+      const junction = join(directory, "session-alias");
+      symlinkSync(
+        dirname(path),
+        junction,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      openedPath = join(junction, basename(path));
+    }
+    const entered = deferred(),
+      release = deferred();
+    let second;
+    let block = true;
+    const opening = SessionManager.openOwned(openedPath, (subject) => {
+      second = subject;
+      owner.bindPersistence(subject, async (text) => {
+        if (block) {
+          block = false;
+          entered.resolve();
+          await release.promise;
+        }
+        return text.replaceAll(
+          "physical baseline",
+          "sanitized physical baseline",
+        );
+      });
+    });
+    await entered.promise;
+    const acknowledged = await first.withPersistence((draft) =>
+      draft.appendMessage(user("acknowledged during owned open")),
+    );
+    const bytes = readFileSync(path, "utf8");
+    assert.ok(
+      bytes.includes(acknowledged),
+      "the first manager's acknowledged append is physically present",
+    );
+    release.resolve();
+    const outcome = await settledWithin(opening);
+    assert.equal(readFileSync(path, "utf8"), bytes);
+    assert.equal(
+      outcome.state,
+      "rejected",
+      "a stale open must not acknowledge its old snapshot",
+    );
+    assert.deepEqual(
+      { code: outcome.error.code, message: outcome.error.message },
+      unavailable,
+    );
+    assert.deepEqual(second.getEntries(), []);
+    assert.ok(first.getEntry(acknowledged));
+    const recovered = await SessionManager.openOwned(openedPath, bind);
+    assert.ok(recovered.getEntry(acknowledged));
+  }
+});
+
+test("an already-open stale manager rejects its next write and recovers only through owned reopen", async (t) => {
+  const directory = temporary(t);
+  const owner = createSplyceOwner(() => {});
+  const bind = (subject) =>
+    owner.bindPersistence(subject, async (text) => text);
+  const first = await SessionManager.createOwned(
+    directory,
+    bind,
+    join(directory, "sessions"),
+  );
+  await first.withPersistence((draft) =>
+    draft.appendMessage(user("baseline for stale manager")),
+  );
+  const path = first.getSessionFile();
+  const second = await SessionManager.openOwned(path, bind);
+  const previous = second.getEntries();
+  const acknowledged = await first.withPersistence((draft) =>
+    draft.appendMessage(user("acknowledged after second opened")),
+  );
+  const bytes = readFileSync(path, "utf8");
+  await assert.rejects(
+    second.withPersistence((draft) =>
+      draft.appendMessage(user("stale unacknowledged write")),
+    ),
+    unavailable,
+  );
+  assert.equal(readFileSync(path, "utf8"), bytes);
+  assert.deepEqual(second.getEntries(), previous);
+  const recovered = await SessionManager.openOwned(path, bind);
+  assert.ok(recovered.getEntry(acknowledged));
+  await recovered.withPersistence((draft) =>
+    draft.appendMessage(user("fresh owned recovery")),
+  );
+  assert.ok(readFileSync(path, "utf8").includes("fresh owned recovery"));
 });
