@@ -11,6 +11,10 @@
       "types": "./dist/contracts.d.ts",
       "import": "./dist/contracts.js"
     },
+    "./store": {
+      "types": "./dist/store.d.ts",
+      "import": "./dist/store.js"
+    },
     "./session-map": {
       "types": "./dist/session-map.d.ts",
       "import": "./dist/session-map.js"
