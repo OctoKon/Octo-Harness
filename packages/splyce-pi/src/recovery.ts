@@ -42,7 +42,7 @@ export interface RecoveryInput {
 export interface ActionCorrection {
   readonly actionId: string;
   readonly from: ActionRecord["state"];
-  readonly to: "completed" | "failed" | "uncertain";
+  readonly to: "completed" | "failed" | "uncertain" | "canceled";
   readonly reason: string;
 }
 
@@ -113,8 +113,17 @@ export function reconcile(input: RecoveryInput): RecoveryReport {
         to: "uncertain",
         reason: "the effect may have started and its result was not observed",
       });
+    } else {
+      // pending/approved without any outcome never reached its effect. After a Restart it must not stay dispatchable
+      // (a stale approval would otherwise run under a run that recovery has already closed): cancel it. A new task
+      // needs a new admission.
+      actionCorrections.push({
+        actionId: action.actionId,
+        from: action.state,
+        to: "canceled",
+        reason: "never reached its effect; stale after the engine Restart",
+      });
     }
-    // pending/approved without any outcome never reached the effect: left for normal re-admission, not replayed here.
   }
 
   const finalState = new Map(

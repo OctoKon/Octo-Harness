@@ -89,11 +89,16 @@ test("a properly completed action is left alone", () => {
   assert.deepEqual(report.runCorrections, []);
 });
 
-test("an action that never reached its effect is not turned into uncertainty or replayed", () => {
-  const report = reconcile(base({ actions: [action("a1", "approved")] }));
-  assert.deepEqual(report.actionCorrections, []);
-  assert.deepEqual(report.uncertain, []);
-  assert.deepEqual(report.redispatch, []);
+test("an action that never reached its effect is canceled, not left dispatchable, not uncertain, not replayed", () => {
+  for (const state of ["pending", "approved"]) {
+    const report = reconcile(base({ actions: [action("a1", state)] }));
+    assert.deepEqual(
+      report.actionCorrections.map((c) => [c.actionId, c.from, c.to]),
+      [["a1", state, "canceled"]],
+    );
+    assert.deepEqual(report.uncertain, []);
+    assert.deepEqual(report.redispatch, []);
+  }
 });
 
 test("an interrupted run with an uncertain action is uncertain; without one it failed", () => {
