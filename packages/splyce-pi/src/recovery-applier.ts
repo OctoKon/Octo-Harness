@@ -21,6 +21,7 @@ import type {
   Store,
   StoredRecord,
 } from "./store.js";
+import { StoreError } from "./store.js";
 
 export class RecoveryApplyError extends Error {
   readonly code: string;
@@ -89,7 +90,6 @@ function snapshot(store: Store, scopeId: string, sessionId: string) {
     );
   return {
     records: target.records,
-    identity: JSON.stringify([before, scope.records, target.records]),
   };
 }
 
@@ -150,10 +150,13 @@ function journal(
 
 /**
  * Append correction versions atomically. Reference callbacks run before the
- * write transaction; only a captured pure lookup reaches Store.append. A fresh
- * in-transaction snapshot must still equal the authorized journal snapshot.
- * All record writes and validation stay in Store; only transaction control uses
- * its same-package internal handle. No result acknowledges an uncommitted seq.
+ * write transaction; only a captured pure lookup reaches Store.appendBatch.
+ * The commit is fenced by Store preconditions (scope/session record cursors,
+ * deletion epoch, ownership epoch, config revision) checked under the same
+ * BEGIN IMMEDIATE as the inserts, so a journal that changed between the
+ * snapshot and the commit appends nothing. All record writes and validation
+ * stay in Store; the applier performs no transaction control of its own.
+ * A deleted source fails recovery closed in every phase.
  */
 export function applyRecovery(
   store: Store,
@@ -206,8 +209,36 @@ export function applyRecovery(
       alive,
     };
   });
+  // A correction may only be acknowledged when every observed writer witness
+  // proves the writer is gone: an alive or unknown witness (or no witness at
+  // all) means the journal may still be written concurrently.
+  if (writers.length === 0 || writers.some((writer) => writer.alive !== false))
+    fail(
+      "RECOVERY_WRITER_ALIVE",
+      "Recovery requires every writer witness to be proven not alive",
+    );
+  const tombstoned = (recordId: string): boolean =>
+    handle
+      .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+      .get(recordId) !== undefined;
   const initial = snapshot(store, scopeId, caller.sessionId);
   const current = journal(initial.records, scopeId, caller.sessionId);
+  // A tombstoned journal record is never a recovery source (P1-1): recovery
+  // would resurrect deleted history through its correction lineage.
+  for (const record of [
+    ...current.runs.values(),
+    ...current.actions.values(),
+    ...current.outcomes.values(),
+  ])
+    if (tombstoned(record.recordId))
+      fail(
+        "RECOVERY_DELETED_SOURCE",
+        `Recovery journal source ${JSON.stringify(record.recordId)} is deleted; nothing is corrected`,
+      );
+  const scopeCursor = store.cursor(scopeId);
+  const sessionCursor = store.sessionCursor(scopeId, caller.sessionId);
+  const deletionEpoch = store.deletionEpoch();
+  const ownershipEpoch = store.ownershipEpoch();
   const report = reconcile({
     runs: [...current.runs.values()],
     actions: [...current.actions.values()],
@@ -249,6 +280,7 @@ export function applyRecovery(
   }
 
   const authorized = new Set<string>();
+  let deletedReference: string | null = null;
   for (const write of writes) {
     // The native schema includes body references as well as sourceIds.
     try {
@@ -258,19 +290,28 @@ export function applyRecovery(
         lastDurableSeq: store.cursor(),
         maxInlineBytes: TRANSPORT_LIMITS.maxInlineBytes,
         resolveReference: (ref, scope) => {
-          if (
-            scope !== scopeId ||
-            (!authorized.has(ref) && authorize?.(ref, scope) !== true)
-          )
-            fail(
-              "RECOVERY_REFERENCE_DENIED",
-              "Native reference authority denied recovery",
-            );
+          if (scope !== scopeId) return false;
+          // A deleted record is never a valid recovery reference, even when
+          // the native authority would still resolve it. Record the denial
+          // out-of-band: the contract validator folds any resolver throw into
+          // a generic UNRESOLVED_REFERENCE.
+          if (tombstoned(ref)) {
+            if (deletedReference === null) deletedReference = ref;
+            return false;
+          }
+          if (!authorized.has(ref) && authorize?.(ref, scope) !== true)
+            return false;
           authorized.add(ref);
           return true;
         },
       });
     } catch (error) {
+      if (deletedReference !== null)
+        throw new RecoveryApplyError(
+          "RECOVERY_DELETED_SOURCE",
+          `Recovery reference ${JSON.stringify(deletedReference)} is deleted; nothing is corrected`,
+          { cause: error },
+        );
       if (
         error instanceof ContractError &&
         error.code === "UNRESOLVED_REFERENCE"
@@ -283,11 +324,6 @@ export function applyRecovery(
       throw error;
     }
   }
-  if (store.db !== handle)
-    fail(
-      "RECOVERY_STALE_SNAPSHOT",
-      "Store changed during reference authorization",
-    );
   if (handle.isTransaction)
     fail(
       "RECOVERY_TRANSACTION_ACTIVE",
@@ -297,76 +333,74 @@ export function applyRecovery(
     ...caller,
     resolveReference: (ref, scope) => scope === scopeId && authorized.has(ref),
   };
-  let began = false;
-  let committing = false;
+  let seqs: number[] = [];
   try {
-    handle.exec("BEGIN IMMEDIATE;");
-    began = true;
-    if (store.configRevision(scopeId) !== caller.configRevision)
-      fail(
-        "RECOVERY_SCOPE",
-        "Recovery configuration revision changed before commit",
-      );
-    const locked = snapshot(store, scopeId, caller.sessionId);
-    if (locked.identity !== initial.identity)
-      fail(
-        "RECOVERY_STALE_SNAPSHOT",
-        "Journal changed before correction commit",
-      );
-    const fresh = journal(locked.records, scopeId, caller.sessionId);
-    const committedReport = reconcile({
-      runs: [...fresh.runs.values()],
-      actions: [...fresh.actions.values()],
-      outcomes: [...fresh.outcomes.values()],
-      writers,
-      explicitRestart: true,
-    });
-    if (JSON.stringify(committedReport) !== JSON.stringify(report))
-      fail(
-        "RECOVERY_STALE_SNAPSHOT",
-        "Recovery pre-states changed before commit",
-      );
-    const seqs: number[] = [];
-    for (const write of writes) seqs.push(store.append(write, writeCaller).seq);
-    committing = true;
-    handle.exec("COMMIT;");
-    if (handle.isTransaction)
-      fail("RECOVERY_COMMIT_UNCERTAIN", "Recovery commit was not acknowledged");
-    return {
-      report: committedReport,
-      applied: {
-        actionIds: committedReport.actionCorrections.map(
-          (change) => change.actionId,
-        ),
-        runIds: committedReport.runCorrections.map((change) => change.runId),
+    const result = store.appendBatch(
+      writes,
+      writeCaller,
+      undefined,
+      { workspaceId: scopeId, epoch: ownershipEpoch },
+      { scopeId, revision: caller.configRevision },
+      undefined,
+      {
+        expectedScopeCursor: { scopeId, seq: scopeCursor },
+        expectedSessionCursor: {
+          scopeId,
+          sessionId: caller.sessionId,
+          seq: sessionCursor,
+        },
+        expectedDeletionEpoch: deletionEpoch,
       },
-      seqs,
-    };
+    );
+    seqs = result.seqs;
   } catch (error) {
-    if (began && handle.isTransaction) {
-      try {
-        handle.exec("ROLLBACK;");
-      } catch (rollbackError) {
+    if (error instanceof StoreError) {
+      if (error.code === "STORE_ROLLBACK_FAILED") {
+        // The store cannot guarantee durability state after a failed
+        // rollback: discard it and report both causes.
         try {
           store.close();
         } catch {
-          /* The store remains unusable after an unacknowledged rollback. */
+          /* A close failure never hides the rollback failure. */
         }
         throw new RecoveryApplyError(
           "RECOVERY_ROLLBACK_FAILED",
           "Recovery rollback failed; discard this Store",
-          {
-            cause: new AggregateError([error, rollbackError]),
-          },
+          { cause: error },
         );
       }
-    } else if (committing) {
-      throw new RecoveryApplyError(
-        "RECOVERY_COMMIT_UNCERTAIN",
-        "Recovery commit was not acknowledged",
-        { cause: error },
-      );
+      if (
+        error.code === "SCOPE_CURSOR_STALE" ||
+        error.code === "SESSION_CURSOR_STALE"
+      )
+        fail(
+          "RECOVERY_STALE_SNAPSHOT",
+          "Journal changed before correction commit",
+        );
+      if (error.code === "STALE_DELETION_EPOCH")
+        fail(
+          "RECOVERY_DELETED_SOURCE",
+          "A record was deleted between the recovery snapshot and its commit",
+        );
+      if (error.code === "OWNERSHIP_STALE_EPOCH")
+        fail(
+          "RECOVERY_STALE_SNAPSHOT",
+          "Workspace ownership changed before correction commit",
+        );
+      if (error.code === "CONFIG_STALE_REVISION")
+        fail(
+          "RECOVERY_SCOPE",
+          "Recovery configuration revision changed before commit",
+        );
     }
     throw error;
   }
+  return {
+    report,
+    applied: {
+      actionIds: report.actionCorrections.map((change) => change.actionId),
+      runIds: report.runCorrections.map((change) => change.runId),
+    },
+    seqs,
+  };
 }

@@ -1052,6 +1052,134 @@ test("appendBatch can require a same-commit ownership epoch", () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test("appendBatch scope/session cursor preconditions fail closed atomically", () => {
+  const dir = freshDir();
+  const path = join(dir, "store.db");
+  const store = Store.open(path);
+  const fixtures = JSON.parse(
+    readFileSync(
+      new URL("../fixtures/contracts/records.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Record<string, Record<string, unknown>>;
+  const artifact = (recordId: string) =>
+    ({
+      ...structuredClone(fixtures.artifact),
+      recordId,
+      scopeId: "w-demo",
+    }) as Record<string, unknown>;
+
+  // Baseline commit advances both the scope and the session cursor.
+  store.appendBatch(
+    [{ kind: "artifact", record: artifact("rec-base") }],
+    caller,
+  );
+  const scopeCursor = store.cursor("w-demo");
+  const sessionCursor = store.sessionCursor("w-demo", "s1");
+  assert.ok(scopeCursor > 0 && sessionCursor > 0);
+
+  // Matching preconditions commit normally.
+  const ok = store.appendBatch(
+    [{ kind: "artifact", record: artifact("rec-matched") }],
+    caller,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      expectedScopeCursor: { scopeId: "w-demo", seq: store.cursor("w-demo") },
+      expectedSessionCursor: {
+        scopeId: "w-demo",
+        sessionId: "s1",
+        seq: store.sessionCursor("w-demo", "s1"),
+      },
+    },
+  );
+  assert.equal(ok.seqs.length, 1);
+
+  // A stale scope cursor (another committer appended first) is refused under
+  // the same BEGIN IMMEDIATE: nothing is appended.
+  const beforeScope = store.cursor();
+  assert.throws(
+    () =>
+      store.appendBatch(
+        [{ kind: "artifact", record: artifact("rec-stale-scope") }],
+        caller,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { expectedScopeCursor: { scopeId: "w-demo", seq: scopeCursor } },
+      ),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "SCOPE_CURSOR_STALE",
+  );
+  assert.equal(store.cursor(), beforeScope);
+
+  // A stale session cursor (this session appended elsewhere) is refused too.
+  assert.throws(
+    () =>
+      store.appendBatch(
+        [{ kind: "artifact", record: artifact("rec-stale-session") }],
+        caller,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          expectedSessionCursor: {
+            scopeId: "w-demo",
+            sessionId: "s1",
+            seq: sessionCursor,
+          },
+        },
+      ),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "SESSION_CURSOR_STALE",
+  );
+  assert.equal(store.cursor(), beforeScope);
+
+  // Malformed precondition values are rejected, never treated as matching.
+  assert.throws(
+    () =>
+      store.appendBatch(
+        [{ kind: "artifact", record: artifact("rec-bad-scope") }],
+        caller,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { expectedScopeCursor: { scopeId: "w-demo", seq: -1 } },
+      ),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "SCOPE_CURSOR_STALE",
+  );
+  assert.equal(store.cursor(), beforeScope);
+  assert.throws(
+    () =>
+      store.appendBatch(
+        [{ kind: "artifact", record: artifact("rec-bad-session") }],
+        caller,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          expectedSessionCursor: {
+            scopeId: "w-demo",
+            sessionId: "s1",
+            seq: Number.NaN,
+          },
+        },
+      ),
+    (error: unknown) =>
+      error instanceof StoreError && error.code === "SESSION_CURSOR_STALE",
+  );
+  assert.equal(store.cursor(), beforeScope);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test("appendBatch precondition rejects an existing actionId with a new key", () => {
   const dir = freshDir();
   const path = join(dir, "store.db");

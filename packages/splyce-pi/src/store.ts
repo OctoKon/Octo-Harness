@@ -108,6 +108,14 @@ export interface AppendBatchResult {
 
 export interface EventPreconditions {
   expectedDeletionEpoch?: number;
+  /** Compare-and-set on the scope's record cursor (recovery fenced writes). */
+  expectedScopeCursor?: { scopeId: string; seq: number };
+  /** Compare-and-set on one session's record cursor (recovery fenced writes). */
+  expectedSessionCursor?: {
+    scopeId: string;
+    sessionId: string;
+    seq: number;
+  };
   expectedAbsentActionKey?: {
     scopeId: string;
     idempotencyKey: string;
@@ -689,6 +697,11 @@ export class Store {
       idempotencyKey: string;
       recordId: string;
     },
+    /** Cursor/deletion-epoch fences (used by recovery) checked under the same lock. */
+    expected: Pick<
+      EventPreconditions,
+      "expectedScopeCursor" | "expectedSessionCursor" | "expectedDeletionEpoch"
+    > = {},
   ): AppendBatchResult {
     if (inputs.some((input) => input.kind === "event"))
       throw new StoreError(
@@ -708,6 +721,7 @@ export class Store {
       ...(expectedActionReservation === undefined
         ? {}
         : { expectedActionReservation }),
+      ...expected,
     });
   }
 
@@ -736,6 +750,8 @@ export class Store {
       expectedConfigRevision,
       expectedActionReservation,
       expectedDeletionEpoch,
+      expectedScopeCursor,
+      expectedSessionCursor,
     }: EventPreconditions,
     importedWatermarks: readonly EventWatermark[] = [],
   ): AppendBatchResult & { events: SplyceEvent[] } {
@@ -748,7 +764,9 @@ export class Store {
       expectedOwnershipEpoch === undefined &&
       expectedConfigRevision === undefined &&
       expectedActionReservation === undefined &&
-      expectedDeletionEpoch === undefined
+      expectedDeletionEpoch === undefined &&
+      expectedScopeCursor === undefined &&
+      expectedSessionCursor === undefined
     )
       return { seqs: [], events: [] };
     const prepared: Array<[RecordKind, RecordByKind[RecordKind]]> = [];
@@ -802,6 +820,34 @@ export class Store {
           "STALE_DELETION_EPOCH",
           "deletion epoch changed before event publication",
         );
+      if (expectedScopeCursor !== undefined) {
+        const { scopeId, seq } = expectedScopeCursor;
+        const valid = Number.isSafeInteger(seq) && seq >= 0;
+        const current = this.cursor(scopeId);
+        if (!valid || current !== seq) {
+          this.db.exec("ROLLBACK;");
+          throw new StoreError(
+            "SCOPE_CURSOR_STALE",
+            `scope ${JSON.stringify(scopeId)} record cursor is ${String(current)}, not the expected ${String(seq)}; nothing appended`,
+          );
+        }
+      }
+      if (expectedSessionCursor !== undefined) {
+        const { scopeId, sessionId, seq } = expectedSessionCursor;
+        const valid =
+          Number.isSafeInteger(seq) &&
+          seq >= 0 &&
+          typeof sessionId === "string" &&
+          sessionId.length > 0;
+        const current = this.sessionCursor(scopeId, sessionId);
+        if (!valid || current !== seq) {
+          this.db.exec("ROLLBACK;");
+          throw new StoreError(
+            "SESSION_CURSOR_STALE",
+            `session ${JSON.stringify(sessionId)} record cursor in scope ${JSON.stringify(scopeId)} is ${String(current)}, not the expected ${String(seq)}; nothing appended`,
+          );
+        }
+      }
       if (expectedOwnershipEpoch !== undefined) {
         const { workspaceId, epoch } = expectedOwnershipEpoch;
         const row = this.db

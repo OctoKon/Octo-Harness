@@ -335,8 +335,9 @@ test("#137: inconsistent persisted session attribution cannot look like empty re
 test("#137: no explicit Restart means no journal correction", (t) => {
   const f = fixture(t);
   const before = f.store.list(scopeId);
-  assert.throws(() =>
-    applyRecovery(f.store, input(f, { explicitRestart: false })),
+  assert.throws(
+    () => applyRecovery(f.store, input(f, { explicitRestart: false })),
+    (error) => error.code === "RECOVERY_RESTART_REQUIRED",
   );
   assert.deepEqual(f.store.list(scopeId), before);
 });
@@ -533,7 +534,10 @@ test("#137: unknown schema cannot become a silently partial reconciliation", (t)
     .prepare("UPDATE records SET schema_version = 999 WHERE record_id = ?")
     .run(f.original.action.recordId);
   const cursor = f.store.cursor();
-  assert.throws(() => applyRecovery(f.store, input(f)));
+  assert.throws(
+    () => applyRecovery(f.store, input(f)),
+    (error) => error.code === "RECOVERY_UNKNOWN_SCHEMA",
+  );
   assert.equal(f.store.cursor(), cursor);
   assert.deepEqual(changedRows(f.store, ids), []);
   assert.equal(f.store.list(scopeId).skippedUnknownSchema, 1);
@@ -597,7 +601,14 @@ for (const [name, mutate] of [
         return originalResolve(id, requestedScope);
       },
     };
-    assert.throws(() => applyRecovery(f.store, input(f, { caller })));
+    const expectedCode =
+      name === "a deletion epoch change"
+        ? "RECOVERY_DELETED_SOURCE"
+        : "RECOVERY_STALE_SNAPSHOT";
+    assert.throws(
+      () => applyRecovery(f.store, input(f, { caller })),
+      (error) => error.code === expectedCode,
+    );
     assert.equal(mutated, true);
     assert.deepEqual(changedRows(f.store, ids), []);
     assert.equal(latest(f.store, "action", "a1").state, "running");
@@ -753,16 +764,182 @@ test("#137: rollback failure preserves both errors and discards the unusable Sto
     () => applyRecovery(f.store, input(f)),
     (error) =>
       error.code === "RECOVERY_ROLLBACK_FAILED" &&
-      error.cause instanceof AggregateError &&
-      error.cause.errors.some((cause) =>
-        /fixture write failure/.test(cause.message),
-      ) &&
-      error.cause.errors.some((cause) =>
-        /fixture rollback failure/.test(cause.message),
-      ),
+      /fixture write failure/.test(String(error.cause)) &&
+      /fixture rollback failure/.test(String(error.cause)),
   );
   assert.equal(f.store.closed, true);
   assert.deepEqual(f.open().list(scopeId), before);
+});
+
+// #154 TD-25 recovery corrections, lead review blockers (P1-1, P1-2, P2-4).
+
+test("#154 P1-1: a deleted journal source fails recovery closed", (t) => {
+  const f = fixture(t);
+  f.store.noteDeletion(f.original.action.recordId);
+  const before = f.store.list(scopeId);
+  const cursor = f.store.cursor();
+  assert.throws(
+    () => applyRecovery(f.store, input(f)),
+    (error) => error.code === "RECOVERY_DELETED_SOURCE",
+  );
+  assert.equal(f.store.cursor(), cursor);
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#154 P1-1: a deleted referenced source is rejected by reference authorization", (t) => {
+  const f = fixture(t);
+  f.store.noteDeletion("e1"); // cited by the run and action sourceIds
+  const before = f.store.list(scopeId);
+  const cursor = f.store.cursor();
+  assert.throws(
+    () => applyRecovery(f.store, input(f)),
+    (error) => error.code === "RECOVERY_DELETED_SOURCE",
+  );
+  assert.equal(f.store.cursor(), cursor);
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#154 P1-2: corrections never commit while a writer witness is alive", (t) => {
+  const f = fixture(t);
+  const before = f.store.list(scopeId);
+  const cursor = f.store.cursor();
+  assert.throws(
+    () =>
+      applyRecovery(
+        f.store,
+        input(f, {
+          writers: [
+            {
+              lease: {
+                piSessionId: targetSession,
+                writerId: "writer1",
+                leaseEpoch: "epoch1",
+              },
+              alive: true,
+            },
+          ],
+        }),
+      ),
+    (error) => error.code === "RECOVERY_WRITER_ALIVE",
+  );
+  assert.equal(f.store.cursor(), cursor);
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#154 P1-2: an unknown writer witness blocks corrections", (t) => {
+  const f = fixture(t);
+  const before = f.store.list(scopeId);
+  const cursor = f.store.cursor();
+  assert.throws(
+    () =>
+      applyRecovery(
+        f.store,
+        input(f, {
+          writers: [
+            {
+              lease: {
+                piSessionId: targetSession,
+                writerId: "writer1",
+                leaseEpoch: "epoch1",
+              },
+              alive: "unknown",
+            },
+          ],
+        }),
+      ),
+    (error) => error.code === "RECOVERY_WRITER_ALIVE",
+  );
+  assert.equal(f.store.cursor(), cursor);
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#154 P1-2: recovery with no writer witness fails closed", (t) => {
+  const f = fixture(t);
+  const before = f.store.list(scopeId);
+  const cursor = f.store.cursor();
+  assert.throws(
+    () => applyRecovery(f.store, input(f, { writers: [] })),
+    (error) => error.code === "RECOVERY_WRITER_ALIVE",
+  );
+  assert.equal(f.store.cursor(), cursor);
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#154 P2-4: a writer lease bound to another session is rejected", (t) => {
+  const f = fixture(t);
+  const before = f.store.list(scopeId);
+  const cursor = f.store.cursor();
+  assert.throws(
+    () =>
+      applyRecovery(
+        f.store,
+        input(f, {
+          writers: [
+            {
+              lease: {
+                piSessionId: "other-session",
+                writerId: "writer1",
+                leaseEpoch: "epoch1",
+              },
+              alive: false,
+            },
+          ],
+        }),
+      ),
+    (error) => error.code === "RECOVERY_SCOPE",
+  );
+  assert.equal(f.store.cursor(), cursor);
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#154 P2-4: a malformed writer lease is rejected", (t) => {
+  const f = fixture(t);
+  const before = f.store.list(scopeId);
+  assert.throws(
+    () =>
+      applyRecovery(
+        f.store,
+        input(f, {
+          writers: [
+            {
+              lease: {
+                piSessionId: targetSession,
+                writerId: "",
+                leaseEpoch: "epoch1",
+              },
+              alive: false,
+            },
+          ],
+        }),
+      ),
+    (error) => error.code === "RECOVERY_SCOPE",
+  );
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#154 P2-4: a non-witness liveness value is rejected", (t) => {
+  const f = fixture(t);
+  const before = f.store.list(scopeId);
+  assert.throws(
+    () =>
+      applyRecovery(
+        f.store,
+        input(f, {
+          writers: [
+            {
+              lease: {
+                piSessionId: targetSession,
+                writerId: "writer1",
+                leaseEpoch: "epoch1",
+              },
+              alive: "yes",
+            },
+          ],
+        }),
+      ),
+    (error) => error.code === "RECOVERY_SCOPE",
+  );
+  assert.deepEqual(f.store.list(scopeId), before);
 });
 
 test(

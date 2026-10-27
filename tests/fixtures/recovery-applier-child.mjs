@@ -58,13 +58,15 @@ try {
       }
     },
   };
-  const append = store.append.bind(store);
-  store.append = (input, context) => {
-    const appended = append(input, context);
+  const insertValidated = store.insertValidated.bind(store);
+  // applyRecovery commits through one Store.appendBatch; the first corrected
+  // row insert is the crash boundary.
+  store.insertValidated = (kind, record, sessionId) => {
+    const seq = insertValidated(kind, record, sessionId);
     signal({
       phase: "after-first-write",
       inTransaction: store.db.isTransaction,
-      seq: appended.seq,
+      seq,
     });
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
     throw new Error("the paused crash fixture unexpectedly resumed");
