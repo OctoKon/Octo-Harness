@@ -290,7 +290,10 @@ test("a stop cannot settle a request that never left the UI", () => {
     apply(ready()),
     apply(ready(), { type: "begin", kind: "rewind" }),
   ]) {
-    assert.equal(reduceSessionAction(settled, { type: "stopped" }, ready()), settled);
+    assert.equal(
+      reduceSessionAction(settled, { type: "stopped" }, ready()),
+      settled,
+    );
   }
 });
 
