@@ -214,7 +214,7 @@ test("TD-26: legacy profileSnapshot bindings remain readable without a model ref
 
 for (const point of [
   0x0080, 0x0085, 0x009f, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a,
-  0x2060, 0xfeff, 0x2028, 0x2029,
+  0x2060, 0xfeff, 0x2028, 0x2029, 0x00ad, 0x061c, 0x180e, 0xe0001,
 ]) {
   const label = `U+${point.toString(16).toUpperCase().padStart(4, "0")}`;
   test(`TD-26: profileSnapshot independently rejects a model reference containing ${label}`, () => {
