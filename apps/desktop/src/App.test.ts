@@ -1,11 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import { get } from "svelte/store";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The only fake: the native IPC boundary. Stores, transport and components are real.
 const ipc = vi.hoisted(() => ({
   ready: false,
   invoke: vi.fn(),
+  selection: null as unknown,
+  setup: async (): Promise<unknown> => ({}),
 }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: ipc.invoke,
@@ -14,16 +16,17 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 
-import App from "./App.svelte";
-import {
-  dispatchEngineEvent,
-  handshake as engineHandshake,
-} from "./stores/engine";
 import {
   FOUNDATION,
   PI_REVISION,
   type SplyceEvent,
 } from "@splyce/pi/contracts";
+import App from "./App.svelte";
+import {
+  dispatchEngineEvent,
+  handshake as engineHandshake,
+  selectWorkspace,
+} from "./stores/engine";
 import { clearSession, selectedSession } from "./stores/session-selection";
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -58,7 +61,15 @@ beforeEach(() => {
     value: {},
   });
   ipc.ready = false;
-  ipc.invoke.mockImplementation(async (cmd: string) => {
+  ipc.selection = null;
+  ipc.setup = async () => ({});
+  ipc.invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+    if (cmd === "dialog_select_workspace") return ipc.selection;
+    if (
+      cmd === "send" &&
+      (args as { payload?: { frame?: string } })?.payload?.frame === "setup"
+    )
+      return ipc.setup();
     if (cmd !== "handshake") return undefined;
     if (!ipc.ready) throw new Error("no native backend");
     return readyHandshake;
@@ -87,6 +98,22 @@ const treeEvent = (sessionId: string, scopeId: string) =>
     seq: 1,
     payload: { sessionId, branchAnchorId: "b1", leaves: ["e1"] },
   }) as never;
+
+const admitted = {
+  selectionRef: "ws_1",
+  workspace: {
+    workspaceId: "ws_1",
+    displayName: "splyce-demo",
+    admittedAt: "2026-10-28T00:00:00.000Z",
+    revision: "rev_1",
+  },
+};
+
+async function chooseProject(selection: unknown = admitted) {
+  ipc.selection = selection;
+  button("Choose project").click();
+  await settle();
+}
 
 describe("App wiring", () => {
   it("shows generation unconfigured while the native core is ready and runnable ports are unavailable", async () => {
@@ -208,9 +235,16 @@ describe("App wiring", () => {
     await boot();
     button("Providers").click();
     flushSync();
-    const providers = q("[data-testid=providers-view]") as HTMLFieldSetElement;
+    const providers = q("[data-testid=providers-view]")!;
     expect(providers).not.toBeNull();
-    expect(providers.disabled).toBe(true);
+    // No engine: the setup form is disabled with the port reason, not faked.
+    expect(button("Save provider").disabled).toBe(true);
+    expect(q("#setup-note")?.textContent).toContain(
+      "engine reports provider setup unavailable",
+    );
+    expect(
+      providers.querySelector<HTMLFieldSetElement>("fieldset.custom")!.disabled,
+    ).toBe(true);
     expect(q("#providers-title")?.textContent).toBe("Provider connections");
     // No support record is delivered: the honest empty state, never a claim.
     expect(q("[data-testid=support-status-empty]")?.textContent).toMatch(
@@ -342,6 +376,7 @@ describe("App wiring", () => {
     await settle();
     q("[role=treeitem]")!.click();
     await settle();
+    await chooseProject();
     const ta = q("textarea") as HTMLTextAreaElement;
     ta.value = "hello";
     ta.dispatchEvent(new Event("input", { bubbles: true }));
@@ -367,6 +402,7 @@ describe("App wiring", () => {
     await settle();
     q("[role=treeitem]")!.click();
     await settle();
+    await chooseProject();
 
     const ta = q("textarea") as HTMLTextAreaElement;
     ta.value = "draft preserved across exit";
@@ -559,5 +595,207 @@ describe("App wiring", () => {
     await dropAndRecover();
     expect(q("[data-testid=lost-selection]")).not.toBeNull();
     expect(get(selectedSession)).toBeNull();
+  });
+
+  it("keeps Send blocked until a project is chosen, then shows the next honest gap", async () => {
+    ipc.ready = true;
+    await boot();
+    dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
+    await settle();
+    q("[role=treeitem]")!.click();
+    await settle();
+    expect(q("#composer-status")?.textContent).toBe(
+      "No project is selected. Choose a project first.",
+    );
+    expect(button("Send").disabled).toBe(true);
+    await chooseProject();
+    expect(q("#composer-status")?.textContent).toBe(
+      "Sending is not available yet",
+    );
+  });
+
+  it("disables the project chooser with a reason until the engine is connected", async () => {
+    await boot();
+    expect(button("Choose project").disabled).toBe(true);
+    expect(q("#project-status")?.textContent).toContain(
+      "engine is not connected",
+    );
+    expect(
+      ipc.invoke.mock.calls.filter(([c]) => c === "dialog_select_workspace"),
+    ).toHaveLength(0);
+  });
+
+  it("shows only the display name of a chosen project and keeps it on cancel", async () => {
+    ipc.ready = true;
+    await boot();
+    expect(q("[data-testid=project-name]")?.textContent).toBe(
+      "No project selected.",
+    );
+    await chooseProject();
+    expect(q("[data-testid=project-name]")?.textContent).toBe("splyce-demo");
+    // Cancel returns null: the chosen project stays.
+    await chooseProject(null);
+    expect(q("[data-testid=project-name]")?.textContent).toBe("splyce-demo");
+    expect(q("#project-status")?.textContent).toBe("");
+    // A malformed native reply changes nothing and shows fixed copy.
+    await chooseProject({ selectionRef: "x", workspace: { workspaceId: "" } });
+    expect(q("[data-testid=project-name]")?.textContent).toBe("splyce-demo");
+    expect(q("#project-status")?.textContent).toBe(
+      "Could not open the project. Nothing changed.",
+    );
+    expect(document.body.innerHTML).not.toMatch(/ws_1|rev_1|admittedAt/);
+  });
+
+  it("the chooser bridge keeps only the workspace id and display name", async () => {
+    ipc.selection = admitted;
+    expect(await selectWorkspace()).toStrictEqual({
+      workspaceId: "ws_1",
+      displayName: "splyce-demo",
+    });
+    ipc.selection = null;
+    expect(await selectWorkspace()).toBeNull();
+    expect(
+      ipc.invoke.mock.calls.filter(([c]) => c === "dialog_select_workspace"),
+    ).toEqual([["dialog_select_workspace"], ["dialog_select_workspace"]]);
+  });
+
+  describe("provider.configure", () => {
+    const SECRET = "sk-app-secret-987";
+    const providerPorts = {
+      generation: false,
+      provider: true,
+      workspace: false,
+      modules: false,
+    };
+
+    async function openSetup() {
+      ipc.ready = true;
+      await boot();
+      dispatchEngineEvent({
+        schemaVersion: 1,
+        protocolVersion: 2,
+        recordId: "rec_p",
+        eventId: "evt_p",
+        createdAt: "2026-10-28T00:00:00.000Z",
+        sourceIds: [],
+        scopeId: "scope_1",
+        sessionId: "ses_1",
+        seq: 1,
+        durable: false,
+        kind: "engine.status",
+        payload: { state: "ready", activeWorkers: 0, ports: providerPorts },
+      } as SplyceEvent);
+      await settle();
+      button("Providers").click();
+      flushSync();
+    }
+
+    function fillAndSubmit() {
+      const set = (id: string, value: string) => {
+        const el = q(`#${id}`) as HTMLInputElement;
+        el.value = value;
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      set("setup-endpoint", "http://localhost:11434/v1/");
+      set("setup-model", "qwen3:8b");
+      set("setup-context", "32768");
+      set("setup-output", "4096");
+      set("setup-key", SECRET);
+      (q("#setup-image") as HTMLInputElement).click();
+      flushSync();
+      (
+        q('form[aria-label="Provider setup"]') as HTMLFormElement
+      ).requestSubmit();
+      flushSync();
+    }
+
+    const setupSends = () =>
+      ipc.invoke.mock.calls.filter(
+        ([c, a]) =>
+          c === "send" &&
+          (a as { payload: { frame?: string } }).payload.frame === "setup",
+      );
+
+    it("requires a chosen project before the form can send", async () => {
+      await openSetup();
+      expect(button("Save provider").disabled).toBe(true);
+      expect(q("#setup-note")?.textContent).toContain("Choose a project first");
+    });
+
+    it("sends the exact frozen payload once, then clears the key", async () => {
+      await openSetup();
+      await chooseProject();
+      expect(button("Save provider").disabled).toBe(false);
+      const log = vi.spyOn(console, "log");
+      fillAndSubmit();
+      await settle();
+      expect(setupSends()).toHaveLength(1);
+      const args = setupSends()[0]![1] as {
+        op: string;
+        payload: Record<string, unknown>;
+      };
+      expect(Object.keys(args).sort()).toEqual(["op", "payload"]);
+      expect(args.op).toBe("provider.configure");
+      const frame = args.payload;
+      expect(Object.keys(frame).sort()).toEqual([
+        "command",
+        "frame",
+        "payload",
+        "requestId",
+      ]);
+      expect(frame.frame).toBe("setup");
+      expect(frame.command).toBe("provider.configure");
+      expect(frame.requestId).toMatch(/^[0-9a-f-]{36}$/);
+      const payload = frame.payload as Record<string, unknown>;
+      expect(payload).toStrictEqual({
+        workspaceId: "ws_1",
+        providerConnectionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        profileId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        apiFamily: "openai-completions",
+        endpoint: "http://localhost:11434/v1",
+        locality: "local",
+        chat: {
+          modelId: "qwen3:8b",
+          model: {
+            contextWindow: 32768,
+            maxOutputTokens: 4096,
+            reasoning: false,
+            input: ["text", "image"],
+          },
+        },
+        accountScopeRef: "provider-default",
+        credential: { kind: "new", secret: SECRET },
+        expectedConnectionRevision: null,
+        expectedProfileRevision: null,
+        expectedEndpointRevision: null,
+      });
+      expect(payload.providerConnectionId).not.toBe(payload.profileId);
+      expect((q("#setup-key") as HTMLInputElement).value).toBe("");
+      expect(q("#connect-status")?.textContent).toContain("Provider saved");
+      expect(document.body.innerHTML).not.toContain(SECRET);
+      expect(JSON.stringify(log.mock.calls)).not.toContain(SECRET);
+      log.mockRestore();
+    });
+
+    it("maps a native rejection to typed copy and clears the key", async () => {
+      await openSetup();
+      await chooseProject();
+      ipc.setup = async () => {
+        throw {
+          code: "STALE_REVISION",
+          message: `C:\\private\\path ${SECRET}`,
+          correlationId: "r",
+          retryable: false,
+        };
+      };
+      fillAndSubmit();
+      await settle();
+      expect(setupSends()).toHaveLength(1);
+      expect(q("#connect-status")?.textContent).toContain(
+        "changed since this form was opened",
+      );
+      expect((q("#setup-key") as HTMLInputElement).value).toBe("");
+      expect(document.body.innerHTML).not.toMatch(/private|sk-app/);
+    });
   });
 });

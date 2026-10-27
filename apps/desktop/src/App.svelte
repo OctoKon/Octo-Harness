@@ -31,9 +31,16 @@
     handshake,
     onEvent,
     portAvailability,
+    selectWorkspace,
+    sendSetup,
     subscribe,
     type EngineConnectionState,
+    type SelectedWorkspace,
   } from "./stores/engine";
+  import {
+    providerConfigurePayload,
+    type ProviderSetupDraft,
+  } from "./stores/profiles";
   import {
     bindSelection,
     clearSession,
@@ -123,6 +130,47 @@
       : ports.generation && ports.provider && ports.workspace,
   );
   let engineConnected = $state(false);
+  // Only the id and display name of the admitted project; never its path or selection ref.
+  let workspace = $state<SelectedWorkspace | null>(null);
+  let choosing = $state(false);
+  let chooserError = $state<string | null>(null);
+  const chooserReason = $derived(
+    readiness?.state === "ready"
+      ? null
+      : "The engine is not connected. A project cannot be chosen yet.",
+  );
+  const providerUnavailable = $derived(
+    !ports?.provider
+      ? "The engine reports provider setup unavailable. Nothing can be saved."
+      : workspace === null
+        ? "Choose a project first. Provider setup is saved for a project."
+        : undefined,
+  );
+
+  async function chooseProject() {
+    if (choosing || chooserReason) return;
+    choosing = true;
+    chooserError = null;
+    try {
+      const chosen = await selectWorkspace();
+      // Cancel (null) keeps the current project.
+      if (chosen) workspace = chosen;
+    } catch {
+      chooserError = "Could not open the project. Nothing changed.";
+    } finally {
+      choosing = false;
+    }
+  }
+
+  // The secret lives only in this one send; the payload object is not kept.
+  async function configureProvider(draft: ProviderSetupDraft) {
+    if (!workspace) throw new Error("No project selected");
+    await sendSetup(
+      "provider.configure",
+      crypto.randomUUID(),
+      providerConfigurePayload(draft, workspace.workspaceId),
+    );
+  }
   let stopped = $derived(engineConnected && status === "disconnected");
   let mounted = false;
   let turns = $state.raw<TurnsState>(createTurnsState());
@@ -299,6 +347,19 @@
       </button>
     {/each}
   </nav>
+  <section class="project" aria-labelledby="project-title">
+    <h2 id="project-title">Project</h2>
+    <p data-testid="project-name">{workspace ? workspace.displayName : "No project selected."}</p>
+    <button
+      type="button"
+      disabled={chooserReason !== null || choosing}
+      aria-describedby="project-status"
+      onclick={() => void chooseProject()}
+    >
+      {choosing ? "Choosing…" : "Choose project"}
+    </button>
+    <p id="project-status" role="status">{chooserReason ?? chooserError}</p>
+  </section>
   <SessionTree
     {nav}
     {onSelect}
@@ -326,11 +387,15 @@
     </div>
   {/if}
   {#if view === "providers"}
-    <!-- No profile service is connected: the list is empty and the add form is disabled, not faked. -->
-    <fieldset disabled data-testid="providers-view">
-      <Providers connections={[]} families={[]} onAddCustom={() => {}} />
-      <p role="status">Provider connections are unavailable: no profile service is connected.</p>
-    </fieldset>
+    <!-- No profile service is connected: the list is empty and custom endpoints stay disabled, not faked. -->
+    <div class="providers" data-testid="providers-view">
+      <Providers
+        connections={[]}
+        families={[]}
+        credentialSubmit={providerUnavailable ? undefined : configureProvider}
+        credentialUnavailable={providerUnavailable}
+      />
+    </div>
     <SupportStatus cells={null} />
   {:else if view === "setup"}
     <Setup
@@ -390,6 +455,7 @@
     connection={status}
     sessionId={$selectedSession?.sessionId ?? null}
     {generationReady}
+    workspaceSelected={workspace !== null}
     unavailable="Sending is not available yet"
     send={async () => {
       throw new Error("Sending is unavailable: session revisions are not wired.");
@@ -469,6 +535,23 @@
   [aria-current="page"] {
     font-weight: 700;
   }
+  .project {
+    display: grid;
+    gap: 4px;
+    padding: 12px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .project h2 {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #4b5563;
+  }
+  .project p {
+    margin: 0;
+    font-size: 0.8125rem;
+  }
   .supervisor {
     display: grid;
     gap: 8px;
@@ -484,9 +567,7 @@
     text-transform: uppercase;
     color: #4b5563;
   }
-  fieldset {
-    border: 0;
-    margin: 0;
+  .providers {
     padding: 12px;
   }
   .subscribe-error {
