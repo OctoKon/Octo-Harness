@@ -61,3 +61,6 @@ These require full implementation; not marked done.
 ## TD-22 adopted
 - provider-admission.ts copied from lapsecoder/td22-bedrock-azure; t-1fdd46 marked complete.
 - t-9b9351 (TD-19) and t-c4e453 (TD-68) remain in progress (no branch/WIP found).
+
+## TD-14 adopted
+- policy.ts and admission.ts copied from Itachi-1824/td14-revision-fence; t-8f6564 marked complete.
