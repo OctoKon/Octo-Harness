@@ -37,3 +37,7 @@ Deleted all prior dhanushbs10/* branches; created dhanushbs10/claude-takeover.
 
 ## Next steps
 Implement TD-71 and TD-17 first (no existing WIP), then reconstruct TD-34 and TD-56/60, then TD-18 follow-up.
+
+## Final verification update
+- t-0c0849, t-13d54f, t-706c8b, t-99e61d, t-ecd159 marked COMPLETE.
+- t-90e780 remains IN PROGRESS (TD-18 follow-up).
