@@ -231,7 +231,7 @@ export class DesktopBridge {
     // Every overflow emits its own resync control frame; the exactly-one
     // rule is per overflow, not per cursor advance. The base cursor is
     // session-exact: other sessions'/scopes' records never move it.
-    const fromSeq = this.receipts.sessionDurableCursor(
+    const fromSeq = this.receipts.sessionEventCursor(
       this.baseContext.scopeId,
       this.baseContext.sessionId,
     );
