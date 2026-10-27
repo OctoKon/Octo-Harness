@@ -91,7 +91,8 @@ const STATE_VIEWS: Readonly<Record<string, StatusView>> = Object.freeze({
 });
 
 function projectState(state: unknown): StatusView {
-  if (typeof state !== "string" || !Object.hasOwn(STATE_VIEWS, state)) return UNKNOWN;
+  if (typeof state !== "string" || !Object.hasOwn(STATE_VIEWS, state))
+    return UNKNOWN;
   return STATE_VIEWS[state]!;
 }
 
