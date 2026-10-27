@@ -7,10 +7,19 @@
   } from "../stores/composer";
   import type { EngineConnectionState } from "../stores/engine";
 
+  /**
+   * Fixed copy for a rejected send. The rejection itself is never shown: it can
+   * carry filesystem paths, secrets or stack frames, and the UI cannot know
+   * whether the engine received the prompt before the failure.
+   */
+  const SEND_UNCERTAIN =
+    "The message may not have reached the engine. Check the connection, then resend.";
+
   let {
     connection,
     sessionId,
     stale = false,
+    generationReady,
     unavailable,
     cancellable = false,
     contextArtifactIds = [],
@@ -20,6 +29,8 @@
     connection: EngineConnectionState;
     sessionId: string | null;
     stale?: boolean;
+    /** Engine-reported generation readiness; fail closed when false. */
+    generationReady?: boolean;
     unavailable?: string;
     cancellable?: boolean;
     contextArtifactIds?: readonly string[];
@@ -33,13 +44,27 @@
   let error = $state<string | null>(null);
 
   const reason = $derived(
-    sendBlockedReason({ connection, sessionId, stale, pending, unavailable }),
+    sendBlockedReason({
+      connection,
+      sessionId,
+      stale,
+      generationReady,
+      pending,
+      unavailable,
+    }),
   );
   const payload = $derived(buildPrompt(draft, contextArtifactIds));
 
   async function submit() {
     // Guard on live state: a handler may run before derived values re-render.
-    if (pending || sendBlockedReason({ connection, sessionId, stale, pending, unavailable }))
+    if (pending || sendBlockedReason({
+      connection,
+      sessionId,
+      stale,
+      generationReady,
+      pending,
+      unavailable,
+    }))
       return;
     const request = buildPrompt(draft, contextArtifactIds);
     if (!request) return;
@@ -48,8 +73,10 @@
     try {
       await send(request);
       draft = "";
-    } catch (e) {
-      error = e instanceof Error ? e.message : "Send failed.";
+    } catch {
+      // Never echo the rejection: it can carry paths, secrets or stack text.
+      // A rejected promise does not prove the engine ignored the message.
+      error = SEND_UNCERTAIN;
     } finally {
       pending = false;
     }
