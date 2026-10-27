@@ -452,3 +452,53 @@ test("displayName and unknown api families are rejected", (t) => {
   assert.throws(() => store.commitSetup(other, caller), code("SETUP_INVALID"));
   assert.deepEqual(kinds(store), []);
 });
+
+test("requestId, apiVersion and adapterRevision are bounded, plain and secret-free", (t) => {
+  const { store, caller } = fixture(t);
+  // Assembled at runtime so the fixture file never contains a key-shaped literal.
+  const bad = [
+    ["s", "k-ant-api03-abcdefghijklmnop"].join(""),
+    ["gh", "p_abcdefghijklmnopqrstuvwxyz"].join(""),
+    ["AK", "IAABCDEFGHIJKLMNOP"].join(""),
+    "x".repeat(65),
+    "has space",
+    "semi;colon",
+  ];
+  for (const value of bad) {
+    assert.throws(
+      () => store.commitSetup(input({ requestId: value }), caller),
+      code("SETUP_INVALID"),
+    );
+    for (const field of ["apiVersion", "adapterRevision"])
+      assert.throws(
+        () =>
+          store.commitSetup(
+            input({ descriptors: { ...input().descriptors, [field]: value } }),
+            caller,
+          ),
+        code("SETUP_INVALID"),
+      );
+  }
+  assert.deepEqual(kinds(store), []);
+});
+
+test("a descriptor that stops resolving between check and commit cannot commit", (t) => {
+  const { store, caller } = fixture(t);
+  // The descriptor resolves for the pre-checks, then disappears before the write lock is held.
+  let calls = 0;
+  const flaky = {
+    ...caller,
+    resolveReference: (id: string, scopeId: string) =>
+      id === "limits1" ? ++calls <= 2 : caller.resolveReference(id, scopeId),
+  };
+  const cursor = store.cursor();
+  assert.throws(
+    () => store.commitSetup(input(), flaky),
+    (error: unknown) =>
+      error instanceof StoreError &&
+      error.code === "SETUP_INVALID" &&
+      error.message.includes("descriptors.limitsArtifactId"),
+  );
+  assert.equal(store.cursor(), cursor);
+  assert.deepEqual(kinds(store), []);
+});

@@ -403,6 +403,10 @@ const SETUP_API_FAMILIES: readonly string[] = [
   "openai-responses",
 ];
 
+// Same shapes the desktop error scrubber treats as secrets (apps/desktop/src/tool-view.ts).
+const SETUP_SECRET =
+  /(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/u;
+
 function setupInvalid(field: string): never {
   throw new StoreError("SETUP_INVALID", `invalid setup input: ${field}`);
 }
@@ -438,6 +442,16 @@ function setupModelRef(value: unknown, field: string): string {
     return setupInvalid(field);
   }
   return value as string;
+}
+/** Short plain label (requestId, apiVersion, adapterRevision): never a place for a secret. */
+function setupToken(value: unknown, field: string): string {
+  if (
+    typeof value !== "string" ||
+    !/^[A-Za-z0-9._:-]{1,64}$/u.test(value) ||
+    SETUP_SECRET.test(value)
+  )
+    setupInvalid(field);
+  return value;
 }
 function setupRevision(value: unknown, field: string): string | null {
   return value === null ? null : setupId(value, field);
@@ -537,7 +551,7 @@ function parseSetup(raw: unknown): SetupInput {
   });
   return {
     workspaceId: setupId(top.workspaceId, "workspaceId"),
-    requestId: setupId(top.requestId, "requestId"),
+    requestId: setupToken(top.requestId, "requestId"),
     endpoint: {
       endpointId,
       canonicalUrl: canonical,
@@ -567,8 +581,8 @@ function parseSetup(raw: unknown): SetupInput {
         d.limitsArtifactId,
         "descriptors.limitsArtifactId",
       ),
-      apiVersion: setupId(d.apiVersion, "descriptors.apiVersion"),
-      adapterRevision: setupId(
+      apiVersion: setupToken(d.apiVersion, "descriptors.apiVersion"),
+      adapterRevision: setupToken(
         d.adapterRevision,
         "descriptors.adapterRevision",
       ),
@@ -1293,7 +1307,7 @@ export class Store {
       locality: setup.endpoint.locality,
       revision: setup.endpoint.revision,
     };
-    // displayName is validated but not persisted: the connection record has no such field.
+    // displayName is rejected as an unknown field: the connection record has no such field.
     const connection = {
       ...base(ids.connection),
       providerConnectionId: setup.connection.providerConnectionId,
@@ -1357,7 +1371,12 @@ export class Store {
         [],
         batchCaller,
         {
-          expectedSetup: { recordIds: Object.values(ids), digestRef },
+          expectedSetup: {
+            recordIds: Object.values(ids),
+            digestRef,
+            unresolved: (): string | undefined =>
+              unresolved.find(([, ref]) => !resolve(ref))?.[0],
+          },
           expectedEntityRevision: [
             {
               kind: "providerEndpoint",
@@ -1493,7 +1512,12 @@ export class Store {
     }: EventPreconditions & {
       expectedEntityRevision?:
         EntityRevisionExpectation | readonly EntityRevisionExpectation[];
-      expectedSetup?: { recordIds: readonly string[]; digestRef: string };
+      expectedSetup?: {
+        recordIds: readonly string[];
+        digestRef: string;
+        /** Re-resolves the setup references; returns the first failing field. */
+        unresolved: () => string | undefined;
+      };
     } & NativeGrantPreconditions,
     importedWatermarks: readonly EventWatermark[] = [],
   ): AppendBatchResult & { events: SplyceEvent[] } {
@@ -1573,6 +1597,13 @@ export class Store {
               : "requestId was already used with a different setup request; nothing appended",
           );
         }
+        // A descriptor removed after the early check must not commit.
+        const field = expectedSetup.unresolved();
+        if (field !== undefined)
+          throw new StoreError(
+            "SETUP_INVALID",
+            `setup reference does not resolve: ${field}`,
+          );
       }
       const expectations: readonly EntityRevisionExpectation[] =
         expectedEntityRevision === undefined
