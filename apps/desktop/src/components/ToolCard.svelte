@@ -40,6 +40,10 @@
   let outcomeRef = $derived(
     action.outcomeRef ? redactToolText(action.outcomeRef) : null,
   );
+  let summary = $derived(action.summary);
+  let preview = $derived(
+    summary?.preview ? redactToolText(summary.preview) : null,
+  );
 
   function approvalRequest(approval: ApprovalView): ApprovalRequest {
     return {
@@ -155,6 +159,30 @@
     </p>
   {/if}
 
+  {#if summary && (summary.exitCode !== undefined || summary.durationMs !== undefined || summary.bytes !== undefined || summary.truncated)}
+    <p class="summary" data-testid="tool-summary">
+      {#if summary.exitCode !== undefined}
+        <span>Exit code {summary.exitCode}</span>
+      {/if}
+      {#if summary.durationMs !== undefined}
+        <span>{summary.durationMs} ms</span>
+      {/if}
+      {#if summary.bytes !== undefined}
+        <span>{summary.bytes} bytes</span>
+      {/if}
+      {#if summary.truncated}
+        <span data-testid="tool-truncated">Truncated</span>
+      {/if}
+    </p>
+  {/if}
+
+  {#if preview}
+    <div class="preview-block">
+      <span class="field-label">Output preview</span>
+      <pre data-testid="tool-preview"><code>{preview}</code></pre>
+    </div>
+  {/if}
+
   {#if action.approval?.state === "requested" && showApprovalControls}
     {#if canRespond(action.actionId) && !stale}
       <div class="approval" use:approvalKeys use:focusDeny>
@@ -209,6 +237,7 @@
   .target code,
   .args code,
   .outcome code,
+  .preview-block code,
   .error-code {
     font-family: var(
       --splyce-font-family-mono,
@@ -256,6 +285,7 @@
   .phase,
   .args,
   .outcome,
+  .summary,
   .tool-error,
   .approval-closed {
     margin: 0;
@@ -266,6 +296,30 @@
   .phase {
     color: var(--splyce-text-muted, #6b7280);
     font-size: var(--splyce-font-size-xs, 0.75rem);
+  }
+
+  .summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--splyce-space-2, 0.5rem);
+    color: var(--splyce-text-muted, #6b7280);
+    font-size: var(--splyce-font-size-xs, 0.75rem);
+  }
+
+  .preview-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--splyce-space-1, 0.25rem);
+  }
+
+  .preview-block pre {
+    margin: 0;
+    padding: var(--splyce-space-2, 0.5rem);
+    border: 1px solid var(--splyce-border-subtle, #f3f4f6);
+    border-radius: 4px;
+    background: var(--splyce-surface-sunken, #f9fafb);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .target {

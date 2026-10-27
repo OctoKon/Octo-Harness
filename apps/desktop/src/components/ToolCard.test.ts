@@ -142,6 +142,29 @@ describe("tool activity card", () => {
     expect(text()).not.toMatch(/truncated/i);
   });
 
+  it("renders the optional outcome summary and redacts its preview", () => {
+    render({
+      action: {
+        ...fixtureAction(),
+        capabilityId: "shell.run",
+        summary: {
+          exitCode: 1,
+          durationMs: 42,
+          bytes: 64,
+          truncated: true,
+          preview: "first line\nsecond line\nsk-live-secret123",
+        },
+      },
+    });
+    expect(text()).toContain("Exit code 1");
+    expect(text()).toContain("42 ms");
+    expect(text()).toContain("64 bytes");
+    expect(text()).toContain("Truncated");
+    expect(text()).toContain("first line");
+    expect(text()).toContain("second line");
+    expect(text()).not.toContain("sk-live-secret123");
+  });
+
   it("keeps approval controls fail-closed unless the caller opts in", () => {
     render({
       action: {
