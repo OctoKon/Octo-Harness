@@ -56,6 +56,7 @@ const connection = (apiVersion = "v1"): ConnectionInput => ({
 const profile = (
   connectionRevision = "c1",
   expectedProfileRevision: string | null = null,
+  modelId = "anthropic/claude-sonnet-4-5",
 ): ProfileInput => ({
   scopeId,
   profileId: "profile-chat",
@@ -64,6 +65,7 @@ const profile = (
       role: "chat",
       providerConnectionId: connection().providerConnectionId,
       connectionRevision,
+      modelId,
     },
   ],
   egressPolicyRefs: [...fixture.profileSnapshot.egressPolicyRefs],
@@ -196,7 +198,7 @@ test("profile p2 appends a new snapshot without rewriting p1", (t) => {
     .list(scopeId)
     .records.find((row) => row.seq === p1.seq);
   profiles.writeConnection(connection("v2"), caller);
-  const p2 = profiles.writeProfile(profile("c2", "p1"), caller);
+  const p2 = profiles.writeProfile(profile("c2", "p1", "model-two"), caller);
   assert.equal(p1.profileRevision, "p1");
   assert.equal(p2.profileRevision, "p2");
   assert.ok(p2.seq > p1.seq);
@@ -212,8 +214,10 @@ test("profile p2 appends a new snapshot without rewriting p1", (t) => {
   profiles.select(selection("p2", "cfg-1", "cfg-2", "select2"), caller);
   assert.deepEqual(
     profiles.effective(scopeId)?.bindings,
-    profile("c2").bindings,
+    profile("c2", null, "model-two").bindings,
   );
+  // Each revision pins its own model; c2 does not rewrite p1.
+  assert.equal(profiles.effective(scopeId)?.bindings[0]?.modelId, "model-two");
 });
 
 test("a stale expected profile revision rejects without any durable write", (t) => {
@@ -307,6 +311,8 @@ test("only the latest applied selection is effective, ignoring later pending and
     profileRevision: "p2",
     configRevision: "cfg-2",
     bindings: profile("c2").bindings,
+    generationReady: true,
+    generationBlocker: null,
   });
 });
 
@@ -363,6 +369,8 @@ test("effective profile and config revision come from one durable observation", 
     profileRevision: "p2",
     configRevision: "cfg-2",
     bindings: profile("c2").bindings,
+    generationReady: true,
+    generationBlocker: null,
   });
 });
 
@@ -416,6 +424,127 @@ test("an unreadable applied config row fails closed instead of reviving an older
     () => f.open().profiles().effective(scopeId),
     code("UNKNOWN_SCHEMA"),
   );
+});
+
+test("a new profile must name its model", (t) => {
+  const f = setup(t);
+  const profiles = f.profiles();
+  profiles.writeConnection(connection(), caller);
+  const before = f.store.list(scopeId);
+  const input = {
+    ...profile(),
+    bindings: [
+      {
+        role: "chat",
+        providerConnectionId: connection().providerConnectionId,
+        connectionRevision: "c1",
+      },
+    ],
+  };
+  assert.throws(
+    () => profiles.writeProfile(input as never, caller),
+    code("PROFILE_INVALID"),
+  );
+  assert.deepEqual(f.store.list(scopeId), before);
+  const p1 = profiles.writeProfile(profile(), caller);
+  const stored = f.store
+    .list(scopeId)
+    .records.find((row) => row.seq === p1.seq);
+  assert.deepEqual(
+    (stored?.record as { bindings: unknown }).bindings,
+    profile().bindings,
+  );
+});
+
+for (const modelId of [
+  "anthropic",
+  "anthropic/claude-sonnet-4-5",
+  "openrouter/anthropic",
+  "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+  "x".repeat(256),
+]) {
+  test(`a model reference accepts ${JSON.stringify(modelId.slice(0, 40))}`, (t) => {
+    const f = setup(t);
+    const profiles = f.profiles();
+    profiles.writeConnection(connection(), caller);
+    const p1 = profiles.writeProfile(profile("c1", null, modelId), caller);
+    profiles.select(selection(p1.profileRevision), caller);
+    const value = profiles.effective(scopeId);
+    assert.equal(value?.bindings[0]?.modelId, modelId);
+    assert.equal(value?.generationReady, true);
+  });
+}
+
+for (const modelId of ["", " ", "a b", "a\nb", "\u0000abc", "x".repeat(257)]) {
+  test(`a malformed model reference ${JSON.stringify(modelId.slice(0, 12))} is rejected without a profile row`, (t) => {
+    const f = setup(t);
+    const profiles = f.profiles();
+    profiles.writeConnection(connection(), caller);
+    const before = f.store.list(scopeId);
+    assert.throws(
+      () => profiles.writeProfile(profile("c1", null, modelId), caller),
+      code("PROFILE_INVALID"),
+    );
+    assert.deepEqual(f.store.list(scopeId), before);
+  });
+}
+
+test("a legacy binding stays readable but is not generation ready and cannot be selected again", (t) => {
+  const f = setup(t);
+  const profiles = f.profiles();
+  profiles.writeConnection(connection(), caller);
+  const p1 = profiles.writeProfile(profile(), caller);
+  profiles.select(selection(p1.profileRevision), caller);
+  // An install written before modelId existed: only the triple is at rest.
+  f.store.append(
+    {
+      kind: "profileSnapshot",
+      record: {
+        schemaVersion: 1,
+        recordId: "legacy-profile",
+        createdAt: "2026-10-27T00:00:00.000Z",
+        scopeId,
+        sourceIds: [],
+        profileId: "profile-chat",
+        profileRevision: "p2",
+        configRevision: "cfg-1",
+        roleBindingRefs: [],
+        installedModuleRefs: [],
+        bindings: [
+          {
+            role: "chat",
+            providerConnectionId: connection().providerConnectionId,
+            connectionRevision: "c1",
+          },
+        ],
+        egressPolicyRefs: [...fixture.profileSnapshot.egressPolicyRefs],
+        limitsArtifactId: fixture.profileSnapshot.limitsArtifactId,
+      },
+    },
+    caller,
+  );
+  const change = selection("p2", "cfg-1", "cfg-2", "legacy-apply");
+  f.config.request(change, caller);
+  f.config.apply(change, caller);
+  const value = profiles.effective(scopeId);
+  assert.equal(value?.profileRevision, "p2");
+  assert.equal(value?.generationReady, false);
+  assert.deepEqual(value?.generationBlocker, {
+    code: "PROFILE_MODEL_UNBOUND",
+    role: "chat",
+  });
+  assert.equal(value?.bindings[0]?.modelId, undefined);
+  const before = f.store.list(scopeId);
+  assert.throws(
+    () =>
+      profiles.select(
+        selection("p2", "cfg-2", "cfg-3", "legacy-reselect"),
+        caller,
+      ),
+    code("PROFILE_MODEL_UNBOUND"),
+  );
+  assert.deepEqual(f.store.list(scopeId), before);
+  assert.equal(f.config.effectiveRevision(scopeId), "cfg-2");
 });
 
 test("connection input rejects an unknown credential-bearing property at runtime and persists nothing", (t) => {
