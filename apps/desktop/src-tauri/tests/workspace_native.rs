@@ -7,7 +7,7 @@ mod workspace;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use workspace::{WorkspaceError, create_child, qualify_directory, validate_basename};
+use workspace::{create_child, qualify_directory, validate_basename, WorkspaceError};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture(PathBuf);

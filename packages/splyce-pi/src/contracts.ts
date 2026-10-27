@@ -379,6 +379,7 @@ type Rule =
   | "uint"
   | "bool"
   | "limits"
+  | "toolSummary"
   | "portAvailability"
   | "eventEnvelope"
   | readonly string[];
@@ -743,6 +744,13 @@ export interface EventPayloads {
     status: "success" | "error" | "uncertain";
     outcomeRef?: string;
     error?: string;
+    summary?: {
+      exitCode?: number | null;
+      durationMs?: number;
+      bytes?: number;
+      truncated?: boolean;
+      preview?: string;
+    };
   };
   "turn.completed": {
     runId: string;
@@ -854,7 +862,11 @@ const EVENT_SCHEMAS = {
 } as const satisfies { [K in EventKind]: Shape };
 const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
   "engine.status": { ports: "portAvailability" },
-  "turn.tool_outcome": { outcomeRef: "ref", error: "text" },
+  "turn.tool_outcome": {
+    outcomeRef: "ref",
+    error: "text",
+    summary: "toolSummary",
+  },
   "approval.requested": { timeoutMs: "uint" },
   "turn.stream_delta": { turnId: "ref" },
   "turn.thought_delta": { turnId: "ref" },
@@ -1153,6 +1165,40 @@ function rule(
       for (const item of value)
         spec === "refs" ? reference(item, field, context) : text(item, field);
       break;
+    case "toolSummary": {
+      const summary = object(value, field);
+      const { exitCode, preview } = summary;
+      shape(
+        summary,
+        {},
+        { durationMs: "uint", bytes: "uint", truncated: "bool" },
+        context,
+        false,
+      );
+      requireThat(
+        Object.keys(summary).every((key) =>
+          ["exitCode", "durationMs", "bytes", "truncated", "preview"].includes(
+            key,
+          ),
+        ),
+        "INVALID_SHAPE",
+        "unknown summary field",
+      );
+      requireThat(
+        exitCode === undefined ||
+          exitCode === null ||
+          Number.isSafeInteger(exitCode),
+        "INVALID_SHAPE",
+        "exitCode",
+      );
+      requireThat(
+        preview === undefined ||
+          (typeof preview === "string" && preview.length <= 2048),
+        "INVALID_SHAPE",
+        "preview",
+      );
+      break;
+    }
     case "limits":
       for (const limit of Object.values(object(value, field)))
         requireThat(
