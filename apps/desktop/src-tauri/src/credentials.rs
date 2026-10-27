@@ -3,16 +3,16 @@
 
 use std::fmt;
 use std::ptr::{null_mut, write_volatile};
-use std::sync::atomic::{Ordering, compiler_fence};
+use std::sync::atomic::{compiler_fence, Ordering};
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_NO_SUCH_LOGON_SESSION, ERROR_NO_TOKEN, ERROR_NOT_FOUND, GetLastError,
+    GetLastError, ERROR_ACCESS_DENIED, ERROR_NOT_FOUND, ERROR_NO_SUCH_LOGON_SESSION, ERROR_NO_TOKEN,
 };
 use windows_sys::Win32::Security::Credentials::{
-    CRED_MAX_CREDENTIAL_BLOB_SIZE, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW,
-    CredDeleteW, CredFree, CredReadW, CredWriteW,
+    CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_MAX_CREDENTIAL_BLOB_SIZE,
+    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
 };
 use windows_sys::Win32::Security::Cryptography::{
-    BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+    BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
 };
 
 const REFERENCE_PREFIX: &str = "splyce-credential:v1:";
