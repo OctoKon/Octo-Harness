@@ -18,9 +18,13 @@
   "include": [
     "src/contracts.ts",
     "src/store.ts",
+    "src/provider-auth.ts",
+    "src/credential-resolver.ts",
+    "src/provider-admission.ts",
     "src/receipts.ts",
     "src/config.ts",
     "src/desktop-bridge.ts",
-    "src/node-sqlite.d.ts"
+    "src/node-sqlite.d.ts",
+    "src/node-child-process.d.ts"
   ]
 }
