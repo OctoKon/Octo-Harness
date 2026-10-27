@@ -960,7 +960,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			output.content = output.content.filter((block) => block.type !== "toolCall" || finishedToolCalls.has(block));
+			// An errored or aborted response carries no executable tool call, finished or not (same rule as every other family).
+			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = await redactWithLease(
 				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
