@@ -335,17 +335,17 @@ pub use windows::{EngineChild, EngineEvents};
 mod windows {
     use super::*;
     use std::collections::VecDeque;
-    use std::ffi::{OsStr, c_void};
+    use std::ffi::{c_void, OsStr};
     use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use std::ptr::{null, null_mut};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Condvar, Mutex, mpsc};
+    use std::sync::{mpsc, Arc, Condvar, Mutex};
     use std::thread::JoinHandle;
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        SetHandleInformation, HANDLE, HANDLE_FLAG_INHERIT, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::System::JobObjects::*;
@@ -598,6 +598,8 @@ mod windows {
     #[derive(Deserialize)]
     #[serde(tag = "method", deny_unknown_fields)]
     enum NativeOperation {
+        #[serde(rename = "credential.redact")]
+        Redact { id: String, params: RedactParams },
         #[serde(rename = "credential.scope.open")]
         Open { id: String, params: CredentialScope },
         #[serde(rename = "credential.read")]
@@ -612,6 +614,12 @@ mod windows {
         scope_id: String,
     }
 
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RedactParams {
+        text: String,
+    }
+
     fn opaque_id(value: &str) -> bool {
         !value.is_empty()
             && value.len() <= 128
@@ -624,7 +632,7 @@ mod windows {
         frame: Value,
         scopes: &mut std::collections::HashMap<String, (CredentialScope, Instant, bool)>,
     ) -> Result<Vec<u8>, EngineError> {
-        use crate::credentials::{CredentialError, CredentialRef, read_owned};
+        use crate::credentials::{read_owned, CredentialError, CredentialRef};
         let invalid = || EngineError::new("ENGINE_FRAME", "Invalid native control frame");
         let object = frame
             .as_object()
@@ -635,6 +643,19 @@ mod windows {
                 .map_err(|_| invalid())?;
         scopes.retain(|_, (_, deadline, consumed)| *consumed || Instant::now() < *deadline);
         let (id, result) = match operation {
+            NativeOperation::Redact { id, params } => {
+                if !opaque_id(&id) {
+                    return Err(invalid());
+                }
+                let unavailable = || serde_json::json!({"native":{"id":id,"ok":false,"error":{"code":"PERSIST_REDACTION_UNAVAILABLE"}}});
+                let value = match crate::credentials::redact_owned(&params.text) {
+                    Ok((text, count)) => {
+                        serde_json::json!({"native":{"id":id,"ok":true,"value":{"text":text,"redactedCount":count}}})
+                    }
+                    Err(_) => unavailable(),
+                };
+                return encode_frame(&value).or_else(|_| encode_frame(&unavailable()));
+            }
             NativeOperation::Open { id, params } => {
                 if !opaque_id(&id)
                     || !opaque_id(&params.scope_id)
@@ -1396,6 +1417,56 @@ mod windows {
         }
 
         #[test]
+        fn persistence_redaction_has_an_exact_separate_private_shape() {
+            let reference = crate::credentials::write_generated("redaction-private-lane").unwrap();
+            struct Cleanup(crate::credentials::CredentialRef);
+            impl Drop for Cleanup {
+                fn drop(&mut self) {
+                    crate::credentials::delete_owned(&self.0).unwrap();
+                }
+            }
+            let _cleanup = Cleanup(reference);
+            let mut scopes = std::collections::HashMap::new();
+            let value = reply(
+                native_reply(
+                    call(
+                        "credential.redact",
+                        json!({"text":"λ redaction-private-lane"}),
+                    ),
+                    &mut scopes,
+                )
+                .unwrap(),
+            );
+            assert_eq!(
+                value,
+                json!({"native":{"id":"native1","ok":true,"value":{"text":"λ [REDACTED:credential]","redactedCount":1}}})
+            );
+            assert!(scopes.is_empty());
+            for params in [
+                json!({}),
+                json!({"text":null}),
+                json!({"text":"x","scopeId":"s"}),
+                json!({"text":"x","target":"anything"}),
+            ] {
+                assert!(native_reply(call("credential.redact", params), &mut scopes).is_err());
+            }
+            for text in [
+                "x".repeat(crate::credentials::MAX_REDACTION_TEXT_BYTES + 1),
+                "x".repeat(MAX_FRAME_BYTES),
+                "redaction-private-lane".repeat(MAX_FRAME_BYTES / 21),
+            ] {
+                let value = reply(
+                    native_reply(call("credential.redact", json!({"text":text})), &mut scopes)
+                        .unwrap(),
+                );
+                assert_eq!(
+                    value["native"]["error"]["code"],
+                    "PERSIST_REDACTION_UNAVAILABLE"
+                );
+            }
+        }
+
+        #[test]
         fn private_schema_and_absent_reference_fail_closed() {
             let target = format!("splyce-credential:v1:{}", "0".repeat(64));
             let params = scope(&target);
@@ -1502,12 +1573,10 @@ mod tests {
         assert!(digest_matches(bytes, &digest));
         assert!(!digest_matches(br#"{}"#, &digest));
         assert!(!digest_matches(bytes, ""));
-        assert!(
-            serde_json::from_slice::<Manifest>(
-                br#"{"schemaVersion":1,"piRevision":"pin","files":[],"extra":true}"#
-            )
-            .is_err()
-        );
+        assert!(serde_json::from_slice::<Manifest>(
+            br#"{"schemaVersion":1,"piRevision":"pin","files":[],"extra":true}"#
+        )
+        .is_err());
     }
 
     #[test]

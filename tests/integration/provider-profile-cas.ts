@@ -59,6 +59,7 @@ const binding = {
   role: "chat",
   providerConnectionId: "conn1",
   connectionRevision: "c1",
+  modelId: "anthropic/claude-sonnet-4-5",
 };
 const transition = () => ({
   ...metadata("transition1.applied"),
@@ -494,6 +495,24 @@ test("profile bindings accept exact role/connection revision triples", () => {
     validateRecord("profileSnapshot", record, context).unrelatedMetadata,
     "preserved",
   );
+  assert.equal(
+    validateRecord("profileSnapshot", record, context).bindings?.[0]?.modelId,
+    "anthropic/claude-sonnet-4-5",
+  );
+});
+
+test("profile bindings accept a historical triple without a model", () => {
+  const legacy = {
+    role: binding.role,
+    providerConnectionId: binding.providerConnectionId,
+    connectionRevision: binding.connectionRevision,
+  };
+  const value = validateRecord(
+    "profileSnapshot",
+    { ...profile("legacy-profile"), bindings: [legacy] },
+    context,
+  );
+  assert.equal(value.bindings?.[0]?.modelId, undefined);
 });
 
 for (const [name, bindings] of [
@@ -505,6 +524,15 @@ for (const [name, bindings] of [
   ["malformed connection", [{ ...binding, providerConnectionId: "a/b" }]],
   ["malformed revision", [{ ...binding, connectionRevision: "c 1" }]],
   ["missing revision", [{ role: "chat", providerConnectionId: "conn1" }]],
+  ["malformed model", [{ ...binding, modelId: "a b" }]],
+  ["control character model", [{ ...binding, modelId: "a\u0000b" }]],
+  ["C1 control character model", [{ ...binding, modelId: "a\u0080b" }]],
+  ["C1 next-line model", [{ ...binding, modelId: "a\u0085b" }]],
+  [
+    "C1 application-program-command model",
+    [{ ...binding, modelId: "a\u009fb" }],
+  ],
+  ["overlong model", [{ ...binding, modelId: "x".repeat(257) }]],
 ] as const) {
   test(`profile bindings reject ${name}`, () => {
     assert.throws(

@@ -1,3 +1,4 @@
+import type { SplyceCredentials } from "../splyce-credentials.ts";
 import type {
 	AnyModel,
 	Api,
@@ -13,6 +14,27 @@ import type {
 	ModelTypeMap,
 } from "../types.ts";
 import { ModelsError } from "./models-error.ts";
+
+/** Only adapters bound to native credentials may bypass ordinary provider auth. */
+export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
+	"anthropic-messages",
+	"google-generative-ai",
+	"google-vertex",
+	"openai-completions",
+	"openai-responses",
+	"openai-codex-responses",
+	"mistral-conversations",
+	"pi-messages",
+]);
+
+export function assertCredentialsSupported(
+	api: string,
+	options: { credentials?: SplyceCredentials | undefined } | undefined,
+): void {
+	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
+		throw new Error(`credentials are not supported for api ${api} yet`);
+	}
+}
 
 /** The type of a model. Models without `type` are chat models. */
 export function getModelType(model: AnyModel): ModelType {

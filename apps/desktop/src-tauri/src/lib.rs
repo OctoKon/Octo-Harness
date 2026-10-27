@@ -1,6 +1,7 @@
 mod credentials;
 pub mod ipc;
 pub mod process;
+mod workspace;
 
 use tauri::Manager;
 

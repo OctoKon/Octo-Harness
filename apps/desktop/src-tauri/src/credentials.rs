@@ -3,22 +3,25 @@
 
 use std::fmt;
 use std::ptr::{null_mut, write_volatile};
-use std::sync::atomic::{Ordering, compiler_fence};
+use std::sync::atomic::{compiler_fence, Ordering};
 use windows_sys::Win32::Foundation::{
-    ERROR_ACCESS_DENIED, ERROR_NO_SUCH_LOGON_SESSION, ERROR_NO_TOKEN, ERROR_NOT_FOUND, GetLastError,
+    GetLastError, ERROR_ACCESS_DENIED, ERROR_NOT_FOUND, ERROR_NO_SUCH_LOGON_SESSION, ERROR_NO_TOKEN,
 };
 use windows_sys::Win32::Security::Credentials::{
-    CRED_MAX_CREDENTIAL_BLOB_SIZE, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW,
-    CredDeleteW, CredFree, CredReadW, CredWriteW,
+    CredDeleteW, CredEnumerateW, CredFree, CredReadW, CredWriteW, CREDENTIALW,
+    CRED_MAX_CREDENTIAL_BLOB_SIZE, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
 };
 use windows_sys::Win32::Security::Cryptography::{
-    BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+    BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
 };
 
 const REFERENCE_PREFIX: &str = "splyce-credential:v1:";
 const TARGET_PREFIX: &str = "Splyce/credentials/v1/";
 const ID_BYTES: usize = 32;
 pub const MAX_SECRET_BYTES: usize = CRED_MAX_CREDENTIAL_BLOB_SIZE as usize;
+pub const MAX_REDACTION_TEXT_BYTES: usize = 1024 * 1024;
+const MAX_REDACTION_CREDENTIALS: usize = 128;
+const REDACTED: &str = "[REDACTED:credential]";
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct CredentialRef(String);
@@ -218,4 +221,216 @@ fn wipe(bytes: &mut [u8]) {
         unsafe { write_volatile(byte, 0) };
     }
     compiler_fence(Ordering::SeqCst);
+}
+
+struct NativeInventory {
+    pointer: *mut *mut CREDENTIALW,
+    count: u32,
+}
+
+impl Drop for NativeInventory {
+    fn drop(&mut self) {
+        if self.pointer.is_null() {
+            return;
+        }
+        // WinCred owns the complete array and nested blobs in one allocation.
+        unsafe {
+            for index in 0..self.count as usize {
+                let pointer = *self.pointer.add(index);
+                if !pointer.is_null() {
+                    let credential = &*pointer;
+                    if !credential.CredentialBlob.is_null() {
+                        wipe(std::slice::from_raw_parts_mut(
+                            credential.CredentialBlob,
+                            credential.CredentialBlobSize as usize,
+                        ));
+                    }
+                }
+            }
+            CredFree(self.pointer.cast());
+        }
+    }
+}
+
+fn base64(bytes: &[u8], url: bool, padding: bool) -> String {
+    let alphabet = if url {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    } else {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    };
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let bits = ((chunk[0] as u32) << 16)
+            | ((chunk.get(1).copied().unwrap_or(0) as u32) << 8)
+            | chunk.get(2).copied().unwrap_or(0) as u32;
+        for index in 0..4 {
+            if index < chunk.len() + 1 {
+                output.push(alphabet[((bits >> (18 - index * 6)) & 63) as usize] as char);
+            } else if padding {
+                output.push('=');
+            }
+        }
+    }
+    output
+}
+
+fn secret_forms(secret: &str) -> Vec<SecretBuffer> {
+    let bytes = secret.as_bytes();
+    let mut forms = vec![SecretBuffer(bytes.to_vec())];
+    for url in [false, true] {
+        for padding in [false, true] {
+            forms.push(SecretBuffer(base64(bytes, url, padding).into_bytes()));
+        }
+    }
+    for uppercase in [false, true] {
+        let alphabet = if uppercase {
+            b"0123456789ABCDEF"
+        } else {
+            b"0123456789abcdef"
+        };
+        let mut hex = Vec::with_capacity(bytes.len() * 2);
+        let mut url = Vec::with_capacity(bytes.len() * 3);
+        let mut component = Vec::with_capacity(bytes.len() * 3);
+        for byte in bytes {
+            let pair = [
+                alphabet[(byte >> 4) as usize],
+                alphabet[(byte & 15) as usize],
+            ];
+            hex.extend_from_slice(&pair);
+            if byte.is_ascii_alphanumeric() || b"-_.~".contains(byte) {
+                url.push(*byte);
+            } else {
+                url.push(b'%');
+                url.extend_from_slice(&pair);
+            }
+            if byte.is_ascii_alphanumeric() || b"-_.~!'()*".contains(byte) {
+                component.push(*byte);
+            } else {
+                component.push(b'%');
+                component.extend_from_slice(&pair);
+            }
+        }
+        forms.push(SecretBuffer(hex));
+        forms.push(SecretBuffer(url));
+        forms.push(SecretBuffer(component));
+    }
+    // JSON escaping is the canonical serializer form, without surrounding quotes.
+    let mut escaped = Vec::with_capacity(bytes.len() * 6 + 2);
+    serde_json::to_writer(&mut escaped, secret).expect("String serialization is infallible");
+    escaped.remove(0);
+    escaped.pop();
+    forms.push(SecretBuffer(escaped));
+    forms
+}
+
+/// Enumerates only the app's generated namespace; never returns inventory or locations.
+pub fn redact_owned(text: &str) -> Result<(String, usize), CredentialError> {
+    let unavailable = CredentialError::Unavailable;
+    if text.len() > MAX_REDACTION_TEXT_BYTES {
+        return Err(unavailable);
+    }
+    let filter: Vec<u16> = format!("{TARGET_PREFIX}*")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut inventory = NativeInventory {
+        pointer: null_mut(),
+        count: 0,
+    };
+    if unsafe {
+        CredEnumerateW(
+            filter.as_ptr(),
+            0,
+            &mut inventory.count,
+            &mut inventory.pointer,
+        )
+    } == 0
+    {
+        return if last_error() == CredentialError::NotFound
+            && inventory.count == 0
+            && inventory.pointer.is_null()
+        {
+            Ok((text.to_owned(), 0))
+        } else {
+            Err(unavailable)
+        };
+    }
+    if inventory.pointer.is_null() || inventory.count as usize > MAX_REDACTION_CREDENTIALS {
+        return Err(unavailable);
+    }
+    let mut forms = Vec::new();
+    let mut bytes = 0usize;
+    for index in 0..inventory.count as usize {
+        let pointer = unsafe { *inventory.pointer.add(index) };
+        if pointer.is_null() {
+            return Err(unavailable);
+        }
+        let credential = unsafe { &*pointer };
+        if credential.TargetName.is_null() {
+            return Err(unavailable);
+        }
+        let expected_length = TARGET_PREFIX.len() + ID_BYTES * 2;
+        let mut target = Vec::with_capacity(expected_length);
+        for offset in 0..=expected_length {
+            let unit = unsafe { *credential.TargetName.add(offset) };
+            if unit == 0 {
+                break;
+            }
+            target.push(unit);
+        }
+        let target = String::from_utf16(&target).map_err(|_| unavailable)?;
+        let id = target.strip_prefix(TARGET_PREFIX).ok_or(unavailable)?;
+        if target.len() != expected_length
+            || CredentialRef::parse(&format!("{REFERENCE_PREFIX}{id}")).is_err()
+            || credential.Type != CRED_TYPE_GENERIC
+            || credential.Persist != CRED_PERSIST_LOCAL_MACHINE
+            || !(8..=MAX_SECRET_BYTES).contains(&(credential.CredentialBlobSize as usize))
+            || credential.CredentialBlob.is_null()
+        {
+            return Err(unavailable);
+        }
+        let blob = unsafe {
+            std::slice::from_raw_parts(
+                credential.CredentialBlob,
+                credential.CredentialBlobSize as usize,
+            )
+        };
+        let secret = std::str::from_utf8(blob).map_err(|_| unavailable)?;
+        validate_secret(secret).map_err(|_| unavailable)?;
+        for form in secret_forms(secret) {
+            bytes = bytes.checked_add(form.0.len()).ok_or(unavailable)?;
+            if bytes > MAX_REDACTION_TEXT_BYTES {
+                return Err(unavailable);
+            }
+            forms.push(form);
+        }
+    }
+    forms.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+    forms.dedup_by(|a, b| a.0 == b.0);
+    let mut output = String::new();
+    let mut count = 0;
+    let mut offset = 0;
+    while offset < text.len() {
+        let remaining = &text[offset..];
+        if let Some(form) = forms
+            .iter()
+            .find(|form| remaining.as_bytes().starts_with(&form.0))
+        {
+            output.push_str(REDACTED);
+            offset += form.0.len();
+            count += 1;
+        } else {
+            let character = remaining.chars().next().expect("Nonempty remaining text");
+            output.push(character);
+            offset += character.len_utf8();
+        }
+        if output.len() > MAX_REDACTION_TEXT_BYTES {
+            return Err(unavailable);
+        }
+    }
+    // The fixed marker and adjacent text can themselves recreate an inventoried value.
+    if forms.iter().any(|form| output.contains(form.as_str())) {
+        return Err(unavailable);
+    }
+    Ok((output, count))
 }

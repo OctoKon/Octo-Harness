@@ -180,6 +180,57 @@ for (const [kind, original] of Object.entries(records)) {
   });
 }
 
+const boundProfileSnapshot = (modelId = "org/model:version") => ({
+  ...copy(records.profileSnapshot),
+  bindings: [
+    {
+      role: "chat",
+      providerConnectionId: records.providerConnection.providerConnectionId,
+      connectionRevision: records.providerConnection.revision,
+      modelId,
+    },
+  ],
+});
+
+test("TD-26: profileSnapshot preserves namespace, slash, colon and Bedrock model references", () => {
+  for (const modelId of [
+    "anthropic",
+    "anthropic/claude-sonnet-4-5",
+    "openrouter/anthropic",
+    "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "arn:aws:bedrock:us-east-1:123456789012:foundation-model/anthropic.claude-v2:1",
+    "模型/модель:é",
+    "x".repeat(256),
+  ]) {
+    const input = boundProfileSnapshot(modelId);
+    assert.deepEqual(validateRecord("profileSnapshot", input, context), input);
+  }
+});
+
+test("TD-26: legacy profileSnapshot bindings remain readable without a model reference", () => {
+  const input = boundProfileSnapshot();
+  delete input.bindings[0].modelId;
+  assert.deepEqual(validateRecord("profileSnapshot", input, context), input);
+});
+
+for (const point of [
+  0x0080, 0x0085, 0x009f, 0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x202a,
+  0x2060, 0xfeff, 0x2028, 0x2029, 0x00ad, 0x061c, 0x180e, 0xe0001,
+]) {
+  const label = `U+${point.toString(16).toUpperCase().padStart(4, "0")}`;
+  test(`TD-26: profileSnapshot independently rejects a model reference containing ${label}`, () => {
+    const valid = boundProfileSnapshot();
+    assert.deepEqual(validateRecord("profileSnapshot", valid, context), valid);
+    const invalid = copy(valid);
+    invalid.bindings[0].modelId = `org/model${String.fromCodePoint(point)}suffix:v1`;
+    assert.throws(
+      () => validateRecord("profileSnapshot", invalid, context),
+      (error) =>
+        error instanceof ContractError && error.code === "INVALID_SHAPE",
+    );
+  });
+}
+
 test("TD-01: record states, references and numeric bounds fail closed", () => {
   rejects(() => validateRecord("unknown", records.run, context));
   for (const [kind, value] of Object.entries(records)) {

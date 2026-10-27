@@ -212,6 +212,11 @@ describe("App wiring", () => {
     expect(providers).not.toBeNull();
     expect(providers.disabled).toBe(true);
     expect(q("#providers-title")?.textContent).toBe("Provider connections");
+    // No support record is delivered: the honest empty state, never a claim.
+    expect(q("[data-testid=support-status-empty]")?.textContent).toMatch(
+      /No support record available/,
+    );
+    expect(q("[data-testid=support-status] table")).toBeNull();
 
     button("Usage").click();
     flushSync();
@@ -260,6 +265,49 @@ describe("App wiring", () => {
     button("Conversation").click();
     flushSync();
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
+  });
+
+  it("mounts the TD-33 session actions disabled with their own reasons", async () => {
+    await boot();
+    const actions = q("[data-testid=session-actions]")!;
+    expect(actions).not.toBeNull();
+    expect(q("[data-testid=fork-point]")?.textContent).toBe(
+      "No branch selected",
+    );
+    for (const id of ["resume", "fork", "rewind"]) {
+      expect(
+        (q(`[data-testid=action-${id}]`) as HTMLButtonElement).disabled,
+      ).toBe(true);
+    }
+    const reasons = q("[data-testid=action-reasons]")!.textContent ?? "";
+    expect(reasons).toContain(
+      "Session revisions are not delivered to the renderer yet.",
+    );
+    // One stated reason per disabled action, not one shared banner.
+    expect(
+      q("[data-testid=action-reasons]")!.querySelectorAll("li"),
+    ).toHaveLength(3);
+    // Initial state: no request can have been produced.
+    expect(q("[data-testid=action-busy]")).toBeNull();
+    expect(q("[data-testid=rewind-dialog]")).toBeNull();
+  });
+
+  it("shows the action target only from the ancestry the tree delivered", async () => {
+    ipc.ready = true;
+    await boot();
+    dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
+    await settle();
+    q("[role=treeitem]")!.click();
+    await settle();
+
+    expect(q("[data-testid=fork-point]")?.textContent).toBe(
+      "Fork point: ses_1 / b1",
+    );
+    expect(q("[data-testid=fork-leaves]")?.textContent).toBe("Leaves: e1");
+    // The ancestry is known, but the engine still cannot admit the request.
+    expect((q("[data-testid=action-fork]") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it("selecting a session follows and subscribes exactly once, and the composer binds to it", async () => {
@@ -312,6 +360,143 @@ describe("App wiring", () => {
     expect(ipc.invoke.mock.calls.filter(([c]) => c === "send")).toHaveLength(0);
   });
 
+  it("updates generation readiness dynamically without reconnect, clears ports on late exit, and preserves draft", async () => {
+    ipc.ready = true;
+    await boot();
+    dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
+    await settle();
+    q("[role=treeitem]")!.click();
+    await settle();
+
+    const ta = q("textarea") as HTMLTextAreaElement;
+    ta.value = "draft preserved across exit";
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    await settle();
+
+    // 1. Initial state: readyHandshake has generation: true -> honest wiring gap
+    expect(button("Send").disabled).toBe(true);
+    expect(q("#composer-status")?.textContent).toBe(
+      "Sending is not available yet",
+    );
+
+    for (const missing of ["provider", "workspace"] as const) {
+      dispatchEngineEvent({
+        schemaVersion: 1,
+        protocolVersion: 2,
+        recordId: `rec_${missing}`,
+        eventId: `evt_${missing}`,
+        createdAt: "2026-10-26T00:00:00.000Z",
+        sourceIds: [],
+        scopeId: "scope_1",
+        sessionId: "ses_1",
+        seq: 1,
+        durable: true,
+        kind: "engine.status",
+        payload: {
+          state: "ready",
+          activeWorkers: 0,
+          ports: {
+            generation: true,
+            provider: true,
+            workspace: true,
+            modules: true,
+            [missing]: false,
+          },
+        },
+      } as SplyceEvent);
+      await settle();
+      expect(button("Send").disabled).toBe(true);
+      expect(q("#composer-status")?.textContent).toContain(
+        "Generation unconfigured",
+      );
+    }
+
+    // 2. Dynamic engine.status event with generation: false without reconnect
+    dispatchEngineEvent({
+      schemaVersion: 1,
+      protocolVersion: 2,
+      recordId: "rec_status_1",
+      eventId: "evt_status_1",
+      createdAt: "2026-10-26T00:00:00.000Z",
+      sourceIds: [],
+      scopeId: "scope_1",
+      sessionId: "ses_1",
+      seq: 2,
+      durable: false,
+      kind: "engine.status",
+      payload: {
+        state: "ready",
+        activeWorkers: 0,
+        ports: {
+          generation: false,
+          provider: true,
+          workspace: true,
+          modules: true,
+        },
+      },
+    } as SplyceEvent);
+    await settle();
+
+    // Now generation is false: blocks with generation unconfigured copy
+    expect(button("Send").disabled).toBe(true);
+    expect(q("#composer-status")?.textContent).toBe(
+      "Generation unconfigured. Connect a provider and select a model.",
+    );
+    expect(ta.value).toBe("draft preserved across exit");
+
+    // 3. Dynamic engine.status event back to generation: true without reconnect
+    dispatchEngineEvent({
+      schemaVersion: 1,
+      protocolVersion: 2,
+      recordId: "rec_status_2",
+      eventId: "evt_status_2",
+      createdAt: "2026-10-26T00:00:00.000Z",
+      sourceIds: [],
+      scopeId: "scope_1",
+      sessionId: "ses_1",
+      seq: 3,
+      durable: false,
+      kind: "engine.status",
+      payload: {
+        state: "ready",
+        activeWorkers: 0,
+        ports: {
+          generation: true,
+          provider: true,
+          workspace: true,
+          modules: true,
+        },
+      },
+    } as SplyceEvent);
+    await settle();
+
+    expect(button("Send").disabled).toBe(true);
+    expect(q("#composer-status")?.textContent).toBe(
+      "Sending is not available yet",
+    );
+    expect(ta.value).toBe("draft preserved across exit");
+
+    // 4. Late engine exit: clears ports, status disconnected, blocks composer, draft kept
+    const nativeHandshake = ipc.invoke.mock.calls
+      .filter(([command]) => command === "handshake")
+      .at(-1)!;
+    nativeHandshake[1].onLifecycle.onmessage({
+      protocolVersion: 2,
+      kind: "engine_exited",
+      expected: false,
+      exitCode: 1,
+      cleanupComplete: true,
+    });
+    await settle();
+
+    const shell = q("[data-testid=app-shell]")!;
+    expect(shell.dataset.connectionState).toBe("disconnected");
+    expect(shell.dataset.readinessGeneration).toBe("unknown");
+    expect(button("Send").disabled).toBe(true);
+    expect(q("#composer-status")?.textContent).toBe("Engine is not connected.");
+    expect(ta.value).toBe("draft preserved across exit");
+  });
+
   async function dropAndRecover() {
     ipc.ready = false;
     await engineHandshake().catch(() => {});
@@ -333,6 +518,35 @@ describe("App wiring", () => {
     expect(get(selectedSession)?.sessionId).toBe("ses_1");
     expect(q("[role=treeitem]")?.getAttribute("aria-selected")).toBe("true");
     expect(subscribes()).toHaveLength(1);
+  });
+
+  it("mounts the TD-30 approval surface without claiming a pending approval", async () => {
+    await boot();
+    expect(q("[data-testid=approval-dialog]")).toBeNull();
+    expect(q("[data-testid=approval-submitted]")).toBeNull();
+    expect(document.body.textContent).not.toContain("Approval required");
+  });
+
+  it("mounts the Supervisor permission mode disabled with the revision reason", async () => {
+    await boot();
+    const supervisor = q("[data-testid=supervisor]")!;
+    expect(supervisor.textContent).toContain("Supervisor");
+    const select = supervisor.querySelector<HTMLSelectElement>(
+      "[data-testid=permission-mode-select]",
+    )!;
+    expect(select.disabled).toBe(true);
+    expect(select.value).toBe("manual");
+    expect(
+      supervisor.querySelector("[data-testid=permission-blocked]")?.textContent,
+    ).toContain("Session revisions are not delivered to the renderer yet");
+    expect(
+      supervisor.querySelector("[data-testid=permission-effective]")
+        ?.textContent,
+    ).toContain("Manual");
+    // A disabled control must not report a mode change.
+    expect(
+      supervisor.querySelector("[data-testid=permission-pending]"),
+    ).toBeNull();
   });
 
   it("clears the selection when a real snapshot lacks the session", async () => {
