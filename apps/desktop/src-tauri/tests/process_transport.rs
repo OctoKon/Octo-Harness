@@ -4,6 +4,10 @@
 #[allow(dead_code)]
 mod credentials;
 
+#[path = "../src/workspace.rs"]
+#[allow(dead_code)]
+mod workspace;
+
 #[path = "../src/ipc.rs"]
 #[allow(dead_code)]
 mod ipc;
@@ -65,6 +69,11 @@ process.stdin.on('data', chunk => {
     }
     if (request.native) {
       if (!nativePending) process.exit(2);
+      if (request.native.id === 'redact') {
+        send({id:nativePending.id,ok:request.native.ok,value:request.native.value,error:request.native.error});
+        nativePending = undefined;
+        continue;
+      }
       if (request.native.id === 'scope-open') {
         if (!request.native.ok) process.exit(3);
         send({native:{id:'secret-read',method:'credential.read',params:nativePending.params}});
@@ -89,6 +98,11 @@ process.stdin.on('data', chunk => {
     }
     if (request.method === 'native-malformed') {
       send({native:{id:'bad',method:'credential.read',params:{target:'invalid',actionId:'a'}}});
+      continue;
+    }
+    if (request.method === 'native-redact') {
+      nativePending = request;
+      send({native:{id:'redact',method:'credential.redact',params:request.params}});
       continue;
     }
     if (request.method === 'native-read' || request.method === 'native-flood-read') {
@@ -822,6 +836,12 @@ fn private_credential_lane_stays_out_of_events_and_preserves_command_matching() 
     assert_eq!(
         value,
         json!({"id":"ordinary-command","ok":true,"value":{"privateOnly":true,"available":true,"length":25}})
+    );
+    assert!(events.drain().unwrap().is_empty());
+    let redacted = child.request(&json!({"id":"persistence-command","method":"native-redact","params":{"text":"transport-private-fixture"}})).unwrap();
+    assert_eq!(
+        redacted,
+        json!({"id":"persistence-command","ok":true,"value":{"text":"[REDACTED:credential]","redactedCount":1}})
     );
     assert!(events.drain().unwrap().is_empty());
     assert_eq!(

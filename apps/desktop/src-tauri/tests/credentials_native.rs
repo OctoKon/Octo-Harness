@@ -8,7 +8,8 @@ use credentials::{
 };
 use std::ptr::null_mut;
 use windows_sys::Win32::Security::Credentials::{
-    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredFree, CredReadW, CredWriteW,
+    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW,
+    CredWriteW,
 };
 
 // Cleanup is restricted to references created by this test process, including on assertion unwind.
@@ -155,8 +156,106 @@ fn real_windows_owned_namespace_metadata_and_invalid_blob() {
             read_owned(reference),
             Err(CredentialError::CorruptCredential)
         ));
+        assert!(matches!(
+            credentials::redact_owned("ordinary text"),
+            Err(CredentialError::Unavailable)
+        ));
     }
     delete_owned(reference).unwrap();
+}
+
+#[test]
+fn real_windows_redaction_covers_unselected_keys_forms_and_unicode() {
+    let mut fixtures = Fixtures::default();
+    fixtures.write("redaction-a");
+    fixtures.write("redaction-b");
+    fixtures.write("redaction-密钥-\"\\");
+    fixtures.write("eight/++?");
+    fixtures.write("eight!++?");
+    let text = "λ redaction-a cmVkYWN0aW9uLWE= cmVkYWN0aW9uLWE 726564616374696f6e2d61 726564616374696F6E2D61 redaction-b redaction%2D密钥 redaction-密钥-\"\\ redaction-密钥-\\\"\\\\ fin";
+    let (output, count) = credentials::redact_owned(text).unwrap();
+    assert_eq!(count, 8);
+    assert_eq!(output.matches("[REDACTED:credential]").count(), 8);
+    assert!(output.starts_with("λ "));
+    assert!(output.ends_with(" fin"));
+    assert!(!output.contains("redaction-a"));
+    assert!(!output.contains("redaction-b"));
+    let (output, count) =
+        credentials::redact_owned("ZWlnaHQvKys/ ZWlnaHQvKys_ eight%2F%2B%2B%3F eight%2f%2b%2b%3f")
+            .unwrap();
+    assert_eq!(count, 4);
+    assert_eq!(output, ["[REDACTED:credential]"; 4].join(" "));
+    let (output, count) =
+        credentials::redact_owned("eight!%2B%2B%3F eight!%2b%2b%3f eight%21%2B%2B%3F").unwrap();
+    assert_eq!(count, 3);
+    assert_eq!(output, ["[REDACTED:credential]"; 3].join(" "));
+    let minimum = fixtures.write("12345678").clone();
+    assert!(
+        credentials::redact_owned(&"12345678".repeat(credentials::MAX_REDACTION_TEXT_BYTES / 8))
+            .is_err()
+    );
+    delete_owned(&minimum).unwrap();
+    assert!(
+        credentials::redact_owned(&"x".repeat(credentials::MAX_REDACTION_TEXT_BYTES + 1)).is_err()
+    );
+    let short = fixtures.write("short").clone();
+    assert!(credentials::redact_owned("ordinary text").is_err());
+    delete_owned(&short).unwrap();
+    assert!(credentials::redact_owned("ordinary text").is_ok());
+}
+
+#[test]
+fn real_windows_redaction_excludes_unrelated_namespace_and_bounds_inventory() {
+    let mut fixtures = Fixtures::default();
+    let reference = fixtures.write("redaction-namespace").clone();
+    let id = reference
+        .as_str()
+        .strip_prefix("splyce-credential:v1:")
+        .unwrap();
+    struct Unrelated(Vec<u16>);
+    impl Drop for Unrelated {
+        fn drop(&mut self) {
+            assert_ne!(
+                unsafe { CredDeleteW(self.0.as_ptr(), CRED_TYPE_GENERIC, 0) },
+                0
+            );
+        }
+    }
+    let mut target: Vec<u16> = format!("Splyce/redaction-test/{id}")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut malformed = [0xffu8];
+    let credential = CREDENTIALW {
+        Type: CRED_TYPE_GENERIC,
+        TargetName: target.as_mut_ptr(),
+        CredentialBlobSize: 1,
+        CredentialBlob: malformed.as_mut_ptr(),
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        ..CREDENTIALW::default()
+    };
+    assert_ne!(unsafe { CredWriteW(&credential, 0) }, 0);
+    let _unrelated = Unrelated(target);
+    assert_eq!(
+        credentials::redact_owned("redaction-namespace").unwrap(),
+        ("[REDACTED:credential]".to_owned(), 1)
+    );
+    for _ in 0..128 {
+        fixtures.write("redaction-inventory-bound");
+    }
+    assert!(credentials::redact_owned("ordinary text").is_err());
+}
+
+#[test]
+fn real_windows_redaction_rejects_marker_and_boundary_secret_recreation() {
+    let mut fixtures = Fixtures::default();
+    fixtures.write("somekey88");
+    let marker = fixtures.write("credential").clone();
+    assert!(credentials::redact_owned("somekey88").is_err());
+    delete_owned(&marker).unwrap();
+    assert!(credentials::redact_owned("somekey88").is_ok());
+    fixtures.write("left[REDACTED:credential]right");
+    assert!(credentials::redact_owned("leftsomekey88right").is_err());
 }
 
 #[test]

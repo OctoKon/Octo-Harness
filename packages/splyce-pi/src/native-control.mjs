@@ -1,9 +1,21 @@
 import { randomUUID } from "node:crypto";
+import { TRANSPORT_LIMITS } from "@splyce/pi/contracts";
 
 const unavailable = () =>
   Object.assign(new Error("Credential unavailable"), {
     code: "CREDENTIAL_UNAVAILABLE",
   });
+const redactionUnavailable = () =>
+  Object.assign(new Error("Persistence redaction unavailable"), {
+    code: "PERSIST_REDACTION_UNAVAILABLE",
+  });
+const validText = (text) =>
+  typeof text === "string" &&
+  text.isWellFormed() &&
+  Buffer.byteLength(text) <= 1048576;
+const fitsFrame = (frame) =>
+  Buffer.byteLength(JSON.stringify(frame)) + 4 <=
+  TRANSPORT_LIMITS.maxEncodedFrameBytes;
 const exact = (value, keys) =>
   value !== null &&
   typeof value === "object" &&
@@ -46,6 +58,11 @@ export class NativeControl {
     )
       return Promise.reject(unavailable());
     const id = `${this.#epoch}-${++this.#sequence}`;
+    if (
+      method === "credential.redact" &&
+      !fitsFrame({ native: { id, method, params } })
+    )
+      return Promise.reject(unavailable());
     return new Promise((resolve, reject) => {
       const finish = (error, value) => {
         if (!this.#pending.delete(id)) return;
@@ -97,7 +114,14 @@ export class NativeControl {
       if (
         !exact(reply, ["id", "ok", "error"]) ||
         !exact(reply.error, ["code"]) ||
-        reply.error.code !== "CREDENTIAL_UNAVAILABLE"
+        !["CREDENTIAL_UNAVAILABLE", "PERSIST_REDACTION_UNAVAILABLE"].includes(
+          reply.error.code,
+        ) ||
+        (pending &&
+          reply.error.code !==
+            (pending.method === "credential.redact"
+              ? "PERSIST_REDACTION_UNAVAILABLE"
+              : "CREDENTIAL_UNAVAILABLE"))
       )
         return fail();
       pending?.finish(true);
@@ -111,12 +135,34 @@ export class NativeControl {
         (typeof reply.value.secret === "string" &&
           Buffer.byteLength(reply.value.secret) <= 2560 &&
           !/\p{Cc}/u.test(reply.value.secret)));
+    const isRedaction =
+      exact(reply.value, ["text", "redactedCount"]) &&
+      validText(reply.value.text) &&
+      Number.isSafeInteger(reply.value.redactedCount) &&
+      reply.value.redactedCount >= 0 &&
+      fitsFrame(frame);
     if (
-      (!isEmpty && !isSecret) ||
-      (pending && (pending.method === "credential.read" ? !isSecret : !isEmpty))
+      (!isEmpty && !isSecret && !isRedaction) ||
+      (pending &&
+        (pending.method === "credential.read"
+          ? !isSecret
+          : pending.method === "credential.redact"
+            ? !isRedaction
+            : !isEmpty))
     )
       return fail();
     pending?.finish(false, reply.value);
+  }
+
+  async redact(text, signal) {
+    if (!validText(text)) throw redactionUnavailable();
+    try {
+      const result = await this.#call("credential.redact", { text }, signal);
+      if (this.#closed || signal?.aborted) throw redactionUnavailable();
+      return result;
+    } catch {
+      throw redactionUnavailable();
+    }
   }
 
   async open(binding, signal) {

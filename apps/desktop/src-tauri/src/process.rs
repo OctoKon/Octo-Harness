@@ -598,6 +598,8 @@ mod windows {
     #[derive(Deserialize)]
     #[serde(tag = "method", deny_unknown_fields)]
     enum NativeOperation {
+        #[serde(rename = "credential.redact")]
+        Redact { id: String, params: RedactParams },
         #[serde(rename = "credential.scope.open")]
         Open { id: String, params: CredentialScope },
         #[serde(rename = "credential.read")]
@@ -610,6 +612,12 @@ mod windows {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     struct CloseScope {
         scope_id: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RedactParams {
+        text: String,
     }
 
     fn opaque_id(value: &str) -> bool {
@@ -635,6 +643,19 @@ mod windows {
                 .map_err(|_| invalid())?;
         scopes.retain(|_, (_, deadline, consumed)| *consumed || Instant::now() < *deadline);
         let (id, result) = match operation {
+            NativeOperation::Redact { id, params } => {
+                if !opaque_id(&id) {
+                    return Err(invalid());
+                }
+                let unavailable = || serde_json::json!({"native":{"id":id,"ok":false,"error":{"code":"PERSIST_REDACTION_UNAVAILABLE"}}});
+                let value = match crate::credentials::redact_owned(&params.text) {
+                    Ok((text, count)) => {
+                        serde_json::json!({"native":{"id":id,"ok":true,"value":{"text":text,"redactedCount":count}}})
+                    }
+                    Err(_) => unavailable(),
+                };
+                return encode_frame(&value).or_else(|_| encode_frame(&unavailable()));
+            }
             NativeOperation::Open { id, params } => {
                 if !opaque_id(&id)
                     || !opaque_id(&params.scope_id)
@@ -1393,6 +1414,56 @@ mod windows {
                 assert_eq!(value["native"]["ok"], index < 8);
             }
             assert_eq!(scopes.len(), 8);
+        }
+
+        #[test]
+        fn persistence_redaction_has_an_exact_separate_private_shape() {
+            let reference = crate::credentials::write_generated("redaction-private-lane").unwrap();
+            struct Cleanup(crate::credentials::CredentialRef);
+            impl Drop for Cleanup {
+                fn drop(&mut self) {
+                    crate::credentials::delete_owned(&self.0).unwrap();
+                }
+            }
+            let _cleanup = Cleanup(reference);
+            let mut scopes = std::collections::HashMap::new();
+            let value = reply(
+                native_reply(
+                    call(
+                        "credential.redact",
+                        json!({"text":"λ redaction-private-lane"}),
+                    ),
+                    &mut scopes,
+                )
+                .unwrap(),
+            );
+            assert_eq!(
+                value,
+                json!({"native":{"id":"native1","ok":true,"value":{"text":"λ [REDACTED:credential]","redactedCount":1}}})
+            );
+            assert!(scopes.is_empty());
+            for params in [
+                json!({}),
+                json!({"text":null}),
+                json!({"text":"x","scopeId":"s"}),
+                json!({"text":"x","target":"anything"}),
+            ] {
+                assert!(native_reply(call("credential.redact", params), &mut scopes).is_err());
+            }
+            for text in [
+                "x".repeat(crate::credentials::MAX_REDACTION_TEXT_BYTES + 1),
+                "x".repeat(MAX_FRAME_BYTES),
+                "redaction-private-lane".repeat(MAX_FRAME_BYTES / 21),
+            ] {
+                let value = reply(
+                    native_reply(call("credential.redact", json!({"text":text})), &mut scopes)
+                        .unwrap(),
+                );
+                assert_eq!(
+                    value["native"]["error"]["code"],
+                    "PERSIST_REDACTION_UNAVAILABLE"
+                );
+            }
         }
 
         #[test]
