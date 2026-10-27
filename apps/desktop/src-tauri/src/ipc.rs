@@ -848,6 +848,7 @@ fn valid_setup_view(view: &Value, metadata: &Value) -> bool {
         "connectionRevision",
         "profileRevision",
         "endpointRevision",
+        "configRevision",
         "credentialState",
         "generationReady",
     ];
@@ -884,6 +885,7 @@ fn valid_setup_view(view: &Value, metadata: &Value) -> bool {
         && view["chat"]["modelId"] == metadata["chat"]["modelId"]
         && (metadata["chat"].get("model").is_none() || view["chat"] == metadata["chat"])
         && view["endpointOrigin"] == origin
+        && setup_id(&view["configRevision"])
         && view["credentialState"] == "stored"
         && view["generationReady"] == false
         && [
@@ -1295,6 +1297,31 @@ mod tests {
             "apiFamily":"openai-completions","endpoint":"https://example.test/api/v1","locality":"hosted","chat":{"modelId":"vendor/model:version","model":{"contextWindow":8192,"maxOutputTokens":1024}},
             "accountScopeRef":"provider-default","credential":{"kind":"new","secret":"synthetic-setup-value"},
             "expectedConnectionRevision":null,"expectedProfileRevision":null,"expectedEndpointRevision":null})
+    }
+
+    #[test]
+    fn provider_view_requires_bounded_current_config_revision() {
+        let (metadata, _) = setup_metadata(provider_setup_fixture()).ok().unwrap();
+        let mut view = json!({
+            "requestId":metadata["requestId"], "workspaceId":metadata["workspaceId"],
+            "providerConnectionId":metadata["providerConnectionId"], "profileId":metadata["profileId"],
+            "apiFamily":metadata["apiFamily"], "locality":metadata["locality"],
+            "endpointOrigin":"https://example.test:443", "chat":metadata["chat"],
+            "connectionRevision":"c1", "profileRevision":"p1", "endpointRevision":"r1",
+            "configRevision":"cfg-0", "credentialState":"stored", "generationReady":false
+        });
+        assert!(valid_setup_view(&view, &metadata));
+        for value in [
+            json!(null),
+            json!(""),
+            json!("bad/id"),
+            json!("x".repeat(129)),
+        ] {
+            view["configRevision"] = value;
+            assert!(!valid_setup_view(&view, &metadata));
+        }
+        view.as_object_mut().unwrap().remove("configRevision");
+        assert!(!valid_setup_view(&view, &metadata));
     }
 
     #[test]

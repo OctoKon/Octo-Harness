@@ -101,6 +101,8 @@ function canonical(value: unknown): string {
 export const actionArgumentsDigest = (args: unknown): string =>
   `sha256:${createHash("sha256").update(canonical(args)).digest("hex")}`;
 
+export { canonical as serializeActionArguments };
+
 function freezeJson(value: JsonValue): JsonValue {
   if (value && typeof value === "object") {
     for (const child of Object.values(value)) freezeJson(child);

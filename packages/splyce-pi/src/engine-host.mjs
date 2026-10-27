@@ -115,6 +115,7 @@ export async function runHost(
   createHost = createNativeHost,
 ) {
   let host;
+  let hostShutdown;
   let stopped = false;
   let failure;
   let queued = 0;
@@ -260,6 +261,10 @@ export async function runHost(
       request.method === "shutdown" &&
       Object.keys(request.params).length === 0
     ) {
+      hostShutdown = Promise.resolve().then(() =>
+        host.shutdown ? host.shutdown() : host.close(),
+      );
+      await hostShutdown;
       reply = { id: request.id, ok: true, value: { state: "stopped" } };
       shutdown = true;
     } else if (request.method === "send" && request.params.frame === "setup") {
@@ -423,8 +428,10 @@ export async function runHost(
     if (failure) throw failure;
   } finally {
     native.shutdown();
-    if (host?.shutdown) await host.shutdown();
-    else await host?.close();
+    if (!hostShutdown) {
+      if (host?.shutdown) await host.shutdown();
+      else await host?.close();
+    }
   }
 }
 

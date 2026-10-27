@@ -157,3 +157,93 @@ test("closed output releases a backpressured write and closes the Store", async 
   await rejected;
   assert.throws(() => host.current("scope"), { code: "STORE_CLOSED" });
 });
+
+test("shutdown keeps private replies flowing until scope cleanup completes", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "splyce-native-stop-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let scope;
+  let host;
+  const observed = [];
+  const running = runHost(input, output, (path, native) => {
+    host = createNativeHost(path);
+    return {
+      ...host,
+      assertCurrent: async () => {
+        scope = await native.open(binding);
+      },
+      async shutdown() {
+        try {
+          await scope.close();
+        } finally {
+          await host.shutdown();
+        }
+      },
+    };
+  }).finally(() => output.end());
+  input.write(
+    encodeFrame(
+      request("native-bootstrap", "native.bootstrap", {
+        appDataDir: directory,
+      }),
+    ),
+  );
+  for await (const frame of readFrames(output)) {
+    if (frame.native) {
+      observed.push(frame.native.method);
+      input.write(
+        encodeFrame({ native: { id: frame.native.id, ok: true, value: {} } }),
+      );
+    } else if (frame.id === "native-bootstrap")
+      input.write(encodeFrame(request("send", "send")));
+    else if (frame.id === "send")
+      input.write(encodeFrame(request("stop", "shutdown")));
+    else observed.push(frame.id);
+  }
+  await running;
+  assert.deepEqual(observed, [
+    "credential.scope.open",
+    "credential.scope.close",
+    "stop",
+  ]);
+  assert.throws(() => host.current("scope"), { code: "STORE_CLOSED" });
+});
+
+test("shutdown rejection terminates without a stopped acknowledgement or double close", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "splyce-native-stop-error-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const input = new PassThrough();
+  const output = new PassThrough();
+  let calls = 0;
+  let host;
+  const running = runHost(input, output, (path) => {
+    host = createNativeHost(path);
+    return {
+      ...host,
+      async shutdown() {
+        calls++;
+        await host.shutdown();
+        throw new Error("cleanup failed");
+      },
+    };
+  }).finally(() => output.end());
+  const rejected = assert.rejects(running, /cleanup failed/);
+  input.write(
+    encodeFrame(
+      request("native-bootstrap", "native.bootstrap", {
+        appDataDir: directory,
+      }),
+    ),
+  );
+  const replies = [];
+  for await (const frame of readFrames(output)) {
+    replies.push(frame.id);
+    if (frame.id === "native-bootstrap")
+      input.write(encodeFrame(request("stop", "shutdown")));
+  }
+  await rejected;
+  assert.deepEqual(replies, ["native-bootstrap"]);
+  assert.equal(calls, 1);
+  assert.throws(() => host.current("scope"), { code: "STORE_CLOSED" });
+});
