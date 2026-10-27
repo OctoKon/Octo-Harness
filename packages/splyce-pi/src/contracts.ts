@@ -240,6 +240,8 @@ export interface RecordBodies {
       role: string;
       providerConnectionId: string;
       connectionRevision: string;
+      /** Exact model the binding dispatches; absent on historical snapshots. */
+      modelId?: string;
     }[];
   };
   selectionTransition: {
@@ -366,6 +368,7 @@ type Rule =
   | "text"
   | "delta"
   | "id"
+  | "modelRef"
   | "ref"
   | "nullableRef"
   | "nullableId"
@@ -930,6 +933,15 @@ function opaque(value: unknown, field: string): asserts value is string {
   text(value, field);
   requireThat(!/\s|[\\/]/u.test(value), "INVALID_SHAPE", field);
 }
+/** A model reference may contain `/` and `:` (OpenRouter, Bedrock); no whitespace, control or format chars. */
+function modelRef(value: unknown, field: string): asserts value is string {
+  text(value, field);
+  requireThat(
+    value.length <= 256 && !/[\s\u0000-\u001f\u007f-\u009f\p{Cf}]/u.test(value),
+    "INVALID_SHAPE",
+    field,
+  );
+}
 function uint(value: unknown, field: string): asserts value is number {
   requireThat(
     typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
@@ -1111,6 +1123,9 @@ function rule(
     case "id":
       opaque(value, field);
       break;
+    case "modelRef":
+      modelRef(value, field);
+      break;
     case "ref":
       reference(value, field, context);
       break;
@@ -1221,7 +1236,7 @@ export function validateRecord<K extends RecordKind>(
       shape(
         binding,
         { role: "id", providerConnectionId: "id", connectionRevision: "id" },
-        {},
+        { modelId: "modelRef" },
         context,
         true,
       );
