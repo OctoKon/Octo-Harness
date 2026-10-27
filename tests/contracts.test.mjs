@@ -598,3 +598,26 @@ test("TD-01: frozen handshake accepts unavailable but requires all readiness gua
   ])
     rejects(() => validateHandshake({ ...input, ...patch }));
 });
+
+test("TD-01: turn.tool_outcome summary is optional, strict and bounded", () => {
+  const base = fixture("events").find(
+    (value) => value.kind === "turn.tool_outcome",
+  );
+  assert.equal(base.payload.summary, undefined);
+  validateEvent(event(base), context);
+  const withSummary = (summary) =>
+    event({ ...base, payload: { ...base.payload, summary } });
+  const cases = fixture("tool-outcome-summary");
+  for (const summary of cases.valid)
+    assert.deepEqual(
+      validateEvent(withSummary(summary), context).payload.summary,
+      summary,
+    );
+  for (const summary of cases.invalid)
+    rejects(() => validateEvent(withSummary(summary), context));
+  const preview = (length) => ({ preview: "p".repeat(length) });
+  validateEvent(withSummary(preview(2048)), context);
+  rejects(() => validateEvent(withSummary(preview(2049)), context));
+  for (const bad of [null, [], "x", 1])
+    rejects(() => validateEvent(withSummary(bad), context));
+});
