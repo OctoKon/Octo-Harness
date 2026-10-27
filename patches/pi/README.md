@@ -119,7 +119,7 @@ core patch to `packages/ai`, recorded here per [core fusion](../../research/docs
   `CREDENTIAL_APIS` set lives in `src/utils/model-operations.ts`. Regression tests: the family loops in
   `splyce-credentials.test.ts` (scoped redactor, wrong API, four pre-send refusals) fail if any of these guards is removed.
 - **No tool calls from errored responses.** Anthropic returns a tool call only after its `content_block_stop`; a stream that ends
-  with an unfinished tool call is an error, and the error path drops unfinished calls. The Google and Vertex error paths drop all
+  with an unfinished tool call is an error, and the error path drops every tool call, finished or not. The Google and Vertex error paths drop all
   tool calls, so a malformed-function-call finish or a stream without a finish reason cannot reach dispatch.
 - **Regression entrypoints.** `packages/ai/test/splyce-credentials.test.ts`, `splyce-anthropic-stream-safety.test.ts` and
   `splyce-google-stream-safety.test.ts` run the real adapters with only the vendor SDK boundary replaced. Removing the mutual

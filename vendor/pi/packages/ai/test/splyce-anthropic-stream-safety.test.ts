@@ -121,6 +121,19 @@ describe("TD-21 Anthropic Messages under the shared core contract", () => {
 		expect(toolCalls(result.content)).toHaveLength(0);
 	});
 
+	it("drops even a FINISHED tool call when the stream then errors", async () => {
+		const { types, result } = await run([
+			start(),
+			toolStart,
+			jsonDelta('{"path": "/a"}'),
+			stop,
+			{ event: "error", data: { type: "error", error: { type: "overloaded_error", message: "Overloaded" } } },
+		]);
+		expect(types).not.toContain("done");
+		expect(result.stopReason).toBe("error");
+		expect(toolCalls(result.content)).toHaveLength(0);
+	});
+
 	it("does not report a completed result when the stream ends without a stop reason", async () => {
 		const { types, result } = await run([start(), toolStart, jsonDelta('{"path": "/a"}'), stop]);
 		expect(types).not.toContain("done");
