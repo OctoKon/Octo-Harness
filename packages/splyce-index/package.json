@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./worktrees": {
+      "types": "./dist/worktrees.d.ts",
+      "import": "./dist/worktrees.js"
     }
   },
   "files": [

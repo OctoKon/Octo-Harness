@@ -12,18 +12,18 @@
  * - Uses native @tauri-apps/api/core invoke with zero mock fallback.
  */
 
-import { Channel, invoke as invokeNative } from "@tauri-apps/api/core";
 import {
-  PROTOCOL_VERSION,
   type CommandOp,
   type CommandPayloads,
   type Handshake,
   type PortAvailability,
+  PROTOCOL_VERSION,
   type SplyceCommand,
   type SplyceEvent,
   validateHandshake,
   validatePortAvailability,
 } from "@splyce/pi/contracts";
+import { Channel, invoke as invokeNative } from "@tauri-apps/api/core";
 
 interface EngineLifecycleEvent {
   protocolVersion: number;
@@ -311,6 +311,55 @@ export async function invoke<O extends CommandOp>(
     op,
     payload: fullSplyceCommand,
   });
+}
+
+/**
+ * Sessionless setup send. Mirrors the native `metadata` setup frame exactly:
+ * `send` with `{ op: command, payload: { frame, command, requestId, payload } }`.
+ */
+export async function sendSetup(
+  command: string,
+  requestId: string,
+  payload: object,
+): Promise<unknown> {
+  const invokeTauri = await getTauriInvoke();
+  if (!invokeTauri) {
+    throw new Error("TAURI_IPC_UNAVAILABLE: Native backend bridge not found");
+  }
+  return await invokeTauri("send", {
+    op: command,
+    payload: { frame: "setup", command, requestId, payload },
+  });
+}
+
+/** What the renderer keeps of an admitted workspace: never the path or selection ref. */
+export interface SelectedWorkspace {
+  readonly workspaceId: string;
+  readonly displayName: string;
+}
+
+/**
+ * Opens the native project chooser. `null` means the user cancelled. Only the
+ * workspace id and display name survive; anything malformed is rejected.
+ */
+export async function selectWorkspace(): Promise<SelectedWorkspace | null> {
+  const invokeTauri = await getTauriInvoke();
+  if (!invokeTauri) {
+    throw new Error("TAURI_IPC_UNAVAILABLE: Native backend bridge not found");
+  }
+  const raw = await invokeTauri("dialog_select_workspace");
+  if (raw === null) return null;
+  const workspace = (raw as { workspace?: unknown } | undefined)?.workspace as
+    { workspaceId?: unknown; displayName?: unknown } | undefined;
+  const { workspaceId, displayName } = workspace ?? {};
+  if (
+    typeof workspaceId !== "string" ||
+    workspaceId === "" ||
+    typeof displayName !== "string" ||
+    displayName.trim() === ""
+  )
+    throw new Error("Invalid workspace selection");
+  return { workspaceId, displayName };
 }
 
 /**

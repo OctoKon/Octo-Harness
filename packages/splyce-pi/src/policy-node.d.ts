@@ -7,3 +7,7 @@ declare module "node:crypto" {
   export function createHash(algorithm: "sha256"): Hash;
   export function randomUUID(): string;
 }
+// TD-70 child path confinement (node:path comes from workspace-tools-node.d.ts).
+declare module "node:fs" {
+  export function realpathSync(path: string): string;
+}

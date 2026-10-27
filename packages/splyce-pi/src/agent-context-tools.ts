@@ -65,8 +65,9 @@ export interface MemoryLike {
 export type ContextToolErrorCode =
   "WORKSPACE_ESCAPE" | "ROOT_MISMATCH" | "BAD_ARGS" | "ABORTED";
 export class ContextToolError extends Error {
-  readonly code: ContextToolErrorCode;
-  constructor(code: ContextToolErrorCode, message: string) {
+  /** A ContextToolErrorCode, or the original failure's code (e.g. ENOENT) with a generic message. */
+  readonly code: string;
+  constructor(code: string, message: string) {
     super(message);
     this.name = "ContextToolError";
     this.code = code;
@@ -114,6 +115,33 @@ const confined = (value: unknown, what: string): void => {
   )
     fail("WORKSPACE_ESCAPE", `${what} escapes the workspace`);
 };
+/** Redacts every string value of a JSON-like tree, so escaping by JSON.stringify cannot hide a secret. */
+const redactDeep = (value: unknown, redact: Redactor): unknown => {
+  if (typeof value === "string") return redact(value);
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, redact));
+  if (value !== null && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, redactDeep(v, redact)]),
+    );
+  return value;
+};
+const deepFreeze = <T>(value: T): T => {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+  }
+  return value;
+};
+/** Keeps the original code (ENOENT, INVALID_ARGUMENT, ...) but never its message, which can carry absolute paths. */
+const generic = (name: string, error: unknown): ContextToolError => {
+  if (error instanceof ContextToolError) return error;
+  const raw = (error as { code?: unknown } | null)?.code;
+  const code =
+    typeof raw === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(raw)
+      ? raw
+      : "TOOL_FAILED";
+  return new ContextToolError(code, `${name} failed (${code})`);
+};
 const PATH_ARGS = ["path", "target", "pathGlob"] as const;
 
 const encoder = new TextEncoder();
@@ -146,7 +174,7 @@ export function createAgentContextTools(
     run: (
       args: Record<string, unknown>,
       signal?: AbortSignal,
-    ) => Promise<string>,
+    ) => Promise<unknown>,
   ): ContextTool => {
     const result = async (
       args: Record<string, unknown>,
@@ -156,8 +184,13 @@ export function createAgentContextTools(
       if (!args || typeof args !== "object" || Array.isArray(args))
         fail("BAD_ARGS", "tool arguments must be an object");
       const started = Date.now();
-      // Scrub the whole text before capping so a secret straddling the cut is never half-kept.
-      const out = cap(redact(await run(args, signal)));
+      // Redact string fields before JSON escaping, then the whole text, and only then cap:
+      // a secret straddling the cut is never half-kept. A throwing redactor is generic too.
+      const out = await run(args, signal)
+        .then((value) => cap(redact(JSON.stringify(redactDeep(value, redact)))))
+        .catch((error: unknown) => {
+          throw generic(name, error);
+        });
       return {
         text: out.text,
         summary: {
@@ -168,21 +201,21 @@ export function createAgentContextTools(
         },
       };
     };
-    return {
+    return deepFreeze({
       name,
       description,
       readOnly: true,
-      parameters,
+      parameters: deepFreeze(JSON.parse(JSON.stringify(parameters))),
       execute: async (args, signal) => (await result(args, signal)).text,
       result,
-    };
+    });
   };
 
   const code = codeTools.map((t) =>
     tool(t.name, t.description, t.parameters, async (args) => {
       for (const k of PATH_ARGS)
         if (args[k] !== undefined) confined(args[k], k);
-      return JSON.stringify(await t.execute(args));
+      return await t.execute(args);
     }),
   );
   if (memory === undefined) return Object.freeze(code);
@@ -217,15 +250,16 @@ export function createAgentContextTools(
             `limit must be an integer 1-${MEMORY_MAX_RESULTS}`,
           );
         const hits = await memory.query(scopeId, query, limit, signal);
-        return JSON.stringify({
+        return {
           results: hits.slice(0, MEMORY_MAX_RESULTS).map((h) => ({
             observationId: h.observationId,
-            text: h.text.slice(0, MEMORY_MAX_TEXT_CHARS),
+            // Redact first: slicing first could leave a secret's prefix.
+            text: redact(h.text).slice(0, MEMORY_MAX_TEXT_CHARS),
             sourceIds: h.sourceIds,
             score: h.score,
             createdAt: h.createdAt,
           })),
-        });
+        };
       },
     ),
   ]);

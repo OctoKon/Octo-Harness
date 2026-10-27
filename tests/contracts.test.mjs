@@ -14,6 +14,7 @@ import {
   validateEvent,
   validateHandshake,
   validateCursor,
+  validateControlFrame,
 } from "@splyce/pi/contracts";
 
 const fixture = (name) =>
@@ -513,7 +514,6 @@ test("TD-01: event-specific scope/session and replay cursors reject mismatches",
   for (const [kind, patch] of [
     ["approval.requested", { targetScope: "other-workspace" }],
     ["session.tree_updated", { sessionId: "other-session" }],
-    ["stream.resync", { fromSeq: 13 }],
     ["run.reconnect_snapshot", { lastDurableSeq: 13 }],
   ]) {
     const fields = fixture("events").find((value) => value.kind === kind);
@@ -734,4 +734,89 @@ test("TD-01: turn.tool_outcome summary is optional, strict and bounded", () => {
   rejects(() => validateEvent(withSummary(preview(2049)), context));
   for (const bad of [null, [], "x", 1])
     rejects(() => validateEvent(withSummary(bad), context));
+});
+
+test("TD-15: stream.resync is an exact unsequenced control frame, never an event", () => {
+  const control = {
+    frame: "control",
+    kind: "stream.resync",
+    sessionId: "s1",
+    fromSeq: 0,
+  };
+  assert.deepEqual(validateControlFrame(control), control);
+  assert.equal(
+    validateControlFrame({ ...control, fromSeq: Number.MAX_SAFE_INTEGER })
+      .fromSeq,
+    Number.MAX_SAFE_INTEGER,
+  );
+  for (const bad of [
+    { ...control, seq: 1 },
+    { ...control, extra: true },
+    { ...control, frame: "data" },
+    { ...control, kind: "stream.other" },
+    { ...control, sessionId: "a b" },
+    { ...control, fromSeq: -1 },
+    { ...control, fromSeq: 1.5 },
+    { ...control, fromSeq: Number.MAX_SAFE_INTEGER + 1 },
+    { frame: "control", kind: "stream.resync", sessionId: "s1" },
+  ])
+    rejects(() => validateControlFrame(bad));
+  // The old durable data shape is no longer an event kind.
+  rejects(() =>
+    validateEvent(
+      event({ kind: "stream.resync", payload: { fromSeq: 0 } }),
+      context,
+    ),
+  );
+  assert.equal(
+    JSON.parse(BRIDGE_PROTOCOL_JSON).eventKinds.includes("stream.resync"),
+    false,
+  );
+});
+
+test("TD-70: child.* payloads are strict at every level and status matches the kind", () => {
+  const find = (kind) => fixture("events").find((value) => value.kind === kind);
+  const valid = event(find("child.completed"));
+  assert.deepEqual(validateEvent(valid, context), valid);
+  const patched = (mutate) => {
+    const input = copy(valid);
+    mutate(input.payload);
+    return input;
+  };
+  for (const mutate of [
+    (p) => (p.budget.extra = 1),
+    (p) => (p.budget.used = -1),
+    (p) => delete p.budget.limit,
+    (p) => (p.citations[0].extra = 1),
+    (p) => (p.citations[0].line = 0),
+    (p) => (p.citations = ["src/main.ts:3"]),
+    (p) => delete p.citations[0].path,
+    (p) => (p.diff.extra = 1),
+    (p) => (p.diff.files[0].extra = 1),
+    (p) => (p.diff.files[0].status = "renamed"),
+    (p) => (p.diff = { files: "src/main.ts" }),
+    (p) => (p.status = "running"),
+    (p) => (p.reason = "BUDGET_TURNS"),
+    (p) => (p.runId = "r1"),
+    (p) => (p.parentRunId = "missing"),
+  ])
+    rejects(() => validateEvent(patched(mutate), context));
+  for (const [kind, status] of [
+    ["child.started", "completed"],
+    ["child.progress", "failed"],
+    ["child.cancelled", "running"],
+  ]) {
+    const fields = find(kind);
+    rejects(() =>
+      validateEvent(
+        event({ ...fields, payload: { ...fields.payload, status } }),
+        context,
+      ),
+    );
+  }
+  const failed = find("child.failed");
+  const { reason: _reason, ...noReason } = failed.payload;
+  rejects(() =>
+    validateEvent(event({ ...failed, payload: noReason }), context),
+  );
 });
