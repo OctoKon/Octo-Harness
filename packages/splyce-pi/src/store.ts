@@ -2598,6 +2598,7 @@ export class Store {
     receipts: readonly AppendInput[],
     caller: CallerContext,
     preconditions: EventPreconditions = {},
+    events: readonly SplyceEventDraft[] = [],
   ): AppendBatchResult {
     this.assertWritable();
     assertNoNativeOnlyKinds(receipts);
@@ -2623,7 +2624,7 @@ export class Store {
     };
     const { seqs } = this.commitBatch(
       [...receipts, { kind: "grant", record: consumed }],
-      [],
+      events,
       caller,
       { ...preconditions, expectedOnceGrant: consumption },
     );
