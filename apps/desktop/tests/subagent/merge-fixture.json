@@ -1,0 +1,45 @@
+{
+  "child": {
+    "childId": "child-merge-1",
+    "parentRunId": "run-parent-1",
+    "team": "workspace",
+    "role": "implementer",
+    "status": "completed",
+    "budget": { "used": 12000, "limit": 20000 },
+    "summary": "Adds a retry helper and makes the merge panel show the retry limit.",
+    "citations": [
+      { "path": "apps/desktop/src/lib/retry.ts", "line": 1 },
+      {
+        "path": "apps/desktop/src/components/merge/MergePanel.svelte",
+        "line": 2
+      }
+    ]
+  },
+  "diff": {
+    "childId": "child-merge-1",
+    "worktreeId": "wt-merge-1",
+    "files": [
+      { "path": "apps/desktop/src/lib/retry.ts", "status": "added" },
+      {
+        "path": "apps/desktop/src/components/merge/MergePanel.svelte",
+        "status": "modified"
+      }
+    ],
+    "patch": "diff --git a/apps/desktop/src/lib/retry.ts b/apps/desktop/src/lib/retry.ts\nnew file mode 100644\n--- /dev/null\n+++ b/apps/desktop/src/lib/retry.ts\n@@ -0,0 +1,2 @@\n+export function retry(): void {}\n+export const RETRY_LIMIT = 3;\ndiff --git a/apps/desktop/src/components/merge/MergePanel.svelte b/apps/desktop/src/components/merge/MergePanel.svelte\nindex 1111111..2222222 100644\n--- a/apps/desktop/src/components/merge/MergePanel.svelte\n+++ b/apps/desktop/src/components/merge/MergePanel.svelte\n@@ -1,2 +1,3 @@\n <script lang=\"ts\">\n+  export const retries = 3;\n </script>\n",
+    "truncated": false,
+    "bytes": 596,
+    "actionId": "worktree.apply:wt-merge-1",
+    "argumentsDigest": "sha256:2f8c1a9d4e6b7c0f3a5d8e1b4c7f0a2d5e8b1c4f7a0d3e6b9c2f5a8d1e4b7c0"
+  },
+  "approval": {
+    "approvalRequestId": "apr-merge-1",
+    "runId": "run-parent-1",
+    "actionId": "worktree.apply:wt-merge-1",
+    "capabilityId": "worktree.apply",
+    "targetScope": "worktree:wt-merge-1",
+    "normalizedTarget": "worktree.apply:wt-merge-1",
+    "riskRationale": "Applies the child worktree changes to the workspace.",
+    "timeoutMs": 60000,
+    "argumentsDigest": "sha256:2f8c1a9d4e6b7c0f3a5d8e1b4c7f0a2d5e8b1c4f7a0d3e6b9c2f5a8d1e4b7c0"
+  }
+}
