@@ -75,6 +75,8 @@ export type ErrorCode =
   | "EDIT_NOT_FOUND"
   | "EDIT_AMBIGUOUS"
   | "BAD_ARGS"
+  | "PATTERN_REJECTED"
+  | "GREP_BUDGET"
   | "ABORTED"
   | "IO_ERROR";
 
@@ -117,6 +119,12 @@ const win = process.platform === "win32";
 const DEVICE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 const MAX_READ_BYTES = 8 << 20;
 const MAX_WALK_FILE_BYTES = 1 << 20;
+const MAX_PATTERN = 256;
+const MAX_GREP_SCAN_BYTES = 8 << 20;
+// shortcut: lines are matched on their first 4096 chars to bound backtracking input.
+const MAX_GREP_LINE = 4096;
+// shortcut: flat check only; overlapping alternation like (a|aa)+ is not caught, the scan budget bounds it.
+const NESTED_QUANTIFIER = /\([^()]*(?:[+*]|\{\d+,\})[^()]*\)(?:[+*]|\{\d+,\})/;
 
 const fail = (code: ErrorCode, message: string): never => {
   throw new WorkspaceToolError(code, message);
@@ -461,8 +469,9 @@ export function createWorkspaceTools(
       const command = str(args.command, "command");
       root();
       const ms = Math.min(timeoutMs, optNum(args.timeout, Infinity) * 1000);
-      const grantId = gate("shell.run", command, a);
-      return effect("shell.run", command, grantId, a, async () => {
+      const target = `${kind}:${command}`;
+      const grantId = gate("shell.run", target, a);
+      return effect("shell.run", target, grantId, a, async () => {
         const r = await exec(kind, command, ms, signal);
         return {
           summary: `exit ${String(r.code)}`,
@@ -579,6 +588,15 @@ export function createWorkspaceTools(
       async execute(args, _signal, actionId) {
         const a = act(args, actionId);
         const pat = str(args.pattern, "pattern");
+        if (
+          pat.length > MAX_PATTERN ||
+          (args.literal !== true &&
+            NESTED_QUANTIFIER.test(pat.replace(/\\./g, "x")))
+        )
+          fail(
+            "PATTERN_REJECTED",
+            "pattern too long or has nested unbounded quantifiers",
+          );
         let re: RegExp;
         try {
           re = new RegExp(
@@ -601,17 +619,26 @@ export function createWorkspaceTools(
           const files = st.isFile()
             ? [{ abs, rel, file: true }]
             : walk(abs, rel);
+          const started = Date.now();
+          let scanned = 0;
           for await (const e of files) {
             if (
               !e.file ||
               (gre && !gre.test(g?.includes("/") ? e.rel : basename(e.rel)))
             )
               continue;
-            if ((await lstat(e.abs)).size > MAX_WALK_FILE_BYTES) continue;
+            const size = (await lstat(e.abs)).size;
+            if (size > MAX_WALK_FILE_BYTES) continue;
+            scanned += size;
+            if (scanned > MAX_GREP_SCAN_BYTES)
+              fail("GREP_BUDGET", "search exceeded its scan budget");
             const ls = (await readFile(e.abs, "utf8")).split("\n");
-            for (let i = 0; i < ls.length && hits.length < limit; i++)
-              if (re.test(ls[i] as string))
+            for (let i = 0; i < ls.length && hits.length < limit; i++) {
+              if (Date.now() - started > timeoutMs)
+                fail("GREP_BUDGET", "search exceeded its time budget");
+              if (re.test((ls[i] as string).slice(0, MAX_GREP_LINE)))
                 hits.push(`${e.rel}:${String(i + 1)}:${ls[i] as string}`);
+            }
             if (hits.length >= limit) break;
           }
         });

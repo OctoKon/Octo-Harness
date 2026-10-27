@@ -370,10 +370,10 @@ test("shell without a grant is denied and nothing runs", async () => {
 test("shell with a grant for the exact command runs in the root; one char off is denied", async () => {
   const h = harness();
   const cmd = win ? "(Get-Location).Path" : "pwd";
-  h.grants.approve("shell.run", cmd);
+  h.grants.approve("shell.run", `${sh}:${cmd}`);
   const out = String(await run(h, sh, { command: cmd }));
   assert.equal(out.trim().toLowerCase(), h.ws.canonicalPath.toLowerCase());
-  h.grants.approve("shell.run", "echo hi > m.txt");
+  h.grants.approve("shell.run", `${sh}:${"echo hi > m.txt"}`);
   assert.equal(
     await codeOf(run(h, sh, { command: "echo hi > m.txt " })),
     "GRANT_REQUIRED",
@@ -388,7 +388,7 @@ test("shell with a grant for the exact command runs in the root; one char off is
 
 test("shell timeout kills the process tree and reports SHELL_TIMEOUT", async () => {
   const h = harness({ timeoutMs: 12000 });
-  h.grants.approve("shell.run", pidCmd);
+  h.grants.approve("shell.run", `${sh}:${pidCmd}`);
   const started = Date.now();
   assert.equal(await codeOf(run(h, sh, { command: pidCmd })), "SHELL_TIMEOUT");
   assert.ok(Date.now() - started < 30000);
@@ -409,7 +409,7 @@ const nodeCmd = (js: string) => `node -e "${js}"`;
 test("shell output is capped with a truncation marker", async () => {
   const h = harness({ maxOutputBytes: 100 });
   const cmd = nodeCmd("console.log('a'.repeat(5000))");
-  h.grants.approve("shell.run", cmd);
+  h.grants.approve("shell.run", `${sh}:${cmd}`);
   const out = String(await run(h, sh, { command: cmd }));
   assert.match(out, /\[output truncated\]/);
   assert.ok(out.length < 300, String(out.length));
@@ -422,7 +422,7 @@ test("secret-looking env vars never reach the child", async () => {
   const cmd = nodeCmd(
     "console.log([process.env.SPLYCE_TEST_API_KEY, process.env.SPLYCE_TEST_DB_PASSWORD, typeof process.env.PATH].join(','))",
   );
-  h.grants.approve("shell.run", cmd);
+  h.grants.approve("shell.run", `${sh}:${cmd}`);
   try {
     assert.equal(String(await run(h, sh, { command: cmd })).trim(), ",,string");
   } finally {
@@ -449,7 +449,7 @@ test("exactly one receipt per effect and none on denial", async () => {
     [["fs.write", "w1", "s1", "a.txt", true]],
   );
   const cmd = "echo hi";
-  h.grants.approve("shell.run", cmd);
+  h.grants.approve("shell.run", `${sh}:${cmd}`);
   await run(h, sh, { command: cmd });
   assert.equal(h.log.length, 2);
   assert.equal(h.log[1]?.capability, "shell.run");
@@ -508,7 +508,7 @@ test("grant checks and receipts carry the action id and a canonical argument dig
 test("a capped shell run writes no raw output spill file", async () => {
   const h = harness({ maxOutputBytes: 100 });
   const cmd = nodeCmd("console.log('SPILLMARK'.repeat(20000))");
-  h.grants.approve("shell.run", cmd);
+  h.grants.approve("shell.run", `${sh}:${cmd}`);
   const started = Date.now() - 1000;
   await run(h, sh, { command: cmd });
   assert.deepEqual(readdirSync(h.root), []);
@@ -545,4 +545,62 @@ test("a directory swapped for a link after the grant is consumed cannot redirect
     assert.equal(h.log.length, 1);
     assert.equal(h.log[0]?.ok, false);
   }
+});
+
+test("a shell grant is bound to the interpreter as well as the command", async () => {
+  const h = harness();
+  h.grants.approve("shell.run", `${sh}:echo hi > m.txt`);
+  const other = win ? "bash" : "powershell";
+  assert.equal(
+    await codeOf(run(h, other, { command: "echo hi > m.txt" })),
+    "GRANT_REQUIRED",
+  );
+  assert.equal(existsSync(join(h.root, "m.txt")), false);
+  const bare = harness();
+  bare.grants.approve("shell.run", "echo hi > m.txt");
+  assert.equal(
+    await codeOf(run(bare, sh, { command: "echo hi > m.txt" })),
+    "GRANT_REQUIRED",
+  );
+  assert.equal(existsSync(join(bare.root, "m.txt")), false);
+  assert.equal(h.log.length, 0);
+});
+
+test("grep rejects over-long patterns and nested unbounded quantifiers", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "a.txt"), `${"a".repeat(40)}!`);
+  for (const pattern of [
+    "a".repeat(257),
+    "(a+)+$",
+    "(.*)*x",
+    "(\\w+\\s*)*z",
+    "(a{1,})+b",
+  ])
+    assert.equal(
+      await codeOf(run(h, "grep", { pattern })),
+      "PATTERN_REJECTED",
+      pattern.slice(0, 12),
+    );
+  assert.match(String(await run(h, "grep", { pattern: "(a)+!" })), /a\.txt:1:/);
+  assert.match(
+    String(await run(h, "grep", { pattern: "(a+)+", literal: true })),
+    /^$/,
+  );
+});
+
+test("grep stops at a scanned-bytes budget and at a time budget", async () => {
+  const h = harness();
+  const chunk = "x".repeat(900_000);
+  for (let i = 0; i < 12; i++)
+    writeFileSync(join(h.root, `big${String(i)}.txt`), chunk);
+  assert.equal(
+    await codeOf(run(h, "grep", { pattern: "needle" })),
+    "GREP_BUDGET",
+  );
+  const t = harness({ timeoutMs: 1, maxOutputBytes: 1 << 20 });
+  writeFileSync(join(t.root, "many.txt"), "line\n".repeat(150_000));
+  assert.equal(
+    await codeOf(run(t, "grep", { pattern: "needle" })),
+    "GREP_BUDGET",
+  );
 });
