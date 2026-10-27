@@ -91,7 +91,7 @@
     </p>
   {/if}
 
-  {#if stale && options.length > 0}
+  {#if stale && catalogStatus !== "error"}
     <p role="status" data-testid="model-catalog-stale">
       This catalog may be out of date. The engine has not confirmed it.
     </p>
