@@ -3,13 +3,25 @@
   import type { Handshake, SplyceEvent } from "@splyce/pi/contracts";
   import Composer from "./components/Composer.svelte";
   import SessionTree from "./components/SessionTree.svelte";
+  import SessionActions from "./components/SessionActions.svelte";
   import TurnStream from "./components/TurnStream.svelte";
   import Shell from "./components/shell/Shell.svelte";
   import UsageView from "./components/usage/UsageView.svelte";
+  import ApprovalSurface from "./components/ApprovalSurface.svelte";
+  import PermissionModeSelect from "./components/PermissionModeSelect.svelte";
+  import SupportStatus from "./components/SupportStatus.svelte";
   import Providers from "./routes/Providers.svelte";
   import Setup from "./routes/Setup.svelte";
   import Modules from "./routes/Modules.svelte";
   import { unavailableModuleSnapshot } from "./stores/modules";
+  import type {
+    ApprovalContext,
+    ApprovalRequestView,
+  } from "./stores/approvals";
+  import {
+    initialPermissionMode,
+    type PermissionModeContext,
+  } from "./stores/permission-mode";
   import {
     connectionState,
     handshake,
@@ -32,6 +44,7 @@
     type SessionNavState,
     type TreeEventLike,
   } from "./stores/sessions";
+  import type { SessionActionsContext } from "./stores/session-actions";
   import {
     createTurnStreamTransport,
     createTurnsState,
@@ -52,6 +65,36 @@
   const moduleSnapshot = unavailableModuleSnapshot(
     "No setup or module service is connected.",
   );
+
+  // TD-30: the turns store carries tool-call approvals for the inline
+  // ApprovalCard, but no request carries the config/profile/policy revisions it
+  // was issued against, and the dialog must not ask about a target it cannot
+  // verify. The surface therefore shows only requests with a known revision:
+  // there are none today, so the shell never claims an approval is pending.
+  const approvalRequests: readonly ApprovalRequestView[] = [];
+  const approvalContext: ApprovalContext = {
+    engine: "unavailable",
+    engineReason: "Session revisions are not delivered to the renderer yet.",
+    sessionId: null,
+    scopeId: null,
+    runId: null,
+    actionId: null,
+    targetScope: null,
+    normalizedTarget: null,
+    revision: null,
+    runCanceled: false,
+    nowMs: 0,
+  };
+
+  // TD-30 Supervisor: a mode change is engine-admitted, and without the session
+  // revisions it cannot be admitted at all. The selector is visibly disabled
+  // with that reason instead of pretending a selection could take effect.
+  const permissionContext: PermissionModeContext = {
+    engine: "unavailable",
+    engineReason: "Session revisions are not delivered to the renderer yet",
+    configRevision: null,
+    policyRevision: null,
+  };
 
   // Snapshot seam: the only thing allowed to complete a session load. Readiness proves nothing about sessions.
   let {
@@ -77,6 +120,45 @@
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
+  // A different session starts on the safe mode: no mode or pending request
+  // carries over from the previous one.
+  const permissionModeState = $derived(
+    initialPermissionMode($selectedSession?.sessionId ?? null),
+  );
+
+  // TD-33: the actions target the branch the tree actually selected. The engine
+  // still does not deliver the revisions a lifecycle request needs, and a
+  // rewind/code restore is not admitted yet, so every action is visibly disabled
+  // with its own reason instead of pretending to run.
+  const sessionActionContext: SessionActionsContext = $derived.by(() => {
+    const key = nav.selectedKey;
+    const node =
+      key === null ? undefined : visibleNodes(nav).find((n) => n.key === key);
+    return {
+      engine: {
+        status: "unavailable",
+        reason: "Session revisions are not delivered to the renderer yet.",
+      },
+      rewind: {
+        status: "unavailable",
+        reason:
+          "A rewind request is not admitted yet: TD-25 restore receipts are not wired.",
+      },
+      codeRestore: {
+        status: "unavailable",
+        reason:
+          "Code restore is not available yet: TD-25 restore receipts are not wired.",
+      },
+      selected: node
+        ? {
+            sessionId: node.sessionId,
+            branchAnchorId: node.branchAnchorId,
+            leaves: node.leaves,
+          }
+        : null,
+      draft: "",
+    };
+  });
 
   function applyTree(event: SplyceEvent) {
     if (event.kind !== "session.tree_updated") return;
@@ -208,9 +290,16 @@
       else void connect();
     }}
   />
+  <SessionActions context={sessionActionContext} />
+  <section class="supervisor" aria-label="Supervisor" data-testid="supervisor">
+    <h2>Supervisor</h2>
+    <PermissionModeSelect modeState={permissionModeState} context={permissionContext} />
+  </section>
 {/snippet}
 
 {#snippet transcript()}
+  <!-- TD-30: engine-facing approval mount. Empty until requests carry revisions. -->
+  <ApprovalSurface requests={approvalRequests} context={approvalContext} />
   {#if subscription.state === "failed"}
     <div class="subscribe-error" role="alert" data-testid="subscribe-error">
       <span>Could not subscribe to the session: {subscription.error}</span>
@@ -223,6 +312,7 @@
       <Providers connections={[]} families={[]} onAddCustom={() => {}} />
       <p role="status">Provider connections are unavailable: no profile service is connected.</p>
     </fieldset>
+    <SupportStatus cells={null} />
   {:else if view === "setup"}
     <Setup
       snapshot={moduleSnapshot}
@@ -236,8 +326,7 @@
       onConfigureProvider={() => (view = "providers")}
     />
   {:else if view === "usage"}
-    <UsageView usage={null} />
-    <p role="status" data-testid="usage-unavailable-note">Usage unavailable - no engine usage report.</p>
+    <UsageView usage={null} status="unavailable" />
   {:else}
     <div class="app-content" class:conversation={currentRun !== undefined}>
       {#if status !== "ready"}
@@ -272,7 +361,10 @@
 {/snippet}
 
 {#snippet composer()}
-  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so sending is disabled. -->
+  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so
+       sending is disabled. generationReady is deliberately omitted: the engine does not
+       report readiness.ports.generation yet, and an omitted flag means "not reported",
+       not "unconfigured". Wire it the moment the parser lands in stores/engine.ts. -->
   <Composer
     connection={status}
     sessionId={$selectedSession?.sessionId ?? null}
@@ -325,6 +417,21 @@
   }
   [aria-current="page"] {
     font-weight: 700;
+  }
+  .supervisor {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid #e5e7eb;
+    margin-top: 8px;
+  }
+  .supervisor h2 {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #4b5563;
   }
   fieldset {
     border: 0;
