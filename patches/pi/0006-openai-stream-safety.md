@@ -4,7 +4,9 @@ Refs [TD-19 / issue 70](https://github.com/OctoKon/Splyce/issues/70).
 Donor: Pi commit `d5b3de22d0e24a3e9c38a9410d3329b099717283`,
 `@earendil-works/pi-ai` 1.4.0. Preserve the donor MIT license.
 Apply `0006-openai-stream-safety.patch` from the Splyce root after the native
-bootstrap and patch 0004's shared credential routing handoff at `b0dde52`.
+bootstrap and the shared provider handoff at
+`d5bf6bd356461f1ec30d3a42e8bb5d486e86054b`. The provider patch order is
+0004, 0007, then 0006; the shared preflight marker belongs to the prior handoff.
 The native resolver integration cases also require the reviewed TD-16 resolver
 at `febf67d`; native changes are consumed as a dependency, not bundled here.
 The initial stream-cleanup slice is checkpointed separately at `da0ae10`.
@@ -138,6 +140,28 @@ After consuming the declared bootstrap at `a5a3b1e`, 58 shared-contract cases,
 111 store/credential/bridge cases, 55 built Pi native admission/entrypoint cases
 and 15 built SessionMap cases pass locally. These establish their named module
 and fixture paths, not an installed desktop or real provider result.
+
+## Shared provider integration checkpoint
+
+The shared handoff now includes Anthropic, Gemini, Vertex, Mistral and Pi-native;
+this patch adds Chat, Responses and Codex to the same registry without removing
+any of those five APIs. The stronger native credential resolver and the native
+request-port interface from the declared bootstrap are retained unchanged.
+
+Codex also rejects a non-SSE native transport before assigning the credentials
+used for terminal error sanitation. The fixed refusal uses the shared
+`CredentialPreflightError` marker and touches no lease, redactor, payload hook,
+socket or HTTP transport, even when the supplied lease is already revoked.
+Ordinary post-send errors retain native lease-scoped sanitation. The updated
+fixture first failed 24 assertions with 26 controls passing; after the change,
+all 50 cases pass. That preliminary run used Vitest 5.0.5. The integrated run
+uses the donor-pinned Vitest 4.1.12 and passes 301 cases across 14 controlled
+fixture files; the inherited Google redirect TODO remains unqualified.
+
+The full vendor check passes with TypeScript 7.0.2, original entry-graph budgets,
+browser smoke checks and no Biome fixes. The native declaration build passes
+with TypeScript 6.0.3. These source and fixture results do not qualify the
+native final-send composition, installed application or actual provider cells.
 
 ## Integration still required
 

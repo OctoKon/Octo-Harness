@@ -1,14 +1,15 @@
 diff --git a/vendor/pi/packages/ai/src/api/openai-codex-responses.ts b/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
-index 5165e1c..a5935e2 100644
+index 5165e1c..f2802e3 100644
 --- a/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-codex-responses.ts
-@@ -7,6 +7,16 @@ import type {
+@@ -7,6 +7,17 @@ import type {
  } from "openai/resources/responses/responses.js";
  import { clampThinkingLevel } from "../models.ts";
  import { registerSessionResourceCleanup } from "../session-resources.ts";
 +import {
 +	assertCredentialApiIdentity,
 +	assertCredentialOptions,
++	CredentialPreflightError,
 +	createLeasedFetch,
 +	redactEventWithLease,
 +	redactResponseWithLease,
@@ -19,7 +20,7 @@ index 5165e1c..a5935e2 100644
  import type {
  	Api,
  	AssistantMessage,
-@@ -248,6 +258,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -248,6 +259,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  	const normalizedContext = resolveTranscript(context, model.compat?.supportsMidConvoSystemMessages);
  
  	(async () => {
@@ -27,17 +28,18 @@ index 5165e1c..a5935e2 100644
  		const output: AssistantMessage = {
  			role: "assistant",
  			content: [],
-@@ -267,12 +278,23 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -267,12 +279,24 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  		};
  
  		try {
 -			const apiKey = options?.apiKey;
 +			assertCredentialOptions(options ?? {}, model.headers);
 +			assertCredentialApiIdentity(model.api, "openai-codex-responses", options);
-+			credentials = options?.credentials;
-+			if (credentials && options?.transport !== "sse") {
-+				throw new Error("Native Codex credentials require explicit SSE transport");
++			const candidateCredentials = options?.credentials;
++			if (candidateCredentials && options?.transport !== "sse") {
++				throw new CredentialPreflightError("Native Codex credentials require explicit SSE transport");
 +			}
++			credentials = candidateCredentials;
 +			const apiKey = credentials ? "splyce-leased" : options?.apiKey;
  			if (!apiKey) {
  				throw new Error(`No API key for provider: ${model.provider}`);
@@ -53,7 +55,7 @@ index 5165e1c..a5935e2 100644
  			const grammarToolInputProperties = createGrammarToolInputProperties(
  				getDeclaredTools(normalizedContext.messages),
  				model.compat?.supportsOpenAIGrammarTools ?? false,
-@@ -306,7 +328,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -306,7 +330,8 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  			const bodyJson = JSON.stringify(body);
  			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
  			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
@@ -63,7 +65,7 @@ index 5165e1c..a5935e2 100644
  			let startEmitted = false;
  			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);
  			if (websocketDisabledForSession) {
-@@ -412,7 +435,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -412,7 +437,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  						httpTimeoutMs !== undefined && httpTimeoutMs > 0 ? AbortSignal.timeout(httpTimeoutMs) : undefined;
  					const combinedSignal = combineAbortSignals([options?.signal, headerTimeoutSignal]);
  					try {
@@ -72,7 +74,7 @@ index 5165e1c..a5935e2 100644
  							method: "POST",
  							headers: sseHeaders,
  							body: sseBody,
-@@ -427,7 +450,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -427,7 +452,10 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  						combinedSignal.cleanup();
  					}
  					await options?.onResponse?.(
@@ -84,7 +86,7 @@ index 5165e1c..a5935e2 100644
  						model,
  					);
  
-@@ -487,7 +513,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -487,7 +515,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  				startEmitted = true;
  				stream.push({ type: "start", partial: output });
  			}
@@ -93,7 +95,7 @@ index 5165e1c..a5935e2 100644
  
  			if (options?.signal?.aborted) {
  				throw new Error("Request was aborted");
-@@ -497,8 +523,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -497,8 +525,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  			stream.push({ type: "done", reason: output.stopReason, message: output });
  			stream.end();
  		} catch (error) {
@@ -107,7 +109,7 @@ index 5165e1c..a5935e2 100644
  			stream.push({ type: "error", reason: output.stopReason, error: output });
  			stream.end();
  		}
-@@ -513,7 +543,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
+@@ -513,7 +545,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
  	options?: SimpleStreamOptions,
  ): AssistantMessageEventStream => {
  	const apiKey = options?.apiKey;
@@ -116,7 +118,7 @@ index 5165e1c..a5935e2 100644
  		throw new Error(`No API key for provider: ${model.provider}`);
  	}
  
-@@ -681,9 +711,10 @@ async function processStream(
+@@ -681,9 +713,10 @@ async function processStream(
  	model: Model<"openai-codex-responses">,
  	grammarToolInputProperties: ReadonlyMap<string, string>,
  	options?: OpenAICodexResponsesOptions,
@@ -128,7 +130,7 @@ index 5165e1c..a5935e2 100644
  		output,
  		stream,
  		model,
-@@ -762,10 +793,13 @@ async function* mapCodexEvents(
+@@ -762,10 +795,13 @@ async function* mapCodexEvents(
  	output: AssistantMessage,
  	model: Model<"openai-codex-responses">,
  	onProviderStreamEvent: StreamOptions["onProviderStreamEvent"] | undefined,
@@ -428,136 +430,8 @@ index c29e6ad..e512629 100644
  	const params: ResponseCreateParamsStreaming = {
  		model: model.id,
  		input: messages,
-diff --git a/vendor/pi/packages/ai/src/splyce-credentials.ts b/vendor/pi/packages/ai/src/splyce-credentials.ts
-index ef8536d..50e029e 100644
---- a/vendor/pi/packages/ai/src/splyce-credentials.ts
-+++ b/vendor/pi/packages/ai/src/splyce-credentials.ts
-@@ -1,3 +1,5 @@
-+import type { ProviderResponse } from "./types.ts";
-+
- // Splyce C4: the one credential option shared by every provider adapter (TD-19..23).
- // Structural mirror of the native SecretLease and Redactor (packages/splyce-pi/src/provider-auth.ts, TD-16): this
- // package must not import @splyce/pi. The native layer builds the lease from ProviderAdmissionPort.admit() and
-@@ -26,13 +28,54 @@ const identity = (text: string): string => text;
- 
- /** The redactor to apply to error text: the native one when credentials are in use, otherwise nothing is leased. */
- export function redactorOf(options: { credentials?: SplyceCredentials | undefined }): (text: string) => string {
--	return options.credentials?.redact ?? identity;
-+	const redact = options.credentials?.redact;
-+	return typeof redact === "function" ? redact : identity;
-+}
-+
-+/** Sanitize inside a live lease; a revoked lease cannot safely expose the provider's error text. */
-+export async function redactWithLease(credentials: SplyceCredentials | undefined, text: string): Promise<string> {
-+	if (!credentials) return text;
-+	try {
-+		return await credentials.lease.use(() => credentials.redact(text));
-+	} catch {
-+		return "Provider credential is no longer available";
-+	}
-+}
-+
-+/** Redact JSON event keys and values inside a live lease before an observer can retain them. */
-+export async function redactEventWithLease(
-+	credentials: SplyceCredentials | undefined,
-+	event: unknown,
-+): Promise<unknown> {
-+	if (!credentials) return event;
-+	const { lease, redact } = credentials;
-+	return lease.use(() => {
-+		const sanitize = (value: unknown): unknown => {
-+			if (typeof value === "string") return redact(value);
-+			if (Array.isArray(value)) return value.map(sanitize);
-+			if (value && typeof value === "object") {
-+				return Object.fromEntries(Object.entries(value).map(([key, item]) => [redact(key), sanitize(item)]));
-+			}
-+			return value;
-+		};
-+		return sanitize(event);
-+	});
-+}
-+
-+/** Response metadata is copied and sanitized before a callback can retain it. */
-+export async function redactResponseWithLease(
-+	credentials: SplyceCredentials | undefined,
-+	response: ProviderResponse,
-+): Promise<ProviderResponse> {
-+	if (!credentials) return response;
-+	return credentials.lease.use(() => ({
-+		status: response.status,
-+		headers: Object.fromEntries(
-+			Object.entries(response.headers).map(([key, value]) => [credentials.redact(key), credentials.redact(value)]),
-+		),
-+	}));
- }
- 
--/**
-- * `apiKey` and `credentials` are mutually exclusive, and credentials need a native redactor. With a lease no ambient
-- * or fallback credential exists. Throws before anything is leased or sent.
-- */
- /** Headers that carry or select a credential. With a lease the caller may not supply any of them. */
- const CALLER_AUTH_HEADERS: ReadonlySet<string> = new Set([
- 	"authorization",
-@@ -72,9 +115,21 @@ export function assertCredentialOptions(
- 	if (!credentials) return;
- 	if (options.apiKey !== undefined) throw new Error("apiKey and credentials are mutually exclusive");
- 	if (typeof credentials.redact !== "function") throw new Error("credentials require a native redact function");
-+	if (typeof credentials.lease?.use !== "function") throw new Error("credentials require a native lease.use function");
- 	assertNoCallerAuthHeaders(modelHeaders, options.headers);
- }
- 
-+/** A single-API provider must not reinterpret the API admitted with native credentials. */
-+export function assertCredentialApiIdentity(
-+	actualApi: string,
-+	expectedApi: string,
-+	options: { credentials?: SplyceCredentials | undefined } | undefined,
-+): void {
-+	if (options?.credentials && actualApi !== expectedApi) {
-+		throw new Error("Native credential API identity does not match this adapter");
-+	}
-+}
-+
- /**
-  * The Google SDK takes transport settings from the request payload. With a lease, a payload hook may not move the
-  * endpoint, add headers or turn on SDK-level retries (which would reuse one lease for several sends).
-@@ -104,7 +159,7 @@ export async function withLeasedSecret<T>(
-  * A fetch that obtains the secret from the lease on every send and writes it into one auth header, so the SDK client
-  * built around it never holds the real key. `format` shapes the header value (default: the raw secret; pass
-  * `(s) => `Bearer ${s}`` for bearer schemes). Headers carried by a `Request` input are kept, with `init.headers`
-- * taking precedence as `fetch` does. Any other auth header is dropped, and redirects are refused so the key cannot
-+ * taking precedence as `fetch` does. Known credential headers are dropped, and redirects are refused so the key cannot
-  * follow a response to another host.
-  */
- export function createLeasedFetch(
-@@ -117,8 +172,7 @@ export function createLeasedFetch(
- 		withLeasedSecret(credentials, (secret) => {
- 			const headers = new Headers(input instanceof Request ? input.headers : undefined);
- 			for (const [name, value] of new Headers(init?.headers)) headers.set(name, value);
--			headers.delete("authorization");
--			headers.delete("x-api-key");
-+			for (const name of CALLER_AUTH_HEADERS) headers.delete(name);
- 			headers.set(header, format(secret));
- 			return base(input, { ...init, headers, redirect: "error" });
- 		});
-diff --git a/vendor/pi/packages/ai/src/types.ts b/vendor/pi/packages/ai/src/types.ts
-index d5616ca..e9b43c2 100644
---- a/vendor/pi/packages/ai/src/types.ts
-+++ b/vendor/pi/packages/ai/src/types.ts
-@@ -1,4 +1,3 @@
--import type { SplyceCredentials } from "./splyce-credentials.ts";
- import type { TelemetrySpan } from "@earendil-works/pi-telemetry";
- import type { AnthropicOptions } from "./api/anthropic-messages.ts";
- import type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
-@@ -28,6 +27,7 @@ import type {
- 	ThinkingLevel,
- 	ThinkingLevelMap,
- } from "./providers/model-schema.ts";
-+import type { SplyceCredentials } from "./splyce-credentials.ts";
- import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
- import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
- import type { ClientIdentity } from "./utils/identity.ts";
 diff --git a/vendor/pi/packages/ai/src/utils/model-operations.ts b/vendor/pi/packages/ai/src/utils/model-operations.ts
-index e034cd3..21eba6d 100644
+index c675d65..665f935 100644
 --- a/vendor/pi/packages/ai/src/utils/model-operations.ts
 +++ b/vendor/pi/packages/ai/src/utils/model-operations.ts
 @@ -1,3 +1,4 @@
@@ -565,7 +439,7 @@ index e034cd3..21eba6d 100644
  import type {
  	AnyModel,
  	Api,
-@@ -14,24 +15,26 @@ import type {
+@@ -14,26 +15,28 @@ import type {
  } from "../types.ts";
  import { ModelsError } from "./models-error.ts";
  
@@ -583,6 +457,8 @@ index e034cd3..21eba6d 100644
 +	"openai-completions",
 +	"openai-responses",
 +	"openai-codex-responses",
+ 	"mistral-conversations",
+ 	"pi-messages",
  ]);
  
 -export function assertCredentialsSupported(api: string, options: { credentials?: unknown } | undefined): void {
@@ -600,14 +476,14 @@ index e034cd3..21eba6d 100644
  	return model.type ?? "chat";
  }
 diff --git a/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts b/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
-index 21eab03..456eabc 100644
+index 43b197a..456eabc 100644
 --- a/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
 +++ b/vendor/pi/packages/ai/test/splyce-anthropic-stream-safety.test.ts
 @@ -4,7 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
  import { Type } from "typebox";
  import { describe, expect, it } from "vitest";
  import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
--import type { Api, Context, Model } from "../src/types.ts";
+-import type { Context, Model } from "../src/types.ts";
 +import type { Model } from "../src/types.ts";
  import { normalizeContext } from "../src/utils/transcript.ts";
  
@@ -638,10 +514,10 @@ index 21eab03..456eabc 100644
  	const types: string[] = [];
 diff --git a/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts b/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts
 new file mode 100644
-index 0000000..b1a7dea
+index 0000000..d0a6523
 --- /dev/null
 +++ b/vendor/pi/packages/ai/test/splyce-codex-native-sse.test.ts
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,444 @@
 +// Splyce #70: actual Codex SSE parser and native resolver; only the remote service is replaced.
 +// Adapter/public caller evidence only: native final-send authority remains a separate gate.
 +import { afterEach, describe, expect, it, vi } from "vitest";
@@ -689,7 +565,20 @@ index 0000000..b1a7dea
 +		egressPolicyRef: binding.egressPolicyRef,
 +		actionId: "fixture-action",
 +	});
-+	return { resolver, lease, credentials: { lease, redact: resolver.redact } satisfies SplyceCredentials };
++	const state = { uses: 0, redactions: 0 };
++	const credentials = {
++		lease: {
++			use: <T>(consume: (secret: string) => T | Promise<T>) => {
++				state.uses++;
++				return lease.use(consume);
++			},
++		},
++		redact: (text: string) => {
++			state.redactions++;
++			return resolver.redact(text);
++		},
++	} satisfies SplyceCredentials;
++	return { resolver, lease, credentials, state };
 +}
 +function sse(event: Record<string, unknown>) {
 +	return new Response(`data: ${JSON.stringify(event)}\n\n`, { headers: { "content-type": "text/event-stream" } });
@@ -751,8 +640,9 @@ index 0000000..b1a7dea
 +		it.each([undefined, "auto", "websocket", "websocket-cached"] as const)(
 +			`${entrypoint} refuses native transport %s without HTTP or socket effects`,
 +			async (transport) => {
-+				const { credentials } = await native();
++				const { credentials, state } = await native();
 +				let effects = 0;
++				let payloads = 0;
 +				vi.stubGlobal(
 +					"WebSocket",
 +					class {
@@ -765,6 +655,9 @@ index 0000000..b1a7dea
 +				const result = await publicStream(entrypoint, {
 +					credentials,
 +					transport,
++					onPayload: () => {
++						payloads++;
++					},
 +					fetch: async () => {
 +						effects++;
 +						return completed();
@@ -772,6 +665,8 @@ index 0000000..b1a7dea
 +				}).result();
 +				expect(result.stopReason).toBe("error");
 +				expect(result.errorMessage).toMatch(/explicit SSE/i);
++				expect(state).toEqual({ uses: 0, redactions: 0 });
++				expect(payloads).toBe(0);
 +				expect(effects).toBe(0);
 +			},
 +		);
@@ -911,33 +806,43 @@ index 0000000..b1a7dea
 +			expect(sends).toBe(1);
 +		});
 +	}
-+	it.each([undefined, "auto", "websocket", "websocket-cached"] as const)(
-+		"refuses native transport %s before any socket or HTTP send",
-+		async (transport) => {
-+			const { credentials } = await native();
-+			let effects = 0;
-+			vi.stubGlobal(
-+				"WebSocket",
-+				class {
-+					constructor() {
++	// #70: a fixed transport refusal must not touch even a revoked native credential.
++	describe.each([false, true])("native lease revoked=%s", (revoked) => {
++		it.each([undefined, "auto", "websocket", "websocket-cached"] as const)(
++			"refuses native transport %s before credential, payload or transport effects",
++			async (transport) => {
++				const { credentials, lease, state } = await native();
++				if (revoked) lease.revoke();
++				let effects = 0;
++				let payloads = 0;
++				vi.stubGlobal(
++					"WebSocket",
++					class {
++						constructor() {
++							effects++;
++							throw new Error("must not connect");
++						}
++					},
++				);
++				const result = await stream(model, context, {
++					credentials,
++					transport,
++					onPayload: () => {
++						payloads++;
++					},
++					fetch: async () => {
 +						effects++;
-+						throw new Error("must not connect");
-+					}
-+				},
-+			);
-+			const result = await stream(model, context, {
-+				credentials,
-+				transport,
-+				fetch: async () => {
-+					effects++;
-+					return completed();
-+				},
-+			}).result();
-+			expect(result.stopReason).toBe("error");
-+			expect(result.errorMessage).toMatch(/explicit SSE/i);
-+			expect(effects).toBe(0);
-+		},
-+	);
++						return completed();
++					},
++				}).result();
++				expect(result.stopReason).toBe("error");
++				expect(result.errorMessage).toMatch(/explicit SSE/i);
++				expect(state).toEqual({ uses: 0, redactions: 0 });
++				expect(payloads).toBe(0);
++				expect(effects).toBe(0);
++			},
++		);
++	});
 +	it("rechecks connection revision after payload hooks and sends nothing stale", async () => {
 +		const { resolver, credentials } = await native();
 +		let payloads = 0;
@@ -1057,210 +962,6 @@ index 0000000..b1a7dea
 +		expect(result.errorMessage).not.toContain(JSON.stringify(secret).slice(1, -1));
 +	});
 +});
-diff --git a/vendor/pi/packages/ai/test/splyce-credentials-routing.test.ts b/vendor/pi/packages/ai/test/splyce-credentials-routing.test.ts
-index 28877e9..dc185c2 100644
---- a/vendor/pi/packages/ai/test/splyce-credentials-routing.test.ts
-+++ b/vendor/pi/packages/ai/test/splyce-credentials-routing.test.ts
-@@ -65,14 +65,22 @@ const wireFetch = (async (_input: unknown, init?: RequestInit) => {
- }) as unknown as typeof fetch;
- const model = () => getModel("anthropic", "claude-haiku-4-5");
- const ctor = () => sdk.opts[0] ?? {};
-+const unexpectedFetch = vi.fn(async () => {
-+	throw new Error("routing fixture must never contact a provider");
-+});
- 
- beforeEach(() => {
- 	sdk.opts.length = 0;
- 	wire.length = 0;
-+	unexpectedFetch.mockClear();
-+	vi.stubGlobal("fetch", unexpectedFetch);
- 	vi.stubEnv("ANTHROPIC_API_KEY", "ambient-env-key");
- 	vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "ambient-env-token");
- });
--afterEach(() => vi.unstubAllEnvs());
-+afterEach(() => {
-+	vi.unstubAllEnvs();
-+	vi.unstubAllGlobals();
-+});
- 
- describe("credentials through the public entrypoints", () => {
- 	it("compat.streamSimple delivers the lease and no ambient env key", async () => {
-@@ -129,22 +137,37 @@ describe("credentials through the public entrypoints", () => {
- });
- 
- describe("APIs without lease support refuse credentials", () => {
--	const unsupported = () => getModel("openai", "gpt-4o");
-+	// #70: use a fixture API that stays unbound as real adapter families gain support.
-+	const unsupported = () => ({
-+		...getModel("openai", "gpt-4o"),
-+		api: "splyce-unbound-test-api" as const,
-+		compat: undefined,
-+		baseUrl: "https://provider.invalid/v1",
-+	});
- 
- 	it("compat.stream throws before any adapter or SDK runs", () => {
--		expect(() => stream(unsupported(), context, { credentials })).toThrow(/not supported/);
-+		expect(() => stream(unsupported(), context, { credentials, fetch: unexpectedFetch })).toThrow(/not supported/);
- 		expect(sdk.opts).toHaveLength(0);
-+		expect(unexpectedFetch).not.toHaveBeenCalled();
- 	});
- 
- 	it("compat.streamSimple throws too", () => {
--		expect(() => streamSimple(unsupported(), context, { credentials })).toThrow(/not supported/);
-+		expect(() => streamSimple(unsupported(), context, { credentials, fetch: unexpectedFetch })).toThrow(
-+			/not supported/,
-+		);
-+		expect(unexpectedFetch).not.toHaveBeenCalled();
- 	});
- 
- 	it("the Models layer rejects instead of resolving ambient auth", async () => {
--		const models = createModels({ authContext: { env: async () => "ambient", fileExists: async () => false } });
-+		const ambientAuth = vi.fn(async () => "ambient");
-+		const models = createModels({ authContext: { env: ambientAuth, fileExists: async () => false } });
- 		models.setProvider(openaiProvider());
--		const result = await models.streamSimple(unsupported(), context, { credentials }).result();
-+		const result = await models
-+			.streamSimple(unsupported(), context, { credentials, fetch: unexpectedFetch })
-+			.result();
- 		expect(result.stopReason).toBe("error");
- 		expect(result.errorMessage ?? "").toMatch(/not supported|not configured|not found|No provider/i);
-+		expect(ambientAuth).not.toHaveBeenCalled();
-+		expect(unexpectedFetch).not.toHaveBeenCalled();
- 	});
- });
-diff --git a/vendor/pi/packages/ai/test/splyce-credentials-wire.test.ts b/vendor/pi/packages/ai/test/splyce-credentials-wire.test.ts
-index ee75413..66b1f21 100644
---- a/vendor/pi/packages/ai/test/splyce-credentials-wire.test.ts
-+++ b/vendor/pi/packages/ai/test/splyce-credentials-wire.test.ts
-@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
- import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
- import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
- import { getModel } from "../src/compat.ts";
--import type { SplyceCredentials } from "../src/splyce-credentials.ts";
-+import { createLeasedFetch, type SplyceCredentials } from "../src/splyce-credentials.ts";
- import type { Context } from "../src/types.ts";
- import { normalizeContext } from "../src/utils/transcript.ts";
- 
-@@ -77,6 +77,33 @@ const googleOk = (res: ServerResponse) => {
- const claude = (origin: string) => ({ ...getModel("anthropic", "claude-haiku-4-5"), baseUrl: origin });
- const gemini = (origin: string) => ({ ...getModel("google", "gemini-2.5-flash"), baseUrl: origin });
- 
-+describe("shared leased fetch on the wire", () => {
-+	it.each(["Request", "init"])(
-+		"strips alternate credential headers and placeholders from %s headers",
-+		async (source) => {
-+			const local = await listen((_req, res) => {
-+				res.writeHead(200, { "content-type": "application/json" });
-+				res.end("{}");
-+			});
-+			const authNames = ["authorization", "proxy-authorization", "x-api-key", "api-key", "x-goog-api-key", "cookie"];
-+			const headers = { ...Object.fromEntries(authNames.map((name) => [name, "splyce-leased"])), "x-trace": "kept" };
-+			const leased = createLeasedFetch(creds(), "authorization", globalThis.fetch, (secret) => `Bearer ${secret}`);
-+			const response =
-+				source === "Request"
-+					? await leased(new Request(`${local.origin}/lease`, { headers }))
-+					: await leased(`${local.origin}/lease`, { headers });
-+			await response.text();
-+			expect(local.seen).toHaveLength(1);
-+			const sent = local.seen[0]!.headers;
-+			expect(sent.authorization).toBe(`Bearer ${SECRET}`);
-+			for (const name of authNames.filter((name) => name !== "authorization"))
-+				expect(sent[name], name).toBeUndefined();
-+			expect(sent["x-trace"]).toBe("kept");
-+			expect(JSON.stringify(sent)).not.toContain("splyce-leased");
-+		},
-+	);
-+});
-+
- describe("Anthropic on the wire (real SDK)", () => {
- 	it("sends exactly the leased key, with no other credential", async () => {
- 		const local = await listen((_req, res) => anthropicOk(res));
-diff --git a/vendor/pi/packages/ai/test/splyce-credentials.test.ts b/vendor/pi/packages/ai/test/splyce-credentials.test.ts
-index cd15d0a..be07e64 100644
---- a/vendor/pi/packages/ai/test/splyce-credentials.test.ts
-+++ b/vendor/pi/packages/ai/test/splyce-credentials.test.ts
-@@ -78,26 +78,25 @@ vi.mock("@google/genai", () => {
- import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
- import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
- import { stream as streamVertex } from "../src/api/google-vertex.ts";
--import { createLeasedFetch } from "../src/splyce-credentials.ts";
--import type { Api, Context, Model } from "../src/types.ts";
-+import { assertCredentialOptions, createLeasedFetch, type SplyceCredentials } from "../src/splyce-credentials.ts";
-+import type { Api, Model } from "../src/types.ts";
- import { normalizeContext } from "../src/utils/transcript.ts";
- 
- const SECRET = "sk-test-secret-0123456789";
- const nativeRedact = (text: string) => text.split(SECRET).join("[redacted]");
--const model = <TApi extends Api>(provider: string, api: TApi, id: string, baseUrl: string): Model<TApi> =>
--	({
--		id,
--		name: id,
--		api,
--		provider,
--		baseUrl,
--		reasoning: false,
--		input: ["text"],
--		cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
--		contextWindow: 100000,
--		maxTokens: 8000,
--	}) as unknown as Model<TApi>;
--const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] } satisfies Context);
-+const model = <TApi extends Api>(provider: string, api: TApi, id: string, baseUrl: string): Model<TApi> => ({
-+	id,
-+	name: id,
-+	api,
-+	provider,
-+	baseUrl,
-+	reasoning: false,
-+	input: ["text"],
-+	cost: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
-+	contextWindow: 100000,
-+	maxTokens: 8000,
-+});
-+const context = () => normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });
- const lease = (secret = SECRET) => ({
- 	use: async <T>(consume: (s: string) => T | Promise<T>) => consume(secret),
- });
-@@ -204,6 +203,23 @@ beforeEach(() => {
- });
- 
- describe.each(families)("credentials option: $name", (family) => {
-+	// #70/#73: malformed leases must fail before SDK construction or payload callbacks.
-+	it.each([undefined, null, {}, { use: null }, { use: "not-a-function" }])(
-+		"refuses malformed lease %j before SDK initialization",
-+		async (invalidLease) => {
-+			let payloads = 0;
-+			const result = await family.run({
-+				credentials: { lease: invalidLease, redact: nativeRedact },
-+				onPayload: () => {
-+					payloads++;
-+				},
-+			});
-+			expect(result.stopReason).toBe("error");
-+			expect(family.sdkCalls()).toHaveLength(0);
-+			expect(wire.sent).toHaveLength(0);
-+			expect(payloads).toBe(0);
-+		},
-+	);
- 	it("delivers the leased secret and the admitted base URL", async () => {
- 		const result = await family.run({ credentials: creds(lease()) });
- 		expect(result.stopReason).not.toBe("error");
-@@ -327,6 +343,15 @@ describe("Anthropic per-send enforcement", () => {
- });
- 
- describe("shared credential helpers", () => {
-+	it.each([undefined, null, {}, { use: null }, { use: "not-a-function" }])(
-+		"requires a callable native lease before accepting credential options (%j)",
-+		(invalidLease) => {
-+			const credentials = { lease: invalidLease, redact: nativeRedact } as unknown as SplyceCredentials;
-+			expect(() => assertCredentialOptions({ credentials })).toThrow(
-+				"credentials require a native lease.use function",
-+			);
-+		},
-+	);
- 	const record = () => {
- 		const calls: Array<{ input: unknown; headers: Headers; redirect: string | undefined }> = [];
- 		const base = (async (input: unknown, init?: RequestInit) => {
 diff --git a/vendor/pi/packages/ai/test/splyce-event-redaction.test.ts b/vendor/pi/packages/ai/test/splyce-event-redaction.test.ts
 new file mode 100644
 index 0000000..5f14318
@@ -2347,20 +2048,10 @@ index 0000000..5b7665c
 +	});
 +});
 diff --git a/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts b/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
-index 7830a1a..0b82dbc 100644
+index 6fdcbf0..0b82dbc 100644
 --- a/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
 +++ b/vendor/pi/packages/ai/test/splyce-provider-e2e.test.ts
-@@ -76,34 +76,33 @@ vi.mock("@google/genai", () => {
- 	};
- });
- 
--import type { ProviderConnectionRecord } from "../../../../../packages/splyce-pi/src/contracts.ts";
-+import type { ProviderConnectionRecord } from "@splyce/pi/contracts";
-+import type { ProviderAdmissionPort } from "@splyce/pi/provider-admission";
- import { NativeCredentialResolver } from "../../../../../packages/splyce-pi/src/credential-resolver.ts";
--import type { ProviderAdmissionPort } from "../../../../../packages/splyce-pi/src/provider-admission.ts";
- import type { CredentialRequest } from "../../../../../packages/splyce-pi/src/provider-auth.ts";
- import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
+@@ -84,26 +84,25 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
  import { stream as streamGoogle } from "../src/api/google-generative-ai.ts";
  import { stream as streamVertex } from "../src/api/google-vertex.ts";
  import type { SplyceCredentials } from "../src/splyce-credentials.ts";

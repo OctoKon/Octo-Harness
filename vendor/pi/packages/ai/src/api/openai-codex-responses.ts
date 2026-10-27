@@ -10,6 +10,7 @@ import { registerSessionResourceCleanup } from "../session-resources.ts";
 import {
 	assertCredentialApiIdentity,
 	assertCredentialOptions,
+	CredentialPreflightError,
 	createLeasedFetch,
 	redactEventWithLease,
 	redactResponseWithLease,
@@ -280,10 +281,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 		try {
 			assertCredentialOptions(options ?? {}, model.headers);
 			assertCredentialApiIdentity(model.api, "openai-codex-responses", options);
-			credentials = options?.credentials;
-			if (credentials && options?.transport !== "sse") {
-				throw new Error("Native Codex credentials require explicit SSE transport");
+			const candidateCredentials = options?.credentials;
+			if (candidateCredentials && options?.transport !== "sse") {
+				throw new CredentialPreflightError("Native Codex credentials require explicit SSE transport");
 			}
+			credentials = candidateCredentials;
 			const apiKey = credentials ? "splyce-leased" : options?.apiKey;
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);

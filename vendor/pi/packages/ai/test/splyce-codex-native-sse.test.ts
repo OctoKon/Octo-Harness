@@ -45,7 +45,20 @@ async function native(secret = TOKEN) {
 		egressPolicyRef: binding.egressPolicyRef,
 		actionId: "fixture-action",
 	});
-	return { resolver, lease, credentials: { lease, redact: resolver.redact } satisfies SplyceCredentials };
+	const state = { uses: 0, redactions: 0 };
+	const credentials = {
+		lease: {
+			use: <T>(consume: (secret: string) => T | Promise<T>) => {
+				state.uses++;
+				return lease.use(consume);
+			},
+		},
+		redact: (text: string) => {
+			state.redactions++;
+			return resolver.redact(text);
+		},
+	} satisfies SplyceCredentials;
+	return { resolver, lease, credentials, state };
 }
 function sse(event: Record<string, unknown>) {
 	return new Response(`data: ${JSON.stringify(event)}\n\n`, { headers: { "content-type": "text/event-stream" } });
@@ -107,8 +120,9 @@ describe("public native Codex SSE", () => {
 		it.each([undefined, "auto", "websocket", "websocket-cached"] as const)(
 			`${entrypoint} refuses native transport %s without HTTP or socket effects`,
 			async (transport) => {
-				const { credentials } = await native();
+				const { credentials, state } = await native();
 				let effects = 0;
+				let payloads = 0;
 				vi.stubGlobal(
 					"WebSocket",
 					class {
@@ -121,6 +135,9 @@ describe("public native Codex SSE", () => {
 				const result = await publicStream(entrypoint, {
 					credentials,
 					transport,
+					onPayload: () => {
+						payloads++;
+					},
 					fetch: async () => {
 						effects++;
 						return completed();
@@ -128,6 +145,8 @@ describe("public native Codex SSE", () => {
 				}).result();
 				expect(result.stopReason).toBe("error");
 				expect(result.errorMessage).toMatch(/explicit SSE/i);
+				expect(state).toEqual({ uses: 0, redactions: 0 });
+				expect(payloads).toBe(0);
 				expect(effects).toBe(0);
 			},
 		);
@@ -267,33 +286,43 @@ describe("direct native Codex SSE", () => {
 			expect(sends).toBe(1);
 		});
 	}
-	it.each([undefined, "auto", "websocket", "websocket-cached"] as const)(
-		"refuses native transport %s before any socket or HTTP send",
-		async (transport) => {
-			const { credentials } = await native();
-			let effects = 0;
-			vi.stubGlobal(
-				"WebSocket",
-				class {
-					constructor() {
+	// #70: a fixed transport refusal must not touch even a revoked native credential.
+	describe.each([false, true])("native lease revoked=%s", (revoked) => {
+		it.each([undefined, "auto", "websocket", "websocket-cached"] as const)(
+			"refuses native transport %s before credential, payload or transport effects",
+			async (transport) => {
+				const { credentials, lease, state } = await native();
+				if (revoked) lease.revoke();
+				let effects = 0;
+				let payloads = 0;
+				vi.stubGlobal(
+					"WebSocket",
+					class {
+						constructor() {
+							effects++;
+							throw new Error("must not connect");
+						}
+					},
+				);
+				const result = await stream(model, context, {
+					credentials,
+					transport,
+					onPayload: () => {
+						payloads++;
+					},
+					fetch: async () => {
 						effects++;
-						throw new Error("must not connect");
-					}
-				},
-			);
-			const result = await stream(model, context, {
-				credentials,
-				transport,
-				fetch: async () => {
-					effects++;
-					return completed();
-				},
-			}).result();
-			expect(result.stopReason).toBe("error");
-			expect(result.errorMessage).toMatch(/explicit SSE/i);
-			expect(effects).toBe(0);
-		},
-	);
+						return completed();
+					},
+				}).result();
+				expect(result.stopReason).toBe("error");
+				expect(result.errorMessage).toMatch(/explicit SSE/i);
+				expect(state).toEqual({ uses: 0, redactions: 0 });
+				expect(payloads).toBe(0);
+				expect(effects).toBe(0);
+			},
+		);
+	});
 	it("rechecks connection revision after payload hooks and sends nothing stale", async () => {
 		const { resolver, credentials } = await native();
 		let payloads = 0;

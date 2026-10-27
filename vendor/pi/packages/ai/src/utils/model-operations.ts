@@ -23,6 +23,8 @@ export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
 	"openai-completions",
 	"openai-responses",
 	"openai-codex-responses",
+	"mistral-conversations",
+	"pi-messages",
 ]);
 
 export function assertCredentialsSupported(

@@ -6,9 +6,12 @@ import {
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
 	assertSafeLeasedGooglePayload,
-	redactorOf,
+	CredentialPreflightError,
+	redactEventWithLease,
+	redactWithLease,
 	withLeasedSecret,
 } from "../splyce-credentials.ts";
 import type {
@@ -70,6 +73,9 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 	const stream = new AssistantMessageEventStream();
 	const normalizedContext = collapseSystemMessages(context);
 
+	// Captured before any caller callback runs: onPayload may mutate options, and error/observer paths must keep the
+	// credentials the call was admitted with.
+	const leasedCredentials = options?.credentials;
 	(async () => {
 		const output: AssistantMessage = {
 			role: "assistant",
@@ -89,13 +95,13 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			timestamp: Date.now(),
 		};
 
-		const redact = redactorOf(options ?? {});
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
-				throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
+				throw new CredentialPreflightError("Custom fetch is not supported by the Google Generative AI adapter");
 			}
+			assertCredentialApiIdentity(model.api, "google-generative-ai", options);
 			assertCredentialOptions(options ?? {}, model.headers);
-			const credentials = options?.credentials;
+			const credentials = leasedCredentials;
 			const apiKey = options?.apiKey;
 			if (!credentials && !apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
@@ -125,7 +131,10 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
-				await options?.onProviderStreamEvent?.(chunk, model);
+				await options?.onProviderStreamEvent?.(
+					(await redactEventWithLease(leasedCredentials, chunk)) as typeof chunk,
+					model,
+				);
 				// @google/genai documents GenerateContentResponse.responseId as an output-only field
 				// used to identify each response. Keep the first non-empty one from the stream.
 				output.responseId ||= chunk.responseId;
@@ -310,7 +319,10 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			// Splyce TD-20: an errored or aborted response never carries tool calls into dispatch or persistence.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = redact(formatProviderError(normalizeProviderError(error)));
+			output.errorMessage = await redactWithLease(
+				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
+				formatProviderError(normalizeProviderError(error)),
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

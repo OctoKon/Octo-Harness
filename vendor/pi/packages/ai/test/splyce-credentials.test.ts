@@ -148,6 +148,12 @@ const families = [
 				context(),
 				{ fetch: recordingFetch, ...extra },
 			).result(),
+		wrongApi: (extra: Record<string, unknown>) =>
+			streamAnthropic(
+				model("anthropic", "pi-messages", "claude-haiku-4-5", "https://api.anthropic.com") as never,
+				context(),
+				{ fetch: recordingFetch, ...extra },
+			).result(),
 		baseKey: (opts: Record<string, unknown>) => opts.baseURL,
 		ambient: { ANTHROPIC_API_KEY: "env-secret-anthropic", ANTHROPIC_AUTH_TOKEN: "env-secret-token" },
 		/** Where the real secret was delivered. */
@@ -169,6 +175,17 @@ const families = [
 				context(),
 				extra,
 			).result(),
+		wrongApi: (extra: Record<string, unknown>) =>
+			streamGoogle(
+				model(
+					"google",
+					"pi-messages",
+					"gemini-3-flash-preview",
+					"https://generativelanguage.example/v1beta",
+				) as never,
+				context(),
+				extra,
+			).result(),
 		baseKey: (opts: Record<string, unknown>) => (opts.httpOptions as { baseUrl?: string } | undefined)?.baseUrl,
 		ambient: { GEMINI_API_KEY: "env-secret-gemini", GOOGLE_API_KEY: "env-secret-google" },
 		delivered: () => sdk.googleOpts.map((o) => o.apiKey),
@@ -186,6 +203,12 @@ const families = [
 					"gemini-3-flash-preview",
 					"https://vertex.example",
 				) as Model<"google-vertex">,
+				context(),
+				{ project: "p", location: "us-central1", ...extra },
+			).result(),
+		wrongApi: (extra: Record<string, unknown>) =>
+			streamVertex(
+				model("google-vertex", "pi-messages", "gemini-3-flash-preview", "https://vertex.example") as never,
 				context(),
 				{ project: "p", location: "us-central1", ...extra },
 			).result(),
@@ -277,6 +300,32 @@ describe.each(families)("credentials option: $name", (family) => {
 		expect(result.errorMessage ?? "").not.toContain(SECRET);
 	});
 
+	it("never calls a lease-scoped redactor outside the lease: a revoked lease gives generic error text", async () => {
+		sdk.failWith = `401 invalid x-api-key ${SECRET}`;
+		const base = expiringLease(1);
+		let inside = false;
+		const scoped = {
+			use: async <T>(consume: (secret: string) => T | Promise<T>) => {
+				return base.use(async (secret: string) => {
+					inside = true;
+					try {
+						return await consume(secret);
+					} finally {
+						inside = false;
+					}
+				});
+			},
+		};
+		const result = await family.run({
+			credentials: {
+				lease: scoped,
+				redact: (text: string) => (inside ? text.split(SECRET).join("[native]") : text),
+			},
+		});
+		expect(result.stopReason).toBe("error");
+		expect(JSON.stringify(result)).not.toContain(SECRET);
+	});
+
 	it("asks the lease again for every use instead of keeping the first answer", async () => {
 		const counted = expiringLease(100);
 		await family.run({ credentials: creds(counted) });
@@ -288,6 +337,16 @@ describe.each(families)("credentials option: $name", (family) => {
 		const counted = expiringLease(100);
 		const result = await family.run({ credentials: { lease: counted } as never });
 		expect(result.stopReason).toBe("error");
+		expect(counted.state.uses).toBe(0);
+		expect(family.sdkCalls()).toHaveLength(0);
+		expect(wire.sent).toHaveLength(0);
+	});
+
+	it("refuses a model of another API with native credentials before any lease, SDK or send", async () => {
+		const counted = expiringLease(100);
+		const result = await family.wrongApi({ credentials: creds(counted) });
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage ?? "").toContain("API identity");
 		expect(counted.state.uses).toBe(0);
 		expect(family.sdkCalls()).toHaveLength(0);
 		expect(wire.sent).toHaveLength(0);
@@ -384,5 +443,98 @@ describe("shared credential helpers", () => {
 		expect(calls[0]!.headers.get("authorization")).toBe(`Bearer ${SECRET}`);
 		expect(calls[0]!.headers.get("x-api-key")).toBeNull();
 		expect(calls[0]!.redirect).toBe("error");
+	});
+});
+
+describe("fixed pre-send refusals never lease or run the native redactor", () => {
+	const counted = () => {
+		let uses = 0;
+		let redactions = 0;
+		return {
+			state: () => ({ uses, redactions }),
+			credentials: {
+				lease: {
+					use: async <T>(consume: (s: string) => T | Promise<T>) => {
+						uses += 1;
+						return consume(SECRET);
+					},
+				},
+				redact: (text: string) => {
+					redactions += 1;
+					return nativeRedact(text);
+				},
+			} as SplyceCredentials,
+		};
+	};
+	const cases: Array<[string, (extra: Record<string, unknown>) => Promise<{ stopReason: string }>]> = [
+		[
+			"Anthropic caller-supplied client",
+			(extra) =>
+				streamAnthropic(
+					model(
+						"anthropic",
+						"anthropic-messages",
+						"claude-haiku-4-5",
+						"https://api.anthropic.com",
+					) as Model<"anthropic-messages">,
+					context(),
+					{ client: {} as never, ...extra },
+				).result(),
+		],
+		[
+			"Anthropic github-copilot provider",
+			(extra) =>
+				streamAnthropic(
+					model(
+						"github-copilot",
+						"anthropic-messages",
+						"claude-haiku-4-5",
+						"https://api.anthropic.com",
+					) as Model<"anthropic-messages">,
+					context(),
+					extra,
+				).result(),
+		],
+		[
+			"Google custom fetch",
+			(extra) =>
+				streamGoogle(
+					model(
+						"google",
+						"google-generative-ai",
+						"gemini-3-flash-preview",
+						"https://generativelanguage.example/v1beta",
+					) as Model<"google-generative-ai">,
+					context(),
+					{ fetch: (async () => new Response("{}")) as unknown as typeof fetch, ...extra },
+				).result(),
+		],
+		[
+			"Vertex custom fetch",
+			(extra) =>
+				streamVertex(
+					model(
+						"google-vertex",
+						"google-vertex",
+						"gemini-3-flash-preview",
+						"https://vertex.example",
+					) as Model<"google-vertex">,
+					context(),
+					{
+						project: "p",
+						location: "us-central1",
+						fetch: (async () => new Response("{}")) as unknown as typeof fetch,
+						...extra,
+					},
+				).result(),
+		],
+	];
+	it.each(cases)("%s: error, zero lease uses, zero redactor calls, zero SDK calls", async (_name, run) => {
+		const c = counted();
+		const result = await run({ credentials: c.credentials });
+		expect(result.stopReason).toBe("error");
+		expect(c.state()).toEqual({ uses: 0, redactions: 0 });
+		expect(sdk.anthropicOpts).toHaveLength(0);
+		expect(sdk.googleOpts).toHaveLength(0);
 	});
 });
