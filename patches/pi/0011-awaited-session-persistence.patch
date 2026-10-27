@@ -210,7 +210,7 @@ index c1d7655dcc9888fd0bbb70304e6a62b84d3b22fc..42f960376a11b21f2093eb25fe314e11
  		if (!existsSync(resolvedPath)) {
  			throw new SessionImportFileNotFoundError(resolvedPath);
 diff --git a/vendor/pi/packages/coding-agent/src/core/agent-session.ts b/vendor/pi/packages/coding-agent/src/core/agent-session.ts
-index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799085e8d42 100644
+index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..9716f16ca7198cc00e3b9661c69aae7f444d6d69 100644
 --- a/vendor/pi/packages/coding-agent/src/core/agent-session.ts
 +++ b/vendor/pi/packages/coding-agent/src/core/agent-session.ts
 @@ -26,6 +26,7 @@ import {
@@ -337,7 +337,18 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  	}
  
  	private _reportInvalidBoundaryContinuation(event: "turn_end" | "agent_before_settle"): void {
-@@ -1140,6 +1155,72 @@ export class AgentSession {
+@@ -1118,6 +1133,10 @@ export class AgentSession {
+ 
+ 	private async _emitAgentSettled(): Promise<void> {
+ 		this._cacheWarmer?.onAgentSettled();
++		// Close the queue window in the same synchronous step as the final empty check.
++		while (this._pendingBashMessages.length > 0 || this._pendingCustomMessages.length > 0) {
++			await this._flushPendingRunMessages();
++		}
+ 		this._isAgentRunActive = false;
+ 		this._isEmittingAgentSettled = true;
+ 		try {
+@@ -1140,6 +1159,72 @@ export class AgentSession {
  		this._resolveIdleWaitIfIdle();
  	}
  
@@ -410,7 +421,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  	/** Internal handler for agent events - shared by subscribe and reconnect */
  	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
  		assertSplyceReady(this);
-@@ -1181,33 +1262,31 @@ export class AgentSession {
+@@ -1181,33 +1266,31 @@ export class AgentSession {
  			}
  		}
  
@@ -464,7 +475,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
  
  			if (event.message.role === "assistant") {
-@@ -1236,7 +1315,7 @@ export class AgentSession {
+@@ -1236,7 +1319,7 @@ export class AgentSession {
  		// extension and listener dispatch above also picks up messages that turn_end
  		// handlers queued.
  		if (event.type === "turn_end") {
@@ -473,7 +484,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  		}
  	};
  
-@@ -1284,7 +1363,7 @@ export class AgentSession {
+@@ -1284,7 +1367,7 @@ export class AgentSession {
  	 * found in the projected context, so the pair stays together whether the attempt comes from
  	 * the current run or a resumed session. An unpaired result fails the next request (#11227).
  	 */
@@ -482,7 +493,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  		const toolCallIds = new Set(message.content.flatMap((block) => (block.type === "toolCall" ? [block.id] : [])));
  		// A context edit replaces the projected copy, so match it by source entry as well.
  		const entryId = this._findPersistedMessageEntryId(message);
-@@ -1305,9 +1384,10 @@ export class AgentSession {
+@@ -1305,9 +1388,10 @@ export class AgentSession {
  		if (unresolvedProjectedTarget) {
  			throw new Error("Cannot persist recovery omission because a projected message has no source entry");
  		}
@@ -496,7 +507,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			const entry = this.sessionManager.getEntry(editId);
  			if (entry) this._emit({ type: "entry_appended", entry });
  		}
-@@ -1931,21 +2011,29 @@ export class AgentSession {
+@@ -1931,21 +2015,29 @@ export class AgentSession {
  			messages = await this._prepareRun(trigger);
  		} catch (error) {
  			this._isAgentRunActive = false;
@@ -532,7 +543,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  		// The run records the loadout in the transcript; restored tools that did not register by now
  		// are dropped, so a tool that never registers does not stay pending.
  		this._pendingToolNames.clear();
-@@ -1965,8 +2053,7 @@ export class AgentSession {
+@@ -1965,8 +2057,7 @@ export class AgentSession {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
  			this._failedResponse = undefined;
  			this._runSystemPromptOptions = undefined;
@@ -542,7 +553,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			await this._emitAgentSettled();
  		}
  	}
-@@ -2077,8 +2164,8 @@ export class AgentSession {
+@@ -2077,8 +2168,8 @@ export class AgentSession {
  				{ type: "agent_before_settle", outcome: this._lastActivityOutcome },
  				(entries) => this._buildBoundaryContext(entries, "agent_before_settle"),
  			);
@@ -553,7 +564,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			const finalContext = this._buildBoundaryContext([], "agent_before_settle");
  			if (this._abortDuringBeforeSettle) return false;
  			const shouldContinue = result.continue || this.agent.hasQueuedMessages();
-@@ -2447,34 +2534,53 @@ export class AgentSession {
+@@ -2447,34 +2538,60 @@ export class AgentSession {
  			// describe messages the session tree does not contain.
  			this._pendingCustomMessages.push(appMessage);
  		} else {
@@ -600,18 +611,25 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
 -		for (const appMessage of pending) {
 -			this._appendCustomMessage(appMessage);
 +		const drain = (async () => {
-+			const pending = this._pendingCustomMessages.slice();
-+			const entryIds = await this.sessionManager.withPersistence((manager) =>
-+				pending.map((message) =>
-+					manager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details),
-+				),
-+			);
-+			this._pendingCustomMessages.splice(0, pending.length);
-+			this._refreshFinalizedContext();
-+			for (let i = 0; i < entryIds.length; i++) {
-+				const message = this._readPersistedMessage(entryIds[i], pending[i]);
-+				this._emit({ type: "message_start", message });
-+				this._emit({ type: "message_end", message });
++			while (this._pendingCustomMessages.length > 0) {
++				const pending = this._pendingCustomMessages.slice();
++				const entryIds = await this.sessionManager.withPersistence((manager) =>
++					pending.map((message) =>
++						manager.appendCustomMessageEntry(
++							message.customType,
++							message.content,
++							message.display,
++							message.details,
++						),
++					),
++				);
++				this._pendingCustomMessages.splice(0, pending.length);
++				this._refreshFinalizedContext();
++				for (let i = 0; i < entryIds.length; i++) {
++					const message = this._readPersistedMessage(entryIds[i], pending[i]);
++					this._emit({ type: "message_start", message });
++					this._emit({ type: "message_end", message });
++				}
 +			}
 +		})();
 +		this._pendingCustomFlush = drain;
@@ -622,7 +640,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  		}
  	}
  
-@@ -2606,17 +2712,7 @@ export class AgentSession {
+@@ -2606,17 +2723,7 @@ export class AgentSession {
  
  		const previousModel = this.model;
  		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
@@ -641,7 +659,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  
  		await this._emitModelSelect(model, previousModel, "set");
  	}
-@@ -2672,20 +2768,7 @@ export class AgentSession {
+@@ -2672,20 +2779,7 @@ export class AgentSession {
  		const next = scopedModels[nextIndex];
  		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.model, next.thinkingLevel);
  
@@ -663,7 +681,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  
  		await this._emitModelSelect(next.model, currentModel, "cycle");
  
-@@ -2708,16 +2791,7 @@ export class AgentSession {
+@@ -2708,16 +2802,7 @@ export class AgentSession {
  		const nextModel = availableModels[nextIndex];
  
  		const thinkingLevel = this._getThinkingLevelForModelSwitch(nextModel);
@@ -681,7 +699,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  
  		await this._emitModelSelect(nextModel, currentModel, "cycle");
  
-@@ -2728,6 +2802,29 @@ export class AgentSession {
+@@ -2728,6 +2813,29 @@ export class AgentSession {
  	// Thinking Level Management
  	// =========================================================================
  
@@ -711,7 +729,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  	/**
  	 * Set thinking level.
  	 * Clamps to model capabilities based on available thinking levels.
-@@ -2743,6 +2840,7 @@ export class AgentSession {
+@@ -2743,6 +2851,7 @@ export class AgentSession {
  		const previousLevel = this.agent.state.thinkingLevel;
  		const isChanging = effectiveLevel !== previousLevel;
  
@@ -719,7 +737,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  		this.agent.state.thinkingLevel = effectiveLevel;
  
  		if (options.persist) {
-@@ -2750,7 +2848,6 @@ export class AgentSession {
+@@ -2750,7 +2859,6 @@ export class AgentSession {
  		}
  
  		if (isChanging) {
@@ -727,7 +745,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			this._emit({ type: "thinking_level_changed", level: effectiveLevel });
  			void this._extensionRunner.emit({
  				type: "thinking_level_select",
-@@ -2760,6 +2857,22 @@ export class AgentSession {
+@@ -2760,6 +2868,22 @@ export class AgentSession {
  		}
  	}
  
@@ -750,7 +768,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  	/**
  	 * Cycle to next thinking level.
  	 * @returns New level, or undefined if model doesn't support thinking
-@@ -2776,6 +2889,14 @@ export class AgentSession {
+@@ -2776,6 +2900,14 @@ export class AgentSession {
  		return nextLevel;
  	}
  
@@ -765,7 +783,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  	/**
  	 * Get available thinking levels for current model.
  	 * The provider will clamp to what the specific model supports internally.
-@@ -2973,15 +3094,17 @@ export class AgentSession {
+@@ -2973,15 +3105,17 @@ export class AgentSession {
  				throw new Error("Compaction cancelled");
  			}
  
@@ -788,7 +806,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  
  			if (this._extensionRunner && savedCompactionEntry) {
  				await this._extensionRunner.emit({
-@@ -2994,12 +3117,12 @@ export class AgentSession {
+@@ -2994,12 +3128,12 @@ export class AgentSession {
  			}
  
  			const compactionResult: CompactionResult = {
@@ -806,7 +824,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			};
  			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
  			this._clearManualCompactionState();
-@@ -3164,8 +3287,8 @@ export class AgentSession {
+@@ -3164,8 +3298,8 @@ export class AgentSession {
  			}
  
  			// Persistently omit the selected final attempt before post-run recovery compaction.
@@ -816,7 +834,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			const retry = await this._runAutoCompaction("overflow", willRetry);
  			if (retry) this._failedResponse = assistantMessage;
  			return retry;
-@@ -3299,15 +3422,17 @@ export class AgentSession {
+@@ -3299,15 +3433,17 @@ export class AgentSession {
  			}
  			abortController.signal.throwIfAborted();
  
@@ -839,7 +857,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  
  			if (this._extensionRunner && savedCompactionEntry) {
  				await this._extensionRunner.emit({
-@@ -3320,12 +3445,12 @@ export class AgentSession {
+@@ -3320,12 +3456,12 @@ export class AgentSession {
  			}
  
  			const result: CompactionResult = {
@@ -857,7 +875,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			};
  			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
  
-@@ -3335,6 +3460,12 @@ export class AgentSession {
+@@ -3335,6 +3471,12 @@ export class AgentSession {
  			// Continue once so queued messages are delivered.
  			return this.agent.hasQueuedMessages();
  		} catch (error) {
@@ -870,7 +888,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			const message = error instanceof Error ? error.message : "compaction failed";
  			const aborted = abortController?.signal.aborted === true || cancelledByExtension;
  			if (started) {
-@@ -3516,41 +3647,25 @@ export class AgentSession {
+@@ -3516,41 +3658,25 @@ export class AgentSession {
  
  		runner.bindCore(
  			{
@@ -921,7 +939,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  				},
  				getActiveTools: () => this.getActiveToolNames(),
  				getAllTools: () => this.getAllTools(),
-@@ -3564,7 +3679,7 @@ export class AgentSession {
+@@ -3564,7 +3690,7 @@ export class AgentSession {
  					return true;
  				},
  				getThinkingLevel: () => this.thinkingLevel,
@@ -930,7 +948,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			},
  			{
  				getModel: () => this.model,
-@@ -3902,13 +4017,12 @@ export class AgentSession {
+@@ -3902,13 +4028,12 @@ export class AgentSession {
  			return false;
  		}
  
@@ -949,7 +967,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  
  		const delayMs = retryDelayMs(settings, this._retryAttempt);
  
-@@ -3920,9 +4034,6 @@ export class AgentSession {
+@@ -3920,9 +4045,6 @@ export class AgentSession {
  			errorMessage: message.errorMessage || "Unknown error",
  		});
  
@@ -959,7 +977,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  		// Wait with exponential backoff (abortable)
  		this._retryAbortController = new AbortController();
  		try {
-@@ -4004,7 +4115,7 @@ export class AgentSession {
+@@ -4004,7 +4126,7 @@ export class AgentSession {
  				},
  			);
  
@@ -968,7 +986,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  			return result;
  		} finally {
  			this._bashAbortControllers.delete(abortController);
-@@ -4039,6 +4150,31 @@ export class AgentSession {
+@@ -4039,6 +4161,31 @@ export class AgentSession {
  		}
  	}
  
@@ -1000,7 +1018,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  	/**
  	 * Cancel running bash command.
  	 */
-@@ -4062,14 +4198,34 @@ export class AgentSession {
+@@ -4062,14 +4209,38 @@ export class AgentSession {
  	 * Flush pending bash messages to agent state and session.
  	 * Called after agent turn completes to maintain proper message ordering.
  	 */
@@ -1009,12 +1027,14 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
 +		if (this._pendingBashFlush) return this._pendingBashFlush;
  		if (this._pendingBashMessages.length === 0) return;
 +		const drain = (async () => {
-+			const pending = this._pendingBashMessages.slice();
-+			await this.sessionManager.withPersistence((manager) => {
-+				for (const bashMessage of pending) manager.appendMessage(bashMessage);
-+			});
-+			this._pendingBashMessages.splice(0, pending.length);
-+			this._refreshFinalizedContext();
++			while (this._pendingBashMessages.length > 0) {
++				const pending = this._pendingBashMessages.slice();
++				await this.sessionManager.withPersistence((manager) => {
++					for (const bashMessage of pending) manager.appendMessage(bashMessage);
++				});
++				this._pendingBashMessages.splice(0, pending.length);
++				this._refreshFinalizedContext();
++			}
 +		})();
 +		this._pendingBashFlush = drain;
 +		try {
@@ -1028,8 +1048,10 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
 -			this.sessionManager.appendMessage(bashMessage);
 +	private async _flushPendingRunMessages(): Promise<void> {
 +		try {
-+			await this._flushPendingBashMessages();
-+			await this._flushPendingCustomMessages();
++			while (this._pendingBashMessages.length > 0 || this._pendingCustomMessages.length > 0) {
++				await this._flushPendingBashMessages();
++				await this._flushPendingCustomMessages();
++			}
 +		} catch (error) {
 +			this._isAgentRunActive = false;
 +			this._resolveIdleWaitIfIdle();
@@ -1040,7 +1062,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  	}
  
  	// =========================================================================
-@@ -4087,6 +4243,14 @@ export class AgentSession {
+@@ -4087,6 +4258,14 @@ export class AgentSession {
  		void this._extensionRunner.emit(event);
  	}
  
@@ -1055,7 +1077,7 @@ index 267a2a1c882fbad5b0cd63a0e165eec83c23c550..c64afcf9e08b292006c366c913cd1799
  	// =========================================================================
  	// Tree Navigation
  	// =========================================================================
-@@ -4246,34 +4410,24 @@ export class AgentSession {
+@@ -4246,34 +4425,24 @@ export class AgentSession {
  
  			// Switch leaf (with or without summary)
  			// Summary is attached at the navigation target position (newLeafId), not the old branch
@@ -1644,11 +1666,12 @@ index 878446ae5b8b90974c10dca63b76b190b6ce5dab..36bc95919e6f0bffba1da6917fec65ee
  		outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`,
  		process.cwd(),
 diff --git a/vendor/pi/packages/coding-agent/src/core/session-manager.ts b/vendor/pi/packages/coding-agent/src/core/session-manager.ts
-index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494fa3f2aae 100644
+index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..2cf26be19ce6d5d9aa089a569a16f9b9210b9e6b 100644
 --- a/vendor/pi/packages/coding-agent/src/core/session-manager.ts
 +++ b/vendor/pi/packages/coding-agent/src/core/session-manager.ts
-@@ -1,4 +1,9 @@
+@@ -1,4 +1,10 @@
 -import type { AgentMessage } from "@earendil-works/pi-agent-core";
++import { AsyncLocalStorage } from "node:async_hooks";
 +import {
 +	type AgentMessage,
 +	assertSplycePersistence,
@@ -1658,10 +1681,17 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  import {
  	type AssistantMessage,
  	getCurrentSystemMessage,
-@@ -21,12 +26,14 @@ import {
+@@ -17,16 +23,21 @@ import {
+ 	closeSync,
+ 	createReadStream,
+ 	existsSync,
++	fstatSync,
+ 	mkdirSync,
  	openSync,
  	readdirSync,
++	readFileSync,
  	readSync,
++	realpathSync,
 +	renameSync,
  	type Stats,
  	statSync,
@@ -1674,7 +1704,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  import { createInterface } from "readline";
  import { StringDecoder } from "string_decoder";
  import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
-@@ -594,6 +601,7 @@ function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgen
+@@ -594,6 +605,7 @@ function getDefaultSessionDirPath(cwd: string, agentDir: string = getDefaultAgen
  }
  
  export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultAgentDir()): string {
@@ -1682,7 +1712,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	const sessionDir = getDefaultSessionDirPath(cwd, agentDir);
  	if (!existsSync(sessionDir)) {
  		mkdirSync(sessionDir, { recursive: true });
-@@ -625,6 +633,10 @@ function parseSessionEntryLine(line: string): FileEntry | null {
+@@ -625,6 +637,10 @@ function parseSessionEntryLine(line: string): FileEntry | null {
  
  /** Exported for testing */
  export function loadEntriesFromFile(filePath: string): FileEntry[] {
@@ -1693,7 +1723,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	const resolvedFilePath = normalizePath(filePath);
  	if (!existsSync(resolvedFilePath)) return [];
  
-@@ -665,7 +677,10 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
+@@ -665,7 +681,10 @@ export function loadEntriesFromFile(filePath: string): FileEntry[] {
  		return [];
  	}
  
@@ -1705,7 +1735,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	return entries;
  }
  
-@@ -984,6 +999,198 @@ async function listSessionsFromDir(
+@@ -984,6 +1003,260 @@ async function listSessionsFromDir(
   * Use buildSessionContext() to get the resolved message list for the LLM, which
   * handles compaction summaries and follows the path from root to current leaf.
   */
@@ -1714,9 +1744,71 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +	write: "none" | "append" | "rewrite";
 +	existingFile: boolean;
 +	target?: string;
++	fileReadPath?: string;
++	fileVersion?: PersistenceFileVersion;
++}
++interface PersistenceFileVersion {
++	canonicalPath: string;
++	device: bigint;
++	inode: bigint;
++	size: bigint;
++	modified: bigint;
++	changed: bigint;
++	bytes: string;
 +}
 +const persistenceStages = new WeakMap<SessionManager, PersistenceStage>();
++const persistenceChains = new AsyncLocalStorage<ReadonlySet<SessionManager>>();
 +let ownedPersistenceStageDepth = 0;
++
++function persistenceFileVersion(path: string): PersistenceFileVersion | undefined {
++	if (!existsSync(path)) return undefined;
++	const fd = openSync(path, "r");
++	try {
++		const before = fstatSync(fd, { bigint: true });
++		if (!before.isFile()) persistenceUnavailable();
++		const bytes = readFileSync(fd, "utf8");
++		const after = fstatSync(fd, { bigint: true });
++		const canonicalPath = realpathSync.native(path);
++		const current = statSync(canonicalPath, { bigint: true });
++		if (
++			before.dev !== after.dev ||
++			before.ino !== after.ino ||
++			before.size !== after.size ||
++			before.mtimeNs !== after.mtimeNs ||
++			before.ctimeNs !== after.ctimeNs ||
++			current.dev !== after.dev ||
++			current.ino !== after.ino
++		)
++			persistenceUnavailable();
++		return {
++			canonicalPath,
++			device: after.dev,
++			inode: after.ino,
++			size: after.size,
++			modified: after.mtimeNs,
++			changed: after.ctimeNs,
++			bytes,
++		};
++	} finally {
++		closeSync(fd);
++	}
++}
++
++function assertPersistenceFileVersion(path: string, expected: PersistenceFileVersion | undefined): void {
++	const actual = persistenceFileVersion(path);
++	if (
++		!expected ||
++		!actual ||
++		actual.canonicalPath !== expected.canonicalPath ||
++		actual.device !== expected.device ||
++		actual.inode !== expected.inode ||
++		actual.size !== expected.size ||
++		actual.modified !== expected.modified ||
++		actual.changed !== expected.changed ||
++		actual.bytes !== expected.bytes
++	)
++		persistenceUnavailable();
++}
 +
 +/** Donor exporters cannot publish either a native manager or a pending/revoked draft. */
 +export function assertUnownedSessionExport(manager: SessionManager): void {
@@ -1904,7 +1996,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  export class SessionManager {
  	private sessionId: string = "";
  	private sessionFile: string | undefined;
-@@ -996,6 +1203,10 @@ export class SessionManager {
+@@ -996,6 +1269,11 @@ export class SessionManager {
  	private labelsById: Map<string, string> = new Map();
  	private labelTimestampsById: Map<string, string> = new Map();
  	private leafId: string | null = null;
@@ -1912,10 +2004,11 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +	private _persistenceUncertain = false;
 +	private _persistenceQualified = false;
 +	private _persistenceBytes: string | undefined;
++	private _persistenceFileVersion: PersistenceFileVersion | undefined;
  
  	private constructor(
  		cwd: string,
-@@ -1004,10 +1215,13 @@ export class SessionManager {
+@@ -1004,10 +1282,13 @@ export class SessionManager {
  		persist: boolean,
  		newSessionOptions?: NewSessionOptions,
  		preloadedFileEntries?: FileEntry[],
@@ -1929,7 +2022,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
  			mkdirSync(this.sessionDir, { recursive: true });
  		}
-@@ -1021,15 +1235,229 @@ export class SessionManager {
+@@ -1021,15 +1302,263 @@ export class SessionManager {
  		}
  	}
  
@@ -1952,8 +2045,12 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +
 +	/** Native persistence is awaited; the synchronous callback only edits a detached draft. */
 +	withPersistence<T>(stage: (manager: SessionManager) => T, signal?: AbortSignal): Promise<T> {
-+		if (persistenceStages.has(this)) persistenceUnavailable();
-+		const operation = this._persistenceTail.then(() => this._withPersistence(stage, signal));
++		if (persistenceStages.has(this) || persistenceChains.getStore()?.has(this)) persistenceUnavailable();
++		const chain = new Set(persistenceChains.getStore());
++		chain.add(this);
++		const operation = this._persistenceTail.then(() =>
++			persistenceChains.run(chain, () => this._withPersistence(stage, signal)),
++		);
 +		this._persistenceTail = operation.then(
 +			() => undefined,
 +			() => undefined,
@@ -1970,6 +2067,13 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +		};
 +		try {
 +			check();
++			const previousFile = this.sessionFile;
++			const previousVersion = this._persistenceFileVersion;
++			const checkPreviousFile = () => {
++				if (owned && this.persist && this.flushed && previousFile)
++					assertPersistenceFileVersion(previousFile, previousVersion);
++			};
++			checkPreviousFile();
 +			const previous = persistenceSnapshot(this.fileEntries);
 +			const previousSerialized = previous.length ? serializePersistence(previous) : "";
 +			const previousBytes = this._persistenceBytes ?? previousSerialized;
@@ -2058,6 +2162,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +			check();
 +			const safeEntries = parseSanitizedPersistence(safe, entries);
 +			if (persist && flushed && safe !== previousSerialized && write === "none") write = "rewrite";
++			if (owned && existingFile && plan.fileVersion?.bytes === safe) write = "none";
 +			let safeResult = resultSnapshot;
 +			if (resultSnapshot !== undefined) {
 +				const projection = projectPersistenceResult(resultSnapshot, safeEntries);
@@ -2077,6 +2182,13 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +			const safeLines = safe.split("\n");
 +			const safePrefix = `${safeLines.slice(0, previous.length).join("\n")}\n`;
 +			check();
++			const checkFiles = () => {
++				checkPreviousFile();
++				if (owned && existingFile && plan.fileReadPath)
++					assertPersistenceFileVersion(plan.fileReadPath, plan.fileVersion);
++			};
++			// This is optimistic validation, not a cross-process exclusive writer lease.
++			checkFiles();
 +			if (persist && sessionDir && !existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
 +			if (persist && sessionFile && write !== "none") {
 +				if (write === "append" && sameFile && this.flushed && safePrefix === previousBytes) {
@@ -2100,6 +2212,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +							closeSync(fd);
 +						}
 +						check();
++						checkFiles();
 +						replacing = true;
 +						renameSync(temporary, sessionFile);
 +						created = false;
@@ -2125,6 +2238,14 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +				}
 +				flushed = true;
 +			}
++			let committedVersion: PersistenceFileVersion | undefined;
++			if (owned && persist && flushed && sessionFile) {
++				committedVersion = persistenceFileVersion(sessionFile);
++				if (!committedVersion || committedVersion.bytes !== safe) {
++					this._persistenceUncertain = true;
++					persistenceUnavailable();
++				}
++			}
 +			this.fileEntries = safeEntries;
 +			this.sessionId = sessionId;
 +			this.sessionFile = sessionFile;
@@ -2134,6 +2255,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +			this.flushed = flushed;
 +			this._persistenceQualified = owned;
 +			this._persistenceBytes = safe;
++			this._persistenceFileVersion = committedVersion;
 +			this._publishIndex();
 +			this.leafId = leafId;
 +			return safeResult;
@@ -2153,14 +2275,19 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +		const staged = persistenceStages.get(this);
 +		if (staged?.target !== undefined && staged.target !== resolvePath(sessionFile)) persistenceUnavailable();
  		this.sessionFile = resolvePath(sessionFile);
++		if (staged && staged.fileReadPath === undefined) {
++			staged.fileReadPath = this.sessionFile;
++			staged.fileVersion = persistenceFileVersion(this.sessionFile);
++		}
  		if (existsSync(this.sessionFile)) {
 -			const entries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
 +			if (staged) staged.existingFile = true;
 +			const entries = preloadedFileEntries ?? readEntriesFromFile(this.sessionFile, !staged);
++			if (staged) assertPersistenceFileVersion(this.sessionFile, staged.fileVersion);
  
  			// If file was empty, initialize it with a valid session header. If it was
  			// non-empty but did not parse as a pi session, fail without modifying it.
-@@ -1040,6 +1468,7 @@ export class SessionManager {
+@@ -1040,6 +1569,7 @@ export class SessionManager {
  				}
  				this.newSession();
  				this.sessionFile = explicitPath;
@@ -2168,7 +2295,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  				this._rewriteFile();
  				this.flushed = true;
  				return;
-@@ -1047,6 +1476,7 @@ export class SessionManager {
+@@ -1047,6 +1577,7 @@ export class SessionManager {
  
  			this._loadEntries(entries);
  			this.flushed = true;
@@ -2176,7 +2303,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		} else {
  			const explicitPath = this.sessionFile;
  			this.newSession();
-@@ -1055,6 +1485,13 @@ export class SessionManager {
+@@ -1055,6 +1586,13 @@ export class SessionManager {
  	}
  
  	newSession(options?: NewSessionOptions): string | undefined {
@@ -2190,7 +2317,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		if (options?.id !== undefined) {
  			assertValidSessionId(options.id);
  		}
-@@ -1083,6 +1520,7 @@ export class SessionManager {
+@@ -1083,6 +1621,7 @@ export class SessionManager {
  	}
  
  	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
@@ -2198,7 +2325,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
  
  		if (header) {
-@@ -1101,6 +1539,11 @@ export class SessionManager {
+@@ -1101,6 +1640,11 @@ export class SessionManager {
  	}
  
  	private _buildIndex(): void {
@@ -2210,7 +2337,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		this.byId.clear();
  		this.labelsById.clear();
  		this.labelTimestampsById.clear();
-@@ -1122,7 +1565,13 @@ export class SessionManager {
+@@ -1122,7 +1666,13 @@ export class SessionManager {
  	}
  
  	private _rewriteFile(): void {
@@ -2224,7 +2351,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		const fd = openSync(this.sessionFile, "w");
  		try {
  			for (const entry of this.fileEntries) {
-@@ -1170,7 +1619,17 @@ export class SessionManager {
+@@ -1170,7 +1720,17 @@ export class SessionManager {
  	}
  
  	_persist(entry: SessionEntry): void {
@@ -2242,7 +2369,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  
  		if (!this.flushed) {
  			if (!this._hasConversation()) return;
-@@ -1189,6 +1648,7 @@ export class SessionManager {
+@@ -1189,6 +1749,7 @@ export class SessionManager {
  	}
  
  	private _appendEntry(entry: SessionEntry): void {
@@ -2250,7 +2377,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		this.fileEntries.push(entry);
  		this.byId.set(entry.id, entry);
  		this.leafId = entry.id;
-@@ -1406,11 +1866,11 @@ export class SessionManager {
+@@ -1406,11 +1967,11 @@ export class SessionManager {
  	}
  
  	getLeafEntry(): SessionEntry | undefined {
@@ -2264,7 +2391,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	}
  
  	/**
-@@ -1423,7 +1883,7 @@ export class SessionManager {
+@@ -1423,7 +1984,7 @@ export class SessionManager {
  				children.push(entry);
  			}
  		}
@@ -2273,7 +2400,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	}
  
  	/**
-@@ -1475,7 +1935,7 @@ export class SessionManager {
+@@ -1475,7 +2036,7 @@ export class SessionManager {
  			current = current.parentId ? this.byId.get(current.parentId) : undefined;
  		}
  		path.reverse();
@@ -2282,7 +2409,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	}
  
  	/**
-@@ -1483,7 +1943,7 @@ export class SessionManager {
+@@ -1483,7 +2044,7 @@ export class SessionManager {
  	 * Uses tree traversal from current leaf.
  	 */
  	buildContextEntries(): SessionEntry[] {
@@ -2291,7 +2418,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	}
  
  	/**
-@@ -1491,7 +1951,7 @@ export class SessionManager {
+@@ -1491,7 +2052,7 @@ export class SessionManager {
  	 * Uses tree traversal from current leaf.
  	 */
  	buildSessionProjection(): SessionProjection {
@@ -2300,7 +2427,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	}
  
  	buildSessionContext(): SessionContext {
-@@ -1504,7 +1964,7 @@ export class SessionManager {
+@@ -1504,7 +2065,7 @@ export class SessionManager {
  	 */
  	getHeader(): SessionHeader | null {
  		const h = this.fileEntries.find((e) => e.type === "session");
@@ -2309,7 +2436,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	}
  
  	/** Number of session entries (excludes header), without copying them like `getEntries()`. */
-@@ -1518,7 +1978,7 @@ export class SessionManager {
+@@ -1518,7 +2079,7 @@ export class SessionManager {
  	 * change the leaf pointer. Entries cannot be modified or deleted.
  	 */
  	getEntries(): SessionEntry[] {
@@ -2318,7 +2445,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  	}
  
  	/**
-@@ -1577,6 +2037,7 @@ export class SessionManager {
+@@ -1577,6 +2138,7 @@ export class SessionManager {
  	 * are not modified or deleted.
  	 */
  	branch(branchFromId: string): void {
@@ -2326,7 +2453,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		if (!this.byId.has(branchFromId)) {
  			throw new Error(`Entry ${branchFromId} not found`);
  		}
-@@ -1589,6 +2050,7 @@ export class SessionManager {
+@@ -1589,6 +2151,7 @@ export class SessionManager {
  	 * Use this when navigating to re-edit the first user message.
  	 */
  	resetLeaf(): void {
@@ -2334,7 +2461,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		this.leafId = null;
  	}
  
-@@ -1604,6 +2066,7 @@ export class SessionManager {
+@@ -1604,6 +2167,7 @@ export class SessionManager {
  		fromHook?: boolean,
  		usage?: Usage,
  	): string {
@@ -2342,7 +2469,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		if (branchFromId !== null && !this.byId.has(branchFromId)) {
  			throw new Error(`Entry ${branchFromId} not found`);
  		}
-@@ -1630,6 +2093,8 @@ export class SessionManager {
+@@ -1630,6 +2194,8 @@ export class SessionManager {
  	 * Returns the new session file path, or undefined if not persisting.
  	 */
  	createBranchedSession(leafId: string): string | undefined {
@@ -2351,7 +2478,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		const previousSessionFile = this.sessionFile;
  		const path = this.getBranch(leafId);
  		if (path.length === 0) {
-@@ -1712,6 +2177,11 @@ export class SessionManager {
+@@ -1712,6 +2278,11 @@ export class SessionManager {
  			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
  			this.sessionId = newSessionId;
  			this.sessionFile = newSessionFile;
@@ -2363,7 +2490,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  			this._buildIndex();
  
  			// Use the same rule as _persist(): write now if the branched path already
-@@ -1752,7 +2222,61 @@ export class SessionManager {
+@@ -1752,7 +2323,65 @@ export class SessionManager {
  	 * @param cwd Working directory (stored in session header)
  	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
  	 */
@@ -2409,6 +2536,10 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
 +			bind(manager);
 +			assertSplycePersistence(manager);
 +			await manager.withPersistence((draft) => {
++				const plan = persistenceStages.get(draft);
++				if (!plan) persistenceUnavailable();
++				plan.fileReadPath = resolvedPath;
++				plan.fileVersion = persistenceFileVersion(resolvedPath);
 +				const entries = readEntriesFromFile(resolvedPath, false);
 +				const header = entries.find((entry): entry is SessionHeader => entry.type === "session");
 +				draft.cwd = resolvePath(cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd());
@@ -2425,7 +2556,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
  		return new SessionManager(cwd, dir, undefined, true, options);
  	}
-@@ -1764,6 +2288,7 @@ export class SessionManager {
+@@ -1764,6 +2393,7 @@ export class SessionManager {
  	 * @param cwdOverride Optional cwd override instead of the session header cwd.
  	 */
  	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
@@ -2433,7 +2564,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		const resolvedPath = resolvePath(path);
  		let header: SessionHeader | null = null;
  		let preloadedFileEntries: FileEntry[] | undefined;
-@@ -1791,6 +2316,7 @@ export class SessionManager {
+@@ -1791,6 +2421,7 @@ export class SessionManager {
  	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
  	 */
  	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
@@ -2441,7 +2572,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494
  		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
  		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
  		const mostRecent = findMostRecentSession(dir, filterCwd ? cwd : undefined);
-@@ -1818,6 +2344,7 @@ export class SessionManager {
+@@ -1818,6 +2449,7 @@ export class SessionManager {
  		sessionDir?: string,
  		options?: NewSessionOptions,
  	): SessionManager {
