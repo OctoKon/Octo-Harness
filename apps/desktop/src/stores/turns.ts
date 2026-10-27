@@ -493,7 +493,9 @@ export function reduceTurns(
       // Assumption: the snapshot is a hint, not applied history. The durable cursor
       // only advances when a durable event is reduced, so authoritative replay
       // from resyncFromSeq is applied exactly once and never skipped.
-      next.lastSeq = Math.max(next.lastSeq, lastDurableSeq);
+      if (typeof lastDurableSeq === "number") {
+        next.lastSeq = Math.max(next.lastSeq, lastDurableSeq);
+      }
       const status: TurnStatus =
         snapshotState === "waiting_approval"
           ? "waiting_approval"
@@ -1042,3 +1044,4 @@ export function createTurnStreamTransport(
     },
   };
 }
+
