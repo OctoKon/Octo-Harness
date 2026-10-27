@@ -57,3 +57,7 @@ These require full implementation; not marked done.
 ## TD-16 adopted
 - provider-auth.ts copied from Itachi-1824/td16-credentials to unified branch; t-0f643f marked complete.
 - t-1fdd46, t-9b9351, t-c4e453 remain in progress (backend-heavy; coordinate with lapsecoder/dnarsh).
+
+## TD-22 adopted
+- provider-admission.ts copied from lapsecoder/td22-bedrock-azure; t-1fdd46 marked complete.
+- t-9b9351 (TD-19) and t-c4e453 (TD-68) remain in progress (no branch/WIP found).
