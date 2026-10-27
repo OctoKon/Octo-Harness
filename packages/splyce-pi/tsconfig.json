@@ -25,12 +25,16 @@
     "src/native-provider.ts",
     "src/admission.ts",
     "src/receipts.ts",
+    "src/recovery.ts",
+    "src/recovery-applier.ts",
     "src/config.ts",
     "src/provider-profiles.ts",
     "src/desktop-bridge.ts",
     "src/session-map.ts",
     "src/node-sqlite.d.ts",
     "src/policy-node.d.ts",
-    "src/node-child-process.d.ts"
+    "src/node-child-process.d.ts",
+    "src/workspace-tools-node.d.ts",
+    "src/workspace-tools.ts"
   ]
 }
