@@ -101,6 +101,58 @@ Pi's exact `undici` pin to 8.12.3, which includes the fix for
 [GHSA-xjj6-f33q-929c](https://github.com/nodejs/undici/security/advisories/GHSA-xjj6-f33q-929c).
 Regenerate and verify both npm lockfiles after applying it.
 
+## 0004: provider credential option and errored tool calls (TD-20, TD-21)
+
+`0004-provider-credentials-and-error-tool-calls.patch` applies from the Splyce root to `vendor/pi/`. It is an upstream-divergent
+core patch to `packages/ai`, recorded here per [core fusion](../../research/docs/design/core-fusion.md).
+
+- **Shared `credentials` option.** `src/splyce-credentials.ts` adds `SplyceCredentials { lease, redact }` (structural mirrors of the
+  native `SecretLease` and `Redactor`, TD-16) and `StreamOptions.credentials`. The secret is taken from the lease for each use,
+  never once: the Anthropic adapter builds its SDK client with a placeholder key and a fetch that leases the real key into
+  `x-api-key` on every HTTP send (SDK retries included) and refuses redirects; the Google and Vertex adapters create their client
+  inside `lease.use` for each request attempt. `apiKey` and `credentials` are mutually exclusive, a failing or revoked lease stops
+  the next send or attempt, and credentials are refused before anything is leased unless the native `redact` is supplied; it is the
+  only thing applied to `errorMessage`, so the adapters keep no copy of any secret. TD-19, TD-22 and TD-23 reuse the same helpers
+  (`createLeasedFetch`, `withLeasedSecret`, `redactorOf`, `assertCredentialOptions`).
+- **A lease cannot be mixed with another credential.** With `credentials`, a caller-supplied or model-configured auth header
+  (`authorization`, `proxy-authorization`, `x-api-key`, `api-key`, `x-goog-api-key`, `cookie`, any letter case) is refused before
+  anything is leased, because the pinned Google SDK prefers a header already present over its key; the Anthropic adapter refuses a
+  caller-supplied SDK client (it carries its own auth and transport); and the Google/Vertex adapters refuse a payload hook that sets
+  `httpOptions.baseUrl`, `headers`, `retryOptions`, `apiVersion` or `baseUrlResourceScope` (the endpoint, extra headers or SDK-level
+  retries that would reuse one lease). `packages/ai/test/splyce-credentials-wire.test.ts` runs the pinned Anthropic and Google SDKs
+  for real against local HTTP servers: exactly the leased key on the wire, a redirect is not followed on the Anthropic path, and a
+  lease revoked after the first send stops the SDK retry. **Unresolved:** the pinned `@google/genai` calls the global fetch with its
+  own options and follows redirects, so a redirect from the admitted Google/Vertex endpoint would carry `x-goog-api-key` along;
+  those APIs therefore stay behind the native transport's final per-send check (TD-13) and this is recorded as a `todo` test.
+- **Routing keeps the lease the only credential.** `buildBaseOptions` forwards `credentials` to the adapters (it used to drop
+  it); `compat.ts` no longer injects an ambient env key beside a lease; `Models.applyAuth` skips stored, environment and
+  provider-derived auth entirely when a lease is given (so no key, header or base URL from auth resolution can be mixed in or
+  redirect the admitted endpoint); the Anthropic and Google simple wrappers skip their early API-key check for a lease; and an
+  API outside `CREDENTIAL_APIS` (now anthropic-messages, google-generative-ai, google-vertex) refuses `credentials` instead of
+  ignoring it, because ignoring it would fall back to an ambient key. Each adapter owner adds its API to the set when bound.
+  Limits: within one Google/Vertex attempt the SDK holds the key until that attempt ends and its redirects are internal, so the
+  native transport (TD-13) must still do the final per-send check there; Vertex application-default credentials are not
+  covered by this option.
+- **Lease-scoped redaction, API identity and observers.** A native redactor may only know the secret while the lease is active,
+  so provider error text goes through `redactWithLease` (generic text if the lease is gone; there is no local fallback), and
+  response headers and provider stream events are sanitized inside the lease (`redactResponseWithLease`, `redactEventWithLease`)
+  before any `onResponse` / `onProviderStreamEvent` callback sees them. The credentials a call was admitted with are captured
+  before `onPayload` runs, so a callback that mutates the caller's options cannot swap them. With native credentials every
+  adapter refuses a model of another API (`assertCredentialApiIdentity`) before anything is leased, and fixed secret-free
+  refusals throw `CredentialPreflightError`, which is never lease-redacted (zero lease uses, zero redactor calls). The
+  `CREDENTIAL_APIS` set lives in `src/utils/model-operations.ts`. Regression tests: the family loops in
+  `splyce-credentials.test.ts` (scoped redactor, wrong API, four pre-send refusals) fail if any of these guards is removed.
+- **No tool calls from errored responses.** Anthropic returns a tool call only after its `content_block_stop`; a stream that ends
+  with an unfinished tool call is an error, and the error path drops every tool call, finished or not. The Google and Vertex error paths drop all
+  tool calls, so a malformed-function-call finish or a stream without a finish reason cannot reach dispatch.
+- **Regression entrypoints.** `packages/ai/test/splyce-credentials.test.ts`, `splyce-anthropic-stream-safety.test.ts` and
+  `splyce-google-stream-safety.test.ts` run the real adapters with only the vendor SDK boundary replaced. Removing the mutual
+  exclusion, the redaction, or the error-path filtering fails the corresponding case.
+- **Regression entrypoints** also include `splyce-credentials-routing.test.ts` (compat, Models layer, buildBaseOptions, unsupported
+  APIs) and `splyce-provider-e2e.test.ts` (the real `NativeCredentialResolver` into the real adapters; revocation, abort,
+  redaction, no fallback). Provider-specific admission, per-send endpoint rechecks on the Google/Vertex SDK paths and
+  cancellation of the SDK transport belong to TD-13/TD-16 and the native transport.
+
 ## Pinned model data hydration
 
 `0005-hydrate-pinned-model-catalog.patch` applies after patch 0003. It adds a

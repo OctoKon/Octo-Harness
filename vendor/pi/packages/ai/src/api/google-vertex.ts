@@ -7,6 +7,15 @@ import {
 	type ThinkingConfig,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import {
+	assertCredentialApiIdentity,
+	assertCredentialOptions,
+	assertSafeLeasedGooglePayload,
+	CredentialPreflightError,
+	redactEventWithLease,
+	redactWithLease,
+	withLeasedSecret,
+} from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -73,6 +82,9 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 	const stream = new AssistantMessageEventStream();
 	const normalizedContext = collapseSystemMessages(context);
 
+	// Captured before any caller callback runs: onPayload may mutate options, and error/observer paths must keep the
+	// credentials the call was admitted with.
+	const leasedCredentials = options?.credentials;
 	(async () => {
 		const output: AssistantMessage = {
 			role: "assistant",
@@ -94,33 +106,56 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
-				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
+				throw new CredentialPreflightError("Custom fetch is not supported by the Google Vertex adapter");
 			}
+			assertCredentialApiIdentity(model.api, "google-vertex", options);
+			assertCredentialOptions(options ?? {}, model.headers);
+			const credentials = leasedCredentials;
 			const apiKey = resolveApiKey(options);
-			// Create the client using either a Vertex API key, if provided, or ADC with project and location
-			const client = apiKey
-				? createClientWithApiKey(model, apiKey, options?.headers, options?.identity)
-				: createClient(
-						model,
-						resolveProject(options),
-						resolveLocation(options),
-						options?.headers,
-						options?.env,
-						options?.identity,
-					);
+			// Create the client using either a Vertex API key, if provided, or ADC with project and location.
+			// Splyce: with a lease the key is taken per request attempt and no long-lived client holds it.
+			const client = credentials
+				? undefined
+				: apiKey
+					? createClientWithApiKey(model, apiKey, options?.headers, options?.identity)
+					: createClient(
+							model,
+							resolveProject(options),
+							resolveLocation(options),
+							options?.headers,
+							options?.env,
+							options?.identity,
+						);
 			let params = buildParams(model, normalizedContext, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
+			if (credentials) assertSafeLeasedGooglePayload(params);
+			const googleStream = await retryGoogleRequest(
+				() =>
+					credentials
+						? withLeasedSecret(credentials, (secret) =>
+								createClientWithApiKey(
+									model,
+									secret,
+									options?.headers,
+									options?.identity,
+								).models.generateContentStream(params),
+							)
+						: client!.models.generateContentStream(params),
+				options,
+			);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
-				await options?.onProviderStreamEvent?.(chunk, model);
+				await options?.onProviderStreamEvent?.(
+					(await redactEventWithLease(leasedCredentials, chunk)) as typeof chunk,
+					model,
+				);
 				// Vertex uses the same @google/genai GenerateContentResponse type as Gemini.
 				// responseId is documented there as an output-only identifier for each response.
 				output.responseId ||= chunk.responseId;
@@ -301,8 +336,13 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			// Splyce TD-20: an errored or aborted response never carries tool calls into dispatch or persistence.
+			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			output.errorMessage = await redactWithLease(
+				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
+				formatProviderError(normalizeProviderError(error)),
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

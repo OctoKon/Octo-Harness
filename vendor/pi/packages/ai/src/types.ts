@@ -27,6 +27,7 @@ import type {
 	ThinkingLevel,
 	ThinkingLevelMap,
 } from "./providers/model-schema.ts";
+import type { SplyceCredentials } from "./splyce-credentials.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 import type { ClientIdentity } from "./utils/identity.ts";
@@ -218,6 +219,11 @@ export interface ProviderRequestOptions<TModel = Model<Api>> {
 }
 
 export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
+	/**
+	 * Splyce: leased credential from the native admission layer. Mutually exclusive with `apiKey`; when set, no
+	 * environment or fallback credential is used. Supported by the Anthropic, Google and Vertex adapters first.
+	 */
+	credentials?: SplyceCredentials;
 	/**
 	 * Optional callback invoked after an HTTP response is received and before
 	 * its body stream is consumed.
