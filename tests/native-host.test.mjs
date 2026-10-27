@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { Store } from "../packages/splyce-pi/dist/store.js";
+import { createNativeHost } from "../packages/splyce-pi/src/native-host.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const node = join(root, "apps/desktop/src-tauri/resources/engine/node.exe");
@@ -196,3 +197,88 @@ for (const [name, path, runtime] of [
     });
   }
 }
+
+test("loaded SDK source host: deleted applied config denies without stopping host", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "splyce-native-denial-"));
+  const appDataDir = join(fixture, "native-data");
+  try {
+    const host = createNativeHost(appDataDir);
+    host.close();
+    const storePath = join(appDataDir, "splyce", "store.db");
+    const store = Store.open(storePath);
+    const records = JSON.parse(
+      readFileSync(
+        new URL("./fixtures/contracts/records.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    store.append(
+      {
+        kind: "configurationTransition",
+        record: {
+          ...records.configurationTransition,
+          expectedConfigRevision: "cfg-0",
+        },
+      },
+      {
+        sessionId: "s1",
+        configRevision: "cfg-0",
+        profileRevision: "cfg-0",
+        policyRevision: "cfg-0",
+        resolveReference: () => true,
+      },
+    );
+    store.noteDeletion("rec-config");
+    const before = store.audit();
+    store.close();
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "packages/splyce-pi/src/engine-host.mjs")],
+      {
+        input: Buffer.concat([
+          frame(bootstrap(appDataDir)),
+          frame({
+            id: "send",
+            method: "send",
+            params: {
+              scopeId: "w-demo",
+              expectedConfigRevision: "cfg2",
+              expectedProfileRevision: "cfg-0",
+              expectedPolicyRevision: "cfg-0",
+            },
+          }),
+          frame({
+            id: "handshake",
+            method: "handshake",
+            params: { protocolVersion: 2 },
+          }),
+          frame({ id: "shutdown", method: "shutdown", params: {} }),
+        ]),
+        timeout: 15000,
+        windowsHide: true,
+      },
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr.toString());
+    assert.equal(result.stderr.length, 0);
+    const replies = responses(result.stdout);
+    assert.equal(replies.length, 4);
+    assert.equal(replies[1].error.code, "POLICY_DENIED");
+    assert.equal(replies[1].error.retryable, false);
+    assert.deepEqual(replies[2], { id: "handshake", ok: true, value: ready });
+    assert.deepEqual(replies[3], {
+      id: "shutdown",
+      ok: true,
+      value: { state: "stopped" },
+    });
+    const reopened = Store.open(storePath);
+    try {
+      assert.deepEqual(reopened.audit(), before);
+      assert.equal(reopened.deletionEpoch(), 1);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});

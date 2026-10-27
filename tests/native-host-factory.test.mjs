@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, toNamespacedPath } from "node:path";
 import test from "node:test";
 import { createNativeHost } from "../packages/splyce-pi/src/native-host.mjs";
 import { ConfigAuthority } from "../packages/splyce-pi/dist/config.js";
@@ -78,7 +78,7 @@ test("private native factory opens persistent Store with every runnable port clo
   assert.deepEqual(host.current("w-demo").grantIds, []);
   assert.deepEqual(readdirSync(join(directory, "splyce", "snapshots")), []);
   host.close();
-  const reopened = createNativeHost(directory);
+  const reopened = createNativeHost(toNamespacedPath(directory));
   try {
     assert.equal(writer.cursor(), 1);
     assert.deepEqual(reopened.current("w-demo").grantIds, []);
@@ -398,7 +398,18 @@ for (const [name, sql, expected] of [
 }
 
 test("path input must be an absolute native appdata path", () => {
-  for (const value of [undefined, {}, "relative", "", "C:\\bad\0path"])
+  const invalid = [undefined, {}, "relative", "", "C:\\bad\0path", "\ud800"];
+  if (process.platform === "win32")
+    invalid.push(
+      "\\\\server\\share",
+      "\\\\?\\UNC\\server\\share",
+      "\\\\.\\device",
+      "\\\\?\\GLOBALROOT\\device",
+      "C:relative",
+      "\\rooted",
+      "C:\\bad\ud800path",
+    );
+  for (const value of invalid)
     assert.throws(
       () => createNativeHost(value),
       code("NATIVE_APP_DATA_INVALID"),

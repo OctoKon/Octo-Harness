@@ -26,9 +26,14 @@ export function createNativeHost(appDataDir) {
   if (
     typeof appDataDir !== "string" ||
     !isAbsolute(appDataDir) ||
-    appDataDir.includes("\0")
+    !appDataDir.isWellFormed() ||
+    appDataDir.includes("\0") ||
+    (process.platform === "win32" &&
+      !/^[A-Za-z]:[\\/]/u.test(appDataDir.replace(/^\\\\\?\\/u, "")))
   )
     fail("NATIVE_APP_DATA_INVALID");
+  if (process.platform === "win32")
+    appDataDir = appDataDir.replace(/^\\\\\?\\/u, "");
   const directory = join(appDataDir, "splyce");
   mkdirSync(directory, { recursive: true });
   const store = Store.open(join(directory, "store.db"));

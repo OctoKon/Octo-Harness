@@ -150,7 +150,15 @@ export async function runHost(input = process.stdin, output = process.stdout) {
             });
           } catch (error) {
             if (error?.code === "STALE_REVISION") code = error.code;
-            else if (error?.code !== "NATIVE_INVALID_ID") throw error;
+            else if (
+              ![
+                "NATIVE_INVALID_ID",
+                "NATIVE_CONFIG_UNAVAILABLE",
+                "NATIVE_PROFILE_UNAVAILABLE",
+                "NATIVE_PROFILE_STALE",
+              ].includes(error?.code)
+            )
+              throw error;
           }
         }
         reply = {
