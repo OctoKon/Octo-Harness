@@ -8,6 +8,9 @@
     type ThemeName,
   } from "./tokens";
 
+  const DARK_QUERY = "(prefers-color-scheme: dark)";
+  const FORCED_QUERY = "(forced-colors: active)";
+
   function mediaMatches(query: string): boolean {
     return typeof window !== "undefined" &&
       typeof window.matchMedia === "function"
@@ -17,13 +20,44 @@
 
   let {
     theme,
-    prefersDark = mediaMatches("(prefers-color-scheme: dark)"),
-    forcedColors = mediaMatches("(forced-colors: active)"),
+    prefersDark: prefersDarkProp,
+    forcedColors: forcedColorsProp,
   }: {
     theme: ThemeName;
     prefersDark?: boolean;
     forcedColors?: boolean;
   } = $props();
+
+  let detectedPrefersDark = $state(mediaMatches(DARK_QUERY));
+  let detectedForcedColors = $state(mediaMatches(FORCED_QUERY));
+  const prefersDark = $derived(prefersDarkProp ?? detectedPrefersDark);
+  const forcedColors = $derived(forcedColorsProp ?? detectedForcedColors);
+
+  $effect(() => {
+    if (
+      typeof window === "undefined" ||
+      typeof window.matchMedia !== "function" ||
+      (prefersDarkProp !== undefined && forcedColorsProp !== undefined)
+    ) {
+      return;
+    }
+    const dark = window.matchMedia(DARK_QUERY);
+    const forced = window.matchMedia(FORCED_QUERY);
+    const onDark = (event: MediaQueryListEvent) => {
+      detectedPrefersDark = event.matches;
+    };
+    const onForced = (event: MediaQueryListEvent) => {
+      detectedForcedColors = event.matches;
+    };
+    detectedPrefersDark = dark.matches;
+    detectedForcedColors = forced.matches;
+    dark.addEventListener("change", onDark);
+    forced.addEventListener("change", onForced);
+    return () => {
+      dark.removeEventListener("change", onDark);
+      forced.removeEventListener("change", onForced);
+    };
+  });
 
   const resolved = $derived(resolveTheme(theme, { prefersDark, forcedColors }));
   const label = $derived(theme === "system" ? `system (${resolved})` : theme);
