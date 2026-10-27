@@ -1039,18 +1039,21 @@ test("#157 P2-1: an ownership change inside the snapshot window fails the fence 
 });
 
 test("#157 P3: a tombstoned superseded outcome fails recovery at the snapshot check", (t) => {
-  const f = fixture(t);
-  // An older outcome that no correction cites: only the snapshot-level
-  // tombstone check can reject it; reference authorization never sees it.
-  const superseded = row("outcome", "superseded-failure", {
-    sourceIds: [f.original.action.recordId],
-    actionId: f.original.action.actionId,
-    resultArtifactId: "result1",
-    effectState: "observed-failure",
-    errorClass: "execution",
+  const f = fixture(t, { seeded: false });
+  // a1 stays running (it is what recovery would correct); a2 is completed and
+  // its observed-success outcome is cited by no correction - the completed a2
+  // needs no correction, so reference authorization never resolves the a2
+  // outcome and only the snapshot-level tombstone check can reject recovery.
+  seed(f.store, {});
+  seed(f.store, {
+    prefix: "done-",
+    runId: "r2",
+    actionId: "a2",
+    runState: "completed",
+    actionState: "completed",
+    effectState: "observed-success",
   });
-  f.store.append({ kind: "outcome", record: superseded }, f.caller);
-  f.store.noteDeletion(superseded.recordId);
+  f.store.noteDeletion("done-outcome");
   const before = f.store.list(scopeId);
   const cursor = f.store.cursor();
   assert.throws(
