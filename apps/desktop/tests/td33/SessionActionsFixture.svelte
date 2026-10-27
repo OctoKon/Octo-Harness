@@ -15,7 +15,7 @@
 
   type Call = { readonly name: string; readonly args: readonly unknown[] };
   type Selection = "a" | "b" | "none";
-  type Mode = "hold" | "succeed" | "fail";
+  type Mode = "hold" | "succeed" | "fail" | "honor" | "none";
 
   const ANCESTRY = {
     a: {
@@ -44,6 +44,8 @@
 
   const calls: Call[] = [];
   const requests: SessionActionRequest[] = [];
+  /** The cancellation channel each dispatched request was handed. */
+  const signals: AbortSignal[] = [];
   let pendingResolve: (() => void) | null = null;
   let pendingReject: ((error: Error) => void) | null = null;
 
@@ -55,15 +57,34 @@
     draft,
   });
 
-  async function request(next: SessionActionRequest) {
+  /**
+   * Plays the engine. "hold" ignores the abort signal (the renderer cannot know
+   * whether the engine stopped); "honor" is a well-behaved executor that stops
+   * on abort and rejects the DOM way.
+   */
+  async function request(next: SessionActionRequest, signal: AbortSignal) {
     requests.push(next);
+    signals.push(signal);
     if (mode === "succeed") return;
     if (mode === "fail") throw new Error("Engine refused the request.");
+    if (mode === "honor") {
+      await new Promise<void>((resolve, reject) => {
+        const stop = () => reject(new DOMException("Stopped.", "AbortError"));
+        if (signal.aborted) {
+          stop();
+          return;
+        }
+        signal.addEventListener("abort", stop, { once: true });
+      });
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
       pendingResolve = resolve;
       pendingReject = reject;
     });
   }
+
+  const aborted = () => signals.map((signal) => signal.aborted);
 
   function release() {
     pendingResolve?.();
@@ -112,6 +133,7 @@
         __td33: {
           calls: () => readonly Call[];
           requests: () => readonly SessionActionRequest[];
+          aborted: typeof aborted;
           setEngine: typeof setEngine;
           setRewind: typeof setRewind;
           setCodeRestore: typeof setCodeRestore;
@@ -124,6 +146,7 @@
     ).__td33 = {
       calls: () => calls.map((call) => ({ ...call })),
       requests: () => requests.map((next) => ({ ...next })),
+      aborted,
       setEngine,
       setRewind,
       setCodeRestore,
@@ -138,6 +161,10 @@
 <label for="editor">Message</label>
 <textarea id="editor" data-testid="editor" bind:value={draft}></textarea>
 
-<SessionActions {context} onRequest={request} onRestoreDraft={restoreDraft} />
+<SessionActions
+  {context}
+  onRequest={mode === "none" ? undefined : request}
+  onRestoreDraft={restoreDraft}
+/>
 
 <button id="behind" data-testid="behind" type="button">Behind the modal</button>

@@ -27,6 +27,8 @@ export type SessionActionPhase =
   | "confirming"
   | "requesting"
   | "canceling"
+  /** The engine confirmed it stopped a request that had already been sent. */
+  | "stopped"
   | "succeeded"
   | "canceled"
   | "failed";
@@ -78,8 +80,9 @@ export interface SessionActionState {
   readonly request: SessionActionRequest | null;
   /**
    * True while a cancel has been requested for an already-dispatched request.
-   * The executor cannot be recalled by the renderer, so the UI must not claim
-   * the source is unchanged until the engine answers.
+   * The executor is asked to stop it through the AbortSignal handed to
+   * `onRequest`; the renderer still cannot undo what already happened, so the
+   * UI must not claim the source is unchanged until the engine answers.
    */
   readonly canceledWhileRequesting: boolean;
   readonly error: string | null;
@@ -93,6 +96,8 @@ export type SessionAction =
   | { type: "choose"; choice: RewindChoice }
   | { type: "confirm" }
   | { type: "cancel" }
+  /** The executor honoured the abort signal: it reports the request stopped. */
+  | { type: "stopped" }
   | { type: "succeeded" }
   | { type: "failed"; message: string };
 
@@ -322,6 +327,19 @@ export function reduceSessionAction(
         phase: "canceling",
         request: null,
         canceledWhileRequesting: true,
+        error: null,
+        blocked: null,
+      };
+    }
+    case "stopped": {
+      // Only the engine can report that a request it already received stopped.
+      // The renderer asking is not an answer, so anything else is ignored.
+      if (state.phase !== "requesting" && state.phase !== "canceling")
+        return state;
+      return {
+        ...state,
+        phase: "stopped",
+        request: null,
         error: null,
         blocked: null,
       };

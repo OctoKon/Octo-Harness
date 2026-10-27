@@ -13,6 +13,7 @@ declare global {
     __td33: {
       calls(): readonly Call[];
       requests(): readonly Request[];
+      aborted(): readonly boolean[];
       setEngine(next: "ready" | "unavailable", reason: string | null): void;
       setRewind(next: "ready" | "unavailable", reason: string | null): void;
       setCodeRestore(
@@ -20,7 +21,7 @@ declare global {
         reason: string | null,
       ): void;
       setSelection(next: "a" | "b" | "none"): void;
-      setMode(next: "hold" | "succeed" | "fail"): void;
+      setMode(next: "hold" | "succeed" | "fail" | "honor" | "none"): void;
       release(): void;
       fail(message: string): void;
     };
@@ -73,6 +74,9 @@ test.describe("TD-33 D4_session_resume_fork", () => {
       "not guaranteed unchanged",
     );
     await expect(page.getByTestId("action-canceled")).toHaveCount(0);
+    // The cancel was actually delivered to the executor: this one ignores the
+    // signal, which is exactly why the UI keeps the pending wording.
+    expect(await page.evaluate(() => window.__td33.aborted())).toEqual([true]);
     await expect(page.getByTestId("editor")).toHaveValue("edited while busy");
     // Focus moves to the status that explains the pending cancel (the trigger
     // is disabled while the request may still be running).
@@ -94,6 +98,49 @@ test.describe("TD-33 D4_session_resume_fork", () => {
     // Once the engine answers, the actions are usable again and focus returns
     // to the control that started them.
     expect(await focusedTestId(page)).toBe("action-fork");
+  });
+
+  test("an executor that honours the cancel settles as stopped, never as an untouched source", async ({
+    page,
+  }) => {
+    await page.goto(url);
+    await page.evaluate(() => window.__td33.setMode("honor"));
+    await page.getByTestId("action-fork").click();
+    await expect(page.getByTestId("action-busy")).toBeVisible();
+    // Nothing is cancelled yet, but the channel travelled with the request.
+    expect(await page.evaluate(() => window.__td33.aborted())).toEqual([false]);
+
+    await page.getByTestId("action-cancel").click();
+
+    // A well-behaved executor stops on abort and rejects the DOM way: only now
+    // may the UI say the request stopped.
+    await expect(page.getByTestId("action-stopped")).toContainText(
+      "the fork request stopped",
+    );
+    expect(await page.evaluate(() => window.__td33.aborted())).toEqual([true]);
+    // Even a confirmed stop does not claim the source was left unchanged.
+    await expect(page.getByTestId("action-stopped")).toContainText(
+      "not verified unchanged",
+    );
+    await expect(page.getByTestId("action-canceled")).toHaveCount(0);
+    await expect(page.getByTestId("action-succeeded")).toHaveCount(0);
+    expect(await focusedTestId(page)).toBe("action-fork");
+  });
+
+  test("with no executor there is no cancellation channel, so no cancel is offered", async ({
+    page,
+  }) => {
+    await page.goto(url);
+    await page.evaluate(() => window.__td33.setMode("none"));
+    await page.getByTestId("action-fork").click();
+
+    await expect(page.getByTestId("action-failed")).toContainText(
+      "No engine executor is connected.",
+    );
+    // No request is in flight, so there is nothing a cancel could reach.
+    await expect(page.getByTestId("action-busy")).toHaveCount(0);
+    await expect(page.getByTestId("action-cancel")).toHaveCount(0);
+    expect(await page.evaluate(() => window.__td33.aborted())).toEqual([]);
   });
 
   test("a double activation dispatches exactly one request from each control", async ({

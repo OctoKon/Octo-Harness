@@ -262,6 +262,38 @@ test("a late result is the engine's answer, not a local claim", () => {
   assert.equal(refused.error, "The engine stopped the request.");
 });
 
+test("a stop the engine confirms is its own outcome, not an untouched source", () => {
+  const context = ready();
+  const canceling = apply(
+    context,
+    { type: "begin", kind: "fork" },
+    { type: "cancel" },
+  );
+  const stopped = reduceSessionAction(canceling, { type: "stopped" }, context);
+  assert.equal(stopped.phase, "stopped");
+  assert.equal(stopped.request, null);
+  assert.equal(stopped.canceledWhileRequesting, true);
+  assert.equal(stopped.preservedDraft, "half-typed instruction");
+  assert.equal(stopped.error, null);
+  // A request was sent: the engine-confirmed stop must never be presented as
+  // the "nothing was requested" cancel, which claims the source is unchanged.
+  assert.notEqual(stopped.phase, "canceled");
+  // The engine has answered, so the actions are usable again.
+  assert.deepEqual(actionAvailability(context, stopped, "fork"), {
+    enabled: true,
+    reason: null,
+  });
+});
+
+test("a stop cannot settle a request that never left the UI", () => {
+  for (const settled of [
+    apply(ready()),
+    apply(ready(), { type: "begin", kind: "rewind" }),
+  ]) {
+    assert.equal(reduceSessionAction(settled, { type: "stopped" }, ready()), settled);
+  }
+});
+
 test("a canceling state blocks every new action until the engine answers", () => {
   const context = ready();
   const canceling = apply(

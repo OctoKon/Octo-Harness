@@ -4,9 +4,11 @@
    *
    * Renders the typed reducer only: fork and resume hand the parent one
    * request, rewind asks for confirmation first, and nothing here fakes an
-   * engine result. Every control states why it is disabled, the position shown
-   * is the ancestry the tree delivered, and the editor text captured at the
-   * start is handed back so a cancel or failure can restore it.
+   * engine result. Cancelling a dispatched request is delivered to the parent
+   * as an aborted signal and stays pending until the executor says it stopped.
+   * Every control states why it is disabled, the position shown is the ancestry
+   * the tree delivered, and the editor text captured at the start is handed
+   * back so a cancel or failure can restore it.
    */
   import {
     REWIND_LIMITS,
@@ -30,8 +32,22 @@
     onRestoreDraft,
   }: {
     context: SessionActionsContext;
-    /** The parent owns execution; the component never invokes the engine. */
-    onRequest?: (request: SessionActionRequest) => Promise<void> | void;
+    /**
+     * The parent owns execution; the component never invokes the engine.
+     *
+     * The second argument is the cancellation channel: the component aborts it
+     * when the user cancels an already-dispatched request. An executor that
+     * honours the signal rejects with an `AbortError` (the DOM convention), and
+     * only that answer lets the UI say the request stopped. An executor that
+     * ignores the signal leaves the UI in the pending "cancel requested" state,
+     * which claims nothing about the source. The component aborts only when the
+     * user cancels: unmounting never aborts, because that would stop work the
+     * user did not ask to stop.
+     */
+    onRequest?: (
+      request: SessionActionRequest,
+      signal: AbortSignal,
+    ) => Promise<void> | void;
     /** Called with the captured editor text when an action settles. */
     onRestoreDraft?: (text: string) => void;
   } = $props();
@@ -43,6 +59,14 @@
   let lastTrigger: HTMLElement | undefined;
   let cancelingStatus: HTMLElement | undefined = $state();
   let previousPhase: SessionActionState["phase"] = "idle";
+  /** The controller for the request currently in flight, if any. */
+  let inFlight: AbortController | null = null;
+
+  /** The DOM cancellation convention: an honoured abort rejects this way. */
+  const isAbortError = (error: unknown): boolean =>
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "AbortError";
 
   const availability = (kind: SessionActionKind) =>
     actionAvailability(context, current, kind);
@@ -129,16 +153,28 @@
       focusTrigger();
       return;
     }
+    // One request is in flight at a time (the reducer refuses a second), so one
+    // controller is enough: it is the channel the user's cancel travels on.
+    const controller = new AbortController();
+    const signal = controller.signal;
+    inFlight = controller;
     try {
-      await onRequest(request);
+      await onRequest(request, signal);
       send({ type: "succeeded" });
       restore();
     } catch (e) {
-      send({
-        type: "failed",
-        message: e instanceof Error ? e.message : "The request failed.",
-      });
+      if (signal.aborted && isAbortError(e)) {
+        // The executor honoured the cancel: it reports the request stopped.
+        send({ type: "stopped" });
+      } else {
+        send({
+          type: "failed",
+          message: e instanceof Error ? e.message : "The request failed.",
+        });
+      }
       restore();
+    } finally {
+      if (inFlight === controller) inFlight = null;
     }
     focusTrigger();
   }
@@ -168,7 +204,12 @@
   }
 
   function cancel() {
+    const dispatched = current.phase === "requesting";
     send({ type: "cancel" });
+    // Deliver the cancel to the executor. The reducer has already moved to the
+    // pending state, so nothing here can claim the request stopped: only the
+    // executor's AbortError does that.
+    if (dispatched) inFlight?.abort();
     restore();
     // A dispatched request leaves every action disabled while its cancel is
     // pending, so the trigger cannot take focus. Put focus on the status that
@@ -289,11 +330,17 @@
       data-testid="action-canceling"
     >
       <p>
-        Cancel requested. The {label} request was already sent, so the source is
-        not guaranteed unchanged until the engine confirms it stopped. Your
-        draft is preserved.
+        Cancel requested. The {label} request was already sent and the engine has
+        been asked to stop it; the source is not guaranteed unchanged until the
+        engine confirms it stopped. Your draft is preserved.
       </p>
     </div>
+  {:else if current.phase === "stopped"}
+    <p class="outcome" role="status" data-testid="action-stopped">
+      Stop confirmed: the engine reports the {label} request stopped. Anything it
+      had already applied is not undone, so the source is not verified unchanged.
+      Your draft is preserved.
+    </p>
   {:else if current.phase === "canceled"}
     <p class="outcome" role="status" data-testid="action-canceled">
       {label === "the rewind" ? "Rewind" : label === "the fork" ? "Fork" : "Resume"}
