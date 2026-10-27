@@ -4,12 +4,12 @@
 mod credentials;
 
 use credentials::{
-    delete_owned, read_owned, write_generated, CredentialError, CredentialRef, MAX_SECRET_BYTES,
+    CredentialError, CredentialRef, MAX_SECRET_BYTES, delete_owned, read_owned, write_generated,
 };
 use std::ptr::null_mut;
 use windows_sys::Win32::Security::Credentials::{
-    CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE,
-    CRED_TYPE_GENERIC,
+    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW,
+    CredWriteW,
 };
 
 // Cleanup is restricted to references created by this test process, including on assertion unwind.
@@ -190,10 +190,10 @@ fn real_windows_redaction_covers_unselected_keys_forms_and_unicode() {
     assert_eq!(count, 3);
     assert_eq!(output, ["[REDACTED:credential]"; 3].join(" "));
     let minimum = fixtures.write("12345678").clone();
-    assert!(credentials::redact_owned(
-        &"12345678".repeat(credentials::MAX_REDACTION_TEXT_BYTES / 8)
-    )
-    .is_err());
+    assert!(
+        credentials::redact_owned(&"12345678".repeat(credentials::MAX_REDACTION_TEXT_BYTES / 8))
+            .is_err()
+    );
     delete_owned(&minimum).unwrap();
     assert!(
         credentials::redact_owned(&"x".repeat(credentials::MAX_REDACTION_TEXT_BYTES + 1)).is_err()
