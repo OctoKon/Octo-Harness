@@ -215,6 +215,45 @@ export async function runHost(
     ) {
       reply = { id: request.id, ok: true, value: { state: "stopped" } };
       shutdown = true;
+    } else if (request.method === "send" && request.params.frame === "setup") {
+      const params = request.params;
+      const validId =
+        typeof params.requestId === "string" &&
+        params.requestId.length > 0 &&
+        Buffer.byteLength(params.requestId, "utf8") <= 128 &&
+        !/[\s\\/]/u.test(params.requestId);
+      if (
+        Object.keys(params).length === 4 &&
+        ["frame", "command", "requestId", "payload"].every((key) =>
+          Object.hasOwn(params, key),
+        ) &&
+        params.command === "metadata" &&
+        validId &&
+        params.payload !== null &&
+        typeof params.payload === "object" &&
+        !Array.isArray(params.payload) &&
+        Object.keys(params.payload).length === 0
+      ) {
+        reply = {
+          id: request.id,
+          ok: true,
+          value: {
+            workspaces: host.listWorkspaces(),
+            readiness: host.handshakeReadiness,
+          },
+        };
+      } else {
+        reply = {
+          id: request.id,
+          ok: false,
+          error: {
+            code: "POLICY_DENIED",
+            message: "Native command unavailable",
+            correlationId: validId ? params.requestId : request.id,
+            retryable: false,
+          },
+        };
+      }
     } else {
       let code = "POLICY_DENIED";
       if (request.method === "send") {

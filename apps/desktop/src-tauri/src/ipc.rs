@@ -474,6 +474,22 @@ fn valid_command(op: &str, value: &Value) -> bool {
     })
 }
 
+fn valid_setup(op: &str, value: &Value) -> bool {
+    let fields = ["frame", "command", "requestId", "payload"];
+    value.as_object().is_some_and(|object| {
+        object.len() == fields.len() && fields.iter().all(|key| object.contains_key(*key))
+    }) && value["frame"] == "setup"
+        && value["command"] == "metadata"
+        && op == "metadata"
+        && opaque(&value["requestId"])
+        && value["requestId"]
+            .as_str()
+            .is_some_and(|id| id.len() <= 128)
+        && value["payload"]
+            .as_object()
+            .is_some_and(|payload| payload.is_empty())
+}
+
 fn valid_ports(value: &Value) -> bool {
     let Some(ports) = value.as_object() else {
         return false;
@@ -546,10 +562,25 @@ pub async fn send(
     payload: Value,
 ) -> Result<Value, BridgeError> {
     caller(&window)?;
-    if !valid_command(&op, &payload) {
-        return Err(BridgeError::denied());
+    let setup = payload["frame"] == "setup";
+    let correlation_field = if setup { "requestId" } else { "correlationId" };
+    if !(if setup {
+        valid_setup(&op, &payload)
+    } else {
+        valid_command(&op, &payload)
+    }) {
+        let mut error = BridgeError::denied();
+        if setup
+            && opaque(&payload["requestId"])
+            && payload["requestId"]
+                .as_str()
+                .is_some_and(|id| id.len() <= 128)
+        {
+            error.correlation_id = payload["requestId"].as_str().unwrap().to_owned();
+        }
+        return Err(error);
     }
-    let correlation = payload["correlationId"]
+    let correlation = payload[correlation_field]
         .as_str()
         .unwrap_or("native-validation")
         .to_owned();
@@ -1057,6 +1088,25 @@ mod tests {
         assert_eq!(lifecycle_received.lock().unwrap().as_slice(), &[exited]);
         assert!(subscriptions.forward(event()).is_ok());
         assert_eq!(received.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn setup_metadata_requires_exact_sessionless_shape_and_matching_op() {
+        let valid =
+            json!({"frame":"setup","command":"metadata","requestId":"request1","payload":{}});
+        assert!(valid_setup("metadata", &valid));
+        assert!(!valid_setup("other", &valid));
+        for (key, value) in [
+            ("command", json!("unknown")),
+            ("sessionId", json!("s1")),
+            ("extra", json!(true)),
+            ("payload", json!({"extra":true})),
+            ("requestId", json!("bad/id")),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[key] = value;
+            assert!(!valid_setup("metadata", &invalid));
+        }
     }
 
     #[test]
