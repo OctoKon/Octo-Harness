@@ -902,6 +902,25 @@ export function createTurnStreamTransport(
     }
     const channel = channelFor(validated.scopeId, validated.sessionId);
 
+    // Unsequenced control frame: stream.resync never carries durable progress
+    // and must not advance any cursor. Handled before data ordering.
+    if (validated.kind === "stream.resync") {
+      const fromSeq =
+        typeof (validated.payload as { fromSeq?: unknown } | undefined)?.fromSeq ===
+        "number"
+          ? (validated.payload as { fromSeq: number }).fromSeq
+          : channel.state.lastDurableSeq;
+      channel.state = {
+        ...channel.state,
+        needsResync: true,
+        resyncFromSeq: fromSeq,
+        resyncAfterSeq: fromSeq,
+      };
+      notifyResync(channel);
+      emit(channel);
+      return;
+    }
+
     if (
       channel.state.needsResync &&
       validated.kind !== "run.reconnect_snapshot"
