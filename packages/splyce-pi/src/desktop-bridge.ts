@@ -327,6 +327,12 @@ export class DesktopBridge {
         "INVALID_CURSOR",
         "client-applied seq must be a non-negative safe integer",
       );
+    const highwater = this.sessionEventCursor();
+    if (afterSeq > highwater)
+      throw new BridgeError(
+        "INVALID_CURSOR",
+        `client-applied seq ${String(afterSeq)} exceeds event highwater ${String(highwater)}`,
+      );
     this._clientAppliedSeq = afterSeq;
   }
 

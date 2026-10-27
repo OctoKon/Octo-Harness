@@ -653,13 +653,24 @@ test("overflow resync starts at the client applied cursor (saturation)", () => {
   }
 });
 
-test("fromSeq never exceeds Store.eventHighwater (INVALID_CURSOR)", () => {
-  const { bridge, store } = makeBridge();
+test("resubscribe rejects a future cursor without changing state", () => {
+  const { bridge, store, dir } = makeBridge();
+  bridge.submit(event("turn.started", { runId: "r1", turnId: "t1" }));
   const highwater = store.eventHighwater("w-demo", "s1");
-  bridge.resubscribe(highwater + 5);
+  bridge.resubscribe(highwater);
+  const status = bridge.status();
   assert.throws(
-    () => bridge["resyncFrame"](),
+    () => bridge.resubscribe(highwater + 5),
     (error: unknown) =>
       error instanceof BridgeError && error.code === "INVALID_CURSOR",
   );
+  assert.deepEqual(bridge.status(), status);
+  assert.equal(store.eventHighwater("w-demo", "s1"), highwater);
+  assert.equal(bridge["resyncFrame"]().event.fromSeq, highwater);
+  assert.equal(bridge.drain().frames.length, 1);
+  bridge.resubscribe(highwater);
+  bridge.submit(event("turn.started", { runId: "r2", turnId: "t2" }));
+  assert.equal(bridge.drain().frames.length, 1);
+  store.close();
+  rmSync(dir, { recursive: true, force: true });
 });
