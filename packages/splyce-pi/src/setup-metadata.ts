@@ -29,6 +29,18 @@ export interface SetupModelDescriptor {
   costKnown: boolean;
 }
 
+/** A pinned catalog entry the native owner trusts for an exact (apiFamily, modelId). */
+export type TrustedCatalogEntry = Omit<SetupModelDescriptor, "source"> & {
+  catalogVersion: string;
+};
+export type TrustedCatalog = (
+  apiFamily: string,
+  modelId: string,
+) => TrustedCatalogEntry | undefined;
+
+const MAX_CONTEXT_WINDOW = 2 ** 21;
+const MAX_OUTPUT_TOKENS = 2 ** 20;
+
 export interface SetupInput {
   workspaceId: string;
   requestId: string;
@@ -142,8 +154,13 @@ function setupToken(value: unknown, field: string): string {
     setupInvalid(field);
   return value;
 }
-function setupPositiveInt(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0)
+function setupPositiveInt(value: unknown, field: string, max: number): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value <= 0 ||
+    value > max
+  )
     setupInvalid(field);
   return value;
 }
@@ -169,7 +186,8 @@ function setupModelDescriptor(
     ...(Object.hasOwn(value, "catalogVersion") ? ["catalogVersion"] : []),
   ];
   setupObject(value, field, keys);
-  if (source === "catalog" && !Object.hasOwn(value, "catalogVersion"))
+  // Provenance: a catalog descriptor names its catalog version, a user one never does.
+  if (Object.hasOwn(value, "catalogVersion") !== (source === "catalog"))
     setupInvalid(`${field}.catalogVersion`);
   const input = value.input;
   if (
@@ -179,6 +197,17 @@ function setupModelDescriptor(
     new Set(input).size !== input.length
   )
     setupInvalid(`${field}.input`);
+  const contextWindow = setupPositiveInt(
+    value.contextWindow,
+    `${field}.contextWindow`,
+    MAX_CONTEXT_WINDOW,
+  );
+  const maxOutputTokens = setupPositiveInt(
+    value.maxOutputTokens,
+    `${field}.maxOutputTokens`,
+    MAX_OUTPUT_TOKENS,
+  );
+  if (maxOutputTokens > contextWindow) setupInvalid(`${field}.maxOutputTokens`);
   return {
     source,
     ...(Object.hasOwn(value, "catalogVersion")
@@ -189,18 +218,40 @@ function setupModelDescriptor(
           ),
         }
       : {}),
-    contextWindow: setupPositiveInt(
-      value.contextWindow,
-      `${field}.contextWindow`,
-    ),
-    maxOutputTokens: setupPositiveInt(
-      value.maxOutputTokens,
-      `${field}.maxOutputTokens`,
-    ),
+    contextWindow,
+    maxOutputTokens,
     reasoning: setupBoolean(value.reasoning, `${field}.reasoning`),
     input: [...input] as ("text" | "image")[],
     costKnown: setupBoolean(value.costKnown, `${field}.costKnown`),
   };
+}
+/** A catalog claim is only believed when the native catalog has exactly this entry. */
+function setupCheckCatalog(
+  descriptor: SetupModelDescriptor,
+  apiFamily: string,
+  modelId: string,
+  field: string,
+  trusted: TrustedCatalog | undefined,
+): void {
+  if (descriptor.source !== "catalog") return;
+  if (trusted === undefined) setupInvalid(`${field}.source`);
+  let entry: TrustedCatalogEntry | undefined;
+  try {
+    entry = trusted(apiFamily, modelId);
+  } catch {
+    entry = undefined;
+  }
+  const canonical = (d: TrustedCatalogEntry | SetupModelDescriptor) =>
+    JSON.stringify([
+      d.catalogVersion,
+      d.contextWindow,
+      d.maxOutputTokens,
+      d.reasoning,
+      d.input,
+      d.costKnown,
+    ]);
+  if (entry === undefined || canonical(entry) !== canonical(descriptor))
+    setupInvalid(field);
 }
 function setupRevision(value: unknown, field: string): string | null {
   return value === null ? null : setupId(value, field);
@@ -215,14 +266,20 @@ function setupRevision(value: unknown, field: string): string | null {
  * credential slot may be absent or null, so the native owner can validate
  * before a key is stored; commitSetup uses the default (credentialRef required).
  */
-export function validateSetupMetadata(raw: unknown): SetupInput;
 export function validateSetupMetadata(
   raw: unknown,
-  options: { credentialPending: true },
+  options?: { trustedCatalog?: TrustedCatalog },
+): SetupInput;
+export function validateSetupMetadata(
+  raw: unknown,
+  options: { credentialPending: true; trustedCatalog?: TrustedCatalog },
 ): SetupMetadata;
 export function validateSetupMetadata(
   raw: unknown,
-  options: { credentialPending?: boolean } = {},
+  options: {
+    credentialPending?: boolean;
+    trustedCatalog?: TrustedCatalog;
+  } = {},
 ): SetupMetadata {
   const pending = options.credentialPending === true;
   const top = setupObject(raw, "input", [
@@ -325,19 +382,30 @@ export function validateSetupMetadata(
       b.connectionRevision !== connectionRevision
     )
       setupInvalid(`profile.bindings[${index}] connection`);
+    const modelId = setupModelRef(
+      b.modelId,
+      `profile.bindings[${index}].modelId`,
+    );
+    const modelDescriptor = isChat
+      ? setupModelDescriptor(
+          b.modelDescriptor,
+          `profile.bindings[${index}].modelDescriptor`,
+        )
+      : undefined;
+    if (modelDescriptor !== undefined)
+      setupCheckCatalog(
+        modelDescriptor,
+        apiFamily,
+        modelId,
+        `profile.bindings[${index}].modelDescriptor`,
+        options.trustedCatalog,
+      );
     return {
       role: setupId(b.role, `profile.bindings[${index}].role`),
       providerConnectionId: connectionId,
       connectionRevision,
-      modelId: setupModelRef(b.modelId, `profile.bindings[${index}].modelId`),
-      ...(isChat
-        ? {
-            modelDescriptor: setupModelDescriptor(
-              b.modelDescriptor,
-              `profile.bindings[${index}].modelDescriptor`,
-            ),
-          }
-        : {}),
+      modelId,
+      ...(modelDescriptor === undefined ? {} : { modelDescriptor }),
     };
   });
   // The profileSnapshot contract's own binding-set check (unique roles, a chat binding).

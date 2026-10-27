@@ -34,10 +34,16 @@ import {
 import {
   type SetupInput,
   SetupMetadataError,
+  type TrustedCatalog,
   validateSetupMetadata,
 } from "./setup-metadata.js";
 
-export type { SetupInput, SetupMetadata } from "./setup-metadata.js";
+export type {
+  SetupInput,
+  SetupMetadata,
+  TrustedCatalog,
+  TrustedCatalogEntry,
+} from "./setup-metadata.js";
 
 const LAYOUT_VERSION = 2 as const;
 
@@ -92,6 +98,8 @@ export interface CallerContext {
   profileRevision: string;
   policyRevision: string;
   resolveReference?: (id: string, scopeId: string) => boolean;
+  /** Native-supplied pinned model catalog; only it can vouch for a `catalog` model descriptor. */
+  trustedCatalog?: TrustedCatalog;
 }
 
 export interface AppendInput {
@@ -1110,7 +1118,12 @@ export class Store {
   commitSetup(input: unknown, caller: CallerContext): SetupResult {
     let setup: SetupInput;
     try {
-      setup = validateSetupMetadata(input);
+      setup = validateSetupMetadata(
+        input,
+        caller.trustedCatalog === undefined
+          ? {}
+          : { trustedCatalog: caller.trustedCatalog },
+      );
     } catch (error) {
       if (error instanceof SetupMetadataError)
         throw new StoreError(error.code, error.message);

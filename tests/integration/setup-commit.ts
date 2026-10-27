@@ -67,8 +67,7 @@ const input = (overrides: Record<string, unknown> = {}) => ({
         connectionRevision: "c1",
         modelId: "gpt-x",
         modelDescriptor: {
-          source: "catalog",
-          catalogVersion: "2026-10",
+          source: "user",
           contextWindow: 128000,
           maxOutputTokens: 8192,
           reasoning: true,
@@ -697,9 +696,9 @@ const METADATA_CASES: Case[] = [
   [
     "catalog descriptor without catalogVersion",
     (v) =>
-      void delete (
+      void ((
         v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
-      ).catalogVersion,
+      ).source = "catalog"),
     false,
   ],
   [
@@ -774,6 +773,75 @@ const METADATA_CASES: Case[] = [
         role: "embedding",
       }),
     false,
+  ],
+  [
+    "user descriptor carrying catalogVersion",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).catalogVersion = "2026-10"),
+    false,
+  ],
+  [
+    "renderer-claimed catalog descriptor (no trusted catalog)",
+    (v) =>
+      void Object.assign(v.profile.bindings[0]!.modelDescriptor as object, {
+        source: "catalog",
+        catalogVersion: "2026-10",
+      }),
+    false,
+  ],
+  [
+    "contextWindow at the 2^21 cap",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).contextWindow = 2097152),
+    true,
+  ],
+  [
+    "contextWindow above the cap",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).contextWindow = 2097153),
+    false,
+  ],
+  [
+    "maxOutputTokens at the 2^20 cap",
+    (v) =>
+      void Object.assign(v.profile.bindings[0]!.modelDescriptor as object, {
+        contextWindow: 2097152,
+        maxOutputTokens: 1048576,
+      }),
+    true,
+  ],
+  [
+    "maxOutputTokens above the cap",
+    (v) =>
+      void Object.assign(v.profile.bindings[0]!.modelDescriptor as object, {
+        contextWindow: 2097152,
+        maxOutputTokens: 1048577,
+      }),
+    false,
+  ],
+  [
+    "maxOutputTokens above contextWindow",
+    (v) =>
+      void Object.assign(v.profile.bindings[0]!.modelDescriptor as object, {
+        contextWindow: 4096,
+        maxOutputTokens: 4097,
+      }),
+    false,
+  ],
+  [
+    "maxOutputTokens equal to contextWindow",
+    (v) =>
+      void Object.assign(v.profile.bindings[0]!.modelDescriptor as object, {
+        contextWindow: 4096,
+        maxOutputTokens: 4096,
+      }),
+    true,
   ],
   ["requestId 129", (v) => void (v.requestId = "r".repeat(129)), false],
   ["requestId secret shape", (v) => void (v.requestId = secretLike), false],
@@ -967,4 +1035,73 @@ test("a chat binding without a model descriptor names the missing field", (t) =>
   );
   assert.throws(() => store.commitSetup(value, caller), names);
   assert.deepEqual(kinds(store), []);
+});
+
+const CATALOG_ENTRY = {
+  catalogVersion: "2026-10",
+  contextWindow: 128000,
+  maxOutputTokens: 8192,
+  reasoning: true,
+  input: ["text", "image"] as ("text" | "image")[],
+  costKnown: true,
+};
+const catalogValue = () => {
+  const value = clone();
+  value.profile.bindings[0]!.modelDescriptor = {
+    source: "catalog",
+    ...CATALOG_ENTRY,
+  } as never;
+  return value;
+};
+
+test("a catalog descriptor is accepted only when it exactly equals the trusted catalog entry", (t) => {
+  const { store, caller } = fixture(t);
+  const seen: [string, string][] = [];
+  const trustedCatalog = (apiFamily: string, modelId: string) => {
+    seen.push([apiFamily, modelId]);
+    return apiFamily === "openai-completions" && modelId === "gpt-x"
+      ? CATALOG_ENTRY
+      : undefined;
+  };
+  const value = catalogValue();
+  // Wire input alone can never claim a catalog.
+  assert.throws(() => validateSetupMetadata(value), invalid);
+  assert.throws(() => store.commitSetup(value, caller), code("SETUP_INVALID"));
+  // Exact match is accepted by the validator and by commitSetup.
+  assert.doesNotThrow(() => validateSetupMetadata(value, { trustedCatalog }));
+  const done = store.commitSetup(value, { ...caller, trustedCatalog });
+  assert.ok(done.profile.sourceIds.some((id) => id.includes("modeldesc")));
+  assert.deepEqual(seen[0], ["openai-completions", "gpt-x"]);
+  // Any deviation, or no entry for this exact (apiFamily, modelId), is rejected.
+  const deviations: ((d: Record<string, unknown>) => void)[] = [
+    (d) => void (d.catalogVersion = "2026-11"),
+    (d) => void (d.contextWindow = 64000),
+    (d) => void (d.maxOutputTokens = 4096),
+    (d) => void (d.reasoning = false),
+    (d) => void (d.input = ["text"]),
+    (d) => void (d.costKnown = false),
+  ];
+  for (const [i, deviate] of deviations.entries()) {
+    const bad = catalogValue();
+    deviate(
+      bad.profile.bindings[0]!.modelDescriptor as Record<string, unknown>,
+    );
+    bad.requestId = `req-dev-${i}`;
+    assert.throws(
+      () => validateSetupMetadata(bad, { trustedCatalog }),
+      invalid,
+    );
+    assert.throws(
+      () => store.commitSetup(bad, { ...caller, trustedCatalog }),
+      code("SETUP_INVALID"),
+    );
+  }
+  const other = catalogValue();
+  other.profile.bindings[0]!.modelId = "gpt-y";
+  assert.throws(
+    () => validateSetupMetadata(other, { trustedCatalog }),
+    invalid,
+  );
+  // A user descriptor never needs the catalog.
+  assert.doesNotThrow(() => validateSetupMetadata(clone(), { trustedCatalog }));
 });
