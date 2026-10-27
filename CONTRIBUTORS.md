@@ -36,14 +36,16 @@ Each member works with AI coding agents; work is credited to the member whose ag
 
 - TD-19 OpenAI-compatible native chat consumer with credential and redaction hardening.
 - TD-26 provider profiles, including the `modelId` binding and its control-character validation.
-- Workspace file and shell tools for the agent (#155, carried into #161), the read-path CodeQL fix and receipt redaction.
-- Shell output compaction, the provider setup design note and many security-tier reviews.
+- Workspace file and shell tools for the agent (#155, closed and carried into the open #161), the read-path CodeQL fix and receipt redaction.
+- Credential-lease hardening for the Anthropic, Google and Mistral adapters (#113, #116; open, targeting the bootstrap branch).
+- Shell output compaction (prototype, not merged) and the provider setup design note.
+- Tier-1 and Tier-2 reviews of the native bootstrap, memory, code index, TD-19, TD-25 and #147.
 
 ### [@lapsecoder](https://github.com/lapsecoder)
 
-- TD-15 desktop bridge ledger and resync work (#152, superseded by #159).
-- TD-25 recovery fail-closed corrections (#157).
-- TD-22 Bedrock and Azure adapters.
+- TD-15 desktop bridge ledger and resync work (#152, closed; continued in the open #159).
+- TD-25 recovery fail-closed corrections (#157, open, approved by two reviewers).
+- TD-22 Bedrock and Azure adapters (branch, in review).
 - Independent reviews of the code index, grants store and workspace tools.
 
 ### [@syed-sufiyaan1207](https://github.com/syed-sufiyaan1207)
