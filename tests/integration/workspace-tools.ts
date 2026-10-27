@@ -1079,6 +1079,26 @@ test("a secret straddling the preview cut is redacted, not half-kept", async () 
   assert.ok(!r.text.includes(apiKey));
 });
 
+test("a secret in a shell command never enters the intent or receipt", async () => {
+  const h = harness();
+  const cmd = nodeCmd(`console.log('${apiKey}')`);
+  approveSh(h, cmd);
+  const checked: string[] = [];
+  const consumed: string[] = [];
+  const check = h.grants.check.bind(h.grants);
+  h.grants.check = (r) => (checked.push(r.target), check(r));
+  const consume = h.grants.consume.bind(h.grants);
+  h.grants.consume = (id, intent) => {
+    consumed.push(intent.target);
+    consume(id, intent);
+  };
+  await run(h, sh, { command: cmd });
+  // Approval still sees the exact command; durable records do not.
+  assert.equal(checked[0], `${sh}:${cmd}`);
+  assert.equal(consumed[0]?.includes(apiKey), false);
+  assert.equal(JSON.stringify(h.log).includes(apiKey), false);
+});
+
 test("injected redactor runs on text, preview and error messages", async () => {
   const custom = ["zq", "custom", "7731"].join("-");
   const h = harness(undefined, (t) => t.split(custom).join("[REDACTED]"));

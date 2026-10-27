@@ -52,6 +52,7 @@ export interface Intent extends Act {
   capability: Capability;
   workspaceId: string;
   sessionId: string;
+  /** Redacted effect target; the exact command stays in the transient grant request. */
   target: string;
   summary: string;
 }
@@ -428,7 +429,8 @@ export function createWorkspaceTools(
     a: Act,
     fn: () => Promise<T>,
   ): Promise<T> {
-    const intent = { ...req(capability, target, a), summary: "" };
+    // The grant check matches the exact target above; durable intent/receipt text is redacted.
+    const intent = { ...req(capability, clean(target), a), summary: "" };
     try {
       grants.consume(grantId, intent);
     } catch {
