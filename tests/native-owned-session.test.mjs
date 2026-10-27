@@ -75,6 +75,110 @@ function ownerFixture() {
   return { owner, current, checks: () => checks };
 }
 
+// Run unchanged subprocess mutations before SDK fixtures accumulate memory on the 8GB host.
+test(
+  "removing native identity, role, current-state or disposal guards fails their independent behavioral assertions",
+  { skip: process.env.SPLYCE_OWNER_MUTANT === "1" },
+  async (t) => {
+    const dir = await mkdtemp(join(tmpdir(), "splyce-owner-mutant-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const hook = join(dir, "owner-mutant.mjs");
+    await writeFile(
+      hook,
+      `import { registerHooks } from "node:module";
+registerHooks({ load(url, context, next) {
+  const loaded = next(url, context);
+  if (!url.endsWith('/agent/dist/splyce-readiness.js')) return loaded;
+  const source = String(loaded.source);
+  const kind = process.env.SPLYCE_OWNER_TARGET;
+  let mutated = source;
+  if (kind === 'identity') mutated = source.replace('if (!binding || binding.owner.disposed)', 'if (!binding) return { owner: { checkCurrent() {}, disposed: false }, role: "session" }; if (binding.owner.disposed)');
+  if (kind === 'role') mutated = source.replace('if (!derivations[binding.role]?.includes(role))', 'if (false)');
+  if (kind === 'current') mutated = source.replaceAll('binding.owner.checkCurrent();', 'void 0;');
+  if (kind === 'disposed') mutated = source.replace('!binding || binding.owner.disposed', '!binding').replace('if (binding.owner.disposed)', 'if (false)');
+  if (kind === 'tool-current') mutated = source.replace('if (bindings.has(tool))', 'if (false)');
+  if (kind === 'tool-exposure') mutated = source.replace('tool.execute = () => unavailable();', 'void 0;');
+  if (kind === 'callback-snapshot') mutated = source.replace('!snapshot || callbackKeys.some((key) => snapshot[key] !== agent[key])', '!snapshot').replace('return snapshot;', 'return agent;');
+  if (kind === 'stream-binding') mutated = source.replace('if (streams.get(config) !== stream)', 'if (false)');
+  if (mutated === source) throw new Error('owner mutation target not found');
+  return { ...loaded, source: mutated };
+} });\n`,
+    );
+    for (const [kind, pattern, observation] of [
+      [
+        "callback-snapshot",
+        "sealed Agent callback snapshot",
+        /replaced callback must preserve physical bytes/,
+      ],
+      ["identity", "private owner mint", /Missing expected exception/],
+      ["role", "private owner mint", /Missing expected exception/],
+      ["current", "native revision changes", /Missing expected exception/],
+      [
+        "current",
+        "owned async tool revoke",
+        /revoked or canceled tool must not invoke a physical update callback/,
+      ],
+      [
+        "current",
+        "SDK subscriber revoke",
+        /interrupted subscriber must not reach subsequent subscribers/,
+      ],
+      ["disposed", "same-owner checks", /Missing expected exception/],
+      [
+        "tool-current",
+        "disposed owned tool",
+        /disposed owner must not append a reservation/,
+      ],
+      [
+        "tool-exposure",
+        "direct final owned tool",
+        /direct owned tool must not write without native admission/,
+      ],
+      [
+        "stream-binding",
+        "exposed Agent cannot",
+        /exposed Agent must not dispatch a caller-selected loop stream/,
+      ],
+    ]) {
+      const env = Object.fromEntries(
+        ["SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "PATHEXT"]
+          .filter((key) => process.env[key])
+          .map((key) => [key, process.env[key]]),
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          pathToFileURL(hook).href,
+          "--test",
+          `--test-name-pattern=${pattern}`,
+          fileURLToPath(import.meta.url),
+        ],
+        {
+          env: {
+            ...env,
+            HOME: dir,
+            USERPROFILE: dir,
+            PI_CODING_AGENT_DIR: dir,
+            SPLYCE_OWNER_MUTANT: "1",
+            SPLYCE_OWNER_TARGET: kind,
+          },
+          encoding: "utf8",
+          timeout: 30000,
+          windowsHide: true,
+        },
+      );
+      assert.equal(result.error, undefined);
+      assert.equal(
+        result.status,
+        1,
+        `${kind}: ${result.stdout}\n${result.stderr}`,
+      );
+      assert.match(result.stdout + result.stderr, observation, kind);
+    }
+  },
+);
+
 test("private owner mint is absent from public package and default readiness never activates", () => {
   assert.equal("createSplyceOwner" in agentApi, false);
   for (const name of [
@@ -1358,106 +1462,3 @@ test("derived loop callback replacement is rejected before its physical effect",
   );
   assert.equal(await readFile(canary, "utf8"), "unchanged");
 });
-
-test(
-  "removing native identity, role, current-state or disposal guards fails their independent behavioral assertions",
-  { skip: process.env.SPLYCE_OWNER_MUTANT === "1" },
-  async (t) => {
-    const dir = await mkdtemp(join(tmpdir(), "splyce-owner-mutant-"));
-    t.after(() => rm(dir, { recursive: true, force: true }));
-    const hook = join(dir, "owner-mutant.mjs");
-    await writeFile(
-      hook,
-      `import { registerHooks } from "node:module";
-registerHooks({ load(url, context, next) {
-  const loaded = next(url, context);
-  if (!url.endsWith('/agent/dist/splyce-readiness.js')) return loaded;
-  const source = String(loaded.source);
-  const kind = process.env.SPLYCE_OWNER_TARGET;
-  let mutated = source;
-  if (kind === 'identity') mutated = source.replace('if (!binding || binding.owner.disposed)', 'if (!binding) return { owner: { checkCurrent() {}, disposed: false }, role: "session" }; if (binding.owner.disposed)');
-  if (kind === 'role') mutated = source.replace('if (!derivations[binding.role]?.includes(role))', 'if (false)');
-  if (kind === 'current') mutated = source.replaceAll('binding.owner.checkCurrent();', 'void 0;');
-  if (kind === 'disposed') mutated = source.replace('!binding || binding.owner.disposed', '!binding').replace('if (binding.owner.disposed)', 'if (false)');
-  if (kind === 'tool-current') mutated = source.replace('if (bindings.has(tool))', 'if (false)');
-  if (kind === 'tool-exposure') mutated = source.replace('tool.execute = () => unavailable();', 'void 0;');
-  if (kind === 'callback-snapshot') mutated = source.replace('!snapshot || callbackKeys.some((key) => snapshot[key] !== agent[key])', '!snapshot').replace('return snapshot;', 'return agent;');
-  if (kind === 'stream-binding') mutated = source.replace('if (streams.get(config) !== stream)', 'if (false)');
-  if (mutated === source) throw new Error('owner mutation target not found');
-  return { ...loaded, source: mutated };
-} });\n`,
-    );
-    for (const [kind, pattern, observation] of [
-      [
-        "callback-snapshot",
-        "sealed Agent callback snapshot",
-        /replaced callback must preserve physical bytes/,
-      ],
-      ["identity", "private owner mint", /Missing expected exception/],
-      ["role", "private owner mint", /Missing expected exception/],
-      ["current", "native revision changes", /Missing expected exception/],
-      [
-        "current",
-        "owned async tool revoke",
-        /revoked or canceled tool must not invoke a physical update callback/,
-      ],
-      [
-        "current",
-        "SDK subscriber revoke",
-        /interrupted subscriber must not reach subsequent subscribers/,
-      ],
-      ["disposed", "same-owner checks", /Missing expected exception/],
-      [
-        "tool-current",
-        "disposed owned tool",
-        /disposed owner must not append a reservation/,
-      ],
-      [
-        "tool-exposure",
-        "direct final owned tool",
-        /direct owned tool must not write without native admission/,
-      ],
-      [
-        "stream-binding",
-        "exposed Agent cannot",
-        /exposed Agent must not dispatch a caller-selected loop stream/,
-      ],
-    ]) {
-      const env = Object.fromEntries(
-        ["SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "PATHEXT"]
-          .filter((key) => process.env[key])
-          .map((key) => [key, process.env[key]]),
-      );
-      const result = spawnSync(
-        process.execPath,
-        [
-          "--import",
-          pathToFileURL(hook).href,
-          "--test",
-          `--test-name-pattern=${pattern}`,
-          fileURLToPath(import.meta.url),
-        ],
-        {
-          env: {
-            ...env,
-            HOME: dir,
-            USERPROFILE: dir,
-            PI_CODING_AGENT_DIR: dir,
-            SPLYCE_OWNER_MUTANT: "1",
-            SPLYCE_OWNER_TARGET: kind,
-          },
-          encoding: "utf8",
-          timeout: 30000,
-          windowsHide: true,
-        },
-      );
-      assert.equal(result.error, undefined);
-      assert.equal(
-        result.status,
-        1,
-        `${kind}: ${result.stdout}\n${result.stderr}`,
-      );
-      assert.match(result.stdout + result.stderr, observation, kind);
-    }
-  },
-);
