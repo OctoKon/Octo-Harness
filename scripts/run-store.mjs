@@ -26,6 +26,7 @@ if (args.length === 0) {
     "tests/integration/credentials.ts",
     "tests/integration/grants.ts",
     "tests/integration/policy-grants.ts",
+    "tests/integration/code-index.ts",
   ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
@@ -54,13 +55,20 @@ if (args.length === 0) {
     files = ["tests/integration/grants.ts"];
   else if (args[1] === "C2_policy_grants")
     files = ["tests/integration/policy-grants.ts"];
+  // TD-39/TD-40 optional memory + retrieval core; builds those packages too.
+  else if (args[1] === "M1_memory_capture")
+    files = ["tests/integration/memory-capture.ts"];
+  else if (args[1] === "M2_memory_recall")
+    files = ["tests/integration/memory-recall.ts"];
+  else if (args[1] === "CTX_code_index")
+    files = ["tests/integration/code-index.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C2_grants_store | --case C2_policy_grants | --case C5_dirty_snapshot | --case C6_event_ledger]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C2_grants_store | --case C2_policy_grants | --case C5_dirty_snapshot | --case C6_event_ledger | --case M1_memory_capture | --case M2_memory_recall | --case CTX_code_index]",
   );
   process.exit(2);
 }
@@ -68,8 +76,16 @@ if (args.length === 0) {
 const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
 const tsc = join(dirname(dirname(require.resolve("typescript"))), "bin", "tsc");
+const memory = files.some((file) => file.includes("/memory-"));
 for (const command of [
   [tsc, "-p", "packages/splyce-pi/tsconfig.json"],
+  ...(memory
+    ? [
+        [tsc, "-p", "packages/splyce-retrieval/tsconfig.json"],
+        [tsc, "-p", "packages/splyce-memory/tsconfig.json"],
+      ]
+    : []),
+  [tsc, "-p", "packages/splyce-index/tsconfig.json"],
   ["--test", "--test-timeout=120000", ...files],
 ]) {
   const result = spawnSync(process.execPath, command, {
