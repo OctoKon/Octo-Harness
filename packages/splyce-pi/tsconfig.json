@@ -27,6 +27,7 @@
     "src/recovery.ts",
     "src/recovery-applier.ts",
     "src/config.ts",
+    "src/provider-profiles.ts",
     "src/desktop-bridge.ts",
     "src/session-map.ts",
     "src/node-sqlite.d.ts",
