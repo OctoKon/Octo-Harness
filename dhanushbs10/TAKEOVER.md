@@ -41,3 +41,11 @@ Implement TD-71 and TD-17 first (no existing WIP), then reconstruct TD-34 and TD
 ## Final verification update
 - t-0c0849, t-13d54f, t-706c8b, t-99e61d, t-ecd159 marked COMPLETE.
 - t-90e780 remains IN PROGRESS (TD-18 follow-up).
+
+## Remaining in-progress tasks (owned by dhanushbs10 agents)
+- t-0f643f — TD-16 credentials (#68): not implemented on main; no WIP found.
+- t-1fdd46 — TD-22 Bedrock/Azure: not implemented on main; no WIP found.
+- t-9b9351 — TD-19 OpenAI families (#70): not implemented on main; no WIP found.
+- t-c4e453 — TD-68 frontend: not implemented on main; no WIP found.
+- t-90e780 — TD-18 embedded e2e fixture runner: in progress (turns.ts has protocolErrors handling).
+These require full implementation; not marked done.
