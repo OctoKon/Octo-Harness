@@ -5,8 +5,8 @@
   import {
     groupByFamily,
     type ConnectionInput,
-    type CredentialDraft,
     type CustomEndpointDraft,
+    type ProviderSetupDraft,
   } from "../stores/profiles";
 
   let {
@@ -14,12 +14,15 @@
     families,
     onAddCustom,
     credentialSubmit,
+    credentialUnavailable,
   }: {
     connections: readonly ConnectionInput[];
     families: readonly string[];
-    onAddCustom: (draft: CustomEndpointDraft) => void;
-    /** Injected once the native credential writer exists; omitted means unavailable. */
-    credentialSubmit?: (draft: CredentialDraft) => Promise<void>;
+    /** Omitted while no profile service is connected: the form stays disabled with its reason. */
+    onAddCustom?: (draft: CustomEndpointDraft) => void;
+    /** Injected once the native setup route is available; omitted means unavailable. */
+    credentialSubmit?: (draft: ProviderSetupDraft) => Promise<void>;
+    credentialUnavailable?: string;
   } = $props();
 
   const groups = $derived(groupByFamily(connections, families));
@@ -33,7 +36,7 @@
 
 <main aria-labelledby="providers-title">
   <h2 id="providers-title">Provider connections</h2>
-  <CredentialForm submit={credentialSubmit} />
+  <CredentialForm submit={credentialSubmit} unavailableReason={credentialUnavailable} />
   {#each groups as group (group.apiFamily)}
     <section aria-labelledby={`fam-${group.apiFamily}`} data-testid="family">
       <h3 id={`fam-${group.apiFamily}`}>{group.apiFamily}</h3>
@@ -48,5 +51,14 @@
       {/if}
     </section>
   {/each}
-  <CustomEndpointForm {existing} onAdd={onAddCustom} />
+  <fieldset class="custom" disabled={!onAddCustom}>
+    {#if !onAddCustom}
+      <p>Custom endpoints are unavailable: no profile service is connected.</p>
+    {/if}
+    <CustomEndpointForm {existing} onAdd={(draft) => onAddCustom?.(draft)} />
+  </fieldset>
 </main>
+
+<style>
+  .custom { border: 0; margin: 0; padding: 0; }
+</style>
