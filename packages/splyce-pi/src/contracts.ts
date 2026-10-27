@@ -296,6 +296,14 @@ export interface RecordBodies {
     firstChildEntryId: string | null;
     activeLeafEntryId: string | null;
   };
+  /** TD-70 write-child file ownership; a release is a later record with releasedAt. */
+  fileClaim: {
+    workspaceId: string;
+    path: string;
+    ownerChildId: string;
+    revision: string;
+    releasedAt: string | null;
+  };
 }
 export type RecordKind = keyof RecordBodies;
 export type RecordByKind = {
@@ -481,6 +489,13 @@ export const RECORD_SCHEMAS = {
     firstChildEntryId: "nullableId",
     activeLeafEntryId: "nullableId",
   },
+  fileClaim: {
+    workspaceId: "ref",
+    path: "text",
+    ownerChildId: "id",
+    revision: "text",
+    releasedAt: "nullableUtc",
+  },
 } as const satisfies { [K in RecordKind]: Shape };
 
 for (const schema of Object.values(RECORD_SCHEMAS)) {
@@ -625,7 +640,48 @@ export interface EventPayloads {
     activeActionIds: string[];
     state: "ready" | "busy" | "waiting_approval" | "stopped";
   };
+  // TD-70 delegated children; runId is the parent run.
+  "child.started": {
+    runId: string;
+    childId: string;
+    mode: (typeof SUBAGENT_MODES)[number];
+  };
+  "child.progress": {
+    runId: string;
+    childId: string;
+    turns: number;
+    tokens: number;
+  };
+  "child.completed": {
+    runId: string;
+    childId: string;
+    summary: string;
+    citations: string[];
+    files?: string[];
+  };
+  "child.failed": {
+    runId: string;
+    childId: string;
+    reason: (typeof SUBAGENT_FAILURE_REASONS)[number];
+    message?: string;
+  };
+  "child.cancelled": { runId: string; childId: string; cleanedUp: boolean };
 }
+export const SUBAGENT_MODES = ["read", "write"] as const;
+export const SUBAGENT_FAILURE_REASONS = [
+  "BUDGET_TURNS",
+  "BUDGET_TOKENS",
+  "BUDGET_WALL_CLOCK",
+  "CAPABILITY_DENIED",
+  "PATH_OUTSIDE_WORKSPACE",
+  "FILE_CLAIM_CONFLICT",
+  "DEPENDENCY_FAILED",
+  "POLICY_DENIED",
+  "PROVIDER_ERROR",
+  "ENGINE_ERROR",
+] as const;
+Object.freeze(SUBAGENT_MODES);
+Object.freeze(SUBAGENT_FAILURE_REASONS);
 export type EventKind = keyof EventPayloads;
 export type SplyceEvent = {
   [K in EventKind]: {
@@ -697,6 +753,25 @@ const EVENT_SCHEMAS = {
     activeActionIds: "refs",
     state: ["ready", "busy", "waiting_approval", "stopped"],
   },
+  "child.started": { runId: "ref", childId: "id", mode: SUBAGENT_MODES },
+  "child.progress": {
+    runId: "ref",
+    childId: "id",
+    turns: "uint",
+    tokens: "uint",
+  },
+  "child.completed": {
+    runId: "ref",
+    childId: "id",
+    summary: "text",
+    citations: "strings",
+  },
+  "child.failed": {
+    runId: "ref",
+    childId: "id",
+    reason: SUBAGENT_FAILURE_REASONS,
+  },
+  "child.cancelled": { runId: "ref", childId: "id", cleanedUp: "bool" },
 } as const satisfies { [K in EventKind]: Shape };
 const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
   "engine.status": { ports: "portAvailability" },
@@ -705,6 +780,8 @@ const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
   "turn.stream_delta": { turnId: "ref" },
   "turn.thought_delta": { turnId: "ref" },
   "run.reconnect_snapshot": { turnId: "ref" },
+  "child.completed": { files: "strings" },
+  "child.failed": { message: "text" },
 };
 export const EVENT_KINDS = Object.freeze(
   Object.keys(EVENT_SCHEMAS) as EventKind[],

@@ -85,5 +85,36 @@
       "activeActionIds": ["a1"],
       "state": "waiting_approval"
     }
+  },
+  {
+    "kind": "child.started",
+    "payload": { "runId": "r1", "childId": "child1", "mode": "read" }
+  },
+  {
+    "kind": "child.progress",
+    "payload": { "runId": "r1", "childId": "child1", "turns": 1, "tokens": 42 }
+  },
+  {
+    "kind": "child.completed",
+    "payload": {
+      "runId": "r1",
+      "childId": "child1",
+      "summary": "Found the entrypoint.",
+      "citations": ["src/main.ts:3"],
+      "files": ["M src/main.ts"]
+    }
+  },
+  {
+    "kind": "child.failed",
+    "payload": {
+      "runId": "r1",
+      "childId": "child1",
+      "reason": "BUDGET_TURNS",
+      "message": "turn budget exhausted"
+    }
+  },
+  {
+    "kind": "child.cancelled",
+    "payload": { "runId": "r1", "childId": "child1", "cleanedUp": true }
   }
 ]

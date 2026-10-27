@@ -7,3 +7,14 @@ declare module "node:crypto" {
   export function createHash(algorithm: "sha256"): Hash;
   export function randomUUID(): string;
 }
+// TD-70 child path confinement.
+declare module "node:path" {
+  export function resolve(...paths: string[]): string;
+  export function relative(from: string, to: string): string;
+  export function isAbsolute(path: string): boolean;
+  export function dirname(path: string): string;
+  export const sep: string;
+}
+declare module "node:fs" {
+  export function realpathSync(path: string): string;
+}
