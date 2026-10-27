@@ -47,6 +47,7 @@ export function buildBaseOptions(
 		signal: options?.signal,
 		telemetry: options?.telemetry,
 		apiKey: apiKey || options?.apiKey,
+		credentials: options?.credentials,
 		fetch: options?.fetch,
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention,

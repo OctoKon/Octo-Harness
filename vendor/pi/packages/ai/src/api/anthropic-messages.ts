@@ -18,6 +18,15 @@ import {
 	ANTHROPIC_WORKSPACE_ID_ENV,
 } from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
+import {
+	assertCredentialApiIdentity,
+	assertCredentialOptions,
+	CredentialPreflightError,
+	createLeasedFetch,
+	redactEventWithLease,
+	redactResponseWithLease,
+	redactWithLease,
+} from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -581,6 +590,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	const normalizedContext = resolveTranscript(context, getAnthropicCompat(model).supportsMidConvoSystemMessages);
 	const currentTools = getCurrentTools(normalizedContext.messages);
 
+	// Captured before any caller callback runs: onPayload may mutate options, and error/observer paths must keep the
+	// credentials the call was admitted with.
+	const leasedCredentials = options?.credentials;
 	(async () => {
 		const output: AssistantMessage = {
 			role: "assistant",
@@ -600,6 +612,10 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			timestamp: Date.now(),
 		};
 
+		// Splyce TD-21: only tool calls closed by content_block_stop may be returned; a partial one never reaches dispatch.
+		const finishedToolCalls = new WeakSet<object>();
+		const LEASED_API_KEY_PLACEHOLDER = "splyce-leased-placeholder";
+
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
@@ -607,10 +623,23 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			let inputTransformations: BetaInputTransformation[] | undefined;
 
 			if (options?.client) {
+				// Splyce: a caller-supplied client carries its own auth and transport, so it cannot be used with a lease.
+				if (leasedCredentials)
+					throw new CredentialPreflightError("credentials cannot be used with a caller-supplied client");
 				client = options.client;
 				isOAuth = false;
 			} else {
-				const apiKey = options?.apiKey;
+				assertCredentialApiIdentity(model.api, "anthropic-messages", options);
+				assertCredentialOptions(options ?? {}, model.headers);
+				// Splyce: with a lease the SDK client holds only a placeholder; the real key is leased and written into the
+				// auth header on every HTTP send (including SDK retries), and redirects are refused.
+				if (leasedCredentials && model.provider === "github-copilot") {
+					throw new CredentialPreflightError("credentials are not supported for this provider");
+				}
+				const apiKey = leasedCredentials ? LEASED_API_KEY_PLACEHOLDER : options?.apiKey;
+				const requestFetch = leasedCredentials
+					? createLeasedFetch(leasedCredentials, "x-api-key", options.fetch)
+					: options?.fetch;
 				const federation = getAnthropicFederation(model, apiKey, options?.headers, options?.env);
 				if (!federation) assertRequestAuth(model.provider, apiKey, options?.headers);
 
@@ -630,7 +659,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					model,
 					apiKey,
 					options?.headers,
-					options?.fetch,
+					requestFetch,
 					copilotDynamicHeaders,
 					cacheSessionId,
 					federation,
@@ -686,12 +715,19 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					appendAssistantMessageDiagnostic(output, {
 						type: "anthropic_strict_tools_fallback",
 						timestamp: Date.now(),
-						error: { message: error.message },
+						// The provider text may echo the credential and this diagnostic persists on a successful response.
+						error: { message: await redactWithLease(leasedCredentials, error.message) },
 						details: { reason: "strict_tool_limits_exceeded" },
 					});
 				}
 			}
-			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			await options?.onResponse?.(
+				await redactResponseWithLease(leasedCredentials, {
+					status: response.status,
+					headers: headersToRecord(response.headers),
+				}),
+				model,
+			);
 			stream.push({ type: "start", partial: output });
 
 			// Stream state per Anthropic block index, kept off the content blocks so it never reaches partials.
@@ -702,7 +738,10 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			};
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
-				await options?.onProviderStreamEvent?.(event, model);
+				await options?.onProviderStreamEvent?.(
+					(await redactEventWithLease(leasedCredentials, event)) as typeof event,
+					model,
+				);
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					const transformations = event.message.input_transformations;
@@ -829,6 +868,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 							});
 						} else if (block.type === "toolCall" && open.arguments !== undefined) {
 							Object.assign(block, open.arguments.finish());
+							finishedToolCalls.add(block);
 							stream.push({
 								type: "toolcall_end",
 								contentIndex: index,
@@ -901,6 +941,9 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error(output.errorMessage || "An unknown error occurred");
 			}
+			if (output.content.some((block) => block.type === "toolCall" && !finishedToolCalls.has(block))) {
+				throw new Error("Anthropic stream ended with an unfinished tool call");
+			}
 			if (inputTransformations && inputTransformations.length > 0) {
 				appendAssistantMessageDiagnostic(output, {
 					type: "anthropic_input_transformations",
@@ -918,8 +961,13 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			// An errored or aborted response carries no executable tool call, finished or not (same rule as every other family).
+			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = await redactWithLease(
+				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
+				error instanceof Error ? error.message : JSON.stringify(error),
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -958,7 +1006,8 @@ export const streamSimple: StreamFunction<"anthropic-messages", SimpleStreamOpti
 	context: TranscriptContext,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	if (!getAnthropicFederation(model, options?.apiKey, options?.headers, options?.env)) {
+	// Splyce: a leased credential is checked by the stream itself, on every send.
+	if (!options?.credentials && !getAnthropicFederation(model, options?.apiKey, options?.headers, options?.env)) {
 		assertRequestAuth(model.provider, options?.apiKey, options?.headers);
 	}
 
