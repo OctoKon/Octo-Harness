@@ -217,7 +217,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		registerProvider: (name, config, extensionPath = "<unknown>") => {
 			runtime.pendingProviderRegistrations.push({ name, config, extensionPath });
 		},
-		registerNativeProvider: (provider, extensionPath = "<unknown>") => {
+		registerNativeProvider: async (provider, extensionPath = "<unknown>") => {
+			assertActive();
 			runtime.pendingNativeProviderRegistrations.push({ provider, extensionPath });
 		},
 		unregisterProvider: (name) => {
@@ -249,9 +250,9 @@ function createExtensionAPI(
 	runtime: ExtensionRuntime,
 	cwd: string,
 	eventBus: EventBus,
-): { api: ExtensionAPI; commit: () => void; discard: () => void } {
+): { api: ExtensionAPI; commit: () => Promise<void>; discard: () => void } {
 	const pendingFlagValues = new Map<string, boolean | string>();
-	const pendingRuntimeChanges: Array<() => void> = [];
+	const pendingRuntimeChanges: Array<() => void | Promise<void>> = [];
 	const loadingUnsubscribers: Array<() => void> = [];
 	let state: "loading" | "active" | "failed" = "loading";
 	const assertActive = () => {
@@ -260,9 +261,9 @@ function createExtensionAPI(
 		}
 		runtime.assertActive();
 	};
-	const applyRuntimeChange = (change: () => void) => {
+	const applyRuntimeChange = (change: () => void | Promise<void>) => {
 		if (state === "loading") pendingRuntimeChanges.push(change);
-		else change();
+		else return change();
 	};
 	const clearPending = () => {
 		pendingFlagValues.clear();
@@ -463,7 +464,9 @@ function createExtensionAPI(
 				applyRuntimeChange(() => runtime.registerProvider(providerOrName, config, extension.path));
 				return;
 			}
-			applyRuntimeChange(() => runtime.registerNativeProvider(providerOrName, extension.path));
+			return Promise.resolve(
+				applyRuntimeChange(() => runtime.registerNativeProvider(providerOrName, extension.path)),
+			);
 		},
 
 		unregisterProvider(name: string) {
@@ -532,13 +535,17 @@ function createExtensionAPI(
 
 	return {
 		api,
-		commit: () => {
+		commit: async () => {
 			if (state !== "loading") return;
 			runtime.assertActive();
 			for (const [name, value] of pendingFlagValues) {
 				if (!runtime.flagValues.has(name)) runtime.flagValues.set(name, value);
 			}
-			for (const apply of pendingRuntimeChanges) apply();
+			for (const apply of pendingRuntimeChanges) {
+				runtime.assertActive();
+				await apply();
+			}
+			runtime.assertActive();
 			state = "active";
 			clearPending();
 		},
@@ -625,7 +632,7 @@ async function initializeExtension(
 	const load = createExtensionAPI(extension, runtime, cwd, eventBus);
 	try {
 		await factory(load.api);
-		load.commit();
+		await load.commit();
 	} catch (error) {
 		load.discard();
 		throw error;

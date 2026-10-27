@@ -295,6 +295,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 		const effectiveTimeoutMs = httpIdleTimeoutMs === 0 ? 2147483647 : httpIdleTimeoutMs;
 		const headerRunner = extensionRunnerRef.current;
+		const transformHeaders: ModelsSimpleStreamOptions["transformHeaders"] = headerRunner?.hasHandlers(
+			"before_provider_headers",
+		)
+			? (headers) => headerRunner.emitBeforeProviderHeaders(headers)
+			: undefined;
 		return {
 			...options,
 			timeoutMs: options.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs,
@@ -303,10 +308,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			maxRetryDelayMs: options.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 			// Replaces the agent loop's default identity; read per request so telemetry changes apply at once.
 			identity: getClientIdentity(settingsManager),
-			transformHeaders: async (headers) =>
-				headerRunner?.hasHandlers("before_provider_headers")
-					? headerRunner.emitBeforeProviderHeaders(headers)
-					: headers,
+			...(transformHeaders ? { transformHeaders } : {}),
 		};
 	};
 	// Warm only requests for the selected model. Requests a virtual selection routed, or that an
@@ -424,6 +426,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 	inheritSplyceOwner(options, sessionOptions, "session-options");
 	const session = new AgentSession(sessionOptions);
+	try {
+		await session.initialize();
+	} catch (error) {
+		session.dispose();
+		throw error;
+	}
 
 	const extensionsResult = resourceLoader.getExtensions();
 

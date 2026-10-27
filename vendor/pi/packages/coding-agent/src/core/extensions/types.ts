@@ -1820,6 +1820,9 @@ export interface ExtensionAPI {
 	 * it is safe to call from command handlers or event callbacks without
 	 * requiring a `/reload`.
 	 *
+	 * Native provider registrations resolve after queueing during extension loading.
+	 * Startup awaits their registration when the runner binds; later calls await registration directly.
+	 *
 	 * @example
 	 * // Register a new provider with custom models
 	 * pi.registerProvider("my-proxy", {
@@ -1859,7 +1862,7 @@ export interface ExtensionAPI {
 	 *   }
 	 * });
 	 */
-	registerProvider(provider: Provider): void;
+	registerProvider(provider: Provider): Promise<void>;
 	registerProvider(name: string, config: ProviderConfig): void;
 
 	/**
@@ -2178,7 +2181,7 @@ export interface ExtensionRuntimeState {
 	 * After bindCore(): calls ModelRegistry directly for immediate effect.
 	 */
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
-	registerNativeProvider: (provider: Provider, extensionPath?: string) => void;
+	registerNativeProvider: (provider: Provider, extensionPath?: string) => Promise<void>;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
 	/** Servers registered with `pi.registerMcpServer()`. */
 	mcpServers: McpServerRegistry;

@@ -428,6 +428,9 @@ export class AgentSession {
 
 	// Extension system
 	private _extensionRunner!: ExtensionRunner;
+	private _initializeRuntime!: () => Promise<void>;
+	private _runtimeInitialization?: Promise<void>;
+	private _runtimeActive = false;
 	private _turnIndex = 0;
 	private readonly _entryIdsByMessage = new WeakMap<object, string>();
 	private readonly _boundaryDispatchedMessages = new WeakSet<object>();
@@ -540,6 +543,21 @@ export class AgentSession {
 
 	get modelRuntime(): ModelRuntime {
 		return this._modelRuntime;
+	}
+
+	/** Await provider registration before using a newly constructed or reloaded runtime. */
+	async initialize(): Promise<void> {
+		assertSplyceReady(this);
+		const runner = this._extensionRunner;
+		this._assertRuntimeCurrent(runner);
+		this._runtimeInitialization ??= this._initializeRuntime();
+		await this._runtimeInitialization;
+		this._assertRuntimeCurrent(runner);
+	}
+
+	private _assertRuntimeCurrent(runner: ExtensionRunner): void {
+		assertSplyceReady(this);
+		if (!this._runtimeActive || runner !== this._extensionRunner) assertSplyceReady();
 	}
 
 	private async _getRequiredRequestAuth(
@@ -2147,6 +2165,7 @@ export class AgentSession {
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
 		assertSplyceReady(this);
+		await this.initialize();
 		if (this._isEmittingAgentSettled) {
 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
 			return;
@@ -3383,6 +3402,7 @@ export class AgentSession {
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
 		assertSplyceReady(this);
+		await this.initialize();
 		if (bindings.uiContext !== undefined) {
 			this._extensionUIContext = bindings.uiContext;
 		}
@@ -3485,7 +3505,7 @@ export class AgentSession {
 		this.agent.state.model = refreshedModel;
 	}
 
-	private _bindExtensionCore(runner: ExtensionRunner): void {
+	private async _bindExtensionCore(runner: ExtensionRunner): Promise<void> {
 		if (inheritSplyceOwner(this, runner, "runner")) {
 			assertSameSplyceOwner(this, runner, "runner");
 		}
@@ -3514,7 +3534,7 @@ export class AgentSession {
 			return [...extensionCommands, ...templates, ...skills];
 		};
 
-		runner.bindCore(
+		await runner.bindCore(
 			{
 				sendMessage: (message, options) => {
 					this.sendCustomMessage(message, options).catch((err) => {
@@ -3605,8 +3625,10 @@ export class AgentSession {
 					this._modelRuntime.registerProvider(name, config);
 					this._refreshCurrentModelFromRegistry();
 				},
-				registerNativeProvider: (provider) => {
-					this._modelRuntime.registerNativeProvider(provider);
+				registerNativeProvider: async (provider) => {
+					this._assertRuntimeCurrent(runner);
+					await this._modelRuntime.registerNativeProvider(provider);
+					this._assertRuntimeCurrent(runner);
 					this._refreshCurrentModelFromRegistry();
 				},
 				unregisterProvider: (name) => {
@@ -3623,6 +3645,7 @@ export class AgentSession {
 				},
 			},
 		);
+		this._assertRuntimeCurrent(runner);
 	}
 
 	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
@@ -3780,7 +3803,10 @@ export class AgentSession {
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
 		}
-		this._bindExtensionCore(this._extensionRunner);
+		const runner = this._extensionRunner;
+		this._runtimeActive = true;
+		this._runtimeInitialization = undefined;
+		this._initializeRuntime = () => this._bindExtensionCore(runner);
 		this._applyExtensionBindings(this._extensionRunner);
 
 		const defaultActiveToolNames = this._baseToolsOverride
@@ -3798,6 +3824,7 @@ export class AgentSession {
 		const oldRunner = this._extensionRunner;
 		const previousFlagValues = oldRunner.getFlagValues();
 		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
+		this._runtimeActive = false;
 		oldRunner.invalidate();
 		const getDefaultTools = () =>
 			this._usesDefaultTools
@@ -3821,6 +3848,7 @@ export class AgentSession {
 			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
 		});
+		await this.initialize();
 
 		const hasBindings =
 			this._extensionUIContext ||
