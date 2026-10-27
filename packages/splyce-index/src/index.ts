@@ -1,9 +1,9 @@
-// TD-43 / CTX_code_index — lexical index of the agent's workspace.
-// The caller (native host / engine, never the renderer) passes a canonical
-// absolute workspace root and an app-data cache dir. Links are recorded and
-// never followed (same rule as src/snapshots.ts); a refresh builds a new
-// generation and swaps it in one assignment, so a query never sees a half
-// index. Stdlib only.
+// TD-43 / CTX_code_index — lexical + graph (+ optional dense) index of the
+// agent's workspace. The caller (native host / engine, never the renderer)
+// passes a canonical absolute workspace root and an app-data cache dir. Links
+// are recorded and never followed (same rule as src/snapshots.ts); a refresh
+// builds a whole new generation (text, postings, graph, vectors) and swaps it
+// in one assignment, so a query never sees a half index. Stdlib only.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -16,23 +16,50 @@ import {
   readlinkSync,
   realpathSync,
   renameSync,
-  writeFileSync,
   type Stats,
+  writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
+import {
+  type Chunk,
+  chunkRanges,
+  chunkText,
+  decodeVec,
+  dot,
+  type EmbeddingPort,
+  embedChecked,
+  encodeVec,
+  reciprocalRankFusion,
+} from "./dense.js";
+import {
+  buildGraph,
+  type CodeGraph,
+  type Definition,
+  extOf,
+  extractImports,
+  extractSymbols,
+  fileNode,
+  languageOf,
+  type OutlineSymbol,
+  personalizedPageRank,
+  symbolNode,
+} from "./graph.js";
 
-export const CACHE_VERSION = 1;
+export type { EmbeddingPort } from "./dense.js";
+export type { Definition, OutlineSymbol } from "./graph.js";
+
+export const CACHE_VERSION = 2;
 const DEFAULT_MAX_FILE_BYTES = 1024 * 1024;
 const BINARY_SNIFF_BYTES = 8192;
 const K1 = 1.2;
 const B = 0.75;
+const DENSE_CANDIDATES = 100;
+const MAX_REFERENCES = 200;
 
 export class CodeIndexError extends Error {
   readonly code:
-    | "ROOT_NOT_CANONICAL"
-    | "CACHE_DIR_INVALID"
-    | "INVALID_ARGUMENT";
+    "ROOT_NOT_CANONICAL" | "CACHE_DIR_INVALID" | "INVALID_ARGUMENT";
   constructor(code: CodeIndexError["code"], message: string) {
     super(message);
     this.name = "CodeIndexError";
@@ -49,27 +76,55 @@ export interface SearchInput {
   pathGlob?: string;
   limit?: number;
 }
+export interface SignalScore {
+  rank: number;
+  score: number;
+}
 export interface SearchHit {
   path: string;
   line: number;
   preview: string;
+  /** BM25 score when lexical only; RRF score when dense is enabled. */
   score: number;
-}
-export interface OutlineSymbol {
-  name: string;
-  kind: string;
-  line: number;
+  signals: { bm25?: SignalScore; dense?: SignalScore };
 }
 export type OutlineResult =
   | { status: "ok"; language: string; symbols: OutlineSymbol[] }
   | { status: "unsupported"; language: string }
   | { status: "not_indexed" };
+export type DependenciesResult =
+  | { status: "ok"; resolved: string[]; unresolved: string[] }
+  | { status: "unsupported"; language: string }
+  | { status: "not_indexed" };
+export type DependentsResult =
+  { status: "ok"; dependents: string[] } | { status: "not_indexed" };
+export interface Reference {
+  path: string;
+  line: number;
+  preview: string;
+}
+export interface SymbolResult {
+  definitions: Definition[];
+  references: Reference[];
+  truncated: boolean;
+}
+export interface RelatedNode {
+  kind: "file" | "symbol";
+  path: string;
+  name?: string;
+  line?: number;
+  score: number;
+}
+export type RelatedResult =
+  { status: "ok"; results: RelatedNode[] } | { status: "not_found" };
 export interface RefreshReport {
   reindexed: string[];
   removed: string[];
   reused: number;
   skipped: string[];
   links: readonly IndexedLink[];
+  /** Chunks sent to the embedding port in this refresh. */
+  embedded: number;
 }
 export type CacheLoad = "loaded" | "absent" | "discarded";
 
@@ -80,12 +135,22 @@ interface FileDoc {
   readonly lines: readonly string[];
   readonly tf: ReadonlyMap<string, number>;
   readonly len: number;
+  readonly symbols: readonly OutlineSymbol[] | null;
+  readonly imports: readonly string[] | null;
+  readonly idents: ReadonlySet<string>;
+}
+interface DenseState {
+  readonly modelId: string;
+  readonly dimensions: number;
+  readonly chunks: ReadonlyMap<string, readonly Chunk[]>;
 }
 interface Generation {
   readonly files: ReadonlyMap<string, FileDoc>;
   readonly postings: ReadonlyMap<string, ReadonlyMap<string, number>>;
   readonly avgLen: number;
   readonly links: readonly IndexedLink[];
+  readonly graph: CodeGraph;
+  readonly dense: DenseState | null;
 }
 
 /** Words plus their camelCase / snake_case parts, lowercased. */
@@ -122,19 +187,36 @@ export function globRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
-function makeDoc(text: string, mtimeMs: number, size: number): FileDoc {
+function makeDoc(
+  path: string,
+  text: string,
+  mtimeMs: number,
+  size: number,
+): FileDoc {
   const tokens = tokenize(text);
   const tf = new Map<string, number>();
   for (const t of tokens) tf.set(t, (tf.get(t) ?? 0) + 1);
-  return { mtimeMs, size, text, lines: text.split(/\r?\n/), tf, len: tokens.length };
+  const lines = text.split(/\r?\n/);
+  return {
+    mtimeMs,
+    size,
+    text,
+    lines,
+    tf,
+    len: tokens.length,
+    symbols: extractSymbols(path, lines),
+    imports: extractImports(path, text),
+    idents: new Set(text.match(/[A-Za-z_$][\w$]*/g) ?? []),
+  };
 }
 
-// ponytail: postings are reassembled from per-file term maps on every
-// generation (O(total distinct terms)); only changed files are re-read and
-// re-tokenized. Patch postings incrementally if large workspaces need it.
+// ponytail: postings and graph are reassembled from per-file facts on every
+// generation (O(total terms + idents)); only changed files are re-read and
+// re-parsed. Patch them incrementally if very large workspaces need it.
 function finalize(
   files: ReadonlyMap<string, FileDoc>,
   links: readonly IndexedLink[],
+  dense: DenseState | null,
 ): Generation {
   const postings = new Map<string, Map<string, number>>();
   let total = 0;
@@ -146,17 +228,24 @@ function finalize(
       post.set(path, f);
     }
   }
+  const goModule =
+    /^module\s+(\S+)/m.exec(files.get("go.mod")?.text ?? "")?.[1] ?? null;
   return Object.freeze({
     files,
     postings,
     avgLen: files.size ? total / files.size : 0,
     links: Object.freeze([...links]),
+    graph: buildGraph(files, goModule),
+    dense,
   });
 }
 
 function canonicalRoot(root: unknown): string {
   if (typeof root !== "string" || !isAbsolute(root) || resolve(root) !== root)
-    throw new CodeIndexError("ROOT_NOT_CANONICAL", "root must be a canonical absolute path");
+    throw new CodeIndexError(
+      "ROOT_NOT_CANONICAL",
+      "root must be a canonical absolute path",
+    );
   let real: string;
   try {
     real = realpathSync.native(root);
@@ -168,7 +257,10 @@ function canonicalRoot(root: unknown): string {
       ? real.toLowerCase() === root.toLowerCase()
       : real === root;
   if (!same || !lstatSync(root).isDirectory())
-    throw new CodeIndexError("ROOT_NOT_CANONICAL", "root must be a canonical directory (no links)");
+    throw new CodeIndexError(
+      "ROOT_NOT_CANONICAL",
+      "root must be a canonical directory (no links)",
+    );
   return root;
 }
 
@@ -284,23 +376,46 @@ function listCandidates(root: string): {
   return { files, links };
 }
 
+interface CacheChunk {
+  start: number;
+  end: number;
+  vec: string;
+}
 interface CacheFile {
   version: number;
   root: string;
   files: { path: string; mtimeMs: number; size: number; text: string }[];
+  dense?: {
+    modelId: string;
+    dimensions: number;
+    files: { path: string; chunks: CacheChunk[] }[];
+  };
 }
+
+const isNum = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v);
 
 function loadCache(
   file: string,
   root: string,
-): { status: CacheLoad; files: Map<string, FileDoc> } {
+  port: EmbeddingPort | null,
+): {
+  status: CacheLoad;
+  files: Map<string, FileDoc>;
+  dense: DenseState | null;
+} {
   const files = new Map<string, FileDoc>();
-  if (!existsSync(file)) return { status: "absent", files };
+  const empty = (status: CacheLoad) => ({
+    status,
+    files: new Map<string, FileDoc>(),
+    dense: null,
+  });
+  if (!existsSync(file)) return empty("absent");
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
   } catch {
-    return { status: "discarded", files }; // corrupt: rebuild from source
+    return empty("discarded"); // corrupt: rebuild from source
   }
   const c = raw as Partial<CacheFile> | null;
   if (
@@ -312,77 +427,65 @@ function loadCache(
       (f) =>
         f &&
         typeof f.path === "string" &&
-        typeof f.mtimeMs === "number" &&
-        typeof f.size === "number" &&
+        isNum(f.mtimeMs) &&
+        isNum(f.size) &&
         typeof f.text === "string",
     )
   )
-    return { status: "discarded", files };
+    return empty("discarded");
   // Cached entries are only reused for paths the next walk lists with the
   // same mtime+size, so the cache cannot introduce a path.
-  for (const f of c.files) files.set(f.path, makeDoc(f.text, f.mtimeMs, f.size));
-  return { status: "loaded", files };
-}
-
-function validateSearch(input: unknown): Required<Omit<SearchInput, "pathGlob">> & {
-  pathGlob: string | null;
-} {
-  const i = input as Partial<SearchInput> | null;
-  if (!i || typeof i !== "object")
-    throw new CodeIndexError("INVALID_ARGUMENT", "search input must be an object");
-  const query = typeof i.query === "string" ? i.query.trim() : "";
-  if (!query || query.length > 512)
-    throw new CodeIndexError("INVALID_ARGUMENT", "query must be 1-512 characters");
+  for (const f of c.files)
+    files.set(f.path, makeDoc(f.path, f.text, f.mtimeMs, f.size));
+  // Vectors are reused only under the same model stamp; anything else
+  // (no port, other model/dims, malformed vectors) is re-embedded.
+  let dense: DenseState | null = null;
+  const d = c.dense;
   if (
-    i.pathGlob !== undefined &&
-    (typeof i.pathGlob !== "string" || !i.pathGlob || i.pathGlob.length > 256)
-  )
-    throw new CodeIndexError("INVALID_ARGUMENT", "pathGlob must be 1-256 characters");
-  const limit = i.limit ?? 20;
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-    throw new CodeIndexError("INVALID_ARGUMENT", "limit must be an integer 1-100");
-  return { query, pathGlob: i.pathGlob ?? null, limit };
+    port &&
+    d &&
+    d.modelId === port.modelId &&
+    d.dimensions === port.dimensions &&
+    Array.isArray(d.files)
+  ) {
+    const chunks = new Map<string, Chunk[]>();
+    for (const f of d.files) {
+      if (!f || typeof f.path !== "string" || !Array.isArray(f.chunks))
+        return empty("discarded");
+      const list: Chunk[] = [];
+      for (const ch of f.chunks) {
+        const vec =
+          ch && isNum(ch.start) && isNum(ch.end) && typeof ch.vec === "string"
+            ? decodeVec(ch.vec, d.dimensions)
+            : null;
+        if (!vec) return empty("discarded");
+        list.push({ start: ch.start, end: ch.end, vec });
+      }
+      chunks.set(f.path, list);
+    }
+    dense = { modelId: d.modelId, dimensions: d.dimensions, chunks };
+  }
+  return { status: "loaded", files, dense };
 }
 
-type OutlineRule = { re: RegExp; kind?: string };
-const TS_RULES: OutlineRule[] = [
-  {
-    re: /^(?:export\s+(?:default\s+)?)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(?<kind>function\*?|class|interface|type|enum|const|let|var|namespace)\s+(?<name>[A-Za-z_$][\w$]*)/,
-  },
-];
-const OUTLINE: Record<string, { language: string; rules: OutlineRule[] }> = {
-  ts: { language: "typescript", rules: TS_RULES },
-  tsx: { language: "typescript", rules: TS_RULES },
-  mts: { language: "typescript", rules: TS_RULES },
-  cts: { language: "typescript", rules: TS_RULES },
-  js: { language: "javascript", rules: TS_RULES },
-  jsx: { language: "javascript", rules: TS_RULES },
-  mjs: { language: "javascript", rules: TS_RULES },
-  cjs: { language: "javascript", rules: TS_RULES },
-  py: {
-    language: "python",
-    rules: [{ re: /^(?:async\s+)?(?<kind>def|class)\s+(?<name>\w+)/ }],
-  },
-  rs: {
-    language: "rust",
-    rules: [
-      {
-        re: /^(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|unsafe|const|extern(?:\s+"[^"]*")?)\s+)*(?<kind>fn|struct|enum|trait|mod|type|const|static|union)\s+(?<name>\w+)/,
-      },
-      { re: /^(?:unsafe\s+)?impl(?:<[^>]*>)?\s+(?<name>[^{]+?)\s*(?:\{|where\b|$)/, kind: "impl" },
-      { re: /^macro_rules!\s*(?<name>\w+)/, kind: "macro" },
-    ],
-  },
-  go: {
-    language: "go",
-    rules: [
-      { re: /^func\s+\([^)]*\)\s*(?<name>\w+)/, kind: "method" },
-      { re: /^func\s+(?<name>\w+)/, kind: "func" },
-      { re: /^type\s+(?<name>\w+)/, kind: "type" },
-      { re: /^(?<kind>var|const)\s+(?<name>\w+)/ },
-    ],
-  },
+const str = (v: unknown, max: number, what: string): string => {
+  if (typeof v !== "string" || !v.trim() || v.length > max)
+    throw new CodeIndexError(
+      "INVALID_ARGUMENT",
+      `${what} must be 1-${String(max)} characters`,
+    );
+  return v.trim();
 };
+const intIn = (v: unknown, dflt: number, max: number, what: string): number => {
+  const n = v ?? dflt;
+  if (!Number.isInteger(n) || (n as number) < 1 || (n as number) > max)
+    throw new CodeIndexError(
+      "INVALID_ARGUMENT",
+      `${what} must be an integer 1-${String(max)}`,
+    );
+  return n as number;
+};
+const relPath = (v: unknown) => str(v, 1024, "path").replace(/\\/g, "/");
 
 export interface CodeIndexOptions {
   /** Canonical absolute workspace root, supplied by native/engine. */
@@ -390,6 +493,8 @@ export interface CodeIndexOptions {
   /** Absolute cache directory under app data. */
   cacheDir: string;
   maxFileBytes?: number;
+  /** Enables the dense signal; absent = lexical + graph only. */
+  embedding?: EmbeddingPort;
 }
 
 export class CodeIndex {
@@ -398,6 +503,7 @@ export class CodeIndex {
   readonly maxFileBytes: number;
   /** What happened to the persisted cache when this index was opened. */
   readonly cacheLoad: CacheLoad;
+  readonly #port: EmbeddingPort | null;
   #gen: Generation;
   #queue: Promise<unknown> = Promise.resolve();
 
@@ -405,24 +511,46 @@ export class CodeIndex {
     root: string,
     cacheFile: string,
     maxFileBytes: number,
-    loaded: { status: CacheLoad; files: Map<string, FileDoc> },
+    port: EmbeddingPort | null,
+    loaded: ReturnType<typeof loadCache>,
   ) {
     this.root = root;
     this.cacheFile = cacheFile;
     this.maxFileBytes = maxFileBytes;
+    this.#port = port;
     this.cacheLoad = loaded.status;
-    this.#gen = finalize(loaded.files, []);
+    this.#gen = finalize(loaded.files, [], loaded.dense);
   }
 
   static async open(options: CodeIndexOptions): Promise<CodeIndex> {
     const root = canonicalRoot(options.root);
     if (typeof options.cacheDir !== "string" || !isAbsolute(options.cacheDir))
-      throw new CodeIndexError("CACHE_DIR_INVALID", "cacheDir must be absolute");
+      throw new CodeIndexError(
+        "CACHE_DIR_INVALID",
+        "cacheDir must be absolute",
+      );
+    const port = options.embedding ?? null;
+    if (
+      port &&
+      (!port.modelId ||
+        !Number.isInteger(port.dimensions) ||
+        port.dimensions < 1)
+    )
+      throw new CodeIndexError(
+        "INVALID_ARGUMENT",
+        "embedding port needs a modelId and positive dimensions",
+      );
     const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
     mkdirSync(options.cacheDir, { recursive: true });
     const key = createHash("sha256").update(root).digest("hex").slice(0, 16);
     const cacheFile = join(options.cacheDir, `code-index-${key}.json`);
-    const index = new CodeIndex(root, cacheFile, maxFileBytes, loadCache(cacheFile, root));
+    const index = new CodeIndex(
+      root,
+      cacheFile,
+      maxFileBytes,
+      port,
+      loadCache(cacheFile, root, port),
+    );
     await index.refresh();
     return index;
   }
@@ -432,6 +560,11 @@ export class CodeIndex {
   }
   get fileCount(): number {
     return this.#gen.files.size;
+  }
+  /** Model stamp of the vectors in the live generation, or null. */
+  get denseModel(): { modelId: string; dimensions: number } | null {
+    const d = this.#gen.dense;
+    return d ? { modelId: d.modelId, dimensions: d.dimensions } : null;
   }
 
   /** Re-index changed files, drop deleted ones, then swap generations. */
@@ -472,39 +605,126 @@ export class CodeIndex {
         skipped.push(rel);
         continue;
       }
-      next.set(rel, makeDoc(buf.toString("utf8"), mtimeMs, size));
+      next.set(rel, makeDoc(rel, buf.toString("utf8"), mtimeMs, size));
       reindexed.push(rel);
     }
     const removed = [...old.files.keys()].filter((p) => !next.has(p));
-    this.#gen = finalize(next, links); // atomic cutover
+    const { dense, embedded } = await this.#embed(old, next);
+    this.#gen = finalize(next, links, dense); // atomic cutover
     this.#save();
-    return { reindexed, removed, reused, skipped, links: this.#gen.links };
+    return {
+      reindexed,
+      removed,
+      reused,
+      skipped,
+      links: this.#gen.links,
+      embedded,
+    };
+  }
+
+  async #embed(
+    old: Generation,
+    next: ReadonlyMap<string, FileDoc>,
+  ): Promise<{ dense: DenseState | null; embedded: number }> {
+    const port = this.#port;
+    if (!port) return { dense: null, embedded: 0 };
+    const reuse =
+      old.dense?.modelId === port.modelId &&
+      old.dense.dimensions === port.dimensions
+        ? old.dense
+        : null;
+    const chunks = new Map<string, readonly Chunk[]>();
+    const pending: {
+      path: string;
+      start: number;
+      end: number;
+      text: string;
+    }[] = [];
+    for (const [path, doc] of next) {
+      const kept =
+        old.files.get(path) === doc ? reuse?.chunks.get(path) : undefined;
+      if (kept) {
+        chunks.set(path, kept);
+        continue;
+      }
+      for (const r of chunkRanges(doc.lines, doc.symbols))
+        pending.push({ path, ...r, text: chunkText(path, doc.lines, r) });
+    }
+    const vecs = await embedChecked(
+      port,
+      pending.map((p) => p.text),
+    );
+    pending.forEach((p, i) => {
+      chunks.set(p.path, [
+        ...(chunks.get(p.path) ?? []),
+        { start: p.start, end: p.end, vec: vecs[i]! },
+      ]);
+    });
+    return {
+      dense: { modelId: port.modelId, dimensions: port.dimensions, chunks },
+      embedded: pending.length,
+    };
   }
 
   #save(): void {
+    const g = this.#gen;
     const body: CacheFile = {
       version: CACHE_VERSION,
       root: this.root,
-      files: [...this.#gen.files].map(([path, d]) => ({
+      files: [...g.files].map(([path, d]) => ({
         path,
         mtimeMs: d.mtimeMs,
         size: d.size,
         text: d.text,
       })),
     };
+    if (g.dense)
+      body.dense = {
+        modelId: g.dense.modelId,
+        dimensions: g.dense.dimensions,
+        files: [...g.dense.chunks].map(([path, list]) => ({
+          path,
+          chunks: list.map((c) => ({
+            start: c.start,
+            end: c.end,
+            vec: encodeVec(c.vec),
+          })),
+        })),
+      };
     const tmp = `${this.cacheFile}.${String(process.pid)}.tmp`;
     writeFileSync(tmp, JSON.stringify(body));
     renameSync(tmp, this.cacheFile);
   }
 
-  /** BM25 over files; `"quoted"` parts are required exact phrases. */
-  search(input: SearchInput): SearchHit[] {
-    const g = this.#gen;
-    const { query, pathGlob, limit } = validateSearch(input);
-    const phrases = [...query.matchAll(/"([^"]+)"/g)].map((m) => m[1]!.toLowerCase());
+  /**
+   * BM25 over files, fused by RRF with dense chunk cosine when an embedding
+   * port is configured. `"quoted"` parts are required exact phrases.
+   */
+  async search(input: SearchInput): Promise<SearchHit[]> {
+    const g = this.#gen; // one generation for the whole query
+    const i = input as Partial<SearchInput> | null;
+    if (!i || typeof i !== "object")
+      throw new CodeIndexError(
+        "INVALID_ARGUMENT",
+        "search input must be an object",
+      );
+    const query = str(i.query, 512, "query");
+    const glob =
+      i.pathGlob === undefined
+        ? null
+        : globRegExp(str(i.pathGlob, 256, "pathGlob"));
+    const limit = intIn(i.limit, 20, 100, "limit");
+    const phrases = [...query.matchAll(/"([^"]+)"/g)].map((m) =>
+      m[1]!.toLowerCase(),
+    );
     const terms = [...new Set(tokenize(query.replace(/"/g, " ")))];
-    if (!terms.length) return [];
-    const glob = pathGlob === null ? null : globRegExp(pathGlob);
+    const allowed = (path: string) => {
+      if (glob && !glob.test(path)) return false;
+      if (!phrases.length) return true;
+      const text = g.files.get(path)!.text.toLowerCase();
+      return phrases.every((p) => text.includes(p));
+    };
+
     const n = g.files.size;
     const scores = new Map<string, number>();
     for (const t of terms) {
@@ -513,60 +733,195 @@ export class CodeIndex {
       const idf = Math.log(1 + (n - post.size + 0.5) / (post.size + 0.5));
       for (const [path, f] of post) {
         const d = g.files.get(path)!;
-        const s = (idf * f * (K1 + 1)) / (f + K1 * (1 - B + (B * d.len) / g.avgLen));
+        const s =
+          (idf * f * (K1 + 1)) / (f + K1 * (1 - B + (B * d.len) / g.avgLen));
         scores.set(path, (scores.get(path) ?? 0) + s);
       }
     }
-    const ranked = [...scores]
-      .filter(([path]) => !glob || glob.test(path))
-      .filter(([path]) => {
-        if (!phrases.length) return true;
-        const text = g.files.get(path)!.text.toLowerCase();
-        return phrases.every((p) => text.includes(p));
-      })
-      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
-      .slice(0, limit);
-    return ranked.map(([path, score]) => {
+    const byScore = (a: [string, number], b: [string, number]) =>
+      b[1] - a[1] || (a[0] < b[0] ? -1 : 1);
+    const lexical = [...scores].filter(([p]) => allowed(p)).sort(byScore);
+
+    const denseBest = new Map<string, { score: number; line: number }>();
+    if (this.#port && g.dense) {
+      const [q] = await embedChecked(this.#port, [query]);
+      for (const [path, list] of g.dense.chunks) {
+        if (!g.files.has(path) || !allowed(path)) continue;
+        for (const c of list) {
+          const s = dot(q!, c.vec);
+          if (s > 0 && s > (denseBest.get(path)?.score ?? 0))
+            denseBest.set(path, { score: s, line: c.start });
+        }
+      }
+    }
+    const dense = [...denseBest]
+      .map(([p, v]) => [p, v.score] as [string, number])
+      .sort(byScore)
+      .slice(0, DENSE_CANDIDATES);
+
+    const hit = (
+      path: string,
+      score: number,
+      signals: SearchHit["signals"],
+    ): SearchHit => {
       const d = g.files.get(path)!;
-      const i = bestLine(d.lines, terms, phrases);
+      const li = signals.bm25
+        ? bestLine(d.lines, terms, phrases)
+        : (denseBest.get(path)?.line ?? 1) - 1;
       return {
         path,
-        line: i + 1,
-        preview: d.lines[i]!.trim().slice(0, 200),
-        score: Math.round(score * 10000) / 10000,
+        line: li + 1,
+        preview: (d.lines[li] ?? "").trim().slice(0, 200),
+        score,
+        signals,
       };
+    };
+    const round = (x: number) => Math.round(x * 1e6) / 1e6;
+    if (!this.#port)
+      return lexical
+        .slice(0, limit)
+        .map(([p, s], r) =>
+          hit(p, round(s), { bm25: { rank: r + 1, score: round(s) } }),
+        );
+    const lexScore = new Map(lexical);
+    const fused = reciprocalRankFusion({
+      bm25: lexical.map(([p]) => p),
+      dense: dense.map(([p]) => p),
     });
+    return [...fused]
+      .sort((a, b) => b[1].score - a[1].score || (a[0] < b[0] ? -1 : 1))
+      .slice(0, limit)
+      .map(([path, f]) => {
+        const signals: SearchHit["signals"] = {};
+        if (f.ranks.bm25)
+          signals.bm25 = {
+            rank: f.ranks.bm25,
+            score: round(lexScore.get(path)!),
+          };
+        if (f.ranks.dense)
+          signals.dense = {
+            rank: f.ranks.dense,
+            score: round(denseBest.get(path)!.score),
+          };
+        return hit(path, round(f.score), signals);
+      });
   }
 
   /** Top-level symbols for an indexed file (path relative to root). */
   outline(path: unknown): OutlineResult {
-    if (typeof path !== "string" || !path || path.length > 1024)
-      throw new CodeIndexError("INVALID_ARGUMENT", "path must be 1-1024 characters");
+    const rel = relPath(path);
     // Lookup only: never touches the filesystem, so it cannot escape the root.
-    const doc = this.#gen.files.get(path.replace(/\\/g, "/"));
+    const doc = this.#gen.files.get(rel);
     if (!doc) return { status: "not_indexed" };
-    const dot = path.lastIndexOf(".");
-    const ext = dot < 0 ? "" : path.slice(dot + 1).toLowerCase();
-    const lang = OUTLINE[ext];
-    if (!lang) return { status: "unsupported", language: ext || "none" };
-    const symbols: OutlineSymbol[] = [];
-    doc.lines.forEach((line, i) => {
-      for (const rule of lang.rules) {
-        const m = rule.re.exec(line);
-        if (!m?.groups?.name) continue;
-        symbols.push({
-          name: m.groups.name.trim(),
-          kind: rule.kind ?? m.groups.kind!.replace("*", ""),
-          line: i + 1,
-        });
-        break;
-      }
-    });
-    return { status: "ok", language: lang.language, symbols };
+    if (!doc.symbols)
+      return { status: "unsupported", language: extOf(rel) || "none" };
+    return {
+      status: "ok",
+      language: languageOf(rel)!,
+      symbols: [...doc.symbols],
+    };
+  }
+
+  /** Indexed files this file imports, plus specifiers that did not resolve. */
+  dependencies(path: unknown): DependenciesResult {
+    const rel = relPath(path);
+    const g = this.#gen;
+    if (!g.files.has(rel)) return { status: "not_indexed" };
+    const d = g.graph.deps.get(rel);
+    if (!d) return { status: "unsupported", language: extOf(rel) || "none" };
+    return {
+      status: "ok",
+      resolved: [...d.resolved],
+      unresolved: [...d.unresolved],
+    };
+  }
+
+  /** Indexed files that import this file. */
+  dependents(path: unknown): DependentsResult {
+    const rel = relPath(path);
+    const g = this.#gen;
+    if (!g.files.has(rel)) return { status: "not_indexed" };
+    return {
+      status: "ok",
+      dependents: [...(g.graph.dependents.get(rel) ?? [])],
+    };
+  }
+
+  /** Top-level definitions of `name` and whole-identifier references to it. */
+  symbol(name: unknown): SymbolResult {
+    const id = str(name, 256, "name");
+    const g = this.#gen;
+    const definitions = [...(g.graph.defs.get(id) ?? [])];
+    const defLines = new Set(
+      definitions.map((d) => `${d.path}:${String(d.line)}`),
+    );
+    const re = new RegExp(
+      `(?<![\\w$])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w$])`,
+    );
+    const references: Reference[] = [];
+    let truncated = false;
+    for (const [path, doc] of [...g.files].sort((a, b) =>
+      a[0] < b[0] ? -1 : 1,
+    )) {
+      if (!doc.idents.has(id)) continue;
+      doc.lines.forEach((l, i) => {
+        if (
+          truncated ||
+          !re.test(l) ||
+          defLines.has(`${path}:${String(i + 1)}`)
+        )
+          return;
+        if (references.length === MAX_REFERENCES) truncated = true;
+        else
+          references.push({
+            path,
+            line: i + 1,
+            preview: l.trim().slice(0, 200),
+          });
+      });
+    }
+    return { definitions, references, truncated };
+  }
+
+  /**
+   * Personalized PageRank over the code graph seeded at a file path or at
+   * every definition of a symbol name.
+   */
+  related(target: unknown, limit?: unknown): RelatedResult {
+    const t = str(target, 1024, "target").replace(/\\/g, "/");
+    const max = intIn(limit, 10, 100, "limit");
+    const g = this.#gen;
+    const seeds = g.files.has(t)
+      ? [fileNode(t)]
+      : (g.graph.defs.get(t) ?? []).map((d) => symbolNode(d));
+    if (!seeds.length) return { status: "not_found" };
+    const skip = new Set(seeds);
+    const results = [...personalizedPageRank(g.graph, seeds)]
+      .filter(([node, s]) => !skip.has(node) && s > 0)
+      .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+      .slice(0, max)
+      .map(([node, s]): RelatedNode => {
+        const score = Math.round(s * 1e6) / 1e6;
+        if (node.startsWith("f:"))
+          return { kind: "file", path: node.slice(2), score };
+        const body = node.slice(2);
+        const hash = body.lastIndexOf("#");
+        const path = body.slice(0, hash);
+        const name = body.slice(hash + 1);
+        const line = g.graph.defs.get(name)?.find((d) => d.path === path)?.line;
+        return line === undefined
+          ? { kind: "symbol", path, name, score }
+          : { kind: "symbol", path, name, line, score };
+      });
+    return { status: "ok", results };
   }
 }
 
-function bestLine(lines: readonly string[], terms: string[], phrases: string[]): number {
+function bestLine(
+  lines: readonly string[],
+  terms: string[],
+  phrases: string[],
+): number {
   if (phrases.length) {
     const i = lines.findIndex((l) => l.toLowerCase().includes(phrases[0]!));
     if (i >= 0) return i;
@@ -585,13 +940,29 @@ function bestLine(lines: readonly string[], terms: string[], phrases: string[]):
 }
 
 export interface CodeIndexTool {
-  name: "code_search" | "code_outline";
+  name: string;
   description: string;
   readOnly: true;
   /** JSON Schema for the model-supplied arguments. */
   parameters: Record<string, unknown>;
   execute(args: unknown): Promise<unknown>;
 }
+
+const obj = (args: unknown): Record<string, unknown> => {
+  if (!args || typeof args !== "object" || Array.isArray(args))
+    throw new CodeIndexError(
+      "INVALID_ARGUMENT",
+      "tool arguments must be an object",
+    );
+  return args as Record<string, unknown>;
+};
+const schema = (required: string[], properties: Record<string, unknown>) => ({
+  type: "object",
+  additionalProperties: false,
+  required,
+  properties,
+});
+const PATH = { type: "string", minLength: 1, maxLength: 1024 };
 
 /**
  * Read-only agent tools over one workspace index. Each call refreshes first
@@ -600,45 +971,69 @@ export interface CodeIndexTool {
 // ponytail: refresh-per-call (git ls-files + lstat); add a watcher if
 // latency on very large workspaces matters.
 export function codeIndexTools(index: CodeIndex): readonly CodeIndexTool[] {
+  const tool = (
+    name: string,
+    description: string,
+    parameters: Record<string, unknown>,
+    run: (a: Record<string, unknown>) => unknown,
+  ): CodeIndexTool => ({
+    name,
+    description,
+    readOnly: true,
+    parameters,
+    async execute(args: unknown) {
+      const a = obj(args);
+      await index.refresh();
+      return run(a);
+    },
+  });
   return Object.freeze([
-    {
-      name: "code_search",
-      description:
-        'Search the workspace by identifiers and words (camelCase/snake_case aware, BM25 ranked). Wrap text in "double quotes" to require an exact phrase; pathGlob filters paths relative to the workspace root (e.g. "src/**/*.ts").',
-      readOnly: true,
-      parameters: {
-        type: "object",
-        additionalProperties: false,
-        required: ["query"],
-        properties: {
-          query: { type: "string", minLength: 1, maxLength: 512 },
-          pathGlob: { type: "string", minLength: 1, maxLength: 256 },
-          limit: { type: "integer", minimum: 1, maximum: 100 },
-        },
-      },
-      async execute(args: unknown) {
-        await index.refresh();
-        return { results: index.search(args as SearchInput) };
-      },
-    },
-    {
-      name: "code_outline",
-      description:
-        "List top-level symbols of a workspace file (path relative to the root). Supports ts/js/py/rs/go; other files report unsupported.",
-      readOnly: true,
-      parameters: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path"],
-        properties: { path: { type: "string", minLength: 1, maxLength: 1024 } },
-      },
-      async execute(args: unknown) {
-        const a = args as { path?: unknown } | null;
-        if (!a || typeof a !== "object")
-          throw new CodeIndexError("INVALID_ARGUMENT", "outline input must be an object");
-        await index.refresh();
-        return index.outline(a.path);
-      },
-    },
-  ] as const);
+    tool(
+      "code_search",
+      'Search the workspace by identifiers and words (camelCase/snake_case aware, BM25; fused with semantic search when enabled). Wrap text in "double quotes" to require an exact phrase; pathGlob filters paths relative to the workspace root (e.g. "src/**/*.ts").',
+      schema(["query"], {
+        query: { type: "string", minLength: 1, maxLength: 512 },
+        pathGlob: { type: "string", minLength: 1, maxLength: 256 },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+      }),
+      async (a) => ({
+        results: await index.search(a as unknown as SearchInput),
+      }),
+    ),
+    tool(
+      "code_outline",
+      "List top-level symbols of a workspace file (path relative to the root). Supports ts/js/py/rs/go; other files report unsupported.",
+      schema(["path"], { path: PATH }),
+      (a) => index.outline(a.path),
+    ),
+    tool(
+      "code_related",
+      "Files and symbols most related to a file path or symbol name, ranked by Personalized PageRank over imports, definitions and references.",
+      schema(["target"], {
+        target: PATH,
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+      }),
+      (a) => index.related(a.target, a.limit),
+    ),
+    tool(
+      "code_dependencies",
+      "Workspace files a file imports, plus import specifiers that are external or unresolved.",
+      schema(["path"], { path: PATH }),
+      (a) => index.dependencies(a.path),
+    ),
+    tool(
+      "code_dependents",
+      "Workspace files that import the given file.",
+      schema(["path"], { path: PATH }),
+      (a) => index.dependents(a.path),
+    ),
+    tool(
+      "code_symbol",
+      "Top-level definitions of a symbol name and the lines that reference it.",
+      schema(["name"], {
+        name: { type: "string", minLength: 1, maxLength: 256 },
+      }),
+      (a) => index.symbol(a.name),
+    ),
+  ]);
 }

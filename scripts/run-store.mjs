@@ -22,6 +22,7 @@ if (args.length === 0) {
     "tests/integration/snapshots.ts",
     "tests/integration/events.ts",
     "tests/integration/credentials.ts",
+    "tests/integration/code-index.ts",
   ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
@@ -42,13 +43,15 @@ if (args.length === 0) {
     files = ["tests/integration/events.ts"];
   else if (args[1] === "C4_credential_resolution")
     files = ["tests/integration/credentials.ts"];
+  else if (args[1] === "CTX_code_index")
+    files = ["tests/integration/code-index.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C5_dirty_snapshot | --case C6_event_ledger]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C5_dirty_snapshot | --case C6_event_ledger | --case CTX_code_index]",
   );
   process.exit(2);
 }
@@ -58,6 +61,7 @@ const require = createRequire(import.meta.url);
 const tsc = join(dirname(dirname(require.resolve("typescript"))), "bin", "tsc");
 for (const command of [
   [tsc, "-p", "packages/splyce-pi/tsconfig.json"],
+  [tsc, "-p", "packages/splyce-index/tsconfig.json"],
   ["--test", "--test-timeout=120000", ...files],
 ]) {
   const result = spawnSync(process.execPath, command, {
