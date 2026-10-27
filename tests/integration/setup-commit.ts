@@ -72,7 +72,7 @@ const input = (overrides: Record<string, unknown> = {}) => ({
           maxOutputTokens: 8192,
           reasoning: true,
           input: ["text", "image"],
-          costKnown: true,
+          costKnown: false,
         },
       },
     ],
@@ -780,6 +780,14 @@ const METADATA_CASES: Case[] = [
       void ((
         v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
       ).catalogVersion = "2026-10"),
+    false,
+  ],
+  [
+    "user descriptor claiming known cost",
+    (v) =>
+      void ((
+        v.profile.bindings[0]!.modelDescriptor as Record<string, unknown>
+      ).costKnown = true),
     false,
   ],
   [

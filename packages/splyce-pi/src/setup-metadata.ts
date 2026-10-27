@@ -189,6 +189,9 @@ function setupModelDescriptor(
   // Provenance: a catalog descriptor names its catalog version, a user one never does.
   if (Object.hasOwn(value, "catalogVersion") !== (source === "catalog"))
     setupInvalid(`${field}.catalogVersion`);
+  // Only a trusted catalog can vouch for pricing; a user model's cost stays unknown.
+  if (source === "user" && value.costKnown !== false)
+    setupInvalid(`${field}.costKnown`);
   const input = value.input;
   if (
     !Array.isArray(input) ||
