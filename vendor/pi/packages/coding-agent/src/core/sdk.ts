@@ -6,6 +6,7 @@ import {
 	assertSplycePersistence,
 	assertSplyceReady,
 	inheritSplyceOwner,
+	isSplyceLoopRequest,
 	setDefaultStreamFn,
 	type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
@@ -356,6 +357,75 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			model: model.id,
 		});
 	};
+	const nativeRequestOptions = (options: ModelsSimpleStreamOptions = {}): ModelsSimpleStreamOptions => {
+		const unsupported = (): never => {
+			throw Object.assign(new Error("PROVIDER_OPTIONS_UNSUPPORTED"), { code: "PROVIDER_OPTIONS_UNSUPPORTED" });
+		};
+		if (options === null || typeof options !== "object") unsupported();
+		const runner = extensionRunnerRef.current;
+		const providerHooks = [
+			"before_provider_headers",
+			"before_provider_request",
+			"after_provider_response",
+			"provider_stream_event",
+		] as const;
+		if (providerHooks.some((event) => runner?.hasHandlers(event))) unsupported();
+		// Accessor defaults belong to the donor transport. Explicit settings remain semantics,
+		// even when their value happens to equal one of those defaults.
+		const settings = settingsManager.getSettings();
+		if (
+			settings.transport !== undefined ||
+			settings.httpIdleTimeoutMs !== undefined ||
+			settings.websocketConnectTimeoutMs !== undefined ||
+			settings.thinkingBudgets !== undefined ||
+			Object.values(settings.retry?.provider ?? {}).some((value) => value !== undefined)
+		)
+			unsupported();
+		const projected: Record<string, unknown> = Object.fromEntries(
+			Reflect.ownKeys(options).map((key) => {
+				const descriptor = Object.getOwnPropertyDescriptor(options, key);
+				if (typeof key !== "string" || !descriptor || !("value" in descriptor)) return unsupported();
+				return [key, descriptor.value];
+			}),
+		);
+		if (isSplyceLoopRequest(agent, options)) {
+			// These exact fields have already been consumed by the proven SDK Agent loop.
+			// They are not provider callbacks or provider request options.
+			for (const key of [
+				"model",
+				"convertToLlm",
+				"transformContext",
+				"getApiKey",
+				"beforeToolCall",
+				"afterToolCall",
+				"finishTurn",
+				"prepareRequest",
+				"prepareNextTurn",
+				"getSteeringMessages",
+				"getFollowUpMessages",
+				"toolExecution",
+			])
+				delete projected[key];
+			if (agent.onPayload === transformProviderPayload) delete projected.onPayload;
+			if (agent.onResponse === handleProviderResponse) delete projected.onResponse;
+			if (agent.onProviderStreamEvent === handleProviderStreamEvent) delete projected.onProviderStreamEvent;
+			if (agent.sessionId === agentOptions.sessionId && projected.sessionId === agentOptions.sessionId)
+				delete projected.sessionId;
+			if (agent.transport === agentOptions.transport && projected.transport === agentOptions.transport)
+				delete projected.transport;
+			if (
+				agent.maxRetryDelayMs === agentOptions.maxRetryDelayMs &&
+				projected.maxRetryDelayMs === agentOptions.maxRetryDelayMs
+			)
+				delete projected.maxRetryDelayMs;
+			if (agent.identity === undefined) delete projected.identity;
+		}
+		for (const key of Object.keys(projected)) {
+			if (projected[key] === undefined) delete projected[key];
+			else if (key !== "signal") unsupported();
+		}
+		return projected as ModelsSimpleStreamOptions;
+	};
 
 	const agentOptions: AgentOptions = {
 		initialState: {
@@ -367,6 +437,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		},
 		convertToLlm: convertToLlmWithBlockImages,
 		streamFn: async (model, context, options) => {
+			if (modelRuntime.getRegisteredNativeProvider(model.provider))
+				return modelRuntime.streamSimple(model, context, nativeRequestOptions(options));
 			const requestOptions = buildRequestOptions(options);
 			// Compaction and summaries use their own routing ids; only session requests
 			// replace the cache entry, so warming restarts from them. Keep warming while

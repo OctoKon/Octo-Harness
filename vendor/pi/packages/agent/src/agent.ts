@@ -573,6 +573,9 @@ export class Agent {
 
 	private async handleRunFailure(error: unknown, aborted: boolean): Promise<void> {
 		rethrowSplycePersistenceError(error);
+		const code = error && typeof error === "object" ? Object.getOwnPropertyDescriptor(error, "code") : undefined;
+		if (code && "value" in code && code.value === "PROVIDER_OPTIONS_UNSUPPORTED")
+			throw Object.assign(new Error("PROVIDER_OPTIONS_UNSUPPORTED"), { code: "PROVIDER_OPTIONS_UNSUPPORTED" });
 		this._state.errorMessage = error instanceof Error ? error.message : String(error);
 		if (aborted) return;
 		try {

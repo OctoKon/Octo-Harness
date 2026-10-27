@@ -26,6 +26,7 @@ import {
 	assertSplyceToolCurrent,
 	getSplyceToolImplementation,
 	inheritSplyceLoopConfig,
+	inheritSplyceLoopRequest,
 	rethrowSplycePersistenceError,
 } from "./splyce-readiness.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
@@ -500,12 +501,14 @@ async function streamAssistantResponse(
 	assertSplyceReady(config);
 	assertSplyceLoopStream(config, streamFunction);
 	signal?.throwIfAborted();
-	const response = await streamFunction(config.model, llmContext, {
+	const requestOptions = {
 		...config,
 		apiKey: resolvedApiKey,
 		identity: mergeClientIdentity(DEFAULT_AGENT_IDENTITY, config.identity),
 		signal,
-	});
+	};
+	inheritSplyceLoopRequest(config, requestOptions);
+	const response = await streamFunction(config.model, llmContext, requestOptions);
 	// Record the requested level, whichever stream function answered.
 	const result = async () => Object.assign(await response.result(), { thinkingLevel: config.reasoning ?? "off" });
 

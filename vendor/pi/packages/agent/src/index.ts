@@ -8,6 +8,7 @@ export {
 	assertSplyceReady,
 	disposeSplyceOwner,
 	inheritSplyceOwner,
+	isSplyceLoopRequest,
 	isSplyceOwned,
 	type SplycePersistenceSanitizer,
 	sanitizeSplycePersistence,
