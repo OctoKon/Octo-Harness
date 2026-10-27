@@ -421,17 +421,18 @@ export class ExtensionRunner {
 		this.modelRegistry = modelRegistry;
 	}
 
-	bindCore(
+	async bindCore(
 		actions: ExtensionActions,
 		contextActions: ExtensionContextActions,
 		providerActions?: {
 			registerProvider?: (name: string, config: ProviderConfig) => void;
-			registerNativeProvider?: (provider: Provider) => void;
+			registerNativeProvider?: (provider: Provider) => Promise<void>;
 			unregisterProvider?: (name: string) => void;
 			registerVirtualModel?: (definition: VirtualModelDefinition) => void;
 			unregisterVirtualModel?: (provider: string, id: string) => void;
 		},
-	): void {
+	): Promise<void> {
+		this.assertActive();
 		// Copy actions into the shared runtime (all extension APIs reference this)
 		this.runtime.sendMessage = actions.sendMessage;
 		this.runtime.sendUserMessage = actions.sendUserMessage;
@@ -493,23 +494,16 @@ export class ExtensionRunner {
 			}
 		}
 		this.runtime.pendingProviderRegistrations = [];
-		for (const { provider, extensionPath } of this.runtime.pendingNativeProviderRegistrations) {
-			try {
-				if (providerActions?.registerNativeProvider) {
-					providerActions.registerNativeProvider(provider);
-				} else {
-					this.modelRegistry.registerProvider(provider);
-				}
-			} catch (err) {
-				rethrowPersistenceError(err);
-				this.emitError({
-					extensionPath,
-					event: "register_provider",
-					error: err instanceof Error ? err.message : String(err),
-					stack: err instanceof Error ? err.stack : undefined,
-				});
+		for (const { provider } of this.runtime.pendingNativeProviderRegistrations) {
+			this.assertActive();
+			if (providerActions?.registerNativeProvider) {
+				await providerActions.registerNativeProvider(provider);
+			} else {
+				await this.modelRegistry.registerProvider(provider);
 			}
+			this.assertActive();
 		}
+		this.assertActive();
 		this.runtime.pendingNativeProviderRegistrations = [];
 		const registerVirtualModel = (definition: VirtualModelDefinition) => {
 			if (providerActions?.registerVirtualModel) providerActions.registerVirtualModel(definition);
@@ -539,12 +533,14 @@ export class ExtensionRunner {
 			}
 			this.modelRegistry.registerProvider(name, config);
 		};
-		this.runtime.registerNativeProvider = (provider) => {
+		this.runtime.registerNativeProvider = async (provider) => {
+			this.assertActive();
 			if (providerActions?.registerNativeProvider) {
-				providerActions.registerNativeProvider(provider);
-				return;
+				await providerActions.registerNativeProvider(provider);
+			} else {
+				await this.modelRegistry.registerProvider(provider);
 			}
-			this.modelRegistry.registerProvider(provider);
+			this.assertActive();
 		};
 		this.runtime.unregisterProvider = (name) => {
 			if (providerActions?.unregisterProvider) {
@@ -750,6 +746,7 @@ export class ExtensionRunner {
 		if (this.staleMessage) {
 			throw new Error(this.staleMessage);
 		}
+		this.runtime.assertActive();
 	}
 
 	onError(listener: ExtensionErrorListener): () => void {

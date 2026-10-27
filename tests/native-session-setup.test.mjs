@@ -1,0 +1,740 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { PassThrough, Writable } from "node:stream";
+import test from "node:test";
+import {
+  createNativeSessionSetup,
+  validateNativeSessionSetup,
+} from "../packages/splyce-pi/src/native-session-setup.mjs";
+import { NativeControl } from "../packages/splyce-pi/src/native-control.mjs";
+import { Store } from "../packages/splyce-pi/dist/store.js";
+import { createNativeHost } from "../packages/splyce-pi/src/native-host.mjs";
+import {
+  encodeFrame,
+  runHost,
+} from "../packages/splyce-pi/src/engine-host.mjs";
+
+const selection = {
+  requestId: "request-1",
+  workspaceId: "workspace-1",
+  profileId: "profile-1",
+  expectedProfileRevision: "p1",
+  expectedConfigRevision: "cfg-0",
+};
+const start = {
+  requestId: "request-2",
+  workspaceId: "workspace-1",
+  profileId: "profile-1",
+  expectedConfigRevision: "cfg-1",
+};
+const denied = (error) =>
+  error?.code === "SETUP_INVALID" &&
+  error.message === "Native setup unavailable";
+
+test("setup commands capture only the exact frozen renderer fields", () => {
+  for (const [command, input] of [
+    ["profile.select", selection],
+    ["session.start", start],
+  ]) {
+    const accepted = validateNativeSessionSetup(
+      command,
+      input,
+      input.requestId,
+    );
+    assert.deepEqual(accepted, input);
+    assert.notEqual(accepted, input);
+    assert.equal(Object.isFrozen(accepted), true);
+  }
+});
+
+test("setup rejects authority fields and missing fields before accepting a request", () => {
+  for (const [command, input] of [
+    ["profile.select", selection],
+    ["session.start", start],
+  ]) {
+    for (const field of [
+      "sessionId",
+      "grantId",
+      "credentialRef",
+      "endpoint",
+      "generationReady",
+      "apiKey",
+    ]) {
+      assert.throws(
+        () =>
+          validateNativeSessionSetup(
+            command,
+            { ...input, [field]: "private-fixture" },
+            input.requestId,
+          ),
+        denied,
+      );
+    }
+    for (const field of Object.keys(input)) {
+      const partial = { ...input };
+      delete partial[field];
+      assert.throws(
+        () => validateNativeSessionSetup(command, partial, input.requestId),
+        denied,
+      );
+    }
+  }
+});
+
+test("setup requires matching inner and outer request identities", () => {
+  assert.throws(
+    () =>
+      validateNativeSessionSetup("profile.select", selection, "other-request"),
+    denied,
+  );
+  assert.throws(
+    () => validateNativeSessionSetup("session.start", start, undefined),
+    denied,
+  );
+  assert.throws(
+    () => validateNativeSessionSetup("session.prompt", start, start.requestId),
+    denied,
+  );
+});
+
+test("setup bounds every opaque id in UTF-8 and rejects ambiguous revisions", () => {
+  for (const [command, input] of [
+    ["profile.select", selection],
+    ["session.start", start],
+  ]) {
+    for (const field of Object.keys(input)) {
+      for (const value of [
+        null,
+        undefined,
+        1,
+        {},
+        "",
+        "bad/id",
+        "bad\\id",
+        "bad id",
+        "bad\n",
+        "bad\u200b",
+        "\ud800",
+        "é".repeat(65),
+      ]) {
+        const candidate = { ...input, [field]: value };
+        assert.throws(
+          () =>
+            validateNativeSessionSetup(command, candidate, candidate.requestId),
+          denied,
+        );
+      }
+    }
+  }
+  const boundary = { ...selection, requestId: "é".repeat(64) };
+  assert.deepEqual(
+    validateNativeSessionSetup("profile.select", boundary, boundary.requestId),
+    boundary,
+  );
+});
+
+test("setup does not invoke accessors or retain a mutable input object", () => {
+  let reads = 0;
+  const input = { ...selection };
+  Object.defineProperty(input, "profileId", {
+    enumerable: true,
+    get() {
+      reads++;
+      return "profile-1";
+    },
+  });
+  assert.throws(
+    () =>
+      validateNativeSessionSetup("profile.select", input, selection.requestId),
+    denied,
+  );
+  assert.equal(reads, 0);
+  const changed = { ...selection };
+  const accepted = validateNativeSessionSetup(
+    "profile.select",
+    changed,
+    changed.requestId,
+  );
+  changed.profileId = "profile-2";
+  assert.equal(accepted.profileId, "profile-1");
+});
+
+// Real SQLite and NativeControl; only the parent protocol and factory port are fixtures.
+function serviceFixture(t) {
+  const appDataDir = mkdtempSync(join(tmpdir(), "splyce-session-setup-"));
+  const directory = join(appDataDir, "splyce");
+  mkdirSync(directory);
+  const store = Store.open(join(directory, "store.db"));
+  const credentialRef = `splyce-credential:v1:${"a".repeat(64)}`;
+  const caller = {
+    sessionId: "native-setup-fixture",
+    configRevision: "cfg-0",
+    profileRevision: "p1",
+    policyRevision: "cfg-0",
+    resolveReference: (id, scopeId) =>
+      store
+        .list(scopeId)
+        .records.some(
+          ({ record }) =>
+            record.recordId === id ||
+            (record.endpointId &&
+              `${record.endpointId}@${record.revision}` === id),
+        ),
+  };
+  const workspace = store.admitWorkspace(
+    {
+      canonicalPath: join(directory, "project"),
+      volumeSerial: "1",
+      fileId: "2",
+    },
+    caller,
+  );
+  const workspaceId = workspace.workspaceId;
+  for (const id of [credentialRef, "account", "limits", "egress"])
+    store.append(
+      {
+        kind: "artifact",
+        record: {
+          schemaVersion: 1,
+          recordId: id,
+          createdAt: "2026-10-28T00:00:00.000Z",
+          scopeId: workspaceId,
+          sourceIds: [],
+          artifactId: id,
+          digest: `sha256:${createHash("sha256").update("{}").digest("hex")}`,
+          mediaType: "application/json",
+          byteLength: 2,
+          retentionClass: "workspace",
+        },
+      },
+      caller,
+    );
+  for (const name of ["a", "b"])
+    store.commitSetup(
+      {
+        workspaceId,
+        requestId: `seed-${name}`,
+        endpoint: {
+          endpointId: `endpoint-${name}`,
+          canonicalUrl: `https://${name}.example.test/v1`,
+          apiFamily: "openai-completions",
+          locality: "hosted",
+          revision: "e1",
+        },
+        connection: {
+          providerConnectionId: `connection-${name}`,
+          revision: "c1",
+          apiFamily: "openai-completions",
+          locality: "hosted",
+          endpointRef: `endpoint-${name}@e1`,
+          credentialRef,
+        },
+        profile: {
+          profileId: `profile-${name}`,
+          profileRevision: "p1",
+          bindings: [
+            {
+              role: "chat",
+              providerConnectionId: `connection-${name}`,
+              connectionRevision: "c1",
+              modelId: "fixture-model",
+              modelDescriptor: {
+                source: "user",
+                contextWindow: 4096,
+                maxOutputTokens: 256,
+                reasoning: false,
+                input: ["text"],
+                costKnown: false,
+              },
+            },
+          ],
+        },
+        descriptors: {
+          accountScopeRef: "account",
+          limitsArtifactId: "limits",
+          apiVersion: "v1",
+          adapterRevision: "fixture1",
+          egressPolicyRefs: ["egress"],
+        },
+        expected: {
+          endpointRevision: null,
+          connectionRevision: null,
+          profileRevision: null,
+        },
+      },
+      caller,
+    );
+  const state = {
+    present: true,
+    failPrepare: false,
+    failBind: false,
+    onPrepare: async () => {},
+    onBind: async () => {},
+  };
+  const trace = [],
+    frames = [];
+  const control = new NativeControl(async (frame) => {
+    frames.push(frame);
+    assert.equal(frame.native.method, "credential.status");
+    assert.deepEqual(frame.native.params, { target: credentialRef });
+    control.accept({
+      native: {
+        id: frame.native.id,
+        ok: true,
+        value: { present: state.present },
+      },
+    });
+  });
+  let number = 0;
+  const factory = {
+    async prepare(input) {
+      trace.push("prepare");
+      if (state.failPrepare) throw new Error("private-path-fixture");
+      await state.onPrepare(input);
+      const piSessionId = `pi-fixture-${++number}`;
+      return {
+        piSessionId,
+        branchAnchor: {
+          branchAnchorId: `anchor-${piSessionId}`,
+          piSessionId,
+          parentAnchorId: null,
+          forkPointEntryId: null,
+          firstChildEntryId: null,
+          activeLeafEntryId: null,
+        },
+        handle: { private: "private-path-fixture" },
+      };
+    },
+    async restore(input) {
+      trace.push("restore");
+      return {
+        piSessionId: input.piSessionId,
+        branchAnchor: input.branchAnchor,
+        handle: {},
+      };
+    },
+    async bind(prepared) {
+      const rows = store.list(workspaceId).records;
+      assert.equal(
+        rows.some(
+          ({ kind, record }) =>
+            kind === "branchAnchor" &&
+            record.piSessionId === prepared.piSessionId,
+        ),
+        true,
+        "Store commit must precede publication",
+      );
+      assert.equal(
+        rows.some(
+          ({ kind, record }) =>
+            kind === "grant" &&
+            record.sessionId === prepared.piSessionId &&
+            record.capability === "net.provider",
+        ),
+        true,
+        "session grant commits before publication",
+      );
+      trace.push("bind");
+      await state.onBind(prepared);
+      if (state.failBind) throw new Error("private-path-fixture");
+    },
+    async dispose(_prepared, reason) {
+      trace.push(`dispose:${reason}`);
+    },
+  };
+  const service = createNativeSessionSetup({ store, control, factory });
+  t.after(async () => {
+    await service.close();
+    control.shutdown();
+    store.close();
+    assert.equal(
+      appDataDir.startsWith(join(tmpdir(), "splyce-session-setup-")),
+      true,
+    );
+    rmSync(appDataDir, { recursive: true, force: true });
+  });
+  const select = (
+    requestId = "select-a",
+    profileId = "profile-a",
+    expectedConfigRevision = "cfg-0",
+  ) => ({
+    requestId,
+    workspaceId,
+    profileId,
+    expectedProfileRevision: "p1",
+    expectedConfigRevision,
+  });
+  const run = (requestId, configRevision) => ({
+    requestId,
+    workspaceId,
+    profileId: "profile-a",
+    expectedConfigRevision: configRevision,
+  });
+  const handle = (input, command = "profile.select", signal) =>
+    service.handle(command, input, input.requestId, signal);
+  return {
+    appDataDir,
+    store,
+    caller,
+    workspaceId,
+    control,
+    factory,
+    service,
+    state,
+    trace,
+    frames,
+    select,
+    run,
+    handle,
+  };
+}
+
+test("real setup service refuses missing credentials before Store or factory effects", async (t) => {
+  const f = serviceFixture(t);
+  const before = f.store.list(f.workspaceId).records;
+  f.state.present = false;
+  await assert.rejects(
+    f.handle(f.select()),
+    (error) =>
+      error.code === "CREDENTIAL_UNAVAILABLE" &&
+      error.message === "Native setup unavailable",
+  );
+  assert.deepEqual(f.store.list(f.workspaceId).records, before);
+  assert.deepEqual(f.trace, []);
+  assert.equal(f.frames.length, 1);
+});
+
+test("real setup service orders prepare, atomic commit and bind and projects public identity", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  assert.deepEqual(Object.keys(selected).sort(), [
+    "configRevision",
+    "profileRevision",
+    "selectedProfileId",
+  ]);
+  assert.equal(
+    f.store.list(f.workspaceId).records.filter(({ kind }) => kind === "grant")
+      .length,
+    0,
+    "select cannot mint grants",
+  );
+  const result = await f.handle(
+    f.run("start-a", selected.configRevision),
+    "session.start",
+  );
+  assert.deepEqual(Object.keys(result).sort(), [
+    "readiness",
+    "sessionId",
+    "sessionRevision",
+  ]);
+  assert.deepEqual(result.readiness, { state: "ready" });
+  assert.deepEqual(f.trace, ["prepare", "bind"]);
+  assert.match(result.sessionRevision, /^[1-9][0-9]*$/);
+  assert.equal(JSON.stringify(result).includes("private-path-fixture"), false);
+  const grants = f.store
+    .list(f.workspaceId)
+    .records.filter(({ kind }) => kind === "grant");
+  assert.equal(grants.length, 1);
+  assert.equal(grants[0].record.capability, "net.provider");
+  assert.equal(grants[0].record.scope, "session");
+  assert.equal(grants[0].record.sessionId, result.sessionId);
+});
+
+test("real setup service compensates bind failure and never resurrects revoked grants on replay", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  f.state.failBind = true;
+  const input = f.run("failed-start", selected.configRevision);
+  const result = await f.handle(input, "session.start");
+  assert.deepEqual(result.readiness, {
+    state: "unavailable",
+    code: "SESSION_BIND_FAILED",
+  });
+  assert.deepEqual(f.trace, ["prepare", "bind", "dispose:SESSION_BIND_FAILED"]);
+  const rows = f.store.list(f.workspaceId).records;
+  assert.equal(
+    rows.some(
+      ({ kind, record }) =>
+        kind === "grant" &&
+        record.sessionId === result.sessionId &&
+        record.revokedAt,
+    ),
+    true,
+  );
+  f.state.failBind = false;
+  const replay = await f.handle(input, "session.start");
+  assert.deepEqual(replay, result);
+  assert.deepEqual(f.store.list(f.workspaceId).records, rows);
+  assert.deepEqual(f.trace, ["prepare", "bind", "dispose:SESSION_BIND_FAILED"]);
+});
+
+test("real setup service disposes inert preparation after a competing selection", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  f.state.onPrepare = async () => {
+    const input = f.select(
+      "rival-selection",
+      "profile-b",
+      selected.configRevision,
+    );
+    const preparation = f.store.prepareNativeSessionSetup(
+      "profile.select",
+      input,
+    );
+    f.store.commitNativeProfileSelection(preparation, f.caller);
+  };
+  await assert.rejects(
+    f.handle(f.run("raced-start", selected.configRevision), "session.start"),
+    (error) => error.code === "STALE_REVISION",
+  );
+  assert.deepEqual(f.trace, ["prepare", "dispose:SETUP_COMMIT_FAILED"]);
+  assert.equal(
+    f.store
+      .list(f.workspaceId)
+      .records.some(({ kind }) => kind === "branchAnchor" || kind === "grant"),
+    false,
+  );
+});
+
+test("real setup service replays stable identities and restores binding without a second Store effect", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  const input = f.run("replayed-start", selected.configRevision);
+  const first = await f.handle(input, "session.start");
+  const rows = f.store.list(f.workspaceId).records;
+  assert.deepEqual(await f.handle(input, "session.start"), first);
+  assert.deepEqual(f.trace, ["prepare", "bind"]);
+  const reopened = createNativeSessionSetup({
+    store: f.store,
+    control: f.control,
+    factory: f.factory,
+  });
+  t.after(() => reopened.close());
+  const replay = await reopened.handle("session.start", input, input.requestId);
+  assert.deepEqual(replay, first);
+  assert.deepEqual(f.trace, ["prepare", "bind", "restore", "bind"]);
+  assert.deepEqual(f.store.list(f.workspaceId).records, rows);
+});
+
+test("real setup service keeps missing factory and private preparation failures unavailable", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  const before = f.store.list(f.workspaceId).records;
+  const unavailable = createNativeSessionSetup({
+    store: f.store,
+    control: f.control,
+  });
+  t.after(() => unavailable.close());
+  const input = f.run("no-factory", selected.configRevision);
+  await assert.rejects(
+    unavailable.handle("session.start", input, input.requestId),
+    (error) => error.code === "SETUP_UNAVAILABLE",
+  );
+  f.state.failPrepare = true;
+  await assert.rejects(
+    f.handle(
+      f.run("private-failure", selected.configRevision),
+      "session.start",
+    ),
+    (error) =>
+      error.code === "SETUP_UNAVAILABLE" &&
+      error.message === "Native setup unavailable",
+  );
+  assert.deepEqual(f.store.list(f.workspaceId).records, before);
+});
+
+test("historical selection replay does not dispose the currently bound profile", async (t) => {
+  const f = serviceFixture(t);
+  const original = f.select();
+  const a = await f.handle(original);
+  const b = await f.handle(f.select("select-b", "profile-b", a.configRevision));
+  const input = {
+    ...f.run("start-b", b.configRevision),
+    profileId: "profile-b",
+  };
+  const active = await f.handle(input, "session.start");
+  const rows = f.store.list(f.workspaceId).records;
+  assert.deepEqual(await f.handle(original), a);
+  assert.deepEqual(f.trace, ["prepare", "bind"]);
+  assert.deepEqual(await f.handle(input, "session.start"), active);
+  assert.deepEqual(f.store.list(f.workspaceId).records, rows);
+  assert.deepEqual(f.trace, ["prepare", "bind"]);
+});
+
+for (const revokeOnly of [false, true]) {
+  test(`setup does not publish readiness after ${revokeOnly ? "a grant revocation" : "a profile change"} during bind`, async (t) => {
+    const f = serviceFixture(t);
+    const selected = await f.handle(f.select());
+    f.state.onBind = async () => {
+      if (revokeOnly) f.store.revokeProviderGrants(f.workspaceId, f.caller);
+      else {
+        const rival = f.select(
+          "bind-rival",
+          "profile-b",
+          selected.configRevision,
+        );
+        f.store.commitNativeProfileSelection(
+          f.store.prepareNativeSessionSetup("profile.select", rival),
+          f.caller,
+        );
+      }
+    };
+    const result = await f.handle(
+      f.run("bind-race", selected.configRevision),
+      "session.start",
+    );
+    assert.deepEqual(result.readiness, {
+      state: "unavailable",
+      code: "SESSION_BIND_FAILED",
+    });
+    assert.deepEqual(f.trace, [
+      "prepare",
+      "bind",
+      "dispose:SESSION_BIND_FAILED",
+    ]);
+  });
+}
+
+test("ready replay rechecks genuine credential presence without minting another grant", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  const input = f.run("recheck-credentials", selected.configRevision);
+  const first = await f.handle(input, "session.start");
+  const frames = f.frames.length;
+  f.state.present = false;
+  const replay = await f.handle(input, "session.start");
+  assert.deepEqual(replay, {
+    sessionId: first.sessionId,
+    sessionRevision: first.sessionRevision,
+    readiness: { state: "unavailable", code: "SESSION_BIND_FAILED" },
+  });
+  assert.equal(f.frames.length, frames + 1);
+  assert.equal(
+    f.store
+      .list(f.workspaceId)
+      .records.filter(
+        ({ kind, record }) => kind === "grant" && !record.revokedAt,
+      ).length,
+    1,
+    "revocation records do not mint another grant",
+  );
+});
+
+test("changed-payload replay keeps the frozen setup conflict code and fixed copy", async (t) => {
+  const f = serviceFixture(t);
+  const input = f.select();
+  await f.handle(input);
+  await assert.rejects(
+    f.handle({ ...input, profileId: "profile-b" }),
+    (error) =>
+      error.code === "SETUP_REQUEST_CONFLICT" &&
+      error.message === "Native setup unavailable",
+  );
+});
+
+test(
+  "framed engine routes select and start through the real native host, Control and SQLite",
+  { timeout: 15000 },
+  async (t) => {
+    const f = serviceFixture(t);
+    const input = new PassThrough();
+    const pending = new Map();
+    const replies = [];
+    let buffered = Buffer.alloc(0);
+    const output = new Writable({
+      write(chunk, _encoding, done) {
+        buffered = Buffer.concat([buffered, chunk]);
+        while (
+          buffered.length >= 4 &&
+          buffered.length >= buffered.readUInt32BE(0) + 4
+        ) {
+          const length = buffered.readUInt32BE(0);
+          const frame = JSON.parse(
+            buffered.subarray(4, length + 4).toString("utf8"),
+          );
+          buffered = buffered.subarray(length + 4);
+          if (frame.native) {
+            assert.equal(frame.native.method, "credential.status");
+            input.write(
+              encodeFrame({
+                native: {
+                  id: frame.native.id,
+                  ok: true,
+                  value: { present: true },
+                },
+              }),
+            );
+          } else {
+            replies.push(frame);
+            const waiter = pending.get(frame.id);
+            assert.ok(waiter);
+            pending.delete(frame.id);
+            waiter(frame);
+          }
+        }
+        done();
+      },
+    });
+    const job = runHost(input, output, (directory, control) =>
+      createNativeHost(directory, control, f.factory),
+    );
+    const rpc = (id, method, params) => {
+      const response = new Promise((resolve) => pending.set(id, resolve));
+      input.write(encodeFrame({ id, method, params }));
+      return response;
+    };
+    t.after(() => {
+      input.destroy();
+      output.destroy();
+    });
+    assert.equal(
+      (
+        await rpc("native-bootstrap", "native.bootstrap", {
+          appDataDir: f.appDataDir,
+        })
+      ).ok,
+      true,
+    );
+    const selection = f.select("framed-select");
+    const selected = await rpc("select-rpc", "send", {
+      frame: "setup",
+      command: "profile.select",
+      requestId: selection.requestId,
+      payload: selection,
+    });
+    assert.equal(selected.ok, true);
+    const start = f.run("framed-start", selected.value.configRevision);
+    const started = await rpc("start-rpc", "send", {
+      frame: "setup",
+      command: "session.start",
+      requestId: start.requestId,
+      payload: start,
+    });
+    assert.equal(started.ok, true);
+    assert.deepEqual(started.value.readiness, { state: "ready" });
+    assert.deepEqual(f.trace, ["prepare", "bind"]);
+    const before = f.store.list(f.workspaceId).records;
+    const rejected = await rpc("authority-rpc", "send", {
+      frame: "setup",
+      command: "session.start",
+      requestId: "forged",
+      payload: { ...start, requestId: "forged", grantId: "foreign" },
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, "SETUP_INVALID");
+    assert.equal(rejected.error.message, "Native setup unavailable");
+    assert.deepEqual(f.store.list(f.workspaceId).records, before);
+    assert.equal(
+      JSON.stringify(replies).includes("private-path-fixture"),
+      false,
+    );
+    assert.equal(JSON.stringify(replies).includes(f.appDataDir), false);
+    assert.equal(JSON.stringify(replies).includes("credentialRef"), false);
+    assert.equal((await rpc("shutdown-rpc", "shutdown", {})).ok, true);
+    await job;
+    assert.equal(pending.size, 0);
+  },
+);

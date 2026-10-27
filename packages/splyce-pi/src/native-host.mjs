@@ -5,6 +5,7 @@ import { ConfigAuthority } from "../dist/config.js";
 import { createProviderProfiles } from "../dist/provider-profiles.js";
 import { Receipts } from "../dist/receipts.js";
 import { createNativeProviderSetup } from "./native-provider-setup.mjs";
+import { createNativeSessionSetup } from "./native-session-setup.mjs";
 import {
   INITIAL_CONFIG_REVISION,
   Store,
@@ -27,7 +28,7 @@ function opaqueId(value) {
 }
 
 // Private entrypoint: only Rust's first bootstrap frame supplies this path.
-export function createNativeHost(appDataDir) {
+export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
   if (
     typeof appDataDir !== "string" ||
     !isAbsolute(appDataDir) ||
@@ -46,6 +47,11 @@ export function createNativeHost(appDataDir) {
   const receipts = new Receipts(store);
   const profiles = createProviderProfiles({ store, config });
   const providerSetup = createNativeProviderSetup(store, directory);
+  const sessions = createNativeSessionSetup({
+    store,
+    control: nativeControl,
+    factory: sessionFactory,
+  });
   try {
     store.audit();
     receipts.durableCursor();
@@ -147,7 +153,21 @@ export function createNativeHost(appDataDir) {
     prepareProviderSetup: providerSetup.prepare,
     commitProviderSetup: providerSetup.commit,
     readProviderSetup: providerSetup.read,
+    selectProfile(input, requestId, signal) {
+      return sessions.handle("profile.select", input, requestId, signal);
+    },
+    startSession(input, requestId, signal) {
+      return sessions.handle("session.start", input, requestId, signal);
+    },
+    async shutdown() {
+      try {
+        await sessions.close();
+      } finally {
+        store.close();
+      }
+    },
     close() {
+      if (sessionFactory) fail("NATIVE_ASYNC_SHUTDOWN_REQUIRED");
       store.close();
     },
   });

@@ -27,6 +27,7 @@ import {
   type RecordKind,
   type SplyceEvent,
   type SplyceEventDraft,
+  originView,
   snapshotPersistedJson,
   validateEvent,
   validateRecord,
@@ -376,6 +377,162 @@ export interface SetupResult {
   profile: RecordByKind["profileSnapshot"];
 }
 
+export type NativeSessionSetupCommand = "profile.select" | "session.start";
+export interface NativeSessionSetupRequest {
+  requestId: string;
+  workspaceId: string;
+  profileId: string;
+  expectedConfigRevision: string;
+  expectedProfileRevision?: string;
+}
+export interface NativeSetupBinding {
+  binding: NonNullable<RecordByKind["profileSnapshot"]["bindings"]>[number];
+  connection: RecordByKind["providerConnection"];
+  endpoint: RecordByKind["providerEndpoint"];
+  descriptorArtifact: RecordByKind["artifact"] | null;
+}
+export interface NativeProfileSelectionResult {
+  selectedProfileId: string;
+  profileRevision: string;
+  configRevision: string;
+}
+export interface NativeSessionStartResult {
+  sessionId: string;
+  sessionRevision: string;
+  readiness: { state: "unavailable"; code?: "SESSION_BIND_FAILED" };
+}
+export type NativeBranchAnchor = Pick<
+  RecordByKind["branchAnchor"],
+  | "branchAnchorId"
+  | "piSessionId"
+  | "parentAnchorId"
+  | "forkPointEntryId"
+  | "firstChildEntryId"
+  | "activeLeafEntryId"
+>;
+export interface NativeSessionSetupCommit<
+  T = NativeProfileSelectionResult | NativeSessionStartResult,
+> {
+  result: T;
+  workspaceId: string;
+  profileId: string;
+  profileRevision: string;
+  configRevision: string;
+  bindings: readonly NativeSetupBinding[];
+  grantIds: readonly string[];
+  replayed: boolean;
+  branchAnchor?: NativeBranchAnchor;
+}
+export interface NativeSessionSetupPreparation {
+  command: NativeSessionSetupCommand;
+  request: Readonly<NativeSessionSetupRequest>;
+  workspace: AdmittedWorkspace;
+  profile: RecordByKind["profileSnapshot"];
+  bindings: readonly NativeSetupBinding[];
+  origins: readonly string[];
+  replay?: NativeSessionSetupCommit;
+}
+interface NativeSetupReceipt {
+  version: 1;
+  command: NativeSessionSetupCommand;
+  request: NativeSessionSetupRequest;
+  profileRecordId: string;
+  bindingRefs: {
+    role: string;
+    connectionRecordId: string;
+    endpointRecordId: string;
+    descriptorRecordId: string | null;
+  }[];
+  configRevision: string;
+  sessionId: string | null;
+  anchorRecordId: string | null;
+  grantIds: string[];
+}
+interface NativeSetupAuthority {
+  workspace: AdmittedWorkspace;
+  profile: RecordByKind["profileSnapshot"];
+  bindings: NativeSetupBinding[];
+  origins: string[];
+  fingerprint: string;
+  revokedGrants: GrantRecord[];
+}
+interface NativeSetupCapture {
+  command: NativeSessionSetupCommand;
+  request: NativeSessionSetupRequest;
+  authority: NativeSetupAuthority;
+}
+interface SetupState {
+  records: {
+    seq: number;
+    kind: RecordKind;
+    record: RecordByKind[RecordKind] & Record<string, unknown>;
+  }[];
+  deletedRecordIds: string[];
+  workspace: AdmittedWorkspace | null;
+  deletionEpoch: number;
+}
+const NATIVE_SETUP_MEDIA = "application/vnd.splyce.native-session-setup+json";
+const NATIVE_SETUP_FAILED_MEDIA =
+  "application/vnd.splyce.native-session-unavailable+json";
+function nativeSetupInvalid(code = "SETUP_INVALID"): never {
+  throw new StoreError(code, "Native setup unavailable");
+}
+function nativeSetupId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.isWellFormed() &&
+    value.length > 0 &&
+    new TextEncoder().encode(value).length <= 128 &&
+    !/[\s\p{Cc}\p{Cf}/\\]/u.test(value)
+  );
+}
+function nativeSetupRequest(
+  command: NativeSessionSetupCommand,
+  input: unknown,
+): NativeSessionSetupRequest {
+  const keys = [
+    "requestId",
+    "workspaceId",
+    "profileId",
+    "expectedConfigRevision",
+    ...(command === "profile.select" ? ["expectedProfileRevision"] : []),
+  ];
+  if (
+    (command !== "profile.select" && command !== "session.start") ||
+    input === null ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(input)) ||
+    Reflect.ownKeys(input).length !== keys.length
+  )
+    nativeSetupInvalid();
+  const captured: Record<string, string> = {};
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, key);
+    if (
+      !descriptor ||
+      !Object.hasOwn(descriptor, "value") ||
+      !nativeSetupId(descriptor.value)
+    )
+      nativeSetupInvalid();
+    captured[key] = descriptor.value;
+  }
+  return captured as unknown as NativeSessionSetupRequest;
+}
+function nativeSetupDigest(value: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+function nativeSetupKey(requestId: string): string {
+  return `native-session-setup:${createHash("sha256").update(requestId).digest("hex").slice(0, 32)}`;
+}
+function nativeSetupFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    for (const child of Object.values(value)) nativeSetupFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 export class Store {
   readonly path: string;
   /** @internal the underlying SQLite handle; reassigned only by restore(). */
@@ -384,6 +541,10 @@ export class Store {
   private readonly maxInlineBytes: number;
   /** @internal closed flag; reset only by restore(). */
   closed = false;
+  private readonly nativeSetupCaptures = new WeakMap<
+    NativeSessionSetupPreparation,
+    NativeSetupCapture
+  >();
 
   private constructor(
     path: string,
@@ -755,13 +916,25 @@ export class Store {
    * transaction. `workspace` is the current admitted workspace (private
    * canonicalPath and directory identity) or null if superseded/deleted/unknown.
    */
-  readSetupState(workspaceId: string): {
-    records: StoredRecord[];
-    deletedRecordIds: string[];
-    workspace: AdmittedWorkspace | null;
-    deletionEpoch: number;
-  } {
+  readSetupState(workspaceId: string): SetupState {
     this.assertOpen();
+    try {
+      this.db.exec("BEGIN;");
+      try {
+        const state = this.readSetupStateLocked(workspaceId);
+        this.db.exec("COMMIT;");
+        return state;
+      } catch (error) {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+        throw error;
+      }
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  /** Caller owns the SQLite observation/commit transaction. */
+  private readSetupStateLocked(workspaceId: string): SetupState {
     const kinds = [
       "providerEndpoint",
       "providerConnection",
@@ -770,53 +943,108 @@ export class Store {
       "configurationTransition",
       "admittedWorkspace",
     ];
+    const rows = this.db
+      .prepare(
+        "SELECT r.*, d.record_id AS deleted_record_id, d.generation, d.deleted_at, " +
+          "(SELECT value FROM store_meta WHERE key = 'deletion_epoch') AS deletion_epoch " +
+          "FROM records r LEFT JOIN deletions d ON d.record_id = r.record_id " +
+          `WHERE r.scope_id = ? AND r.kind IN (${kinds.map(() => "?").join(",")}) ORDER BY r.seq`,
+      )
+      .all(workspaceId, ...kinds) as Array<
+      Parameters<Store["validateStructuralRow"]>[0] & {
+        deleted_record_id: string | null;
+        generation: number | null;
+        deleted_at: string | null;
+        deletion_epoch: string | null;
+      }
+    >;
+    const records: SetupState["records"] = [];
+    const deletedRecordIds: string[] = [];
+    for (const row of rows) {
+      const record = this.validateStructuralRow(row);
+      if (row.deleted_record_id !== null) {
+        const epoch =
+          Store.parseEpoch(row.deletion_epoch ?? undefined, "deletion_epoch") ??
+          0;
+        if (
+          !Number.isSafeInteger(row.generation) ||
+          row.generation! < 1 ||
+          row.generation! > epoch ||
+          typeof row.deleted_at !== "string" ||
+          !Number.isFinite(Date.parse(row.deleted_at))
+        )
+          throw new StoreError("STORE_LAYOUT", "invalid deletion tombstone");
+        deletedRecordIds.push(row.deleted_record_id);
+      }
+      records.push({
+        seq: row.seq,
+        kind: row.kind,
+        record: record as RecordByKind[RecordKind] & Record<string, unknown>,
+      });
+    }
+    const workspace = this.currentWorkspace(workspaceId) ?? null;
+    const deletionEpoch = this.deletionEpoch();
+    return { records, deletedRecordIds, workspace, deletionEpoch };
+  }
+
+  /** Native owner captures this before awaiting credential presence; the proof cannot be cloned. */
+  prepareNativeSessionSetup(
+    command: NativeSessionSetupCommand,
+    input: unknown,
+  ): NativeSessionSetupPreparation {
+    this.assertOpen();
+    const request = nativeSetupRequest(command, input);
     try {
       this.db.exec("BEGIN;");
       try {
-        const rows = this.db
-          .prepare(
-            "SELECT r.*, d.record_id AS deleted_record_id, d.generation, d.deleted_at, " +
-              "(SELECT value FROM store_meta WHERE key = 'deletion_epoch') AS deletion_epoch " +
-              "FROM records r LEFT JOIN deletions d ON d.record_id = r.record_id " +
-              `WHERE r.scope_id = ? AND r.kind IN (${kinds.map(() => "?").join(",")}) ORDER BY r.seq`,
-          )
-          .all(workspaceId, ...kinds) as Array<
-          Parameters<Store["validateStructuralRow"]>[0] & {
-            deleted_record_id: string | null;
-            generation: number | null;
-            deleted_at: string | null;
-            deletion_epoch: string | null;
-          }
-        >;
-        const records: StoredRecord[] = [];
-        const deletedRecordIds: string[] = [];
-        for (const row of rows) {
-          const record = this.validateStructuralRow(row);
-          if (row.deleted_record_id !== null) {
-            const epoch =
-              Store.parseEpoch(
-                row.deletion_epoch ?? undefined,
-                "deletion_epoch",
-              ) ?? 0;
-            if (
-              !Number.isSafeInteger(row.generation) ||
-              row.generation! < 1 ||
-              row.generation! > epoch ||
-              typeof row.deleted_at !== "string" ||
-              !Number.isFinite(Date.parse(row.deleted_at))
-            )
-              throw new StoreError(
-                "STORE_LAYOUT",
-                "invalid deletion tombstone",
-              );
-            deletedRecordIds.push(row.deleted_record_id);
-          }
-          records.push({ seq: row.seq, kind: row.kind, record });
-        }
-        const workspace = this.currentWorkspace(workspaceId) ?? null;
-        const deletionEpoch = this.deletionEpoch();
+        const workspace = this.currentWorkspace(request.workspaceId);
+        if (!workspace) nativeSetupInvalid("WORKSPACE_SUPERSEDED");
+        const receipt = this.nativeSetupReceipt(
+          nativeSetupKey(request.requestId) + ":request",
+        );
+        if (
+          receipt &&
+          (receipt.command !== command ||
+            JSON.stringify(receipt.request) !== JSON.stringify(request))
+        )
+          nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+        const replay = receipt
+          ? this.nativeSetupReplay(receipt, true)
+          : undefined;
+        const authority = receipt
+          ? {
+              workspace,
+              profile: this.nativeSetupRecord(
+                receipt.profileRecordId,
+                request.workspaceId,
+                "profileSnapshot",
+              ).record as RecordByKind["profileSnapshot"],
+              bindings: [...replay!.bindings],
+              origins: [
+                ...new Set(
+                  replay!.bindings.map(({ endpoint }) => originView(endpoint)),
+                ),
+              ].sort(),
+              fingerprint: "",
+              revokedGrants: [],
+            }
+          : this.nativeSetupAuthority(command, request);
+        const preparation: NativeSessionSetupPreparation = nativeSetupFreeze({
+          command,
+          request: { ...request },
+          workspace: structuredClone(authority.workspace),
+          profile: structuredClone(authority.profile),
+          bindings: structuredClone(authority.bindings),
+          origins: [...authority.origins],
+          ...(replay ? { replay: structuredClone(replay) } : {}),
+        });
+        this.nativeSetupCaptures.set(preparation, {
+          command,
+          request,
+          authority,
+        });
         this.db.exec("COMMIT;");
-        return { records, deletedRecordIds, workspace, deletionEpoch };
+        return preparation;
       } catch (error) {
         if (this.db.isTransaction) this.db.exec("ROLLBACK;");
         throw error;
@@ -824,6 +1052,1131 @@ export class Store {
     } catch (error) {
       throw mapSqliteError(error);
     }
+  }
+
+  commitNativeProfileSelection(
+    preparation: NativeSessionSetupPreparation,
+    caller: CallerContext,
+  ): NativeSessionSetupCommit<NativeProfileSelectionResult> {
+    if (this.nativeSetupCaptures.get(preparation)?.command !== "profile.select")
+      nativeSetupInvalid();
+    return this.commitNativeSessionSetup(
+      preparation,
+      undefined,
+      caller,
+    ) as NativeSessionSetupCommit<NativeProfileSelectionResult>;
+  }
+
+  commitNativeSessionStart(
+    preparation: NativeSessionSetupPreparation,
+    prepared:
+      { piSessionId: string; branchAnchor: NativeBranchAnchor } | undefined,
+    caller: CallerContext,
+  ): NativeSessionSetupCommit<NativeSessionStartResult> {
+    if (this.nativeSetupCaptures.get(preparation)?.command !== "session.start")
+      nativeSetupInvalid();
+    return this.commitNativeSessionSetup(
+      preparation,
+      prepared,
+      caller,
+    ) as NativeSessionSetupCommit<NativeSessionStartResult>;
+  }
+
+  private nativeSetupRecord(
+    recordId: string,
+    scopeId: string,
+    kind: RecordKind,
+  ): StoredRecord {
+    const row = this.db
+      .prepare("SELECT * FROM records WHERE record_id = ?")
+      .get(recordId) as
+      Parameters<Store["validateStructuralRow"]>[0] | undefined;
+    if (
+      !row ||
+      row.kind !== kind ||
+      row.scope_id !== scopeId ||
+      this.db
+        .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+        .get(recordId)
+    )
+      nativeSetupInvalid("STALE_REVISION");
+    return {
+      seq: Number(row.seq),
+      kind,
+      record: this.validateStructuralRow(row),
+    };
+  }
+
+  private nativeSetupReceipt(recordId: string): NativeSetupReceipt | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM records WHERE record_id = ?")
+      .get(recordId) as
+      Parameters<Store["validateStructuralRow"]>[0] | undefined;
+    if (!row) {
+      if (
+        this.db
+          .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+          .get(recordId)
+      )
+        nativeSetupInvalid("SETUP_DELETED");
+      return undefined;
+    }
+    if (
+      this.db
+        .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+        .get(recordId)
+    )
+      nativeSetupInvalid("SETUP_DELETED");
+    const record = this.validateStructuralRow(row) as unknown as Record<
+      string,
+      unknown
+    >;
+    const body = record.nativeSetup as NativeSetupReceipt | undefined;
+    if (
+      row.kind !== "artifact" ||
+      record.artifactId !== recordId ||
+      record.mediaType !== NATIVE_SETUP_MEDIA ||
+      record.retentionClass !== "workspace" ||
+      !body ||
+      typeof body !== "object" ||
+      Array.isArray(body) ||
+      Object.keys(body).sort().join(",") !==
+        "anchorRecordId,bindingRefs,command,configRevision,grantIds,profileRecordId,request,sessionId,version" ||
+      body.version !== 1 ||
+      !nativeSetupId(body.profileRecordId) ||
+      !nativeSetupId(body.configRevision) ||
+      !Array.isArray(body.bindingRefs) ||
+      !Array.isArray(body.grantIds) ||
+      !body.grantIds.every(nativeSetupId) ||
+      new Set(body.grantIds).size !== body.grantIds.length ||
+      (body.command !== "profile.select" && body.command !== "session.start")
+    )
+      nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    const request = nativeSetupRequest(body.command, body.request);
+    if (
+      JSON.stringify(request) !== JSON.stringify(body.request) ||
+      record.scopeId !== request.workspaceId ||
+      recordId !== nativeSetupKey(request.requestId) + ":request" ||
+      record.digest !== nativeSetupDigest(body) ||
+      record.byteLength !==
+        new TextEncoder().encode(JSON.stringify(body)).length ||
+      (body.command === "profile.select"
+        ? body.sessionId !== null ||
+          body.anchorRecordId !== null ||
+          body.grantIds.length !== 0
+        : !nativeSetupId(body.sessionId) || !nativeSetupId(body.anchorRecordId))
+    )
+      nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    for (const ref of body.bindingRefs) {
+      if (
+        !ref ||
+        typeof ref !== "object" ||
+        Object.keys(ref).sort().join(",") !==
+          "connectionRecordId,descriptorRecordId,endpointRecordId,role" ||
+        !nativeSetupId(ref.role) ||
+        !nativeSetupId(ref.connectionRecordId) ||
+        !nativeSetupId(ref.endpointRecordId) ||
+        (ref.descriptorRecordId !== null &&
+          !nativeSetupId(ref.descriptorRecordId))
+      )
+        nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    }
+    return body;
+  }
+
+  private nativeSetupBindings(
+    profile: RecordByKind["profileSnapshot"],
+    state: SetupState,
+    latest: boolean,
+  ): NativeSetupBinding[] {
+    if (!profile.bindings?.length) nativeSetupInvalid();
+    const deleted = new Set(state.deletedRecordIds);
+    const live = (row: StoredRecord | undefined): StoredRecord => {
+      if (!row || deleted.has(row.record.recordId))
+        nativeSetupInvalid("STALE_REVISION");
+      return row;
+    };
+    const referenced = (id: string) =>
+      live(state.records.find(({ record }) => record.recordId === id));
+    for (const ref of [profile.limitsArtifactId, ...profile.egressPolicyRefs]) {
+      if (referenced(ref).kind !== "artifact") nativeSetupInvalid();
+    }
+    return profile.bindings.map((binding) => {
+      if (typeof binding.modelId !== "string") nativeSetupInvalid();
+      const connections = state.records.filter(
+        ({ kind, record }) =>
+          kind === "providerConnection" &&
+          record.providerConnectionId === binding.providerConnectionId,
+      );
+      const connectionRow = live(
+        latest
+          ? connections.at(-1)
+          : connections.find(
+              ({ record }) => record.revision === binding.connectionRevision,
+            ),
+      );
+      const connection =
+        connectionRow.record as RecordByKind["providerConnection"];
+      if (
+        connection.revision !== binding.connectionRevision ||
+        connections.filter(
+          ({ record }) => record.revision === binding.connectionRevision,
+        ).length !== 1 ||
+        referenced(connection.accountScopeRef).kind !== "artifact"
+      )
+        nativeSetupInvalid("STALE_REVISION");
+      const separator = connection.endpointRef.lastIndexOf("@");
+      if (separator < 1) nativeSetupInvalid();
+      const endpointId = connection.endpointRef.slice(0, separator),
+        revision = connection.endpointRef.slice(separator + 1);
+      const endpoints = state.records.filter(
+        ({ kind, record }) =>
+          kind === "providerEndpoint" && record.endpointId === endpointId,
+      );
+      const endpoint = live(
+        latest
+          ? endpoints.at(-1)
+          : endpoints.find(({ record }) => record.revision === revision),
+      ).record as RecordByKind["providerEndpoint"];
+      if (
+        endpoint.revision !== revision ||
+        endpoints.filter(({ record }) => record.revision === revision)
+          .length !== 1 ||
+        endpoint.apiFamily !== connection.apiFamily ||
+        (endpoint.locality === "loopback"
+          ? connection.locality !== "local"
+          : connection.locality !== "hosted")
+      )
+        nativeSetupInvalid("STALE_REVISION");
+      const descriptors = state.records.filter(
+        ({ kind, record }) =>
+          kind === "artifact" &&
+          profile.sourceIds.includes(record.recordId) &&
+          record.mediaType === "application/vnd.splyce.model-descriptor+json" &&
+          record.role === binding.role &&
+          record.modelId === binding.modelId,
+      );
+      if (binding.role === "chat" && descriptors.length !== 1)
+        nativeSetupInvalid();
+      if (descriptors.length > 1) nativeSetupInvalid();
+      const descriptorArtifact = descriptors.length
+        ? (live(descriptors[0]).record as RecordByKind["artifact"])
+        : null;
+      if (descriptorArtifact) {
+        const descriptor = (
+          descriptorArtifact as RecordByKind["artifact"] &
+            Record<string, unknown>
+        ).descriptor as Record<string, unknown> | undefined;
+        if (
+          !descriptor ||
+          typeof descriptor !== "object" ||
+          Array.isArray(descriptor) ||
+          !["catalog", "user"].includes(String(descriptor.source)) ||
+          !Number.isSafeInteger(descriptor.contextWindow) ||
+          Number(descriptor.contextWindow) < 1 ||
+          Number(descriptor.contextWindow) > 2 ** 21 ||
+          !Number.isSafeInteger(descriptor.maxOutputTokens) ||
+          Number(descriptor.maxOutputTokens) < 1 ||
+          Number(descriptor.maxOutputTokens) >
+            Number(descriptor.contextWindow) ||
+          typeof descriptor.reasoning !== "boolean" ||
+          typeof descriptor.costKnown !== "boolean" ||
+          (descriptor.source === "user" && descriptor.costKnown !== false) ||
+          (descriptor.source === "catalog"
+            ? !nativeSetupId(descriptor.catalogVersion)
+            : Object.hasOwn(descriptor, "catalogVersion")) ||
+          Object.keys(descriptor).sort().join(",") !==
+            [
+              "source",
+              "contextWindow",
+              "maxOutputTokens",
+              "reasoning",
+              "input",
+              "costKnown",
+              ...(descriptor.source === "catalog" ? ["catalogVersion"] : []),
+            ]
+              .sort()
+              .join(",") ||
+          Number(descriptor.maxOutputTokens) > 2 ** 20 ||
+          !Array.isArray(descriptor.input) ||
+          descriptor.input.length === 0 ||
+          !descriptor.input.every(
+            (item) => item === "text" || item === "image",
+          ) ||
+          new Set(descriptor.input).size !== descriptor.input.length ||
+          descriptorArtifact.digest !== nativeSetupDigest(descriptor) ||
+          descriptorArtifact.byteLength !==
+            new TextEncoder().encode(JSON.stringify(descriptor)).length
+        )
+          nativeSetupInvalid();
+      }
+      return { binding, connection, endpoint, descriptorArtifact };
+    });
+  }
+
+  private nativeProviderGrants(workspaceId: string): GrantRecord[] {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM records WHERE scope_id = ? AND kind = 'grant' ORDER BY seq",
+      )
+      .all(workspaceId) as Parameters<Store["validateStructuralRow"]>[0][];
+    const minted = new Map<string, GrantRecord>(),
+      revoked = new Set<string>();
+    for (const row of rows) {
+      const grant = this.validateStructuralRow(row) as GrantRecord;
+      if (
+        grant.workspaceId !== workspaceId ||
+        grant.capability !== "net.provider"
+      )
+        continue;
+      if (grant.recordId === grant.grantId) minted.set(grant.grantId, grant);
+      // Match dispatch's append-only grant fold: a tombstone alone does not revoke authority.
+      if (grant.revokedAt !== undefined) revoked.add(grant.grantId);
+    }
+    return [...minted.values()]
+      .filter((grant) => !revoked.has(grant.grantId))
+      .sort((a, b) => a.grantId.localeCompare(b.grantId));
+  }
+
+  private nativeSetupAuthority(
+    command: NativeSessionSetupCommand,
+    request: NativeSessionSetupRequest,
+  ): NativeSetupAuthority {
+    const state = this.readSetupStateLocked(request.workspaceId);
+    if (!state.workspace) nativeSetupInvalid("WORKSPACE_SUPERSEDED");
+    const transitions = state.records.filter(
+      ({ kind, record }) =>
+        kind === "configurationTransition" && record.state === "applied",
+    );
+    const latestConfig = transitions.at(-1);
+    const selected = transitions.findLast(
+      ({ record }) =>
+        typeof record.profileId === "string" &&
+        typeof record.profileRevision === "string",
+    );
+    if (
+      [latestConfig, selected].some(
+        (row) => row && state.deletedRecordIds.includes(row.record.recordId),
+      )
+    )
+      nativeSetupInvalid("STALE_REVISION");
+    const configRevision = latestConfig
+      ? String(latestConfig.record.acceptedConfigRevision)
+      : INITIAL_CONFIG_REVISION;
+    if (configRevision !== request.expectedConfigRevision)
+      nativeSetupInvalid("STALE_REVISION");
+    const profileRow = state.records
+      .filter(
+        ({ kind, record }) =>
+          kind === "profileSnapshot" && record.profileId === request.profileId,
+      )
+      .at(-1);
+    if (
+      !profileRow ||
+      state.deletedRecordIds.includes(profileRow.record.recordId)
+    )
+      nativeSetupInvalid("STALE_REVISION");
+    const profile = profileRow.record as RecordByKind["profileSnapshot"];
+    if (
+      command === "profile.select"
+        ? profile.profileRevision !== request.expectedProfileRevision
+        : selected?.record.profileId !== profile.profileId ||
+          selected.record.profileRevision !== profile.profileRevision
+    )
+      nativeSetupInvalid("STALE_REVISION");
+    const bindings = this.nativeSetupBindings(profile, state, true);
+    const grants = this.nativeProviderGrants(request.workspaceId);
+    const receipts = this.db
+      .prepare(
+        "SELECT record_id FROM records WHERE scope_id = ? AND kind = 'artifact' AND json_extract(payload, '$.mediaType') = ? ORDER BY seq",
+      )
+      .all(request.workspaceId, NATIVE_SETUP_MEDIA) as { record_id: string }[];
+    const sessions = receipts
+      .filter(
+        ({ record_id }) =>
+          !this.db
+            .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+            .get(record_id),
+      )
+      .map(({ record_id }) => this.nativeSetupReceipt(record_id)!)
+      .filter((receipt) => receipt.command === "session.start");
+    const sessionProfiles = grants.map((grant) => {
+      const receipt = sessions.find(
+        (entry) => entry.sessionId === grant.sessionId,
+      );
+      const boundProfile =
+        receipt && !state.deletedRecordIds.includes(receipt.profileRecordId)
+          ? (state.records.find(
+              ({ record }) => record.recordId === receipt.profileRecordId,
+            )?.record as RecordByKind["profileSnapshot"] | undefined)
+          : undefined;
+      return {
+        grant,
+        profileId: boundProfile?.profileId ?? null,
+        profileRevision: boundProfile?.profileRevision ?? null,
+      };
+    });
+    const descriptorRefs = [
+      ...new Set([
+        profile.limitsArtifactId,
+        ...profile.egressPolicyRefs,
+        ...bindings.map(({ connection }) => connection.accountScopeRef),
+      ]),
+    ].map((id) => state.records.find(({ record }) => record.recordId === id));
+    const fingerprint = JSON.stringify({
+      workspace: state.workspace,
+      profile: profileRow,
+      latestConfig,
+      selected,
+      bindings,
+      descriptorRefs,
+      sessionProfiles,
+      grantDeletions: this.db
+        .prepare(
+          "SELECT d.record_id FROM deletions d JOIN records r ON r.record_id = d.record_id WHERE r.scope_id = ? AND r.kind = 'grant' ORDER BY d.record_id",
+        )
+        .all(request.workspaceId),
+    });
+    return {
+      workspace: state.workspace,
+      profile,
+      bindings,
+      origins: [
+        ...new Set(bindings.map(({ endpoint }) => originView(endpoint))),
+      ].sort(),
+      fingerprint,
+      revokedGrants: sessionProfiles
+        .filter(
+          (entry) =>
+            entry.profileId !== profile.profileId ||
+            entry.profileRevision !== profile.profileRevision,
+        )
+        .map(({ grant }) => grant),
+    };
+  }
+
+  private nativeSetupArtifact(
+    recordId: string,
+    scopeId: string,
+    mediaType: string,
+    field: string,
+    body: unknown,
+  ): AppendInput {
+    return {
+      kind: "artifact",
+      record: {
+        schemaVersion: CONTRACT_VERSION,
+        recordId,
+        createdAt: new Date().toISOString(),
+        scopeId,
+        sourceIds: [],
+        artifactId: recordId,
+        mediaType,
+        retentionClass: "workspace",
+        digest: nativeSetupDigest(body),
+        byteLength: new TextEncoder().encode(JSON.stringify(body)).length,
+        [field]: body,
+      },
+    };
+  }
+
+  private nativeSetupCaller(
+    caller: CallerContext,
+    workspaceId: string,
+    staged: Set<string>,
+    sessionId = caller.sessionId,
+  ): CallerContext {
+    return {
+      sessionId,
+      configRevision: caller.configRevision,
+      profileRevision: caller.profileRevision,
+      policyRevision: caller.policyRevision,
+      resolveReference: (id, scopeId) =>
+        scopeId === workspaceId &&
+        (staged.has(id) ||
+          this.db
+            .prepare(
+              "SELECT 1 FROM records r WHERE scope_id = ? AND NOT EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = r.record_id) AND " +
+                "(record_id = ? OR json_extract(payload, '$.workspaceId') = ? OR json_extract(payload, '$.piSessionId') = ? OR json_extract(payload, '$.branchAnchorId') = ?) LIMIT 1",
+            )
+            .get(workspaceId, id, id, id, id) !== undefined),
+    };
+  }
+
+  private nativeSetupFailed(
+    receipt: NativeSetupReceipt,
+    sessionRevision: string,
+  ): boolean {
+    const recordId = nativeSetupKey(receipt.request.requestId) + ":unavailable";
+    const row = this.db
+      .prepare("SELECT * FROM records WHERE record_id = ?")
+      .get(recordId) as
+      Parameters<Store["validateStructuralRow"]>[0] | undefined;
+    if (!row) return false;
+    const record = this.nativeSetupRecord(
+      recordId,
+      receipt.request.workspaceId,
+      "artifact",
+    ).record as RecordByKind["artifact"] & Record<string, unknown>;
+    const expected = {
+      sessionId: receipt.sessionId,
+      sessionRevision,
+      code: "SESSION_BIND_FAILED",
+    };
+    if (
+      record.artifactId !== recordId ||
+      record.mediaType !== NATIVE_SETUP_FAILED_MEDIA ||
+      JSON.stringify(record.unavailable) !== JSON.stringify(expected) ||
+      record.digest !== nativeSetupDigest(expected) ||
+      record.byteLength !==
+        new TextEncoder().encode(JSON.stringify(expected)).length
+    )
+      nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    return true;
+  }
+
+  private nativeSetupReplay(
+    receipt: NativeSetupReceipt,
+    replayed: boolean,
+  ): NativeSessionSetupCommit {
+    const workspaceId = receipt.request.workspaceId;
+    const state = this.readSetupStateLocked(workspaceId);
+    const profile = this.nativeSetupRecord(
+      receipt.profileRecordId,
+      workspaceId,
+      "profileSnapshot",
+    ).record as RecordByKind["profileSnapshot"];
+    if (profile.profileId !== receipt.request.profileId)
+      nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    const bindings = this.nativeSetupBindings(profile, state, false);
+    const refs = bindings.map(
+      ({ binding, connection, endpoint, descriptorArtifact }) => ({
+        role: binding.role,
+        connectionRecordId: connection.recordId,
+        endpointRecordId: endpoint.recordId,
+        descriptorRecordId: descriptorArtifact?.recordId ?? null,
+      }),
+    );
+    if (JSON.stringify(refs) !== JSON.stringify(receipt.bindingRefs))
+      nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    const common = {
+      workspaceId,
+      profileId: profile.profileId,
+      profileRevision: profile.profileRevision,
+      configRevision: receipt.configRevision,
+      bindings,
+      grantIds: receipt.grantIds,
+      replayed,
+    };
+    if (receipt.command === "profile.select") {
+      const transition = this.nativeSetupRecord(
+        nativeSetupKey(receipt.request.requestId) + ":applied",
+        workspaceId,
+        "configurationTransition",
+      ).record as RecordByKind["configurationTransition"];
+      if (
+        transition.state !== "applied" ||
+        transition.acceptedConfigRevision !== receipt.configRevision ||
+        transition.expectedConfigRevision !==
+          receipt.request.expectedConfigRevision ||
+        transition.profileId !== profile.profileId ||
+        transition.profileRevision !== profile.profileRevision
+      )
+        nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+      return {
+        ...common,
+        result: {
+          selectedProfileId: profile.profileId,
+          profileRevision: profile.profileRevision,
+          configRevision: receipt.configRevision,
+        },
+      };
+    }
+    const anchorRow = this.nativeSetupRecord(
+      receipt.anchorRecordId!,
+      workspaceId,
+      "branchAnchor",
+    );
+    const anchor = anchorRow.record as RecordByKind["branchAnchor"];
+    const attribution = this.db
+      .prepare("SELECT session_id FROM records WHERE record_id = ?")
+      .get(anchor.recordId) as { session_id: string };
+    if (
+      anchor.piSessionId !== receipt.sessionId ||
+      attribution.session_id !== receipt.sessionId
+    )
+      nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    const origins = [
+      ...new Set(bindings.map(({ endpoint }) => originView(endpoint))),
+    ].sort();
+    if (receipt.grantIds.length !== origins.length)
+      nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    for (let index = 0; index < receipt.grantIds.length; index++) {
+      const grant = this.nativeSetupRecord(
+        receipt.grantIds[index]!,
+        workspaceId,
+        "grant",
+      ).record as GrantRecord;
+      if (
+        grant.sessionId !== receipt.sessionId ||
+        grant.workspaceId !== workspaceId ||
+        grant.capability !== "net.provider" ||
+        grant.scope !== "session" ||
+        grant.origin !== origins[index] ||
+        grant.recordId !== grant.grantId
+      )
+        nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+    }
+    const sessionRevision = String(anchorRow.seq);
+    return {
+      ...common,
+      branchAnchor: this.nativeSetupAnchor(anchor, receipt.sessionId!),
+      result: {
+        sessionId: receipt.sessionId!,
+        sessionRevision,
+        readiness: {
+          state: "unavailable",
+          ...(this.nativeSetupFailed(receipt, sessionRevision)
+            ? { code: "SESSION_BIND_FAILED" as const }
+            : {}),
+        },
+      },
+    };
+  }
+
+  private nativeSetupAnchor(
+    input: unknown,
+    piSessionId: string,
+    strict = false,
+  ): NativeBranchAnchor {
+    if (!input || typeof input !== "object" || Array.isArray(input))
+      nativeSetupInvalid();
+    const keys = [
+      "branchAnchorId",
+      "piSessionId",
+      "parentAnchorId",
+      "forkPointEntryId",
+      "firstChildEntryId",
+      "activeLeafEntryId",
+    ];
+    if (strict && Reflect.ownKeys(input).length !== keys.length)
+      nativeSetupInvalid();
+    const anchor: Record<string, string | null> = {};
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (
+        !descriptor ||
+        !Object.hasOwn(descriptor, "value") ||
+        !(
+          nativeSetupId(descriptor.value) ||
+          (key !== "branchAnchorId" &&
+            key !== "piSessionId" &&
+            descriptor.value === null)
+        )
+      )
+        nativeSetupInvalid();
+      anchor[key] = descriptor.value;
+    }
+    if (anchor.piSessionId !== piSessionId) nativeSetupInvalid();
+    return anchor as unknown as NativeBranchAnchor;
+  }
+
+  private commitNativeSessionSetup(
+    preparation: NativeSessionSetupPreparation,
+    prepared:
+      { piSessionId: string; branchAnchor: NativeBranchAnchor } | undefined,
+    caller: CallerContext,
+  ): NativeSessionSetupCommit {
+    const capture = this.nativeSetupCaptures.get(preparation);
+    if (
+      !capture ||
+      (capture.command === "profile.select" && prepared !== undefined)
+    )
+      nativeSetupInvalid();
+    const { command, request } = capture;
+    // Capture factory metadata before any lock-time callback can observe caller-owned objects.
+    let piSessionId: string | undefined,
+      branchAnchor: NativeBranchAnchor | undefined;
+    if (prepared !== undefined) {
+      if (
+        !prepared ||
+        typeof prepared !== "object" ||
+        Reflect.ownKeys(prepared).length !== 2
+      )
+        nativeSetupInvalid();
+      const id = Object.getOwnPropertyDescriptor(prepared, "piSessionId"),
+        anchor = Object.getOwnPropertyDescriptor(prepared, "branchAnchor");
+      if (
+        !id ||
+        !anchor ||
+        !Object.hasOwn(id, "value") ||
+        !Object.hasOwn(anchor, "value") ||
+        !nativeSetupId(id.value)
+      )
+        nativeSetupInvalid();
+      piSessionId = id.value;
+      branchAnchor = this.nativeSetupAnchor(anchor.value, piSessionId!, true);
+    }
+    if (prepared && !nativeSetupId(piSessionId)) nativeSetupInvalid();
+    const key = nativeSetupKey(request.requestId),
+      receiptId = key + ":request";
+    const staged = new Set<string>([
+      request.workspaceId,
+      ...(piSessionId ? [piSessionId] : []),
+    ]);
+    const batchCaller = this.nativeSetupCaller(
+      caller,
+      request.workspaceId,
+      staged,
+      piSessionId ?? caller.sessionId,
+    );
+    let replay: NativeSessionSetupCommit | undefined,
+      receipt: NativeSetupReceipt | undefined;
+    let authority: NativeSetupAuthority | undefined;
+    let seqs: number[];
+    try {
+      ({ seqs } = this.commitBatch([], [], batchCaller, {
+        expectedConfigRevision: {
+          scopeId: request.workspaceId,
+          revision: request.expectedConfigRevision,
+        },
+        nativeSetup: () => {
+          if (!this.currentWorkspace(request.workspaceId))
+            nativeSetupInvalid("WORKSPACE_SUPERSEDED");
+          const prior = this.nativeSetupReceipt(receiptId);
+          if (prior) {
+            if (
+              prior.command !== command ||
+              JSON.stringify(prior.request) !== JSON.stringify(request)
+            )
+              nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+            replay = this.nativeSetupReplay(prior, true);
+            throw new StoreError(
+              "NATIVE_SETUP_REPLAY",
+              "Native setup already committed",
+            );
+          }
+          authority = this.nativeSetupAuthority(command, request);
+          if (authority.fingerprint !== capture.authority.fingerprint)
+            nativeSetupInvalid("STALE_REVISION");
+          if (command === "session.start" && (!branchAnchor || !piSessionId))
+            nativeSetupInvalid();
+          const configRevision =
+            command === "profile.select"
+              ? `cfg-native-${key.slice(key.lastIndexOf(":") + 1)}`
+              : request.expectedConfigRevision;
+          const grantIds =
+            command === "session.start"
+              ? authority.origins.map((_, index) => `${key}:grant:${index}`)
+              : [];
+          receipt = {
+            version: 1,
+            command,
+            request: { ...request },
+            profileRecordId: authority.profile.recordId,
+            bindingRefs: authority.bindings.map(
+              ({ binding, connection, endpoint, descriptorArtifact }) => ({
+                role: binding.role,
+                connectionRecordId: connection.recordId,
+                endpointRecordId: endpoint.recordId,
+                descriptorRecordId: descriptorArtifact?.recordId ?? null,
+              }),
+            ),
+            configRevision,
+            sessionId: command === "session.start" ? piSessionId! : null,
+            anchorRecordId:
+              command === "session.start"
+                ? `${branchAnchor!.branchAnchorId}.1`
+                : null,
+            grantIds,
+          };
+          const base = (recordId: string) => ({
+            schemaVersion: CONTRACT_VERSION,
+            recordId,
+            scopeId: request.workspaceId,
+            createdAt: new Date().toISOString(),
+            sourceIds: [] as string[],
+          });
+          let inputs: AppendInput[];
+          if (command === "profile.select") {
+            inputs = [
+              {
+                kind: "configurationTransition",
+                record: {
+                  ...base(key + ":applied"),
+                  transitionId: key,
+                  expectedConfigRevision: request.expectedConfigRevision,
+                  acceptedConfigRevision: configRevision,
+                  intentRef: receiptId,
+                  changedValuesArtifactId: receiptId,
+                  state: "applied",
+                  outcomeRef: receiptId,
+                  profileId: authority.profile.profileId,
+                  profileRevision: authority.profile.profileRevision,
+                },
+              },
+              ...authority.revokedGrants.map((grant) => ({
+                kind: "grant" as const,
+                record: {
+                  ...grant,
+                  recordId: `${grant.grantId}.revoked`,
+                  createdAt: new Date().toISOString(),
+                  revokedAt: new Date().toISOString(),
+                },
+              })),
+            ];
+          } else {
+            if (
+              this.db
+                .prepare(
+                  "SELECT 1 FROM records WHERE kind = 'branchAnchor' AND json_extract(payload, '$.piSessionId') = ? LIMIT 1",
+                )
+                .get(piSessionId!)
+            )
+              nativeSetupInvalid("STALE_REVISION");
+            inputs = [
+              {
+                kind: "branchAnchor",
+                record: { ...base(receipt.anchorRecordId!), ...branchAnchor },
+              },
+              ...authority.origins.map((origin, index) => ({
+                kind: "grant" as const,
+                record: {
+                  ...base(grantIds[index]!),
+                  grantId: grantIds[index]!,
+                  workspaceId: request.workspaceId,
+                  sessionId: piSessionId!,
+                  capability: "net.provider",
+                  scope: "session",
+                  origin,
+                },
+              })),
+            ];
+          }
+          inputs.push(
+            this.nativeSetupArtifact(
+              receiptId,
+              request.workspaceId,
+              NATIVE_SETUP_MEDIA,
+              "nativeSetup",
+              receipt,
+            ),
+          );
+          for (const input of inputs) {
+            const record = input.record as Record<string, unknown>;
+            staged.add(String(record.recordId));
+            if (typeof record.branchAnchorId === "string")
+              staged.add(record.branchAnchorId);
+          }
+          return inputs;
+        },
+      }));
+    } catch (error) {
+      if (
+        error instanceof StoreError &&
+        error.code === "NATIVE_SETUP_REPLAY" &&
+        replay
+      )
+        return nativeSetupFreeze(structuredClone(replay));
+      if (
+        error instanceof StoreError &&
+        ["CONFIG_STALE_REVISION", "CONFIG_REVISION_REUSED"].includes(error.code)
+      )
+        nativeSetupInvalid("STALE_REVISION");
+      throw error;
+    }
+    const saved = receipt!,
+      current = authority!;
+    const common = {
+      workspaceId: request.workspaceId,
+      profileId: current.profile.profileId,
+      profileRevision: current.profile.profileRevision,
+      configRevision: saved.configRevision,
+      bindings: current.bindings,
+      grantIds: saved.grantIds,
+      replayed: false,
+    };
+    return nativeSetupFreeze(
+      structuredClone(
+        command === "profile.select"
+          ? {
+              ...common,
+              result: {
+                selectedProfileId: current.profile.profileId,
+                profileRevision: current.profile.profileRevision,
+                configRevision: saved.configRevision,
+              },
+            }
+          : {
+              ...common,
+              branchAnchor: branchAnchor!,
+              result: {
+                sessionId: piSessionId!,
+                sessionRevision: String(seqs[0]),
+                readiness: { state: "unavailable" as const },
+              },
+            },
+      ),
+    );
+  }
+
+  /** A replayed identity is not permission to publish readiness for stale or revoked authority. */
+  assertNativeSessionStartCurrent(input: {
+    workspaceId: string;
+    sessionId: string;
+    sessionRevision: string;
+  }): void {
+    this.assertOpen();
+    const fields = ["workspaceId", "sessionId", "sessionRevision"];
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Reflect.ownKeys(input).length !== fields.length
+    )
+      nativeSetupInvalid();
+    const captured: Record<string, string> = {};
+    for (const field of fields) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, field);
+      if (
+        !descriptor ||
+        !Object.hasOwn(descriptor, "value") ||
+        !nativeSetupId(descriptor.value)
+      )
+        nativeSetupInvalid();
+      captured[field] = descriptor.value;
+    }
+    const workspaceId = captured.workspaceId!,
+      sessionId = captured.sessionId!;
+    if (
+      !/^[1-9][0-9]*$/u.test(captured.sessionRevision!) ||
+      !Number.isSafeInteger(Number(captured.sessionRevision))
+    )
+      nativeSetupInvalid();
+    try {
+      this.db.exec("BEGIN;");
+      try {
+        if (!this.currentWorkspace(workspaceId))
+          nativeSetupInvalid("WORKSPACE_SUPERSEDED");
+        const rows = this.db
+          .prepare(
+            "SELECT record_id FROM records WHERE scope_id = ? AND kind = 'artifact' AND json_extract(payload, '$.mediaType') = ? AND json_extract(payload, '$.nativeSetup.sessionId') = ?",
+          )
+          .all(workspaceId, NATIVE_SETUP_MEDIA, sessionId) as {
+          record_id: string;
+        }[];
+        if (rows.length !== 1) nativeSetupInvalid("STALE_REVISION");
+        const receipt = this.nativeSetupReceipt(rows[0]!.record_id);
+        if (!receipt || receipt.command !== "session.start")
+          nativeSetupInvalid("STALE_REVISION");
+        const original = this.nativeSetupReplay(
+          receipt,
+          true,
+        ) as NativeSessionSetupCommit<NativeSessionStartResult>;
+        if (
+          original.result.sessionId !== sessionId ||
+          original.result.sessionRevision !== captured.sessionRevision ||
+          original.result.readiness.code !== undefined
+        )
+          nativeSetupInvalid("STALE_REVISION");
+        // This path deliberately checks current selection/CAS instead of accepting the replay result.
+        const current = this.nativeSetupAuthority(
+          "session.start",
+          receipt.request,
+        );
+        if (
+          current.profile.profileId !== original.profileId ||
+          current.profile.profileRevision !== original.profileRevision ||
+          receipt.configRevision !== this.configRevision(workspaceId)
+        )
+          nativeSetupInvalid("STALE_REVISION");
+        const grantRows = this.db
+          .prepare(
+            "SELECT * FROM records WHERE kind = 'grant' AND json_extract(payload, '$.sessionId') = ? AND json_extract(payload, '$.capability') = 'net.provider' ORDER BY seq",
+          )
+          .all(sessionId) as Parameters<Store["validateStructuralRow"]>[0][];
+        const grants = grantRows
+          .map((row) => this.validateStructuralRow(row) as GrantRecord)
+          .filter((grant) => grant.recordId === grant.grantId);
+        const live = grants.filter((grant) => {
+          const state = this.grantState(grant.grantId);
+          return (
+            state !== undefined &&
+            !state.revoked &&
+            state.consumedSeq === undefined
+          );
+        });
+        if (
+          live.length !== receipt.grantIds.length ||
+          live.some(
+            (grant) =>
+              !receipt.grantIds.includes(grant.grantId) ||
+              grant.workspaceId !== workspaceId ||
+              grant.scopeId !== workspaceId ||
+              grant.scope !== "session" ||
+              !current.origins.includes(grant.origin!),
+          )
+        )
+          nativeSetupInvalid("STALE_REVISION");
+        for (const grantId of receipt.grantIds) {
+          const grant = live.find((entry) => entry.grantId === grantId);
+          if (!grant) nativeSetupInvalid("STALE_REVISION");
+          this.checkGrant(
+            {
+              grantId,
+              workspaceId,
+              sessionId,
+              capability: "net.provider",
+              origin: grant.origin!,
+              observedIdentity: current.workspace,
+            },
+            "session",
+          );
+        }
+        this.db.exec("COMMIT;");
+      } catch (error) {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+        throw error;
+      }
+    } catch (error) {
+      // Readiness failures expose a fixed typed copy, never stored values or SQLite diagnostics.
+      nativeSetupInvalid(
+        error instanceof StoreError && error.code === "WORKSPACE_SUPERSEDED"
+          ? "WORKSPACE_SUPERSEDED"
+          : "STALE_REVISION",
+      );
+    }
+  }
+
+  /** Failed live attachment keeps the committed identity and revokes its provider authority atomically. */
+  failNativeSessionStart(
+    input: { workspaceId: string; sessionId: string; sessionRevision: string },
+    caller: CallerContext,
+  ): NativeSessionSetupCommit<NativeSessionStartResult> {
+    const fields = ["workspaceId", "sessionId", "sessionRevision"];
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Reflect.ownKeys(input).length !== fields.length
+    )
+      nativeSetupInvalid();
+    const captured: Record<string, string> = {};
+    for (const field of fields) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, field);
+      if (
+        !descriptor ||
+        !Object.hasOwn(descriptor, "value") ||
+        !nativeSetupId(descriptor.value)
+      )
+        nativeSetupInvalid();
+      captured[field] = descriptor.value;
+    }
+    const workspaceId = captured.workspaceId!,
+      sessionId = captured.sessionId!;
+    const staged = new Set<string>([workspaceId, sessionId]);
+    let result: NativeSessionSetupCommit<NativeSessionStartResult> | undefined;
+    this.commitBatch(
+      [],
+      [],
+      this.nativeSetupCaller(caller, workspaceId, staged, sessionId),
+      {
+        nativeSetup: () => {
+          const rows = this.db
+            .prepare(
+              "SELECT record_id FROM records WHERE scope_id = ? AND kind = 'artifact' AND json_extract(payload, '$.mediaType') = ? AND json_extract(payload, '$.nativeSetup.sessionId') = ?",
+            )
+            .all(workspaceId, NATIVE_SETUP_MEDIA, sessionId) as {
+            record_id: string;
+          }[];
+          if (rows.length !== 1) nativeSetupInvalid("STALE_REVISION");
+          const receipt = this.nativeSetupReceipt(rows[0]!.record_id)!;
+          // Compensation must still revoke authority if a profile/descriptor was deleted after commit.
+          const anchorRow = this.db
+            .prepare("SELECT * FROM records WHERE record_id = ?")
+            .get(receipt.anchorRecordId!) as
+            Parameters<Store["validateStructuralRow"]>[0] | undefined;
+          const profileRow = this.db
+            .prepare("SELECT * FROM records WHERE record_id = ?")
+            .get(receipt.profileRecordId) as
+            Parameters<Store["validateStructuralRow"]>[0] | undefined;
+          if (
+            !anchorRow ||
+            !profileRow ||
+            anchorRow.kind !== "branchAnchor" ||
+            profileRow.kind !== "profileSnapshot" ||
+            anchorRow.scope_id !== workspaceId ||
+            profileRow.scope_id !== workspaceId ||
+            anchorRow.session_id !== sessionId
+          )
+            nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+          const anchor = this.validateStructuralRow(
+            anchorRow,
+          ) as RecordByKind["branchAnchor"];
+          const profile = this.validateStructuralRow(
+            profileRow,
+          ) as RecordByKind["profileSnapshot"];
+          if (
+            anchor.piSessionId !== sessionId ||
+            profile.profileId !== receipt.request.profileId
+          )
+            nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
+          const original: NativeSessionSetupCommit<NativeSessionStartResult> = {
+            workspaceId,
+            profileId: profile.profileId,
+            profileRevision: profile.profileRevision,
+            configRevision: receipt.configRevision,
+            bindings: [],
+            grantIds: receipt.grantIds,
+            replayed: true,
+            branchAnchor: this.nativeSetupAnchor(anchor, sessionId),
+            result: {
+              sessionId,
+              sessionRevision: String(anchorRow.seq),
+              readiness: { state: "unavailable" },
+            },
+          };
+          if (original.result.sessionRevision !== captured.sessionRevision)
+            nativeSetupInvalid("STALE_REVISION");
+          const inputs: AppendInput[] = this.nativeProviderGrants(workspaceId)
+            .filter((grant) => grant.sessionId === sessionId)
+            .map((grant) => ({
+              kind: "grant",
+              record: {
+                ...grant,
+                recordId: `${grant.grantId}.revoked`,
+                createdAt: new Date().toISOString(),
+                revokedAt: new Date().toISOString(),
+              },
+            }));
+          if (!this.nativeSetupFailed(receipt, captured.sessionRevision!))
+            inputs.push(
+              this.nativeSetupArtifact(
+                nativeSetupKey(receipt.request.requestId) + ":unavailable",
+                workspaceId,
+                NATIVE_SETUP_FAILED_MEDIA,
+                "unavailable",
+                {
+                  sessionId,
+                  sessionRevision: captured.sessionRevision!,
+                  code: "SESSION_BIND_FAILED",
+                },
+              ),
+            );
+          for (const entry of inputs)
+            staged.add(
+              String((entry.record as Record<string, unknown>).recordId),
+            );
+          result = {
+            ...original,
+            result: {
+              ...original.result,
+              readiness: { state: "unavailable", code: "SESSION_BIND_FAILED" },
+            },
+          };
+          return inputs;
+        },
+      },
+    );
+    return nativeSetupFreeze(structuredClone(result!));
   }
 
   private validateStructuralRow(row: {
@@ -1740,6 +3093,7 @@ export class Store {
       expectedEntityRevision,
       expectedSetup,
       reservationCheck,
+      nativeSetup,
       expectedOnceGrant,
       expectedGrantMint,
       expectedActiveGrants,
@@ -1748,6 +3102,8 @@ export class Store {
       expectedEntityRevision?:
         EntityRevisionExpectation | readonly EntityRevisionExpectation[];
       reservationCheck?: () => void;
+      /** Native setup resolves authority and builds its batch under this write lock. */
+      nativeSetup?: () => readonly AppendInput[];
       expectedSetup?: {
         workspaceId: string;
         reservation?: {
@@ -1782,7 +3138,8 @@ export class Store {
       expectedDeletionEpoch === undefined &&
       expectedScopeCursor === undefined &&
       expectedSessionCursor === undefined &&
-      expectedEntityRevision === undefined
+      expectedEntityRevision === undefined &&
+      nativeSetup === undefined
     )
       return { seqs: [], events: [] };
     const prepared: Array<[RecordKind, RecordByKind[RecordKind]]> = [];
@@ -1827,6 +3184,17 @@ export class Store {
     try {
       this.db.exec("BEGIN IMMEDIATE;");
       reservationCheck?.();
+      for (const input of nativeSetup?.() ?? []) {
+        const record = input.record as Record<string, unknown>;
+        prepared.push([
+          input.kind,
+          validateRecord(
+            input.kind,
+            input.record,
+            this.context(String(record.scopeId ?? ""), caller),
+          ),
+        ]);
+      }
       if (expectedSetup !== undefined) {
         if (
           expectedSetup.expectedDeletionEpoch !== undefined &&
