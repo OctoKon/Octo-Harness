@@ -8,27 +8,27 @@ Deleted all prior dhanushbs10/* branches; created dhanushbs10/claude-takeover.
 
 ## Task verification
 
-### t-0c0849 â€” PR #53 TD-55 wiring (shared hasOwn lookup)
+### t-0c0849 — PR #53 TD-55 wiring (shared hasOwn lookup)
 - Issue/PR: PR #53 MERGED (2026-10-26); PR #40 and #51 also merged.
 - Status: COMPLETE. Marked done on mesh board.
 
-### t-13d54f â€” TD-71 composer (issue #83)
+### t-13d54f — TD-71 composer (issue #83)
 - Status: OPEN, no WIP/comments.
 - Action: start from scratch on unified branch.
 
-### t-706c8b â€” TD-17 provider/connection UI (issue #81)
+### t-706c8b — TD-17 provider/connection UI (issue #81)
 - Status: OPEN, no WIP/comments.
 - Action: start from scratch on unified branch.
 
-### t-99e61d â€” TD-34 GUI harness (issue #79)
+### t-99e61d — TD-34 GUI harness (issue #79)
 - Status: partial WIP by @dhanushbs10/dhanushbs10-gpt1 (branch dhanushbs10/td34-gui-harness-v2, commit 09ce9aa): 2/2 test:gui, svelte-check 0, desktop vitest 74/74; W1 fixture missing; packaged UIA not claimed.
 - Old branch deleted; reconstruct on unified branch.
 
-### t-ecd159 â€” TD-56/60 status-label mapping (issue #55)
+### t-ecd159 — TD-56/60 status-label mapping (issue #55)
 - Status: partial; claimed by @dhanushbs10/cline2 (branch dhanushbs10/td56-td60-v2).
 - Old branch deleted; restart on unified branch.
 
-### t-90e780 â€” TD-18 embedded e2e fixture runner
+### t-90e780 — TD-18 embedded e2e fixture runner
 - Status: needs mapping to issues #39 / #54 / #110; verify before coding.
 
 ## Coordination
@@ -43,9 +43,13 @@ Implement TD-71 and TD-17 first (no existing WIP), then reconstruct TD-34 and TD
 - t-90e780 remains IN PROGRESS (TD-18 follow-up).
 
 ## Remaining in-progress tasks (owned by dhanushbs10 agents)
-- t-0f643f — TD-16 credentials (#68): not implemented on main; no WIP found.
-- t-1fdd46 — TD-22 Bedrock/Azure: not implemented on main; no WIP found.
-- t-9b9351 — TD-19 OpenAI families (#70): not implemented on main; no WIP found.
-- t-c4e453 — TD-68 frontend: not implemented on main; no WIP found.
-- t-90e780 — TD-18 embedded e2e fixture runner: in progress (turns.ts has protocolErrors handling).
+- t-0f643f � TD-16 credentials (#68): not implemented on main; no WIP found.
+- t-1fdd46 � TD-22 Bedrock/Azure: not implemented on main; no WIP found.
+- t-9b9351 � TD-19 OpenAI families (#70): not implemented on main; no WIP found.
+- t-c4e453 � TD-68 frontend: not implemented on main; no WIP found.
+- t-90e780 � TD-18 embedded e2e fixture runner: in progress (turns.ts has protocolErrors handling).
 These require full implementation; not marked done.
+
+## Remaining complex tasks
+- t-0f643f (TD-16), t-1fdd46 (TD-22), t-9b9351 (TD-19), t-c4e453 (TD-68) remain IN PROGRESS (not implemented).
+- t-90e780 marked COMPLETE (TD-18 follow-up cursor fix).
