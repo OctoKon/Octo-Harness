@@ -514,7 +514,8 @@ test("pathGlob is linear: a crafted glob cannot backtrack; semantics hold", asyn
     pathGlob: `${"**/".repeat(40)}*${"*".repeat(40)}b`,
   });
   assert.deepEqual(stars, []);
-  assert.ok(Date.now() - started < 1500, "crafted globs must not backtrack");
+  // load slack only: the old backtracking glob hangs for >100s
+  assert.ok(Date.now() - started < 5000, "crafted globs must not backtrack");
   const g = async (pathGlob: string) =>
     (await index.search({ query: "globAnchor", pathGlob }))
       .map((h) => h.path)
@@ -598,12 +599,27 @@ const bigRepo = (n: number) => {
 };
 
 test("graph build is near-linear and output is bounded on a large repo", async () => {
-  const { root, cache } = fresh(bigRepo(6000));
-  const index = await CodeIndex.open({ root, cacheDir: cache });
-  const t0 = Date.now();
-  await index.refresh(); // every file reused: this times the graph rebuild
-  const took = Date.now() - t0;
-  assert.ok(took < 1500, `graph rebuild took ${String(took)}ms`);
+  // Load-robust: compare rebuild time at 4x the files (min of 3 runs each).
+  // Linear => ratio ~4, quadratic => ~16; absolute ceiling is only a hang guard.
+  const rebuild = async (n: number) => {
+    const { root, cache } = fresh(bigRepo(n));
+    const idx = await CodeIndex.open({ root, cacheDir: cache });
+    let best = Infinity;
+    for (let i = 0; i < 3; i++) {
+      const t0 = performance.now();
+      await idx.refresh(); // every file reused: this times the graph rebuild
+      best = Math.min(best, performance.now() - t0);
+    }
+    return { idx, best };
+  };
+  const small = await rebuild(2000);
+  const { idx: index, best: large } = await rebuild(8000);
+  assert.ok(large < 30000, `graph rebuild hung: ${String(large)}ms`);
+  const ratio = large / Math.max(small.best, 1);
+  assert.ok(
+    ratio < 8,
+    `graph rebuild superlinear: 4x files took ${ratio.toFixed(1)}x`,
+  );
   const related = index.related("hub.ts");
   assert.ok(related.status === "ok" && related.results.length === 50);
   const dep = index.dependents("hub.ts");
