@@ -91,6 +91,11 @@ describe("App wiring", () => {
     expect(providers).not.toBeNull();
     expect(providers.disabled).toBe(true);
     expect(q("#providers-title")?.textContent).toBe("Provider connections");
+    // No support record is delivered: the honest empty state, never a claim.
+    expect(q("[data-testid=support-status-empty]")?.textContent).toMatch(
+      /No support record available/,
+    );
+    expect(q("[data-testid=support-status] table")).toBeNull();
 
     button("Usage").click();
     flushSync();
@@ -255,6 +260,35 @@ describe("App wiring", () => {
     expect(get(selectedSession)?.sessionId).toBe("ses_1");
     expect(q("[role=treeitem]")?.getAttribute("aria-selected")).toBe("true");
     expect(subscribes()).toHaveLength(1);
+  });
+
+  it("mounts the TD-30 approval surface without claiming a pending approval", async () => {
+    await boot();
+    expect(q("[data-testid=approval-dialog]")).toBeNull();
+    expect(q("[data-testid=approval-submitted]")).toBeNull();
+    expect(document.body.textContent).not.toContain("Approval required");
+  });
+
+  it("mounts the Supervisor permission mode disabled with the revision reason", async () => {
+    await boot();
+    const supervisor = q("[data-testid=supervisor]")!;
+    expect(supervisor.textContent).toContain("Supervisor");
+    const select = supervisor.querySelector<HTMLSelectElement>(
+      "[data-testid=permission-mode-select]",
+    )!;
+    expect(select.disabled).toBe(true);
+    expect(select.value).toBe("manual");
+    expect(
+      supervisor.querySelector("[data-testid=permission-blocked]")?.textContent,
+    ).toContain("Session revisions are not delivered to the renderer yet");
+    expect(
+      supervisor.querySelector("[data-testid=permission-effective]")
+        ?.textContent,
+    ).toContain("Manual");
+    // A disabled control must not report a mode change.
+    expect(
+      supervisor.querySelector("[data-testid=permission-pending]"),
+    ).toBeNull();
   });
 
   it("clears the selection when a real snapshot lacks the session", async () => {
