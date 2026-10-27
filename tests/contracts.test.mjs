@@ -204,6 +204,8 @@ test("TD-01: record states, references and numeric bounds fail closed", () => {
     ["memoryObservation", { claimArtifactId: "missing" }],
     ["profileSnapshot", { limitsArtifactId: "missing" }],
     ["configurationTransition", { changedValuesArtifactId: "missing" }],
+    ["branchAnchor", { piSessionId: "missing" }],
+    ["branchAnchor", { parentAnchorId: "missing" }],
     ["action", { targetScopeId: "other-workspace" }],
     ["providerRole", { locality: "hosted", qualificationRef: null }],
     ["providerRole", { limits: { tokens: Infinity } }],
@@ -212,6 +214,27 @@ test("TD-01: record states, references and numeric bounds fail closed", () => {
       validateRecord(kind, { ...records[kind], ...patch }, context),
     );
   assert.deepEqual(validateRecord("run", records.run, context), records.run);
+});
+
+test("event ledger records validate nested envelopes and matching durable metadata", () => {
+  const original = records.event;
+  for (const patch of [
+    { seq: 0 },
+    { sessionId: "other" },
+    { recordId: "missing" },
+    { eventId: "different" },
+    { durable: false },
+    { payload: { state: "ready", activeWorkers: -1 } },
+    { sourceIds: ["missing"] },
+  ]) {
+    rejects(() =>
+      validateRecord(
+        "event",
+        { ...original, envelope: { ...original.envelope, ...patch } },
+        context,
+      ),
+    );
+  }
 });
 
 test("TD-01: optional record data cannot smuggle raw credentials or absolute paths", () => {
@@ -363,6 +386,39 @@ for (const fields of fixture("events")) {
     );
   });
 }
+
+test("TD-10: branch anchors hold opaque Pi identities, never raw paths", () => {
+  const anchor = records.branchAnchor;
+  assert.deepEqual(
+    validateRecord(
+      "branchAnchor",
+      {
+        ...anchor,
+        parentAnchorId: null,
+        forkPointEntryId: null,
+        activeLeafEntryId: null,
+        firstChildEntryId: "entry2",
+      },
+      context,
+    ).firstChildEntryId,
+    "entry2",
+  );
+  for (const field of [
+    "branchAnchorId",
+    "piSessionId",
+    "forkPointEntryId",
+    "firstChildEntryId",
+    "activeLeafEntryId",
+  ])
+    for (const value of ["C:\\pi\\s1.jsonl", "/home/pi/s1.jsonl", " "])
+      rejects(() =>
+        validateRecord("branchAnchor", { ...anchor, [field]: value }, context),
+      );
+  for (const field of ["branchAnchorId", "piSessionId"])
+    rejects(() =>
+      validateRecord("branchAnchor", { ...anchor, [field]: null }, context),
+    );
+});
 
 test("TD-01: historical records remain readable after configuration/profile changes", () => {
   const advanced = {

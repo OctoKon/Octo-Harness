@@ -142,6 +142,7 @@ export interface RecordMetadata {
 }
 
 export interface RecordBodies {
+  event: { envelope: SplyceEvent };
   run: {
     runId: string;
     piSessionId: string;
@@ -277,6 +278,15 @@ export interface RecordBodies {
     lastDurableCursor: string;
     expiresAt: string | null;
   };
+  /** Pi-derived ancestry anchor (TD-10); Pi entry ids, never file paths. */
+  branchAnchor: {
+    branchAnchorId: string;
+    piSessionId: string;
+    parentAnchorId: string | null;
+    forkPointEntryId: string | null;
+    firstChildEntryId: string | null;
+    activeLeafEntryId: string | null;
+  };
 }
 export type RecordKind = keyof RecordBodies;
 export type RecordByKind = {
@@ -297,6 +307,7 @@ export type PackageInstallationRecord = RecordByKind["packageInstallation"];
 export type ConfigurationTransitionRecord =
   RecordByKind["configurationTransition"];
 export type SessionWriterLeaseRecord = RecordByKind["sessionWriterLease"];
+export type BranchAnchorRecord = RecordByKind["branchAnchor"];
 
 type Rule =
   | "text"
@@ -304,6 +315,7 @@ type Rule =
   | "id"
   | "ref"
   | "nullableRef"
+  | "nullableId"
   | "refs"
   | "strings"
   | "utc"
@@ -311,9 +323,11 @@ type Rule =
   | "uint"
   | "bool"
   | "limits"
+  | "eventEnvelope"
   | readonly string[];
 type Shape = { readonly [key: string]: Rule };
 export const RECORD_SCHEMAS = {
+  event: { envelope: "eventEnvelope" },
   run: {
     runId: "id",
     piSessionId: "ref",
@@ -448,6 +462,14 @@ export const RECORD_SCHEMAS = {
     configRevision: "text",
     lastDurableCursor: "text",
     expiresAt: "nullableUtc",
+  },
+  branchAnchor: {
+    branchAnchorId: "id",
+    piSessionId: "ref",
+    parentAnchorId: "nullableRef",
+    forkPointEntryId: "nullableId",
+    firstChildEntryId: "nullableId",
+    activeLeafEntryId: "nullableId",
   },
 } as const satisfies { [K in RecordKind]: Shape };
 
@@ -613,6 +635,9 @@ export type SplyceEvent = {
   );
 }[EventKind];
 export type SplyceEventEnvelope = SplyceEvent;
+export type SplyceEventDraft = {
+  [K in EventKind]: Omit<Extract<SplyceEvent, { kind: K }>, "seq">;
+}[EventKind];
 const EVENT_SCHEMAS = {
   "turn.started": { runId: "ref", turnId: "ref" },
   "turn.stream_delta": { runId: "ref", delta: "delta" },
@@ -891,6 +916,12 @@ function rule(
     return;
   }
   switch (spec) {
+    case "eventEnvelope": {
+      const event = validateEvent(value, context);
+      requireThat(event.durable, "INVALID_SHAPE", "durable event");
+      reference(event.recordId, "recordId", context);
+      break;
+    }
     case "delta":
       requireThat(typeof value === "string", "INVALID_SHAPE", field);
       break;
@@ -905,6 +936,9 @@ function rule(
       break;
     case "nullableRef":
       if (value !== null) reference(value, field, context);
+      break;
+    case "nullableId":
+      if (value !== null) opaque(value, field);
       break;
     case "utc":
       utc(value, field);
@@ -995,6 +1029,18 @@ export function validateRecord<K extends RecordKind>(
   const record = object(value, "record");
   metadata(record, context);
   shape(record, RECORD_SCHEMAS[kind], {}, context, false);
+  if (kind === "event") {
+    const envelope = object(record.envelope, "envelope");
+    requireThat(
+      record.scopeId === envelope.scopeId &&
+        record.createdAt === envelope.createdAt &&
+        JSON.stringify(record.sourceIds) ===
+          JSON.stringify(envelope.sourceIds) &&
+        record.recordId === `event:${String(envelope.eventId)}`,
+      "INVALID_SHAPE",
+      "event record metadata",
+    );
+  }
   if (kind === "action")
     requireThat(
       record.targetScopeId === context.scopeId,

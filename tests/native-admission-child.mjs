@@ -7,7 +7,7 @@ import {
 import { NativePolicy } from "../packages/splyce-pi/dist/policy.js";
 import { Store } from "../packages/splyce-pi/dist/store.js";
 
-const [dir, encodedPermit] = process.argv.slice(2);
+const [dir, encodedPermit, mode] = process.argv.slice(2);
 const permit = JSON.parse(encodedPermit);
 const store = Store.open(join(dir, "store.db"));
 const refs = new Set([
@@ -73,5 +73,15 @@ await runToolCall(
     tools: [tool],
     context: { messages: [], tools: [tool] },
     assistantMessage: { role: "assistant", content: [], timestamp: 0 },
+    beforeToolCall:
+      mode === "proposal"
+        ? async () => {
+            await writeFile(join(dir, "proposal-ready"), "durable");
+            process.send?.("proposal-ready");
+            await new Promise(() => {
+              setInterval(() => {}, 1000);
+            });
+          }
+        : undefined,
   },
 );
