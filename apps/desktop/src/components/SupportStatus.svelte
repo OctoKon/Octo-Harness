@@ -1,5 +1,9 @@
 <script lang="ts">
-  import { supportView, type SupportCell } from "../status-labels";
+  import {
+    formatRuns,
+    supportCellView,
+    type SupportCell,
+  } from "../status-labels";
   import StatusLabel from "./StatusLabel.svelte";
 
   let { cells = null }: { cells?: readonly SupportCell[] | null } = $props();
@@ -15,8 +19,8 @@
         {#each cells as cell (cell.id)}
           <tr>
             <th scope="row">{cell.label}</th>
-            <td><StatusLabel view={supportView(cell.status)} /></td>
-            <td>{cell.runs === undefined ? "not reported" : `n=${cell.runs}`}</td>
+            <td><StatusLabel view={supportCellView(cell)} /></td>
+            <td>{formatRuns(cell.runs)}</td>
           </tr>
         {/each}
       </tbody>

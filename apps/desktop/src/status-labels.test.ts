@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 import {
   SUPPORT_STATUSES,
+  formatRuns,
+  supportCellView,
   supportView,
   type SupportCell,
 } from "./status-labels";
@@ -44,6 +46,8 @@ describe("supportView", () => {
     "__proto__",
     1,
     {},
+    { toString: () => "supported" },
+    new String("supported"),
   ])("never shows %j as supported", (raw) => {
     const v = supportView(raw);
     expect(v.label).toBe("Unknown");
@@ -52,6 +56,42 @@ describe("supportView", () => {
 
   it("reuses the shared status-view Unknown instead of its own table", () => {
     expect(supportView("unknown")).toBe(projectStatus("run", null));
+  });
+});
+
+describe("supportCellView", () => {
+  it("does not claim supported without a positive whole run count", () => {
+    for (const runs of [undefined, 0, -1, 1.5, NaN]) {
+      expect(supportCellView({ status: "supported", runs })).toEqual(
+        projectStatus("run", null),
+      );
+    }
+  });
+
+  it("keeps supported when positive runs back the claim", () => {
+    const view = supportCellView({ status: "supported", runs: 3 });
+    expect(view.label).toBe("Supported");
+    expect(view.tone).toBe("positive");
+  });
+
+  it("does not evidence-gate statuses that make no support claim", () => {
+    expect(supportCellView({ status: "unsupported" }).label).toBe(
+      "Unsupported",
+    );
+    expect(supportCellView({ status: "unavailable", runs: 0 }).label).toBe(
+      "Unavailable",
+    );
+  });
+});
+
+describe("formatRuns", () => {
+  it("reports only non-negative whole counts", () => {
+    expect(formatRuns(0)).toBe("n=0");
+    expect(formatRuns(3)).toBe("n=3");
+    expect(formatRuns(undefined)).toBe("not reported");
+    expect(formatRuns(NaN)).toBe("not reported");
+    expect(formatRuns(-1)).toBe("not reported");
+    expect(formatRuns(1.5)).toBe("not reported");
   });
 });
 
@@ -100,5 +140,24 @@ describe("SupportStatus", () => {
     expect(t.querySelector("th[scope=row]")?.textContent).toBe(
       "Windows 11 x64",
     );
+  });
+
+  it("renders a supported claim as Unknown unless runs prove it", () => {
+    const cells: SupportCell[] = [
+      { id: "a", label: "Unrun", status: "supported", runs: 0 },
+      { id: "b", label: "Absent", status: "supported" },
+      { id: "c", label: "Invalid", status: "supported", runs: -1 },
+      { id: "d", label: "Backed", status: "supported", runs: 2 },
+    ];
+    const t = render(SupportStatus, { cells });
+    const rows = [...t.querySelectorAll("tbody tr")].map((r) =>
+      [...r.children].map((c) => c.textContent?.trim()),
+    );
+    expect(rows).toEqual([
+      ["Unrun", "Unknown", "n=0"],
+      ["Absent", "Unknown", "not reported"],
+      ["Invalid", "Unknown", "not reported"],
+      ["Backed", "Supported", "n=2"],
+    ]);
   });
 });

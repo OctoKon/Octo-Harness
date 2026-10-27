@@ -38,3 +38,27 @@ export function supportView(status: unknown): SupportView {
   // Reuse the shared projection's Unknown rather than a second table.
   return projectStatus("run", null);
 }
+
+/** A supported claim needs a positive, whole run count behind it. */
+export function supportCellView(
+  cell: Pick<SupportCell, "status" | "runs">,
+): SupportView {
+  const view = supportView(cell.status);
+  if (cell.status !== "supported") return view;
+  if (
+    typeof cell.runs === "number" &&
+    Number.isInteger(cell.runs) &&
+    cell.runs > 0
+  ) {
+    return view;
+  }
+  return projectStatus("run", null);
+}
+
+/** Invalid counts are not evidence; render them as missing, not as n=NaN. */
+export function formatRuns(runs: unknown): string {
+  if (typeof runs !== "number" || !Number.isInteger(runs) || runs < 0) {
+    return "not reported";
+  }
+  return `n=${runs}`;
+}
