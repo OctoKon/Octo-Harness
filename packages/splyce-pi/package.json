@@ -11,6 +11,10 @@
       "types": "./dist/contracts.d.ts",
       "import": "./dist/contracts.js"
     },
+    "./store": {
+      "types": "./dist/store.d.ts",
+      "import": "./dist/store.js"
+    },
     "./session-map": {
       "types": "./dist/session-map.d.ts",
       "import": "./dist/session-map.js"
@@ -30,6 +34,10 @@
     "./provider-profiles": {
       "types": "./dist/provider-profiles.d.ts",
       "import": "./dist/provider-profiles.js"
+    },
+    "./agent-context-tools": {
+      "types": "./dist/agent-context-tools.d.ts",
+      "import": "./dist/agent-context-tools.js"
     }
   },
   "files": [
