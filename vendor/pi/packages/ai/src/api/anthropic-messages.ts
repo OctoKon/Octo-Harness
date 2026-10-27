@@ -624,7 +624,8 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 
 			if (options?.client) {
 				// Splyce: a caller-supplied client carries its own auth and transport, so it cannot be used with a lease.
-				if (leasedCredentials) throw new Error("credentials cannot be used with a caller-supplied client");
+				if (leasedCredentials)
+					throw new CredentialPreflightError("credentials cannot be used with a caller-supplied client");
 				client = options.client;
 				isOAuth = false;
 			} else {
@@ -633,7 +634,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 				// Splyce: with a lease the SDK client holds only a placeholder; the real key is leased and written into the
 				// auth header on every HTTP send (including SDK retries), and redirects are refused.
 				if (leasedCredentials && model.provider === "github-copilot") {
-					throw new Error("credentials are not supported for this provider");
+					throw new CredentialPreflightError("credentials are not supported for this provider");
 				}
 				const apiKey = leasedCredentials ? LEASED_API_KEY_PLACEHOLDER : options?.apiKey;
 				const requestFetch = leasedCredentials
