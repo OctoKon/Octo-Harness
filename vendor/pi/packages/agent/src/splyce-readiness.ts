@@ -38,7 +38,8 @@ function persistenceUnavailable(
 
 /** Persistence refusal must not become an ordinary model/tool fallback response. */
 export function rethrowSplycePersistenceError(error: unknown): void {
-	const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+	const descriptor = error && typeof error === "object" ? Object.getOwnPropertyDescriptor(error, "code") : undefined;
+	const code = descriptor && "value" in descriptor ? descriptor.value : undefined;
 	if (code === "PERSIST_REDACTION_UNAVAILABLE" || code === "PERSIST_ENTRY_TOO_LARGE") persistenceUnavailable(code);
 }
 
@@ -120,6 +121,8 @@ const loopCallbackKeys = [
 	"getFollowUpMessages",
 ];
 const loopCallbacks = new WeakMap<object, Record<string, unknown>>();
+const loopAgents = new WeakMap<object, Agent>();
+const loopRequests = new WeakMap<object, Map<PropertyKey, unknown>>();
 const streams = new WeakMap<object, StreamFn>();
 const toolImplementations = new WeakMap<object, AgentTool["execute"]>();
 const derivations: Partial<Record<SplyceRole, readonly SplyceRole[]>> = {
@@ -220,10 +223,36 @@ export function inheritSplyceLoopConfig(parent: object, child: object): void {
 	if ((binding.role !== "agent" && binding.role !== "loop-config") || !stream) unavailable();
 	bind(binding.owner, child, "loop-config");
 	streams.set(child, stream);
+	const agent = binding.role === "agent" ? (parent as Agent) : loopAgents.get(parent);
+	if (!agent) unavailable();
+	loopAgents.set(child, agent);
 	loopCallbacks.set(
 		child,
 		Object.fromEntries(loopCallbackKeys.map((key) => [key, (child as Record<string, unknown>)[key]])),
 	);
+}
+
+/** Only the actual loop can preserve the identity of its final provider request. */
+export function inheritSplyceLoopRequest(parent: object, child: object): void {
+	inheritSplyceLoopConfig(parent, child);
+	loopRequests.set(child, new Map(Reflect.ownKeys(child).map((key) => [key, Reflect.get(child, key)])));
+}
+
+/** Comparison only: callers cannot mint a request or attach authority to a copy. */
+export function isSplyceLoopRequest(agent: Agent, request: object): boolean {
+	if (!loopRequests.has(request) || loopAgents.get(request) !== agent) return false;
+	const snapshot = loopRequests.get(request)!;
+	const keys = Reflect.ownKeys(request);
+	const unchanged =
+		keys.length === snapshot.size &&
+		keys.every((key) => {
+			const descriptor = Object.getOwnPropertyDescriptor(request, key);
+			return descriptor && "value" in descriptor && snapshot.has(key) && descriptor.value === snapshot.get(key);
+		});
+	if (!unchanged) return false;
+	assertSameSplyceOwner(agent, request, "loop-config");
+	getSplyceAgentCallbacks(agent);
+	return true;
 }
 
 export function assertSplyceLoopStream(config: object, stream: StreamFn): void {

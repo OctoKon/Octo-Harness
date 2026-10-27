@@ -76,7 +76,7 @@
     "test:desktop": "npm run check --workspace=@splyce/desktop && npm run test --workspace=@splyce/desktop",
     "test:native-openai": "npm run build:contracts && npm run build:pi && node --test tests/native-openai-chat.test.mjs tests/native-provider-sdk.test.mjs",
     "test:native-persistence": "node --test --test-concurrency=1 tests/native-persistence-owner.test.mjs tests/native-persistence.test.mjs tests/native-extension-persistence.test.mjs && node --import ./vendor/pi/packages/coding-agent/src/experimental/source-resolver.ts --test tests/native-session-manager-persistence.test.mjs",
-    "test:native-provider-callers": "node --test tests/native-provider-callers.test.mjs",
+    "test:native-provider-callers": "node --test --test-concurrency=1 --test-timeout=120000 tests/native-provider-callers.test.mjs tests/native-sdk-projection.test.mjs",
     "test:native-session-setup": "node --test --test-concurrency=1 tests/native-session-setup.test.mjs tests/integration/native-session-setup.ts tests/native-session-setup-producer.test.mjs",
     "test:native-session-factory": "node --test --test-concurrency=1 tests/native-session-factory.test.mjs tests/native-session-writer.test.mjs"
   },

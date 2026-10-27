@@ -382,7 +382,7 @@ test("native caller live extension rejection cannot refresh the selected model",
 });
 
 for (const headersHook of [false, true]) {
-  test(`native caller SDK ${headersHook ? "preserves a real" : "omits an absent"} provider-header hook`, async (t) => {
+  test(`native caller SDK ${headersHook ? "rejects a real" : "omits an absent"} provider-header hook`, async (t) => {
     const f = await fixture(t);
     let hookCalls = 0;
     if (headersHook)
@@ -396,18 +396,13 @@ for (const headersHook of [false, true]) {
     const { session } = await createAgentSession(f.options);
     t.after(() => session.dispose());
     const frames = f.frames.length;
-    const response = await session.agent.streamFunction(
-      f.model,
-      { messages: [] },
-      {},
-    );
-    const result = await response.result();
+    const request = () =>
+      session.agent.streamFunction(f.model, { messages: [] }, {});
     if (headersHook) {
-      assert.equal(result.stopReason, "error");
-      assert.match(
-        result.errorMessage,
-        /Native request overrides are unavailable/,
-      );
+      await assert.rejects(request, {
+        code: "PROVIDER_OPTIONS_UNSUPPORTED",
+        message: "PROVIDER_OPTIONS_UNSUPPORTED",
+      });
       assert.equal(f.calls.length, 0);
       assert.equal(
         f.frames.length,
@@ -416,6 +411,7 @@ for (const headersHook of [false, true]) {
       );
       assert.equal(hookCalls, 0);
     } else {
+      const result = await (await request()).result();
       assert.equal(result.stopReason, "stop");
       assert.equal(f.calls.length, 1);
       assert.equal(
