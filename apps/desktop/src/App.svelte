@@ -7,6 +7,9 @@
   import Shell from "./components/shell/Shell.svelte";
   import UsageView from "./components/usage/UsageView.svelte";
   import Providers from "./routes/Providers.svelte";
+  import Setup from "./routes/Setup.svelte";
+  import Modules from "./routes/Modules.svelte";
+  import { unavailableModuleSnapshot } from "./stores/modules";
   import {
     connectionState,
     handshake,
@@ -35,12 +38,20 @@
     type TurnsState,
   } from "./stores/turns";
 
-  type View = "conversation" | "providers" | "usage";
+  type View = "conversation" | "setup" | "modules" | "providers" | "usage";
   const VIEWS: readonly (readonly [View, string])[] = [
     ["conversation", "Conversation"],
+    ["setup", "Setup"],
+    ["modules", "Modules"],
     ["providers", "Providers"],
     ["usage", "Usage"],
   ];
+
+  // No setup/module service is connected: the screens stay honest and disabled
+  // instead of implying a catalog, plan or installation.
+  const moduleSnapshot = unavailableModuleSnapshot(
+    "No setup or module service is connected.",
+  );
 
   // Snapshot seam: the only thing allowed to complete a session load. Readiness proves nothing about sessions.
   let {
@@ -212,6 +223,18 @@
       <Providers connections={[]} families={[]} onAddCustom={() => {}} />
       <p role="status">Provider connections are unavailable: no profile service is connected.</p>
     </fieldset>
+  {:else if view === "setup"}
+    <Setup
+      snapshot={moduleSnapshot}
+      onEnterWorkbench={() => (view = "conversation")}
+      onOpenModules={() => (view = "modules")}
+      onConfigureProvider={() => (view = "providers")}
+    />
+  {:else if view === "modules"}
+    <Modules
+      snapshot={moduleSnapshot}
+      onConfigureProvider={() => (view = "providers")}
+    />
   {:else if view === "usage"}
     <UsageView usage={null} />
     <p role="status" data-testid="usage-unavailable-note">Usage unavailable - no engine usage report.</p>
@@ -219,10 +242,12 @@
     <div class="app-content" class:conversation={currentRun !== undefined}>
       {#if status !== "ready"}
         <div class="unavailable-view" data-testid="unavailable-banner" role="status" aria-live="polite">
-          <h2>{stopped ? "Engine stopped" : "Engine Unavailable"}</h2>
+          <h2>{stopped ? "Engine stopped" : readiness?.state === "ready" ? "Generation unconfigured" : "Engine Unavailable"}</h2>
           <p>
             {stopped
               ? "The native engine exited. Restart the app to reconnect; the last transcript may be incomplete."
+              : readiness?.state === "ready"
+                ? "Generation requires a configured provider and workspace."
               : "Backend native services (policy, durable store, and receipts) are currently initializing or unavailable. Release qualification requires all three subsystems verified before task execution."}
           </p>
         </div>

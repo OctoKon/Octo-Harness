@@ -37,14 +37,20 @@ const subscribes = () =>
 
 let app: object | undefined;
 const readyHandshake = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   schemaVersion: 1,
-  engineProtocolVersion: 1,
-  bridgeProtocolVersion: 1,
+  engineProtocolVersion: 2,
+  bridgeProtocolVersion: 2,
   piRevision: PI_REVISION,
   entryMode: FOUNDATION.entryMode,
   disabledBuiltinExtensions: [...FOUNDATION.disabledBuiltinExtensions],
-  readiness: { state: "ready", policy: true, store: true, receipts: true },
+  readiness: {
+    state: "ready",
+    policy: true,
+    store: true,
+    receipts: true,
+    ports: { generation: true, provider: true, workspace: true, modules: true },
+  },
 };
 beforeEach(() => {
   Object.defineProperty(window, "__TAURI_INTERNALS__", {
@@ -83,6 +89,33 @@ const treeEvent = (sessionId: string, scopeId: string) =>
   }) as never;
 
 describe("App wiring", () => {
+  it("shows generation unconfigured while the native core is ready and runnable ports are unavailable", async () => {
+    ipc.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd !== "handshake") return undefined;
+      return {
+        ...readyHandshake,
+        readiness: {
+          ...readyHandshake.readiness,
+          ports: {
+            generation: false,
+            provider: false,
+            workspace: false,
+            modules: false,
+          },
+        },
+      };
+    });
+    await boot();
+    const shell = q("[data-testid=app-shell]")!;
+    expect(shell.dataset.connectionState).toBe("unavailable");
+    for (const service of ["Policy", "Store", "Receipts"])
+      expect(shell.dataset[`readiness${service}`]).toBe("true");
+    const banner = q("[data-testid=unavailable-banner]")!;
+    expect(banner.textContent).toContain("Generation unconfigured");
+    expect(banner.textContent).not.toMatch(/initializing/);
+    expect(button("Send").disabled).toBe(true);
+  });
+
   it("refreshes native readiness after Retry and observes the recovered engine exiting", async () => {
     await boot();
     ipc.ready = true;
@@ -96,7 +129,7 @@ describe("App wiring", () => {
       .filter(([command]) => command === "handshake")
       .at(-1)!;
     nativeHandshake[1].onLifecycle.onmessage({
-      protocolVersion: 1,
+      protocolVersion: 2,
       kind: "engine_exited",
       expected: false,
       exitCode: 1,
@@ -122,7 +155,7 @@ describe("App wiring", () => {
     await settle();
     dispatchEngineEvent({
       schemaVersion: 1,
-      protocolVersion: 1,
+      protocolVersion: 2,
       recordId: "rec_1",
       eventId: "evt_1",
       createdAt: "2026-10-26T00:00:00.000Z",
@@ -140,7 +173,7 @@ describe("App wiring", () => {
       ([command]) => command === "handshake",
     )!;
     nativeHandshake[1].onLifecycle.onmessage({
-      protocolVersion: 1,
+      protocolVersion: 2,
       kind: "engine_exited",
       expected: false,
       exitCode: 1,
@@ -184,6 +217,45 @@ describe("App wiring", () => {
     flushSync();
     expect(q("[data-testid=usage-unavailable-note]")).not.toBeNull();
     expect(q("[data-testid=providers-view]")).toBeNull();
+
+    // Setup and Modules are mounted from the shell and stay honest with no service.
+    button("Setup").click();
+    flushSync();
+    expect(q("[data-testid=setup]")).not.toBeNull();
+    expect(q("[data-testid=engine-unavailable]")?.textContent).toContain(
+      "No setup or module service is connected.",
+    );
+    expect(q("[data-testid=generation]")?.textContent).toContain(
+      "Generation unconfigured",
+    );
+    // No engine means no install review or confirmation to offer.
+    expect(q("[data-testid=confirm-install]")).toBeNull();
+    // Continuing with the base is still valid and returns to the workbench.
+    button("Continue with base only").click();
+    flushSync();
+    expect(q("[data-testid=setup]")).toBeNull();
+    expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
+
+    // Skip setup must enter the workbench too, not leave a dead button.
+    button("Setup").click();
+    flushSync();
+    button("Skip setup").click();
+    flushSync();
+    expect(q("[data-testid=setup]")).toBeNull();
+    expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
+
+    button("Modules").click();
+    flushSync();
+    expect(q("[data-testid=modules]")).not.toBeNull();
+    expect(
+      q("[data-testid=modules-engine-unavailable]")?.textContent,
+    ).toContain("No setup or module service is connected.");
+    expect((q("[data-testid=add-module]") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect(
+      (q("[data-testid=refresh-catalog]") as HTMLButtonElement).disabled,
+    ).toBe(true);
 
     button("Conversation").click();
     flushSync();
