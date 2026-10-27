@@ -2,6 +2,7 @@
   import {
     whenEffective,
     type Disposition,
+    type ModelCatalogStatus,
     type ModelOption,
     type ModelSelectionState,
   } from "../../stores/model-selection";
@@ -9,11 +10,17 @@
   let {
     selection,
     options,
+    catalogStatus = "ready",
+    stale = false,
     turnActive = false,
     onRequest,
   }: {
     selection: ModelSelectionState;
     options: ModelOption[];
+    /** The catalog feed's state; never inferred from `options` being empty. */
+    catalogStatus?: ModelCatalogStatus;
+    /** The catalog may be behind the engine's current catalog. */
+    stale?: boolean;
     turnActive?: boolean;
     onRequest: (ref: string, disposition: Disposition) => void;
   } = $props();
@@ -23,6 +30,13 @@
 
   const labelOf = (ref: string): string =>
     options.find((o) => o.ref === ref)?.label ?? ref;
+  /**
+   * A picker is only offered from a catalog we actually read: a failed catalog
+   * must not let the user commit a switch to a binding the engine may no longer
+   * have. Loading keeps options already known, because they are still the
+   * engine's last statement and the refresh is expected to settle.
+   */
+  const showsPicker = $derived(options.length > 0 && catalogStatus !== "error");
   const busy = $derived(
     selection.transition?.status === "requested" ||
       selection.transition?.status === "pending",
@@ -36,7 +50,11 @@
   } as const;
 </script>
 
-<section aria-labelledby="model-switch-title" data-testid="model-switcher">
+<section
+  aria-labelledby="model-switch-title"
+  aria-busy={catalogStatus === "loading" ? "true" : undefined}
+  data-testid="model-switcher"
+>
   <h3 id="model-switch-title">Model</h3>
   <p data-testid="model-current">Active: {labelOf(selection.currentRef)}</p>
 
@@ -58,58 +76,81 @@
     </p>
   {/if}
 
-  <fieldset disabled={busy}>
-    <legend>Switch model</legend>
-    {#each options as o (o.ref)}
-      <label>
-        <input
-          type="radio"
-          name="model"
-          value={o.ref}
-          disabled={o.unavailableReason !== undefined}
-          checked={chosen === o.ref}
-          onchange={() => (chosen = o.ref)}
-        />
-        {o.label}
-        <span>({o.locality === "local" ? "Local" : "Cloud"})</span>
-        {#each o.labels ?? [] as l}<span>[{l}]</span>{/each}
-        {#if o.unavailableReason !== undefined}
-          <span data-testid="model-unavailable">
-            Unavailable: {o.unavailableReason}
-          </span>
-        {/if}
-      </label>
-    {/each}
+  {#if catalogStatus === "loading"}
+    <p role="status" data-testid="model-catalog-loading">
+      Loading the model catalog…
+    </p>
+  {:else if catalogStatus === "error"}
+    <p role="alert" data-testid="model-catalog-error">
+      The model catalog could not be loaded. Available models are unknown - not
+      none.
+    </p>
+  {:else if options.length === 0}
+    <p data-testid="model-catalog-empty">
+      The engine reported no models. Nothing is available to switch to.
+    </p>
+  {/if}
 
-    {#if turnActive}
-      <label>
-        <input
-          type="radio"
-          name="disposition"
-          value="next-turn"
-          checked={disposition === "next-turn"}
-          onchange={() => (disposition = "next-turn")}
-        />
-        After the running turn
-      </label>
-      <label>
-        <input
-          type="radio"
-          name="disposition"
-          value="cancel-and-switch"
-          checked={disposition === "cancel-and-switch"}
-          onchange={() => (disposition = "cancel-and-switch")}
-        />
-        Cancel the running turn and switch
-      </label>
-    {/if}
+  {#if stale && options.length > 0}
+    <p role="status" data-testid="model-catalog-stale">
+      This catalog may be out of date. The engine has not confirmed it.
+    </p>
+  {/if}
 
-    <button
-      type="button"
-      disabled={chosen === null || chosen === selection.currentRef}
-      onclick={() => chosen !== null && onRequest(chosen, disposition)}
-    >
-      Request switch
-    </button>
-  </fieldset>
+  {#if showsPicker}
+    <fieldset disabled={busy}>
+      <legend>Switch model</legend>
+      {#each options as o (o.ref)}
+        <label>
+          <input
+            type="radio"
+            name="model"
+            value={o.ref}
+            disabled={o.unavailableReason !== undefined}
+            checked={chosen === o.ref}
+            onchange={() => (chosen = o.ref)}
+          />
+          {o.label}
+          <span>({o.locality === "local" ? "Local" : "Cloud"})</span>
+          {#each o.labels ?? [] as l}<span>[{l}]</span>{/each}
+          {#if o.unavailableReason !== undefined}
+            <span data-testid="model-unavailable">
+              Unavailable: {o.unavailableReason}
+            </span>
+          {/if}
+        </label>
+      {/each}
+
+      {#if turnActive}
+        <label>
+          <input
+            type="radio"
+            name="disposition"
+            value="next-turn"
+            checked={disposition === "next-turn"}
+            onchange={() => (disposition = "next-turn")}
+          />
+          After the running turn
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="disposition"
+            value="cancel-and-switch"
+            checked={disposition === "cancel-and-switch"}
+            onchange={() => (disposition = "cancel-and-switch")}
+          />
+          Cancel the running turn and switch
+        </label>
+      {/if}
+
+      <button
+        type="button"
+        disabled={chosen === null || chosen === selection.currentRef}
+        onclick={() => chosen !== null && onRequest(chosen, disposition)}
+      >
+        Request switch
+      </button>
+    </fieldset>
+  {/if}
 </section>
