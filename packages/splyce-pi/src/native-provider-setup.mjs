@@ -452,7 +452,8 @@ export function createNativeProviderSetup(store, directory) {
     }
     return { endpoint, connection, profile };
   }
-  function view(metadata, result) {
+  function view(metadata, result, observation) {
+    if (!opaque(observation.configRevision)) fail("SETUP_UNAVAILABLE");
     const { contextWindow, maxOutputTokens, reasoning, input } =
       selectedModel(metadata);
     return {
@@ -469,6 +470,7 @@ export function createNativeProviderSetup(store, directory) {
       },
       connectionRevision: result.connection.revision,
       profileRevision: result.profile.profileRevision,
+      configRevision: observation.configRevision,
       endpointRevision: result.endpoint.revision,
       credentialState: "stored",
       generationReady: false,
@@ -487,7 +489,7 @@ export function createNativeProviderSetup(store, directory) {
       return {
         state: "replayed",
         credentialRef: replay.connection.credentialRef,
-        view: view(metadata, replay),
+        view: view(metadata, replay, observation),
       };
     const owned = descriptors(metadata);
     const intentId = owned[3].recordId;
@@ -602,7 +604,7 @@ export function createNativeProviderSetup(store, directory) {
     return {
       state: "committed",
       credentialRef: raw.credentialRef,
-      view: view(metadata, result),
+      view: view(metadata, result, observation),
     };
   }
   function commit(raw) {
