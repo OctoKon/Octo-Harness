@@ -21,6 +21,7 @@ import {
 } from "../../packages/splyce-pi/dist/policy.js";
 import { Store } from "../../packages/splyce-pi/dist/store.js";
 import {
+  APPROVAL_ARGS_MAX,
   createToolDispatch,
   type ApprovalRequest,
   type ToolAdmission,
@@ -128,6 +129,7 @@ async function setup(
   );
   const approvals: ApprovalRequest[] = [];
   const bound: object[] = [];
+  const admissions = new Map<object, ToolAdmission>();
   let registered = 0;
   const dispatch = createToolDispatch({
     store,
@@ -152,8 +154,9 @@ async function setup(
     nativeRedact:
       options.nativeRedact ??
       (async (text) => ({ text, redactedCount: 0 }) as never),
-    bindTool: (tool) => {
+    bindTool: (tool, admission) => {
       bound.push(tool);
+      admissions.set(tool, admission);
       return () => undefined;
     },
     ...(options.memory
@@ -173,11 +176,19 @@ async function setup(
     name: string,
     args: Record<string, unknown>,
     tamper?: Record<string, unknown>,
+    before?: (toolCallId: string) => void | Promise<void>,
   ) {
     const adm: ToolAdmission = dispatch.admission;
     const tool = dispatch.tools.find((x) => x.name === name)!;
     adm.reserve(toolCallId, name, undefined);
     await adm.prepare(toolCallId, name, args, undefined, undefined);
+    // beforeToolCall: the first point where extension / user code can run.
+    try {
+      await before?.(toolCallId);
+    } catch (error) {
+      adm.discard(toolCallId, "denied");
+      throw error;
+    }
     adm.finish(toolCallId, name, tamper ?? args, undefined);
     return adm.execute(
       toolCallId,
@@ -216,12 +227,29 @@ async function setup(
     workDir,
     approvals,
     bound,
+    admissions,
+    /** What Pi builds from our definitions: name + the parameters object by reference. */
+    piTools: () =>
+      dispatch.tools.map((x) => ({ name: x.name, parameters: x.parameters })),
     registrations: () => registered,
     workspaceId,
     scope,
   };
 }
 
+/** What Pi gets back: the content text and the details summary preview. */
+const returned = (out: unknown) => {
+  const { result } = out as {
+    result: {
+      content: { text: string }[];
+      details: { summary?: { preview: string } };
+    };
+  };
+  return {
+    text: result.content.map((c) => c.text).join(""),
+    preview: result.details.summary?.preview ?? "",
+  };
+};
 const state = (r: { record: unknown }) => (r.record as { state: string }).state;
 const rejects = (code: string) => (error: unknown) =>
   (error as { code?: string }).code === code;
@@ -257,17 +285,15 @@ test("approved write: once grant consumed exactly once, one receipt per effect, 
     "running",
     "completed",
   ]);
-  const once = f
-    .grants()
-    .map(
-      ({ record }) =>
-        record as {
-          scope: string;
-          consumedAt?: string;
-          actionId?: string;
-          argumentsDigest?: string;
-        },
-    );
+  const once = f.grants().map(
+    ({ record }) =>
+      record as {
+        scope: string;
+        consumedAt?: string;
+        actionId?: string;
+        argumentsDigest?: string;
+      },
+  );
   assert.equal(
     once.filter((g) => g.scope === "once" && !g.consumedAt).length,
     1,
@@ -376,7 +402,9 @@ test("preview redaction fails closed when the native lane rejects", async (t) =>
       throw new Error("down");
     },
   });
-  await f.drive("call-r", "read", { path: "hello.txt" });
+  const out = await f.drive("call-r", "read", { path: "hello.txt" });
+  assert.equal(returned(out).text, "[unavailable]");
+  assert.equal(returned(out).preview, "[unavailable]");
   const events = JSON.stringify(f.events());
   assert.ok(!events.includes("hello"));
   assert.ok(!events.includes(SECRET));
@@ -430,7 +458,7 @@ test("a tool cannot run outside the admission sequence", async (t) => {
 
 test("bind attaches the admission to every session tool and freezes the registry", async (t) => {
   const f = await setup(t);
-  const tools = f.dispatch.tools.map((x) => ({ name: x.name }));
+  const tools = f.piTools();
   let reloaded = 0;
   const session = {
     agent: { state: { tools } },
@@ -453,7 +481,7 @@ test("bind attaches the admission to every session tool and freezes the registry
   assert.equal(reloaded, 0);
   await assert.rejects(
     f.dispatch.bind({
-      agent: { state: { tools: [{ name: "extension_tool" }] } },
+      agent: { state: { tools: [{ name: "extension_tool", parameters: {} }] } },
     }),
     rejects("TOOL_REGISTRY_FOREIGN"),
   );
@@ -560,7 +588,7 @@ test("a rejecting provider registration fails the start typed; nothing is bound 
   let reloaded = 0;
   const session = {
     agent: {
-      state: { tools: f.dispatch.tools.map((x) => ({ name: x.name })) },
+      state: { tools: f.piTools() },
     },
     reload: () => {
       reloaded += 1;
@@ -579,4 +607,298 @@ test("a rejecting provider registration fails the start typed; nothing is bound 
       .length,
     0,
   );
+});
+
+const PATHS = [
+  "reload",
+  "_refreshToolRegistry",
+  "_buildRuntime",
+  "setActiveToolsByName",
+] as const;
+
+for (const path of PATHS) {
+  test(`registry path ${path} is frozen`, async (t) => {
+    const f = await setup(t);
+    let ran = 0;
+    const session: Record<string, unknown> & {
+      agent: { state: { tools: object[] } };
+    } = {
+      agent: { state: { tools: f.piTools() } },
+      [path]: () => {
+        ran += 1;
+      },
+    };
+    await f.dispatch.bind(session);
+    assert.throws(
+      () => (session[path] as () => void)(),
+      rejects("TOOL_REGISTRY_FROZEN"),
+    );
+    assert.equal(ran, 0);
+  });
+}
+
+for (const path of ["_applyToolLoadout", "_setActiveTools"] as const) {
+  test(`registry path ${path} may not install a cloned or foreign tool object`, async (t) => {
+    const f = await setup(t);
+    const original = f.piTools();
+    const state = { tools: original as object[] };
+    let clone = false;
+    const session: Record<string, unknown> & {
+      agent: { state: { tools: object[] } };
+    } = {
+      agent: { state },
+      // Pi: assigns agent.state.tools from the registry, cloning on a prepareLoadout hook.
+      [path]: () => {
+        state.tools = clone
+          ? original.map((x) => ({ ...x, description: "d" }))
+          : [...original];
+        return state.tools;
+      },
+    };
+    await f.dispatch.bind(session);
+    // the same bound objects are fine (Pi calls this on every prompt)
+    (session[path] as () => void)();
+    assert.deepEqual(state.tools, original);
+    const before = state.tools;
+    clone = true;
+    assert.throws(
+      () => (session[path] as () => void)(),
+      rejects("TOOL_REGISTRY_FROZEN"),
+    );
+    assert.equal(state.tools, before, "the previous bound tools are restored");
+  });
+}
+
+test("reservation precedes beforeToolCall: the callback sees the reserved action; a denied call never reaches it", async (t) => {
+  const f = await setup(t, { approve: (r) => r.toolCallId !== "deny" });
+  let seen: string[] | undefined;
+  await f.drive(
+    "call-1",
+    "write",
+    { path: "a.txt", content: "x" },
+    undefined,
+    (id) => {
+      seen = f.actions(id).map(state);
+    },
+  );
+  assert.deepEqual(seen, ["proposed"]);
+
+  let reached = 0;
+  const hook = () => {
+    reached += 1;
+  };
+  await assert.rejects(
+    f.drive("deny", "write", { path: "b.txt", content: "x" }, undefined, hook),
+    rejects("POLICY_DENIED"),
+  );
+  await assert.rejects(
+    f.drive("nope", "rm_rf", {}, undefined, hook),
+    rejects("CAPABILITY_REQUIRED"),
+  );
+  assert.equal(reached, 0);
+  assert.equal(existsSync(join(f.workDir, "b.txt")), false);
+});
+
+test("a throwing beforeToolCall discards the reservation durably and nothing runs", async (t) => {
+  const f = await setup(t);
+  await assert.rejects(
+    f.drive(
+      "call-1",
+      "write",
+      { path: "a.txt", content: "x" },
+      undefined,
+      () => {
+        throw new Error("extension veto");
+      },
+    ),
+    /extension veto/u,
+  );
+  assert.equal(existsSync(join(f.workDir, "a.txt")), false);
+  assert.deepEqual(f.actions("call-1").map(state), ["proposed", "denied"]);
+  assert.equal(
+    f
+      .grants()
+      .filter(({ record }) => (record as { consumedAt?: string }).consumedAt)
+      .length,
+    0,
+  );
+});
+
+test("P1-a: approval shows the COMPLETE redacted args, including a suffix past 512 chars", async (t) => {
+  let shown = "";
+  const f = await setup(t, {
+    approve: (r) => {
+      shown = r.argsSummary;
+      return false;
+    },
+  });
+  const content = `${"A".repeat(700)} ; Set-Content evil.txt payload`;
+  await assert.rejects(
+    f.drive("call-1", "write", { path: "a.txt", content }),
+    rejects("POLICY_DENIED"),
+  );
+  assert.ok(shown.length > 700);
+  assert.ok(shown.includes("Set-Content evil.txt payload"));
+  assert.equal(existsSync(join(f.workDir, "a.txt")), false);
+});
+
+test("P1-a: args that cannot be shown whole are denied, never truncated; approval is not even asked", async (t) => {
+  const f = await setup(t);
+  await assert.rejects(
+    f.drive("call-1", "write", {
+      path: "a.txt",
+      content: "B".repeat(APPROVAL_ARGS_MAX + 1),
+    }),
+    rejects("POLICY_DENIED"),
+  );
+  assert.equal(f.approvals.length, 0);
+  assert.equal(existsSync(join(f.workDir, "a.txt")), false);
+  assert.deepEqual(f.actions("call-1").map(state), ["denied"]);
+});
+
+test("P1-a: when the native lane is down a once call is denied (nothing to show), not approved blind", async (t) => {
+  const f = await setup(t, {
+    nativeRedact: async () => {
+      throw new Error("down");
+    },
+  });
+  await assert.rejects(
+    f.drive("call-1", "write", { path: "a.txt", content: "x" }),
+    rejects("POLICY_DENIED"),
+  );
+  assert.equal(f.approvals.length, 0);
+  assert.equal(existsSync(join(f.workDir, "a.txt")), false);
+});
+
+test("P1-b: a native-only secret is absent from the returned content, summary and events", async (t) => {
+  const f = await setup(t, {
+    nativeRedact: async (text) => ({
+      text: text.replace(/hello/gu, "NATIVE-MASKED"),
+    }),
+  });
+  const out = await f.drive("call-r", "read", { path: "hello.txt" });
+  const r = returned(out);
+  assert.ok(!r.text.includes("hello"));
+  assert.ok(r.text.includes("NATIVE-MASKED"));
+  assert.ok(!r.preview.includes("hello"));
+  assert.ok(!JSON.stringify(f.events()).includes("hello"));
+});
+
+test("P1-b: errors are redacted fail-closed too", async (t) => {
+  const f = await setup(t, {
+    nativeRedact: async (text) => ({
+      text: text.replace(/missing/gu, "MASKED"),
+    }),
+  });
+  const out = await f.drive("call-r", "read", { path: "missing-file.txt" });
+  assert.ok(!returned(out).text.includes("missing"));
+  assert.equal((out as { isError: boolean }).isError, true);
+});
+
+test("P2-a: a foreign tool under a bound name is TOOL_REGISTRY_FOREIGN, even with copied parameters", async (t) => {
+  const f = await setup(t);
+  const real = f.dispatch.tools.find((x) => x.name === "read")!;
+  for (const foreign of [
+    { name: "read", parameters: { type: "object" } },
+    { name: "read", parameters: JSON.parse(JSON.stringify(real.parameters)) },
+    { name: "write", parameters: real.parameters },
+  ])
+    await assert.rejects(
+      f.dispatch.bind({ agent: { state: { tools: [foreign] } } }),
+      rejects("TOOL_REGISTRY_FOREIGN"),
+    );
+  assert.equal(f.bound.length, 0);
+});
+
+test("P2-a: an effect whose implementation was not the adapter's is recorded uncertain", async (t) => {
+  const f = await setup(t);
+  const adm = f.dispatch.admission;
+  const args = { path: "a.txt" };
+  adm.reserve("c", "read", undefined);
+  await adm.prepare("c", "read", args, undefined, undefined);
+  adm.finish("c", "read", args, undefined);
+  await assert.rejects(
+    adm.execute(
+      "c",
+      "read",
+      args,
+      async () => ({ result: {}, isError: false }),
+      undefined,
+    ),
+    rejects("EFFECT_UNCERTAIN"),
+  );
+  assert.ok(f.actions("c").map(state).includes("uncertain"));
+});
+
+test("P2-b: the live registry array is frozen; a replaced registry fails every dispatch phase", async (t) => {
+  const f = await setup(t);
+  const session = { agent: { state: { tools: f.piTools() as object[] } } };
+  await f.dispatch.bind(session);
+  assert.throws(
+    () => session.agent.state.tools.push({ name: "extra" }),
+    TypeError,
+  );
+  const first = f.bound[0]!;
+  const adm = f.admissions.get(first)!;
+  // assignment replaces the collection with one holding a foreign tool object
+  session.agent.state.tools = [...f.bound, { name: "extra", parameters: {} }];
+  assert.throws(
+    () => adm.reserve("c", "read", undefined),
+    rejects("TOOL_REGISTRY_FROZEN"),
+  );
+  await assert.rejects(
+    adm.prepare("c", "read", { path: "hello.txt" }, undefined, undefined),
+    rejects("TOOL_REGISTRY_FROZEN"),
+  );
+  await assert.rejects(
+    Promise.resolve().then(() =>
+      adm.execute("c", "read", {}, async () => ({ isError: false }), undefined),
+    ),
+    rejects("TOOL_REGISTRY_FROZEN"),
+  );
+  assert.equal(f.actions("c").length, 0);
+});
+
+test("P2-b: a prototype-level registry refresh (instance override bypassed) fails dispatch closed", async (t) => {
+  const f = await setup(t);
+  class Sess {
+    agent = { state: { tools: f.piTools() as object[] } };
+    _refreshToolRegistry() {
+      this.agent.state.tools = f.piTools().map((x) => ({ ...x }));
+    }
+  }
+  const session = new Sess();
+  await f.dispatch.bind(session);
+  assert.throws(
+    () => session._refreshToolRegistry(),
+    rejects("TOOL_REGISTRY_FROZEN"),
+  );
+  Sess.prototype._refreshToolRegistry.call(session);
+  const adm = f.admissions.get(f.bound[0]!)!;
+  await assert.rejects(
+    adm.prepare("c", "read", { path: "hello.txt" }, undefined, undefined),
+    rejects("TOOL_REGISTRY_FROZEN"),
+  );
+  assert.equal(f.actions("c").length, 0);
+});
+
+test("P3: execute without finish leaves no dangling proposed reservation after discard", async (t) => {
+  const f = await setup(t);
+  const adm = f.dispatch.admission;
+  const args = { path: "a.txt", content: "x" };
+  adm.reserve("c", "write", undefined);
+  await adm.prepare("c", "write", args, undefined, undefined);
+  await assert.rejects(
+    adm.execute(
+      "c",
+      "write",
+      args,
+      async () => ({ isError: false }),
+      undefined,
+    ),
+    rejects("PREPARATION_REQUIRED"),
+  );
+  adm.discard("c", "denied");
+  assert.deepEqual(f.actions("c").map(state), ["proposed", "denied"]);
+  assert.equal(existsSync(join(f.workDir, "a.txt")), false);
 });

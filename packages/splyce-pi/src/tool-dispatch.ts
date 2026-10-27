@@ -60,7 +60,10 @@ const CAPABILITY: Readonly<Record<string, Capability>> = {
 };
 const ONCE: ReadonlySet<Capability> = new Set(["fs.write", "shell.run"]);
 const PREVIEW_MAX = 2048;
+/** Read-only intent summaries are bounded; approval summaries are never truncated (see APPROVAL_ARGS_MAX). */
 const ARGS_SUMMARY_MAX = 512;
+/** A once-capability call whose complete redacted arguments exceed this is denied, never truncated. */
+export const APPROVAL_ARGS_MAX = 16 * 1024;
 const UNAVAILABLE = "[unavailable]";
 
 export class ToolDispatchError extends Error {
@@ -138,11 +141,31 @@ export interface ApprovalRequest {
   argsSummary: string;
 }
 
+/**
+ * Pi paths that rebuild or clone tool objects after construction (agent-session.ts):
+ * reload() and _buildRuntime() -> _refreshToolRegistry() (every tool wrapped anew),
+ * setActiveToolsByName() -> _setActiveTools() -> _applyToolLoadout() (assigns
+ * agent.state.tools and, with a prepareLoadout hook, clones `{...tool, description}`).
+ */
 export interface PiSessionLike {
   agent: { state: { tools: readonly object[] } };
   reload?: unknown;
   _refreshToolRegistry?: unknown;
+  _buildRuntime?: unknown;
+  setActiveToolsByName?: unknown;
+  _setActiveTools?: unknown;
+  _applyToolLoadout?: unknown;
 }
+
+/** Never needed by an owned session: denied outright. */
+const DENIED_PATHS = [
+  "reload",
+  "_refreshToolRegistry",
+  "_buildRuntime",
+  "setActiveToolsByName",
+] as const;
+/** Pi calls these itself on every prompt / tree switch: allowed only while they keep bound tool objects. */
+const VERIFIED_PATHS = ["_setActiveTools", "_applyToolLoadout"] as const;
 
 export interface ToolDispatchDeps {
   store: Store;
@@ -191,6 +214,8 @@ interface Call {
   argsSummary: string;
   reserved: boolean;
   admitted: boolean;
+  /** Set only by an adapter-created tool implementation when it actually runs. */
+  ownImpl: boolean;
   consumed: boolean;
   effectSummary?: string;
 }
@@ -270,18 +295,22 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
 
   const redactSync = (text: string): string => scrubSecrets(deps.redact(text));
   /** Sync scrub, then the Rust lane; a lane failure yields a placeholder, never raw text. */
-  const redactFinal = async (
+  const redactStrict = async (
     text: string,
     signal?: AbortSignal,
-  ): Promise<string> => {
+  ): Promise<string | undefined> => {
     try {
       const out = await deps.nativeRedact(redactSync(text), signal);
       const redacted = typeof out === "string" ? out : out.text;
-      return typeof redacted === "string" ? redacted : UNAVAILABLE;
+      return typeof redacted === "string" ? redacted : undefined;
     } catch {
-      return UNAVAILABLE;
+      return undefined;
     }
   };
+  const redactFinal = async (
+    text: string,
+    signal?: AbortSignal,
+  ): Promise<string> => (await redactStrict(text, signal)) ?? UNAVAILABLE;
 
   const workspaceTools = createWorkspaceTools({
     workspaces,
@@ -309,43 +338,75 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
   // Context tools are read-only: fs.read (session grant, never consumed).
   for (const tool of contextTools) caps.set(tool.name, "fs.read");
 
-  const tools: DispatchTool[] = [...impls.values()].map((impl) => ({
-    name: impl.name,
-    description: impl.description,
-    parameters: impl.parameters,
-    async execute(toolCallId, args, signal) {
-      const call = calls.get(toolCallId);
-      // Defense in depth: Pi's bound tool.execute is a thrower; this refuses
-      // anything that did not come through ToolAdmission.execute.
-      if (!call?.admitted || call.name !== impl.name)
-        throw new AdmissionError("POLICY_DENIED");
-      try {
-        const r = await impl.result(args, signal, call.actionId);
-        return {
-          content: [{ type: "text", text: r.text }],
-          details: { summary: r.summary },
-        };
-      } catch (error) {
-        if (
-          error instanceof WorkspaceToolError ||
-          error instanceof ContextToolError
-        ) {
-          const summary = (error as WorkspaceToolError).summary;
+  /** Provenance: Pi copies `parameters` by reference into the AgentTool it builds from our definition. */
+  const brand = new WeakMap<object, string>();
+  const deepFreeze = <T>(value: T): T => {
+    if (value && typeof value === "object") {
+      for (const child of Object.values(value)) deepFreeze(child);
+      Object.freeze(value);
+    }
+    return value;
+  };
+  const redactSummary = async (
+    summary: ToolSummary,
+    signal?: AbortSignal,
+  ): Promise<ToolSummary> => ({
+    ...summary,
+    preview: (await redactFinal(summary.preview, signal)).slice(0, PREVIEW_MAX),
+  });
+
+  const tools: DispatchTool[] = [...impls.values()].map((impl) => {
+    const parameters = deepFreeze(
+      JSON.parse(JSON.stringify(impl.parameters)) as Record<string, unknown>,
+    );
+    brand.set(parameters, impl.name);
+    return {
+      name: impl.name,
+      description: impl.description,
+      parameters,
+      async execute(toolCallId, args, signal) {
+        const call = calls.get(toolCallId);
+        // Defense in depth: Pi bound tool.execute is a thrower; this refuses
+        // anything that did not come through ToolAdmission.execute.
+        if (!call?.admitted || call.name !== impl.name)
+          throw new AdmissionError("POLICY_DENIED");
+        call.ownImpl = true;
+        try {
+          const r = await impl.result(args, signal, call.actionId);
+          // Everything Pi (and so the model and transcript) sees is redacted fail-closed.
           return {
             content: [
-              {
-                type: "text",
-                text: `${error.code}: ${redactSync(error.message)}`,
-              },
+              { type: "text", text: await redactFinal(r.text, signal) },
             ],
-            details: { code: error.code, ...(summary ? { summary } : {}) },
-            isError: true,
+            details: { summary: await redactSummary(r.summary, signal) },
           };
+        } catch (error) {
+          if (
+            error instanceof WorkspaceToolError ||
+            error instanceof ContextToolError
+          ) {
+            const summary = (error as WorkspaceToolError).summary;
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `${error.code}: ${await redactFinal(error.message, signal)}`,
+                },
+              ],
+              details: {
+                code: error.code,
+                ...(summary
+                  ? { summary: await redactSummary(summary, signal) }
+                  : {}),
+              },
+              isError: true,
+            };
+          }
+          throw error;
         }
-        throw error;
-      }
-    },
-  }));
+      },
+    };
+  });
 
   const draft = <K extends "turn.tool_intent" | "turn.tool_outcome">(
     kind: K,
@@ -400,27 +461,39 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
           : typeof args.pattern === "string"
             ? args.pattern
             : toolName;
-      const argsSummary = (
-        await redactFinal(JSON.stringify(validatedArgs), signal)
-      ).slice(0, ARGS_SUMMARY_MAX);
+      const redactedArgs = await redactStrict(
+        JSON.stringify(validatedArgs),
+        signal,
+      );
+      const once = ONCE.has(capability);
+      // What the approver sees is the COMPLETE redacted argument text of exactly the call whose
+      // digest the grant binds. If it cannot be shown whole (lane down, or over the cap) the
+      // call is denied; it is never truncated.
+      const showable =
+        redactedArgs !== undefined && redactedArgs.length <= APPROVAL_ARGS_MAX;
+      const argsSummary = once
+        ? (redactedArgs ?? UNAVAILABLE)
+        : (redactedArgs ?? UNAVAILABLE).slice(0, ARGS_SUMMARY_MAX);
       let grantId = deps.readGrantId;
-      if (ONCE.has(capability)) {
+      if (once) {
         // Once capability: nothing is minted without an explicit approval. An
         // unapproved call authorizes against a grant id that is not live, so the
         // policy denies it with a durable receipt before anything runs.
         grantId = "grant-unapproved";
-        const approved = await deps
-          .approve(
-            {
-              toolCallId,
-              actionId,
-              capability,
-              target: await redactFinal(target, signal),
-              argsSummary,
-            },
-            signal,
-          )
-          .catch(() => false);
+        const approved =
+          showable &&
+          (await deps
+            .approve(
+              {
+                toolCallId,
+                actionId,
+                capability,
+                target: await redactFinal(target, signal),
+                argsSummary,
+              },
+              signal,
+            )
+            .catch(() => false));
         if (approved && !signal?.aborted) {
           const minted = store.mintGrant(
             {
@@ -462,6 +535,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
         argsSummary,
         reserved: false,
         admitted: false,
+        ownImpl: false,
         consumed: false,
       });
       byAction.set(actionId, calls.get(toolCallId)!);
@@ -513,10 +587,8 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
                 : "success";
           const details = executed?.result?.details;
           const raw = details?.summary;
-          const preview = (await redactFinal(raw?.preview ?? "", signal)).slice(
-            0,
-            PREVIEW_MAX,
-          );
+          // already redacted fail-closed in the tool wrapper
+          const preview = (raw?.preview ?? "").slice(0, PREVIEW_MAX);
           const summary: {
             exitCode?: number | null;
             durationMs?: number;
@@ -544,13 +616,22 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
           toolCallId,
           toolName,
           args,
-          (admittedArgs) => {
+          async (admittedArgs) => {
             call.admitted = true;
-            return invoke(admittedArgs);
+            const out = await invoke(admittedArgs);
+            // A foreign implementation behind a bound name never marks itself: its effect is
+            // recorded uncertain instead of success.
+            if (!call.ownImpl) throw new Error("FOREIGN_IMPLEMENTATION");
+            return out;
           },
           signal,
           events,
         );
+      } catch (error) {
+        // An execute that failed before the policy consumed the reservation (no finish, stale
+        // permit) must not leave a proposed reservation behind; discard is a no-op otherwise.
+        if (call.reserved) policy.discard(toolCallId, "denied");
+        throw error;
       } finally {
         call.admitted = false;
         byAction.delete(call.actionId);
@@ -571,22 +652,95 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
       } catch {
         throw new ToolDispatchError("SESSION_REGISTRATION_FAILED");
       }
-      const names = new Set(tools.map((t) => t.name));
       const live = session.agent.state.tools;
-      for (const tool of live)
-        if (!names.has((tool as { name?: string }).name ?? ""))
+      // Provenance, never the name: only a tool Pi built from one of OUR definitions carries the
+      // frozen parameters object this adapter created (Pi copies it by reference).
+      for (const tool of live) {
+        const { name, parameters } = tool as {
+          name?: string;
+          parameters?: unknown;
+        };
+        if (
+          typeof name !== "string" ||
+          typeof parameters !== "object" ||
+          parameters === null ||
+          brand.get(parameters) !== name
+        )
           throw new ToolDispatchError("TOOL_REGISTRY_FOREIGN");
-      const unbind = live.map((tool) => deps.bindTool(tool, admission));
+      }
+      const bound = new WeakSet<object>(live);
+      const snapshot = [...live];
       const frozen = () => {
         throw new ToolDispatchError("TOOL_REGISTRY_FROZEN");
       };
-      // Pi rebuilds (and so unbinds) every tool object on reload / registry refresh.
-      for (const key of ["reload", "_refreshToolRegistry"] as const)
+      // Identity check at every dispatch phase: the registry the loop runs against must still be
+      // exactly the bound tool objects (collection mutation, replaced state, prototype refresh).
+      const registryIntact = () => {
+        const current = session.agent.state.tools;
+        if (
+          current.length !== snapshot.length ||
+          current.some((tool) => !bound.has(tool))
+        )
+          frozen();
+      };
+      const unbind = live.map((tool) => {
+        const guarded: ToolAdmission = {
+          check: (...a) => {
+            registryIntact();
+            admission.check(...a);
+          },
+          reserve: (...a) => {
+            registryIntact();
+            admission.reserve(...a);
+          },
+          prepare: async (...a) => {
+            registryIntact();
+            await admission.prepare(...a);
+          },
+          finish: (...a) => {
+            registryIntact();
+            admission.finish(...a);
+          },
+          // cleanup must always work
+          discard: (...a) => admission.discard(...a),
+          execute(toolCallId, toolName, args, invoke, signal) {
+            registryIntact();
+            return admission.execute(
+              toolCallId,
+              toolName,
+              args,
+              invoke,
+              signal,
+            );
+          },
+        };
+        return deps.bindTool(tool, guarded);
+      });
+      Object.freeze(live);
+      // Pi rebuilds (and so unbinds) every tool object on these paths. An unbound tool
+      // already fails closed in the loop (SPLYCE_UNAVAILABLE); this fails earlier and typed.
+      const freeze = (key: string, value: unknown) =>
         Object.defineProperty(session, key, {
-          value: frozen,
+          value,
           configurable: false,
           writable: false,
         });
+      for (const key of DENIED_PATHS) freeze(key, frozen);
+      for (const key of VERIFIED_PATHS) {
+        const original = session[key];
+        if (typeof original !== "function") continue;
+        freeze(key, function (this: unknown, ...args: unknown[]) {
+          const previous = session.agent.state.tools;
+          const out: unknown = original.apply(session, args);
+          const now = session.agent.state.tools;
+          if (now.some((tool) => !bound.has(tool))) {
+            (session.agent.state as { tools: readonly object[] }).tools =
+              previous;
+            frozen();
+          }
+          return out;
+        });
+      }
       return () => {
         for (const u of unbind) u();
       };
