@@ -48,6 +48,7 @@ export interface CredentialResolverDeps {
   /** OS credential store read (e.g. Windows Credential Manager); undefined = absent. */
   readonly readCredentialStore?: (
     target: string,
+    request: CredentialRequest,
   ) => Promise<string | undefined>;
   readonly helpers?: Readonly<Record<string, HelperCommand>>;
   /** Returns null to deny. Absent = every helper is denied. */
@@ -151,7 +152,7 @@ export class NativeCredentialResolver implements CredentialResolver {
       const read =
         this.#deps.readCredentialStore ??
         fail("CREDENTIAL_UNAVAILABLE", "no OS credential store reader");
-      return read(source.target);
+      return read(source.target, request);
     }
     const command =
       this.#deps.helpers?.[source.commandRef] ??
