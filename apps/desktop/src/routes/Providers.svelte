@@ -65,9 +65,12 @@
             ? " (selected)"
             : ""}</span
         >
+        {#if profile.credential}
+          <span>{profile.apiFamily} · {profile.modelId} · {profile.endpointOrigin} · Credential {profile.credential}</span>
+        {/if}
         <button
           type="button"
-          disabled={!workspaceSelected ||
+          disabled={profile.credential === "missing" || !workspaceSelected ||
             !selectProfile ||
             profilePending ||
             !credentialSubmit}

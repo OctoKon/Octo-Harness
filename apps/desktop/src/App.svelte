@@ -45,6 +45,7 @@
     setupErrorCopy,
     validateProfileSelectionResult,
     validateSessionStartResult,
+    validateSetupReadResult,
     type ConfiguredProfile,
     type ProfileSelectionResult,
     type ProviderSetupDraft,
@@ -133,8 +134,10 @@
   let status = $state<EngineConnectionState>("disconnected");
   let readiness = $state<Handshake["readiness"] | null>(null);
   let ports = $state<PortAvailability | null>(null);
+  let startedSession = $state<SessionStartResult | null>(null);
+  let sessionPortWitness = $state(false);
   let generationReady = $derived(
-    ports === null
+    ports === null || (startedSession !== null && !sessionPortWitness)
       ? undefined
       : ports.generation && ports.provider && ports.workspace,
   );
@@ -145,7 +148,6 @@
   let chooserError = $state<string | null>(null);
   let profiles = $state<ConfiguredProfile[]>([]);
   let profileSelection = $state<ProfileSelectionResult | null>(null);
-  let startedSession = $state<SessionStartResult | null>(null);
   let profilePending = $state(false);
   let configuring = $state(false);
   let profileStatus = $state<string | null>(null);
@@ -153,6 +155,7 @@
 
   function invalidateSetup() {
     setupEpoch++;
+    sessionPortWitness = false;
     profiles = [];
     profileSelection = null;
     startedSession = null;
@@ -168,8 +171,8 @@
   const providerUnavailable = $derived(
     profilePending || configuring
       ? "Provider setup is already in progress."
-      : !ports?.provider
-      ? "The engine reports provider setup unavailable. Nothing can be saved."
+      : readiness?.state !== "ready"
+      ? "The engine is not connected. Nothing can be saved."
       : workspace === null
         ? "Choose a project first. Provider setup is saved for a project."
         : undefined,
@@ -186,6 +189,7 @@
         invalidateSetup();
         clearSession();
         workspace = chosen;
+        void readSetup(chosen);
       }
     } catch {
       chooserError = "Could not open the project. Nothing changed.";
@@ -194,9 +198,26 @@
     }
   }
 
+  async function readSetup(project: SelectedWorkspace) {
+    const epoch = ++setupEpoch;
+    const requestId = crypto.randomUUID();
+    try {
+      const result = validateSetupReadResult(await sendSetup("setup.read", requestId, {
+        requestId, workspaceId: project.workspaceId,
+      }));
+      if (epoch !== setupEpoch) return;
+      profiles = result.profiles;
+      profileSelection = result.selection;
+      startedSession = null;
+      profileStatus = "Saved profiles loaded. Start a session before sending.";
+    } catch {
+      if (epoch === setupEpoch) profileStatus = "Saved profiles could not be loaded.";
+    }
+  }
+
   // The secret lives only in this one send; the payload object is not kept.
   async function configureProvider(draft: ProviderSetupDraft) {
-    if (!workspace || configuring || profilePending)
+    if (!workspace || readiness?.state !== "ready" || configuring || profilePending)
       throw new Error("Setup unavailable");
     const project = workspace;
     const epoch = ++setupEpoch;
@@ -207,12 +228,12 @@
     const requestId = crypto.randomUUID();
     try {
       const result = configuredProfileResult(
-    await sendSetup(
-      "provider.configure",
-      requestId,
+        await sendSetup(
+          "provider.configure",
+          requestId,
           providerConfigurePayload(draft, project.workspaceId, requestId),
         ),
-    );
+      );
       if (epoch !== setupEpoch) throw { code: "WORKSPACE_SUPERSEDED" };
       profiles = [
         ...profiles
@@ -226,10 +247,11 @@
   }
 
   async function useProfile(profile: ConfiguredProfile) {
-    if (!workspace || profilePending || configuring || !ports?.provider) return;
+    if (!workspace || readiness?.state !== "ready" || profilePending || configuring || profile.credential === "missing") return;
     const project = workspace;
     const epoch = ++setupEpoch;
     profilePending = true;
+    sessionPortWitness = false;
     profileSelection = null;
     startedSession = null;
     profileStatus = "Selecting profile…";
@@ -266,10 +288,22 @@
       );
       if (epoch !== setupEpoch) return;
       startedSession = started;
-      profileStatus =
-        started.readiness.state === "ready"
-          ? "Profile selected. Session ready."
-          : "Profile selected. The session is unavailable. Sending stays blocked.";
+      if (started.readiness.state === "ready") {
+        profileStatus = "Checking engine readiness…";
+        try {
+          const verified = await handshake();
+          if (epoch !== setupEpoch) return;
+          readiness = verified.readiness;
+          sessionPortWitness = true;
+          selectSession({ sessionId: started.sessionId, scopeId: project.workspaceId });
+          profileStatus = "Profile selected. Session ready.";
+        } catch {
+          if (epoch !== setupEpoch) return;
+          profileStatus = "Profile selected. Engine readiness could not be confirmed. Sending stays blocked.";
+        }
+      } else {
+        profileStatus = "Profile selected. The session is unavailable. Sending stays blocked.";
+      }
     } catch (error) {
       if (epoch === setupEpoch) {
         startedSession = null;
@@ -387,6 +421,7 @@
       if (!mounted) return;
       readiness = status === "disconnected" ? null : verified.readiness;
       engineConnected = true;
+      if (workspace && readiness?.state === "ready") void readSetup(workspace);
     } catch {
       // The engine store publishes the unavailable/error state.
     }

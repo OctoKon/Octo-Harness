@@ -304,7 +304,7 @@ impl BridgeState {
         let selection = method == "send"
             && matches!(
                 params["command"].as_str(),
-                Some("profile.select" | "session.start")
+                Some("profile.select" | "session.start" | "setup.read")
             )
             && valid_setup(params["command"].as_str().unwrap(), &params);
         let mut inner = self.inner.try_lock().map_err(|_| BridgeError::denied())?;
@@ -547,6 +547,11 @@ fn valid_setup(op: &str, value: &Value) -> bool {
                 .is_some_and(|payload| payload.is_empty()))
             || (op == "provider.configure"
                 && valid_provider_setup(&value["payload"], &value["requestId"]))
+            || (op == "setup.read"
+                && exact_fields(&value["payload"], &["requestId", "workspaceId"])
+                && value["payload"]["requestId"] == value["requestId"]
+                && setup_id(&value["payload"]["requestId"])
+                && setup_id(&value["payload"]["workspaceId"]))
             || (matches!(op, "profile.select" | "session.start") && {
                 let fields: &[&str] = if op == "profile.select" {
                     &[
@@ -575,6 +580,58 @@ fn exact_fields(value: &Value, fields: &[&str]) -> bool {
     value.as_object().is_some_and(|object| {
         object.len() == fields.len() && fields.iter().all(|key| object.contains_key(*key))
     })
+}
+
+fn valid_setup_read_view(value: &Value) -> bool {
+    if !exact_fields(value, &["configRevision", "selectedProfileId", "profiles"])
+        || !setup_id(&value["configRevision"])
+        || !(value["selectedProfileId"].is_null() || setup_id(&value["selectedProfileId"]))
+    {
+        return false;
+    }
+    let Some(profiles) = value["profiles"].as_array() else {
+        return false;
+    };
+    let mut seen = std::collections::HashSet::new();
+    profiles.iter().all(|profile| {
+        exact_fields(
+            profile,
+            &[
+                "profileId",
+                "profileRevision",
+                "apiFamily",
+                "modelId",
+                "endpointOrigin",
+                "credential",
+            ],
+        ) && setup_id(&profile["profileId"])
+            && setup_id(&profile["profileRevision"])
+            && seen.insert(profile["profileId"].as_str().unwrap())
+            && matches!(
+                profile["apiFamily"].as_str(),
+                Some("openai-completions" | "openai-responses")
+            )
+            && matches!(
+                profile["credential"].as_str(),
+                Some("configured" | "missing")
+            )
+            && profile["modelId"].as_str().is_some_and(|model| {
+                !model.is_empty()
+                    && model.len() <= 256
+                    && !model.chars().any(|c| c.is_whitespace() || c.is_control())
+            })
+            && profile["endpointOrigin"].as_str().is_some_and(|origin| {
+                origin.len() <= 2048
+                    && tauri::Url::parse(origin).is_ok_and(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            && url.host_str().is_some()
+                            && url.origin().ascii_serialization() == origin
+                    })
+            })
+    }) && (value["selectedProfileId"].is_null()
+        || profiles
+            .iter()
+            .any(|profile| profile["profileId"] == value["selectedProfileId"]))
 }
 
 fn setup_id(value: &Value) -> bool {
@@ -1116,6 +1173,10 @@ pub async fn send(
     let result = if setup && op == "provider.configure" {
         let setup_payload = payload.get_mut("payload").unwrap().take();
         configure_provider(setup_payload, |method, params| state.call(method, params))
+    } else if setup && op == "setup.read" {
+        state.call_with_response("send", payload, |reply| {
+            reply["ok"] != true || valid_setup_read_view(&reply["value"])
+        })
     } else {
         state.call("send", payload)
     };
@@ -2323,6 +2384,49 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
             invalid[key] = value;
             assert!(!valid_setup("metadata", &invalid));
         }
+    }
+
+    #[test]
+    fn setup_read_rejects_authority_and_private_result_fields() {
+        let frame = json!({"frame":"setup", "command":"setup.read", "requestId":"read1", "payload":{"requestId":"read1", "workspaceId":"workspace1"}});
+        assert!(valid_setup("setup.read", &frame));
+        for field in ["path", "credentialRef", "sessionId", "extra"] {
+            let mut invalid = frame.clone();
+            invalid["payload"][field] = json!("untrusted");
+            assert!(!valid_setup("setup.read", &invalid));
+        }
+        let mut mismatched = frame.clone();
+        mismatched["payload"]["requestId"] = json!("other");
+        assert!(!valid_setup("setup.read", &mismatched));
+        let view = json!({"configRevision":"cfg-0", "selectedProfileId":"profile1", "profiles":[{"profileId":"profile1","profileRevision":"p1","apiFamily":"openai-completions","modelId":"org/model","endpointOrigin":"https://example.test","credential":"configured"}]});
+        assert!(valid_setup_read_view(&view));
+        for field in ["credentialRef", "path", "extra"] {
+            let mut invalid = view.clone();
+            invalid["profiles"][0][field] = json!("private");
+            assert!(!valid_setup_read_view(&invalid));
+        }
+        for origin in [
+            "https://example.test/",
+            "https://user@example.test",
+            "https://example.test/path",
+            "https://example.test?q=private",
+        ] {
+            let mut invalid = view.clone();
+            invalid["profiles"][0]["endpointOrigin"] = json!(origin);
+            assert!(!valid_setup_read_view(&invalid));
+        }
+        let mut duplicate = view.clone();
+        duplicate["profiles"]
+            .as_array_mut()
+            .unwrap()
+            .push(view["profiles"][0].clone());
+        assert!(!valid_setup_read_view(&duplicate));
+        let mut unknown = view.clone();
+        unknown["selectedProfileId"] = json!("unknown");
+        assert!(!valid_setup_read_view(&unknown));
+        assert!(valid_setup_read_view(
+            &json!({"configRevision":"cfg-0","selectedProfileId":null,"profiles":[]})
+        ));
     }
 
     #[test]

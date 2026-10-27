@@ -241,11 +241,9 @@ describe("App wiring", () => {
     flushSync();
     const providers = q("[data-testid=providers-view]")!;
     expect(providers).not.toBeNull();
-    // No engine: the setup form is disabled with the port reason, not faked.
+    // No engine: the setup form is disabled until it connects.
     expect(button("Save provider").disabled).toBe(true);
-    expect(q("#setup-note")?.textContent).toContain(
-      "engine reports provider setup unavailable",
-    );
+    expect(q("#setup-note")?.textContent).toContain("engine is not connected");
     expect(
       providers.querySelector<HTMLFieldSetElement>("fieldset.custom")!.disabled,
     ).toBe(true);
@@ -396,7 +394,12 @@ describe("App wiring", () => {
     expect(q("#composer-status")?.textContent).toBe(
       "No profile is selected. Use a configured profile first.",
     );
-    expect(ipc.invoke.mock.calls.filter(([c]) => c === "send")).toHaveLength(0);
+    expect(
+      ipc.invoke.mock.calls.filter(
+        ([c, a]) =>
+          c === "send" && (a as { op: string }).op === "session.prompt",
+      ),
+    ).toHaveLength(0);
   });
 
   it("updates generation readiness dynamically without reconnect, clears ports on late exit, and preserves draft", async () => {
@@ -716,8 +719,7 @@ describe("App wiring", () => {
     const setupSends = () =>
       ipc.invoke.mock.calls.filter(
         ([c, a]) =>
-          c === "send" &&
-          (a as { payload: { frame?: string } }).payload.frame === "setup",
+          c === "send" && (a as { op: string }).op === "provider.configure",
       );
 
     it("requires a chosen project before the form can send", async () => {

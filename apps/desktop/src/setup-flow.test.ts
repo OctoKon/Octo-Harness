@@ -56,11 +56,13 @@ beforeEach(() => {
   window.innerWidth = 1400;
   selectedWorkspace = "ws_1";
   reply = async (op) =>
-    op === "provider.configure"
-      ? profile
-      : op === "profile.select"
-        ? selection
-        : session;
+    op === "setup.read"
+      ? { configRevision: "cfg_0", selectedProfileId: null, profiles: [] }
+      : op === "provider.configure"
+        ? profile
+        : op === "profile.select"
+          ? selection
+          : session;
   ipc.invoke.mockReset();
   ipc.invoke.mockImplementation(async (cmd, args) => {
     if (cmd === "handshake")
@@ -122,6 +124,262 @@ async function configured() {
 }
 
 describe("native profile and session setup", () => {
+  it("recovers profiles with provider port unavailable and blocks generation", async () => {
+    const initial = ipc.invoke.getMockImplementation()!;
+    ipc.invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "handshake") {
+        const result = (await initial(cmd, args)) as any;
+        result.readiness.ports.provider = false;
+        return result;
+      }
+      return initial(cmd, args);
+    });
+    reply = async (op) =>
+      op === "setup.read"
+        ? {
+            configRevision: "cfg_2",
+            selectedProfileId: "profile_1",
+            profiles: [
+              {
+                profileId: "profile_1",
+                profileRevision: "pr_2",
+                apiFamily: "openai-responses",
+                modelId: "model_1",
+                endpointOrigin: "https://example.test",
+                credential: "configured",
+              },
+              {
+                profileId: "profile_2",
+                profileRevision: "pr_3",
+                apiFamily: "openai-responses",
+                modelId: "model_2",
+                endpointOrigin: "https://example.test",
+                credential: "missing",
+              },
+            ],
+          }
+        : op === "profile.select"
+          ? selection
+          : session;
+    app = mount(App, { target: document.body });
+    await tick();
+    button("Choose project").click();
+    await tick();
+    button("Providers").click();
+    flushSync();
+    const read = sends("setup.read")[0]![1];
+    expect(read.payload).toEqual({
+      frame: "setup",
+      command: "setup.read",
+      requestId: read.payload.requestId,
+      payload: { requestId: read.payload.requestId, workspaceId: "ws_1" },
+    });
+    expect(document.body.textContent).toContain("profile_1 (selected)");
+    expect(document.body.textContent).toContain("missing");
+    const profileButtons = [...document.querySelectorAll("button")].filter(
+      (b) => b.textContent?.trim() === "Use this profile",
+    );
+    expect(profileButtons[0]!.disabled).toBe(false);
+    expect(profileButtons[1]!.disabled).toBe(true);
+    profileButtons[0]!.click();
+    await tick();
+    expect(sends("profile.select")).toHaveLength(1);
+    expect(sends("session.start")).toHaveLength(1);
+    expect(
+      (document.getElementById("setup-key") as HTMLInputElement).disabled,
+    ).toBe(false);
+    expect(button("Send").disabled).toBe(true);
+  });
+
+  it("refreshes native ports after a ready session while the unwired Send remains blocked", async () => {
+    const initial = ipc.invoke.getMockImplementation()!;
+    let handshakes = 0;
+    ipc.invoke.mockImplementation(async (cmd, args) => {
+      const result = await initial(cmd, args);
+      if (cmd === "handshake") {
+        handshakes++;
+        (result as any).readiness.ports.provider = handshakes > 1;
+        (result as any).readiness.ports.generation = handshakes > 1;
+      }
+      return result;
+    });
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    const input = document.querySelector("textarea")!;
+    input.value = "draft";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    expect(handshakes).toBe(2);
+    expect(get(selectedSession)).toEqual({
+      sessionId: "session_1",
+      scopeId: "ws_1",
+    });
+    expect(
+      ipc.invoke.mock.calls.some(
+        ([cmd, args]) => cmd === "subscribe" && args.sessionId === "session_1",
+      ),
+    ).toBe(true);
+    expect(document.getElementById("composer-status")?.textContent).toContain(
+      "Sending is not available yet",
+    );
+    expect(button("Send").disabled).toBe(true);
+  });
+
+  it("preserves the selected profile when the readiness refresh fails", async () => {
+    const initial = ipc.invoke.getMockImplementation()!;
+    let handshakes = 0;
+    ipc.invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "handshake" && ++handshakes === 2)
+        throw new Error("private native error");
+      return initial(cmd, args);
+    });
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    expect(document.body.textContent).toContain("profile_1 (selected)");
+    expect(document.getElementById("profile-status")?.textContent).toContain(
+      "could not be confirmed",
+    );
+    expect(document.body.textContent).not.toContain("private native error");
+    expect(button("Send").disabled).toBe(true);
+  });
+
+  it("does not use a late readiness refresh after changing project", async () => {
+    const initial = ipc.invoke.getMockImplementation()!;
+    let handshakes = 0;
+    let resolve!: (value: unknown) => void;
+    ipc.invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "handshake" && ++handshakes === 2)
+        return new Promise((r) => {
+          resolve = r;
+        });
+      return initial(cmd, args);
+    });
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    selectedWorkspace = "ws_2";
+    button("Choose project").click();
+    await tick();
+    resolve(await initial("handshake", {}));
+    await tick();
+    expect(button("Send").disabled).toBe(true);
+  });
+
+  it("reloads saved profiles after reconnect without restoring session readiness", async () => {
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    const lifecycle = ipc.invoke.mock.calls
+      .filter(([cmd]) => cmd === "handshake")
+      .at(-1)![1].onLifecycle;
+    lifecycle.onmessage({
+      protocolVersion: 2,
+      kind: "engine_exited",
+      expected: false,
+      exitCode: 1,
+      cleanupComplete: true,
+    });
+    await tick();
+    button("Conversation").click();
+    flushSync();
+    button("Retry").click();
+    await tick();
+    expect(sends("setup.read")).toHaveLength(2);
+    expect(button("Send").disabled).toBe(true);
+  });
+
+  it("discards a delayed setup read after project change", async () => {
+    let resolve!: (value: unknown) => void;
+    reply = async (op) =>
+      op === "setup.read"
+        ? new Promise((r) => {
+            resolve = r;
+          })
+        : session;
+    app = mount(App, { target: document.body });
+    await tick();
+    button("Choose project").click();
+    await tick();
+    const oldResolve = resolve;
+    selectedWorkspace = "ws_2";
+    button("Choose project").click();
+    await tick();
+    oldResolve({
+      configRevision: "cfg_2",
+      selectedProfileId: null,
+      profiles: [
+        {
+          profileId: "old_profile",
+          profileRevision: "pr_2",
+          apiFamily: "openai-responses",
+          modelId: "model_1",
+          endpointOrigin: "https://example.test",
+          credential: "configured",
+        },
+      ],
+    });
+    await tick();
+    button("Providers").click();
+    flushSync();
+    expect(document.body.textContent).not.toContain("old_profile");
+  });
+
+  it.each([
+    {
+      configRevision: "cfg_2",
+      selectedProfileId: null,
+      profiles: [],
+      extra: "secret",
+    },
+    {
+      configRevision: "cfg_2",
+      selectedProfileId: null,
+      profiles: [
+        {
+          profileId: "profile_1",
+          profileRevision: "pr_2",
+          apiFamily: "openai-responses",
+          modelId: "model_1",
+          endpointOrigin: "https://example.test/path",
+          credential: "configured",
+        },
+      ],
+    },
+    {
+      configRevision: "cfg_2",
+      selectedProfileId: null,
+      profiles: [
+        {
+          profileId: "profile_1",
+          profileRevision: "pr_2",
+          apiFamily: "openai-responses",
+          modelId: "model_1",
+          endpointOrigin: "https://example.test",
+          credential: "configured",
+          credentialRef: "secret",
+        },
+      ],
+    },
+  ])(
+    "rejects malformed setup reads without exposing metadata",
+    async (invalid) => {
+      reply = async () => invalid;
+      app = mount(App, { target: document.body });
+      await tick();
+      button("Choose project").click();
+      await tick();
+      button("Providers").click();
+      flushSync();
+      expect(document.getElementById("profile-status")?.textContent).toContain(
+        "could not be loaded",
+      );
+      expect(document.body.textContent).not.toContain("secret");
+      expect(button("Send").disabled).toBe(true);
+    },
+  );
+
   it("provider save alone keeps Send disabled; selecting sends both exact frozen setup frames", async () => {
     await configured();
     expect(button("Send").disabled).toBe(true);

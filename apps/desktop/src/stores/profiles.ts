@@ -4,6 +4,10 @@ export interface ConfiguredProfile {
   readonly profileId: string;
   readonly profileRevision: string;
   readonly configRevision: string;
+  readonly apiFamily?: ApiFamily;
+  readonly modelId?: string;
+  readonly endpointOrigin?: string;
+  readonly credential?: "configured" | "missing";
 }
 
 export interface ProfileSelectionResult {
@@ -67,6 +71,69 @@ export function configuredProfileResult(raw: unknown): ConfiguredProfile {
     profileId: setupOpaque(value.profileId),
     profileRevision: setupOpaque(value.profileRevision),
     configRevision: setupOpaque(value.configRevision),
+  };
+}
+
+export function validateSetupReadResult(raw: unknown): {
+  profiles: ConfiguredProfile[];
+  selection: ProfileSelectionResult | null;
+} {
+  const value = setupRecord(raw);
+  setupFields(value, ["configRevision", "selectedProfileId", "profiles"]);
+  const configRevision = setupOpaque(value.configRevision);
+  const selectedId =
+    value.selectedProfileId === null
+      ? null
+      : setupOpaque(value.selectedProfileId);
+  if (!Array.isArray(value.profiles)) throw new Error("Invalid setup response");
+  const profiles = value.profiles.map(
+    (rawProfile: unknown): ConfiguredProfile => {
+      const p = setupRecord(rawProfile);
+      setupFields(p, [
+        "profileId",
+        "profileRevision",
+        "apiFamily",
+        "modelId",
+        "endpointOrigin",
+        "credential",
+      ]);
+      if (
+        (p.apiFamily !== "openai-completions" &&
+          p.apiFamily !== "openai-responses") ||
+        (p.credential !== "configured" && p.credential !== "missing") ||
+        typeof p.modelId !== "string" ||
+        p.modelId.length === 0 ||
+        p.modelId.length > 256 ||
+        /[\s\u0000-\u001f\u007f-\u009f\p{Cf}]/u.test(p.modelId) ||
+        typeof p.endpointOrigin !== "string" ||
+        endpointOrigin(p.endpointOrigin) !== p.endpointOrigin
+      )
+        throw new Error("Invalid setup response");
+      return {
+        profileId: setupOpaque(p.profileId),
+        profileRevision: setupOpaque(p.profileRevision),
+        configRevision,
+        apiFamily: p.apiFamily,
+        modelId: p.modelId,
+        endpointOrigin: p.endpointOrigin,
+        credential: p.credential,
+      };
+    },
+  );
+  if (new Set(profiles.map((p) => p.profileId)).size !== profiles.length)
+    throw new Error("Invalid setup response");
+  const selected = profiles.find((p) => p.profileId === selectedId);
+  if (selectedId !== null && !selected)
+    throw new Error("Invalid setup response");
+  return {
+    profiles,
+    selection: selected
+      ? {
+          selectedProfileId: selected.profileId,
+          profileRevision: selected.profileRevision,
+          configRevision,
+        }
+      : null,
   };
 }
 
