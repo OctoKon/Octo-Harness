@@ -2,7 +2,8 @@
 // (built pi-agent-core), owned by a native Splyce owner, admitted through
 // NativePolicy against a real Store, with real Pi tools on real files. Only the
 // provider stream is a fixture; worktrees are the real @splyce/index
-// WorktreeManager on a real temp repo; once-grants use an in-memory port.
+// WorktreeManager on a real temp repo; grants are real Store grants on a real
+// admitted workspace (TD-13), identity from the in-memory native port fixture.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -26,7 +27,7 @@ import {
 import { WorktreeManager } from "../../packages/splyce-index/dist/worktrees.js";
 import { RevisionFence } from "../../packages/splyce-pi/dist/admission.js";
 import { AdmissionError } from "../../packages/splyce-pi/dist/policy.js";
-import { Store } from "../../packages/splyce-pi/dist/store.js";
+import { Store, StoreError } from "../../packages/splyce-pi/dist/store.js";
 import {
   type SpawnResult,
   SubagentError,
@@ -35,6 +36,10 @@ import {
 } from "../../packages/splyce-pi/dist/subagents.js";
 import { childToolFactories } from "../../packages/splyce-pi/src/subagent-tools.mjs";
 import { createSplyceOwner } from "../../vendor/pi/packages/agent/dist/splyce-readiness.js";
+import {
+  IDENTITY,
+  MemoryWorkspaceIdentity,
+} from "../fixtures/native-grants.mjs";
 
 const records = JSON.parse(
   readFileSync(
@@ -43,13 +48,7 @@ const records = JSON.parse(
   ),
 );
 const SECRET = "sk-fixture-SECRET-0123456789";
-const GRANTS = {
-  "fs.read": "g-read",
-  "code.index": "g-code",
-  "fs.write": "g-write",
-  "shell.run": "g-shell",
-} as const;
-
+const CAPS = ["fs.read", "code.index", "fs.write", "shell.run"] as const;
 type Msg = Record<string, unknown>;
 type Step = (input: {
   task: string;
@@ -105,45 +104,19 @@ const until = (signal: AbortSignal, gate?: Promise<unknown>) =>
     gate?.then(() => done("open"));
   });
 
-/**
- * In-memory once-grant port (td13-grants-store consumeOnceGrant is not on this
- * base): an approved grant is bound to one {actionId, argumentsDigest} and
- * consumed atomically on first use.
- */
-function onceGrants() {
-  const approved = new Map<
-    string,
-    { actionId: string; argumentsDigest: string }
-  >();
-  return {
-    approve(
-      grantId: string,
-      act: { actionId: string; argumentsDigest: string },
-    ) {
-      approved.set(grantId, { ...act });
-    },
-    consume(
-      grantId: string,
-      act: { actionId: string; argumentsDigest: string },
-    ) {
-      const bound = approved.get(grantId);
-      if (
-        !bound ||
-        bound.actionId !== act.actionId ||
-        bound.argumentsDigest !== act.argumentsDigest
-      )
-        throw new Error("GRANT_DENIED");
-      approved.delete(grantId);
-    },
-  };
-}
-
-function harness(
+type Store_ = ReturnType<typeof Store.open>;
+async function harness(
   t: { after: (fn: () => void | Promise<void>) => void },
   steps: Step,
   options: {
     limits?: Record<string, number>;
-    parentGrants?: Partial<Record<keyof typeof GRANTS, string>>;
+    tools?: Record<string, unknown>;
+    /** Runs before SubagentSupervisor.start (state a crashed run left). */
+    beforeStart?: (ctx: {
+      store: Store_;
+      workspaceId: string;
+      worktrees: InstanceType<typeof WorktreeManager>;
+    }) => void | Promise<void>;
   } = {},
 ) {
   const dir = realpathSync.native(
@@ -184,22 +157,48 @@ function harness(
     policyRevision: "policy1",
     resolveReference: () => true,
   };
-  const grants = options.parentGrants ?? GRANTS;
+  const { workspaceId } = store.admitWorkspace(
+    { canonicalPath: workspace, ...IDENTITY },
+    caller,
+  );
+  store.append(
+    {
+      kind: "branchAnchor",
+      record: {
+        ...records.branchAnchor,
+        scopeId: workspaceId,
+        piSessionId: "s1",
+        parentAnchorId: null,
+        forkPointEntryId: null,
+        activeLeafEntryId: null,
+      },
+    },
+    caller,
+  );
+  const identity = new MemoryWorkspaceIdentity();
+  identity.set(workspaceId, IDENTITY);
+  // Children only ever read the admitted workspace: one session fs.read grant.
+  const read = store.mintGrant(
+    { workspaceId, sessionId: "s1", capability: "fs.read", scope: "session" },
+    caller,
+  ).grantId;
+  const grants = Object.fromEntries(CAPS.map((c) => [c, read]));
   const run = {
     ...records.run,
     recordId: "rec-run",
-    grantIds: Object.values(grants),
+    workspaceId,
+    grantIds: [read],
   };
   delete run.optionalNote;
   store.append({ kind: "run", record: run }, caller);
-  const ownership = store.acquireWorkspace("w-demo", "s1");
+  const ownership = store.acquireWorkspace(workspaceId, "s1");
   const fence = new RevisionFence(
     { effectiveRevision: (scope: string) => store.configRevision(scope) },
     {
       scopeId: "w-demo",
       profileRevision: "profile1",
       policyRevision: "policy1",
-      grantIds: Object.values(grants),
+      grantIds: [read],
     },
   );
   const owner = createSplyceOwner(() => {});
@@ -249,15 +248,15 @@ function harness(
     return stream;
   };
   const parentAbort = new AbortController();
-  const grantsPort = onceGrants();
   let supervisorRef: SubagentSupervisor | undefined;
   const worktrees = new WorktreeManager({
     cacheDir: join(dir, "worktrees"),
     workspaces: {
       workspace: (id: string) =>
-        id === "w-demo" ? { canonicalPath: workspace } : undefined,
+        id === workspaceId ? { canonicalPath: workspace } : undefined,
     },
-    consumeGrant: (grantId, act) => grantsPort.consume(grantId, act),
+    consumeGrant: (grantId, act) =>
+      supervisorRef!.confirmApplyGrant(grantId, act),
     isChildLive: (childId) => supervisorRef?.isChildLive(childId) ?? false,
     maxPerWorkspace: 8,
   });
@@ -268,15 +267,17 @@ function harness(
       cacheDir: join(dir, "cache"),
     });
   })();
-  const supervisor = new SubagentSupervisor({
+  await options.beforeStart?.({ store, workspaceId, worktrees });
+  const supervisor = await SubagentSupervisor.start({
     store,
     caller,
     fence,
+    identity,
     parent: {
       runId: "r1",
       runRecordId: "rec-run",
       scopeId: "w-demo",
-      workspaceId: "w-demo",
+      workspaceId,
       workspaceRoot: workspace,
       baseRevision: "A",
       ownership,
@@ -287,18 +288,21 @@ function harness(
     pi: { Agent, bindSplyceToolAdmission },
     model,
     streamFn,
-    tools: childToolFactories({ codeTools: () => codeIndexTools(index!) }),
+    tools: {
+      ...childToolFactories({ codeTools: () => codeIndexTools(index!) }),
+      ...options.tools,
+    },
     worktrees,
     redact: (value: string) => value.replaceAll(SECRET, "[redacted]"),
     ...(options.limits ? { limits: options.limits } : {}),
   });
   supervisorRef = supervisor;
-  const live = () => worktrees.list("w-demo").length;
+  const live = () => worktrees.list(workspaceId).length;
   t.after(async () => {
     parentAbort.abort();
     owner.dispose();
     store.close();
-    for (const w of worktrees.list("w-demo"))
+    for (const w of worktrees.list(workspaceId))
       await worktrees.discard(w.worktreeId);
     rmSync(dir, {
       recursive: true,
@@ -321,16 +325,48 @@ function harness(
       .list("w-demo")
       .records.filter(({ kind }) => kind === "action")
       .map(({ record }) => record as Record<string, unknown>);
+  /** The user approves exactly this act: an fs.write once grant on the run and live fence. */
+  const approve = (act: { actionId: string; argumentsDigest: string }) => {
+    const grantId = store.mintGrant(
+      {
+        workspaceId,
+        sessionId: "s1",
+        capability: "fs.write",
+        scope: "once",
+        actionId: act.actionId,
+        argumentsDigest: act.argumentsDigest,
+      },
+      caller,
+    ).grantId;
+    const latest = store
+      .list("w-demo")
+      .records.filter(({ kind }) => kind === "run")
+      .at(-1)!.record as Record<string, unknown>;
+    store.append(
+      {
+        kind: "run",
+        record: {
+          ...latest,
+          recordId: `rec-run-${grantId}`,
+          grantIds: [...(latest.grantIds as string[]), grantId],
+        },
+      },
+      caller,
+    );
+    fence.grantAdded(grantId);
+    return grantId;
+  };
   return {
     dir,
     workspace,
+    workspaceId,
     outside,
     store,
     fence,
     supervisor,
     parentAbort,
     worktrees,
-    grantsPort,
+    approve,
     live,
     events,
     kinds,
@@ -347,7 +383,7 @@ function harness(
 }
 
 test("read child cites code index and read results through admitted Pi tools; events replay", async (t) => {
-  const h = harness(
+  const h = await harness(
     t,
     ({ turn }) =>
       [
@@ -386,12 +422,32 @@ test("read child cites code index and read results through admitted Pi tools; ev
   assert.ok(!replayed.includes(SECRET), "child events must be redacted");
   assert.ok(replayed.includes("[redacted]"));
   assert.ok(!r.summary.includes(SECRET));
-  // Replay survives reopen (durable ledger, not memory).
-  assert.ok(h.events().some((e) => e.kind === "child.completed"));
+  // Published child.* contract (store-validated on commit, replayed as-is).
+  const progress = h
+    .events()
+    .filter((e) => e.kind.startsWith("child."))
+    .map((e) => e.payload as Record<string, unknown>);
+  assert.deepEqual(
+    progress.map((p) => [p.status, (p.budget as { used: number }).used]),
+    [
+      ["running", 0],
+      ["running", 10],
+      ["running", 20],
+      ["running", 30],
+      ["completed", 30],
+    ],
+  );
+  const completed = progress.at(-1)!;
+  assert.equal(completed.parentRunId, "r1");
+  assert.equal(completed.childId, r.childId);
+  assert.deepEqual(completed.budget, { used: 30, limit: 200_000 });
+  assert.deepEqual(completed.citations, r.citations);
+  assert.equal(completed.summary, r.summary);
+  assert.equal("diff" in completed, false, "read children have no diff");
 });
 
 test("read child is denied write and shell tools even though the parent holds them", async (t) => {
-  const h = harness(t, ({ task }) =>
+  const h = await harness(t, ({ task }) =>
     task.includes("write")
       ? call("write", { path: "src/main.ts", content: "pwned" })
       : call("bash", { command: "echo pwned > src/main.ts" }),
@@ -434,7 +490,7 @@ test("read child is denied write and shell tools even though the parent holds th
 });
 
 test("read child path arguments are confined to the workspace", async (t) => {
-  const h = harness(t, ({ turn }) =>
+  const h = await harness(t, ({ turn }) =>
     turn === 0 ? call("read", { path: "../outside.txt" }) : say("read it"),
   );
   const { results } = await h.spawn({ tasks: [{ prompt: "escape" }] });
@@ -444,7 +500,7 @@ test("read child path arguments are confined to the workspace", async (t) => {
 });
 
 test("turn budget exhaustion fails only that child; parent and sibling continue", async (t) => {
-  const h = harness(t, ({ task, turn }) =>
+  const h = await harness(t, ({ task, turn }) =>
     task.includes("loop")
       ? call("read", { path: "src/main.ts" })
       : turn === 0
@@ -465,7 +521,7 @@ test("turn budget exhaustion fails only that child; parent and sibling continue"
 });
 
 test("token and wall-clock budgets fail with their reason", async (t) => {
-  const h = harness(t, async ({ task, turn, signal }) => {
+  const h = await harness(t, async ({ task, turn, signal }) => {
     if (task.includes("slow")) {
       await until(signal);
       throw new Error("aborted");
@@ -487,7 +543,7 @@ test("token and wall-clock budgets fail with their reason", async (t) => {
 test("parent cancel cascades to running and queued children; child cancel spares parent and sibling", async (t) => {
   let release!: () => void;
   const gate = new Promise<void>((r) => (release = r));
-  const h = harness(t, async ({ task, signal }) => {
+  const h = await harness(t, async ({ task, signal }) => {
     if (task.includes("free")) return say("free done");
     if (
       (await until(signal, task.includes("gated") ? gate : undefined)) ===
@@ -536,7 +592,7 @@ test("parent cancel cascades to running and queued children; child cancel spares
 });
 
 test("default concurrency comes from the user budget and bounds in-flight children", async (t) => {
-  const h = harness(t, async () => {
+  const h = await harness(t, async () => {
     await new Promise((r) => setTimeout(r, 30));
     return say("ok");
   });
@@ -549,7 +605,7 @@ test("default concurrency comes from the user budget and bounds in-flight childr
   );
   assert.equal(h.supervisor.limits.concurrency, 2);
   assert.equal(h.maxInFlight(), 2);
-  const h3 = harness(
+  const h3 = await harness(
     t,
     async () => {
       await new Promise((r) => setTimeout(r, 30));
@@ -565,7 +621,7 @@ test("default concurrency comes from the user budget and bounds in-flight childr
 });
 
 test("dependencies order tasks, pass results forward and fail dependents; team roles prefix prompts", async (t) => {
-  const h = harness(t, ({ task }) =>
+  const h = await harness(t, ({ task }) =>
     task.includes("explode")
       ? call("write", { path: "x", content: "y" })
       : say(`summary of ${task.split("\n")[0]}`),
@@ -583,6 +639,20 @@ test("dependencies order tasks, pass results forward and fail dependents; team r
     ],
   });
   assert.equal(team, "review");
+  // Every child.* event names the team and the task's role.
+  const failedD = h
+    .events()
+    .map((e) => e.payload as Record<string, unknown>)
+    .find((p) => p.childId === results[3]!.childId)!;
+  assert.deepEqual(
+    [failedD.team, failedD.role, failedD.status, failedD.reason],
+    ["review", undefined, "failed", "DEPENDENCY_FAILED"],
+  );
+  const judge = h
+    .events()
+    .map((e) => e.payload as Record<string, unknown>)
+    .find((p) => p.childId === results[0]!.childId)!;
+  assert.deepEqual([judge.team, judge.role], ["review", "judge"]);
   assert.deepEqual(
     results.map((r) => [r.taskId, r.status]),
     [
@@ -611,14 +681,14 @@ test("dependencies order tasks, pass results forward and fail dependents; team r
   );
 });
 
-test("write child edits only its worktree; apply needs a once-grant and lands the change", async (t) => {
-  const h = harness(
+test("write child edits only its worktree; subagent.diff binds the once grant that apply consumes", async (t) => {
+  const h = await harness(
     t,
     ({ turn }) =>
       [
         call("write", {
           path: "src/new.ts",
-          content: "export const added = 1;\n",
+          content: `export const added = 1;\nconst key = "${SECRET}";\n`,
         }),
         call("edit", {
           path: "src/helper.ts",
@@ -646,78 +716,158 @@ test("write child edits only its worktree; apply needs a once-grant and lands th
     readFileSync(join(h.workspace, "src", "helper.ts"), "utf8"),
     /return 42/u,
   );
+  // Published child.* contract: the completed event carries the pending diff.
   const completed = h.events().find((e) => e.kind === "child.completed")!;
-  assert.deepEqual((completed.payload as { files: string[] }).files.sort(), [
-    "added src/new.ts",
-    "modified src/helper.ts",
+  const payload = completed.payload as {
+    diff: { files: { path: string; status: string }[] };
+  };
+  assert.deepEqual(
+    payload.diff.files.map((f) => `${f.status} ${f.path}`).sort(),
+    ["added src/new.ts", "modified src/helper.ts"],
+  );
+  assert.deepEqual(Object.keys(completed.payload as object).sort(), [
+    "budget",
+    "childId",
+    "citations",
+    "diff",
+    "parentRunId",
+    "status",
+    "summary",
   ]);
-  // Writes were receipted under the parent's write grant without an approval.
+  // Worktree writes are receipted under the parent's session read grant.
   assert.ok(
     h
       .actions()
       .some((a) => a.capabilityId === "fs.write" && a.state === "completed"),
   );
 
-  // No approval yet: the once-grant is not in current authority → denied, nothing applied.
+  // subagent.diff: strict request, redacted bounded display copy, apply act.
   await assert.rejects(
-    h.supervisor.apply(r.childId, { grantId: "g-apply-once" }),
+    h.supervisor.diff({ childId: r.childId, extra: 1 }),
+    (e: unknown) => e instanceof SubagentError && e.code === "INVALID_ARGUMENT",
+  );
+  const diff = await h.supervisor.diff({ childId: r.childId });
+  assert.equal(diff.childId, r.childId);
+  assert.equal(diff.actionId, `worktree.apply:${diff.worktreeId}`);
+  assert.deepEqual(diff.files, r.files);
+  assert.equal(diff.truncated, false);
+  assert.ok(diff.patch.includes("+export const added = 1;"), diff.patch);
+  assert.ok(!diff.patch.includes(SECRET), "secret-shaped strings are redacted");
+  assert.ok(diff.patch.includes("[REDACTED]"));
+  assert.ok(diff.bytes > Buffer.byteLength(diff.patch) - 1);
+
+  // Not approved yet: refused before any receipt, nothing applied, retry stays possible.
+  await assert.rejects(
+    h.supervisor.apply(r.childId, { grantId: "g-unapproved" }),
     (e: unknown) => e instanceof AdmissionError && e.code === "POLICY_DENIED",
   );
+  // A grant approved for another patch does not apply this one.
+  const wrong = h.approve({
+    actionId: diff.actionId,
+    argumentsDigest: `sha256:${"0".repeat(64)}`,
+  });
+  await assert.rejects(
+    h.supervisor.apply(r.childId, { grantId: wrong }),
+    (e: unknown) => e instanceof StoreError && e.code === "GRANT_MISMATCH",
+  );
   assert.equal(existsSync(join(h.workspace, "src", "new.ts")), false);
-  assert.ok(
-    h
-      .actions()
-      .some((a) => a.capabilityId === "subagent.apply" && a.state === "denied"),
+  assert.equal(
+    h.actions().filter((a) => a.capabilityId === "worktree.apply").length,
+    0,
   );
 
-  // Approval: the host adds the once-grant to the run and the live fence.
-  const latest = h.store
-    .list("w-demo")
-    .records.filter(({ kind }) => kind === "run")
-    .at(-1)!.record as Record<string, unknown>;
-  h.store.append(
-    {
-      kind: "run",
-      record: {
-        ...latest,
-        recordId: "rec-run-approved",
-        grantIds: [...(latest.grantIds as string[]), "g-apply-once"],
-      },
-    },
-    {
-      sessionId: "s1",
-      configRevision: "cfg-0",
-      profileRevision: "profile1",
-      policyRevision: "policy1",
-      resolveReference: () => true,
-    },
-  );
-  h.fence.grantAdded("g-apply-once");
-  // The user approved exactly this patch: the once-grant binds to its act.
-  const review = await h.supervisor.review(r.childId);
-  assert.deepEqual(review.files, r.files);
-  h.grantsPort.approve("g-apply-once", review);
-  const applied = await h.supervisor.apply(r.childId, {
-    grantId: "g-apply-once",
-  });
+  const grantId = h.approve(diff);
+  const applied = await h.supervisor.apply(r.childId, { grantId });
   assert.equal(applied.applied, true);
-  assert.equal(
+  assert.match(
     readFileSync(join(h.workspace, "src", "new.ts"), "utf8"),
-    "export const added = 1;\n",
+    /^export const added = 1;\n/u,
   );
   assert.match(
     readFileSync(join(h.workspace, "src", "helper.ts"), "utf8"),
     /return 43/u,
   );
+  assert.deepEqual(
+    h
+      .actions()
+      .filter((a) => a.capabilityId === "worktree.apply")
+      .map((a) => a.state),
+    ["proposed", "approved", "running", "completed"],
+  );
   assert.equal(
-    h.fence.current().grantIds.includes("g-apply-once"),
+    h.fence.current().grantIds.includes(grantId),
     false,
-    "once-grant is consumed",
+    "once-grant leaves live authority",
   );
   assert.equal(h.live(), 0, "applied worktree is removed");
   await assert.rejects(
-    h.supervisor.apply(r.childId, { grantId: "g-apply-once" }),
+    h.supervisor.apply(r.childId, { grantId }),
     SubagentError,
+  );
+});
+
+test("subagent.diff truncates large patches; subagent.discard drops the worktree", async (t) => {
+  const big = "x".repeat(300_000);
+  const h = await harness(t, ({ turn }) =>
+    turn === 0
+      ? call("write", { path: "big.txt", content: `${big}\n` })
+      : say("wrote big.txt"),
+  );
+  const { results } = await h.spawn({
+    tasks: [{ prompt: "big", mode: "write" }],
+  });
+  const childId = results[0]!.childId;
+  const diff = await h.supervisor.diff({ childId });
+  assert.equal(diff.truncated, true);
+  assert.ok(Buffer.byteLength(diff.patch) <= 262_144);
+  assert.ok(diff.bytes > 300_000);
+  assert.equal(h.live(), 1);
+  await h.supervisor.discard({ childId });
+  assert.equal(h.live(), 0);
+  await assert.rejects(
+    h.supervisor.diff({ childId }),
+    (e: unknown) =>
+      e instanceof SubagentError && e.code === "CHILD_NOT_APPLICABLE",
+  );
+});
+
+test("write child cannot change a parent-workspace file before apply: no shell, fs confined to the worktree", async (t) => {
+  const target = (workspace: string) => join(workspace, "src", "main.ts");
+  let parentFile = "";
+  const h = await harness(t, ({ task, turn }) => {
+    if (turn > 0) return say("done");
+    if (task.includes("shell"))
+      return call("bash", {
+        command: `node -e "require('fs').writeFileSync(process.argv[1], 'pwned')" "${parentFile}"`,
+      });
+    if (task.includes("absolute"))
+      return call("write", { path: parentFile, content: "pwned" });
+    return call("edit", {
+      path: "../../../../workspace/src/main.ts",
+      edits: [{ oldText: "helper()", newText: "pwned()" }],
+    });
+  });
+  parentFile = target(h.workspace);
+  const before = readFileSync(parentFile, "utf8");
+  const { results } = await h.spawn({
+    tasks: [
+      { prompt: "shell", mode: "write" },
+      { prompt: "absolute", mode: "write" },
+      { prompt: "relative", mode: "write" },
+    ],
+  });
+  assert.deepEqual(
+    results.map((r) => (r.status === "failed" ? r.reason : r.status)),
+    ["CAPABILITY_DENIED", "PATH_OUTSIDE_WORKSPACE", "PATH_OUTSIDE_WORKSPACE"],
+  );
+  assert.equal(readFileSync(parentFile, "utf8"), before);
+  assert.equal(h.live(), 0, "failed write children leave no worktree");
+  await assert.rejects(
+    h.spawn({
+      tasks: [{ prompt: "x", mode: "write", capabilities: ["shell.run"] }],
+    }),
+    (e: unknown) =>
+      e instanceof SubagentError && e.code === "CAPABILITY_DENIED",
   );
 });
 
@@ -726,7 +876,7 @@ test("two write children claiming one path: the second gets FILE_CLAIM_CONFLICT;
   const gate = new Promise<void>((r) => (release = r));
   let firstWrote!: () => void;
   const wrote = new Promise<void>((r) => (firstWrote = r));
-  const h = harness(t, async ({ task, turn, signal }) => {
+  const h = await harness(t, async ({ task, turn, signal }) => {
     if (task.includes("first")) {
       if (turn === 0)
         return call("write", { path: "src/shared.ts", content: "first\n" });
@@ -770,63 +920,103 @@ test("two write children claiming one path: the second gets FILE_CLAIM_CONFLICT;
   h.supervisor.claim("later-child", "src/shared.ts");
 });
 
-test("parent cancel kills a write child's running shell process tree", async (t) => {
-  const pidFile = join(tmpdir(), `splyce-e1-pid-${process.pid}-${Date.now()}`);
-  const script = `require('fs').writeFileSync(${JSON.stringify(pidFile.replaceAll("\\", "/"))}, String(process.pid)); setInterval(() => {}, 1000);`;
-  const h = harness(t, ({ turn }) =>
-    turn === 0
-      ? call("bash", { command: `node -e "${script.replaceAll('"', '\\"')}"` })
-      : say("never"),
+test("a crashed owner's claim does not block the next writer; start releases stale claims", async (t) => {
+  const claim = (
+    store: ReturnType<typeof Store.open>,
+    workspaceId: string,
+    owner: string,
+  ) =>
+    store.append(
+      {
+        kind: "fileClaim",
+        record: {
+          schemaVersion: 1,
+          recordId: `claim-${owner}`,
+          createdAt: new Date().toISOString(),
+          scopeId: "w-demo",
+          sourceIds: ["rec-run"],
+          workspaceId,
+          path: "src/shared.ts",
+          ownerChildId: owner,
+          revision: "A",
+          releasedAt: null,
+        },
+      },
+      {
+        sessionId: "s1",
+        configRevision: "cfg-0",
+        profileRevision: "profile1",
+        policyRevision: "policy1",
+        resolveReference: () => true,
+      },
+    );
+  const h = await harness(
+    t,
+    ({ turn }) =>
+      turn === 0
+        ? call("write", { path: "src/shared.ts", content: "next\n" })
+        : say("wrote it"),
+    {
+      beforeStart: ({ store, workspaceId }) =>
+        claim(store, workspaceId, "crashed-before-start"),
+    },
   );
-  t.after(() => rmSync(pidFile, { force: true }));
-  const pending = h.spawn({ tasks: [{ prompt: "run it", mode: "write" }] });
-  const deadline = Date.now() + 20_000;
-  while (!existsSync(pidFile) || !readFileSync(pidFile, "utf8")) {
-    assert.ok(Date.now() < deadline, "shell child never started");
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  const pid = Number(readFileSync(pidFile, "utf8"));
-  assert.doesNotThrow(
-    () => process.kill(pid, 0),
-    "shell child is alive before cancel",
+  const heads = () =>
+    h.store
+      .list("w-demo")
+      .records.filter(({ kind }) => kind === "fileClaim")
+      .map(({ record }) => record as Record<string, unknown>);
+  assert.ok(
+    heads().some(
+      (c) => c.ownerChildId === "crashed-before-start" && c.releasedAt !== null,
+    ),
+    "start releases a claim left by a crashed run",
   );
-  h.parentAbort.abort();
-  const { results } = await pending;
-  assert.equal(results[0]!.status, "cancelled");
-  const alive = () => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  const killDeadline = Date.now() + 10_000;
-  while (alive() && Date.now() < killDeadline)
-    await new Promise((r) => setTimeout(r, 50));
-  assert.equal(alive(), false, "cancel must kill the child's shell process");
-  assert.equal(h.live(), 0, "cancelled worktree is discarded");
-});
-
-test("write child shell runs in the worktree with a scrubbed environment", async (t) => {
-  process.env.SPLYCE_E1_CANARY = SECRET;
-  t.after(() => delete process.env.SPLYCE_E1_CANARY);
-  let output = "";
-  const probe =
-    "console.log((process.env.SPLYCE_E1_CANARY || 'absent') + '|' + process.cwd())";
-  const h = harness(t, ({ turn, messages }) => {
-    if (turn === 0) return call("bash", { command: `node -e "${probe}"` });
-    output = text(messages.findLast((m) => m.role === "toolResult")?.content);
-    return say("checked");
-  });
+  // A claim whose owner died after start (no release record) is not live either.
+  claim(h.store, h.workspaceId, "dead-after-start");
   const { results } = await h.spawn({
-    tasks: [{ prompt: "probe env", mode: "write" }],
+    tasks: [{ prompt: "write shared", mode: "write" }],
   });
   assert.equal(results[0]!.status, "completed", JSON.stringify(results[0]));
-  assert.match(output, /^absent\|/u, output);
-  assert.ok(!output.includes(SECRET));
-  assert.ok(
-    output.toLowerCase().includes(join(h.dir, "worktrees").toLowerCase()),
-    `shell cwd must be the child worktree: ${output}`,
+});
+
+test("worktrees never outlive their child: crash, empty result and start-up sweep", async (t) => {
+  let orphan = "";
+  const h = await harness(
+    t,
+    ({ turn }) => (turn === 0 ? say("nothing") : say("x")),
+    {
+      tools: {
+        "code.index": () => {
+          throw new Error("host fault while building child tools");
+        },
+      },
+      beforeStart: async ({ worktrees, workspaceId }) => {
+        orphan = (
+          await worktrees.create({ workspaceId, childId: "dead-child" })
+        ).worktreeId;
+      },
+    },
   );
+  assert.ok(
+    h.supervisor.swept.removed.includes(orphan),
+    "start sweeps orphans",
+  );
+  assert.equal(h.live(), 0);
+  // Completed with no changes: nothing to review, the worktree goes.
+  const { results } = await h.spawn({
+    tasks: [{ prompt: "noop", mode: "write", capabilities: ["fs.write"] }],
+  });
+  assert.equal(results[0]!.status, "completed");
+  assert.equal(h.live(), 0, "an empty write child keeps no worktree");
+  await assert.rejects(
+    h.supervisor.diff({ childId: results[0]!.childId }),
+    SubagentError,
+  );
+  // Host fault after the worktree exists: the fault propagates, the worktree does not survive.
+  await assert.rejects(
+    h.spawn({ tasks: [{ prompt: "crash", mode: "write" }] }),
+    /host fault while building child tools/u,
+  );
+  assert.equal(h.live(), 0, "a crashed write child's worktree is discarded");
 });

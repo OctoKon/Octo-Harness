@@ -11,9 +11,17 @@
 //    ChildAdmission that re-checks the capability, confines `path` arguments
 //    to the child root and hands the action to a per-child NativePolicy (same
 //    receipts as any parent action: proposed/approved/running/outcome).
+//  - Grants: a child never affects the admitted workspace directly, so every
+//    child call is admitted under the parent's session `fs.read` grant (the
+//    receipt's capabilityId still names the child capability). The only
+//    workspace write is apply: an `fs.write` once grant bound to
+//    {actionId: worktree.apply:<worktreeId>, argumentsDigest} (subagent.diff).
 //  - Read mode shares the parent workspace root; write mode runs in an
-//    isolated worktree and claims each written path (fileClaim records).
-//  - Merge-back is a parent action under a once-grant (`apply`).
+//    isolated worktree and claims each written path (fileClaim records). Write
+//    children get no shell: without an OS sandbox a shell could write outside
+//    the worktree before review.
+//  - A claim whose owner is not live is released; start() releases stale
+//    claims and sweeps orphan worktrees left by a crash.
 //  - Status is durable child.* events in the parent session ledger.
 //
 // Unwired slice: no engine generation exists yet (engine-host replies
@@ -26,20 +34,24 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { RevisionFence } from "./admission.js";
 import {
+  CHILD_KIND_STATUS,
+  type ChildEventPayload,
   CONTRACT_VERSION,
-  type EventPayloads,
+  type GrantRecord,
   PROTOCOL_VERSION,
   type RecordByKind,
   type SplyceEventDraft,
   type SUBAGENT_FAILURE_REASONS,
+  type SUBAGENT_FILE_STATUSES,
   SUBAGENT_MODES,
 } from "./contracts.js";
 import {
   AdmissionError,
   actionArgumentsDigest,
   NativePolicy,
+  type WorkspaceIdentityPort,
 } from "./policy.js";
-import type { Redactor } from "./provider-auth.js";
+import { type Redactor, redactSecrets } from "./provider-auth.js";
 import type { CallerContext, Store, WorkspaceOwnership } from "./store.js";
 
 export type SubagentMode = (typeof SUBAGENT_MODES)[number];
@@ -53,12 +65,20 @@ export const CAPABILITIES = [
   "shell.run",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
-/** Read children never get fs.write or shell.run, whatever the parent holds. */
+/**
+ * Read children never get fs.write; no child gets shell.run (it is requestable
+ * only to be denied) until an OS sandbox confines a shell to the worktree.
+ */
 export const MODE_CAPABILITIES: Readonly<
   Record<SubagentMode, readonly Capability[]>
 > = Object.freeze({
   read: Object.freeze(["fs.read", "code.index", "memory.query"] as const),
-  write: CAPABILITIES,
+  write: Object.freeze([
+    "fs.read",
+    "code.index",
+    "memory.query",
+    "fs.write",
+  ] as const),
 });
 
 export class SubagentError extends Error {
@@ -138,7 +158,7 @@ export interface ToolAdmission {
 
 export interface WorktreeFile {
   path: string;
-  status: string;
+  status: (typeof SUBAGENT_FILE_STATUSES)[number];
 }
 /**
  * @splyce/index/worktrees WorktreeManager (structural: splyce-pi does not
@@ -162,6 +182,10 @@ export interface WorktreeManager {
     input: { grantId: string },
   ): Promise<{ applied: true; files: WorktreeFile[] }>;
   discard(worktreeId: string): Promise<void>;
+  sweepOrphans(): Promise<{
+    removed: string[];
+    failed: { worktreeId: string; code: string }[];
+  }>;
 }
 
 /** The user's budget; every per-call value is clamped to it. */
@@ -189,7 +213,10 @@ export interface ParentRun {
   workspaceRoot: string;
   baseRevision: string;
   ownership: WorkspaceOwnership;
-  /** capability → the parent grant that authorizes it. */
+  /**
+   * capability → the parent's session `fs.read` grant that authorizes it (a
+   * child's calls never touch the admitted workspace except through apply).
+   */
   grants: Readonly<Partial<Record<Capability, string>>>;
   /** Parent run cancellation; aborting it cancels every child. */
   signal: AbortSignal;
@@ -213,6 +240,10 @@ export interface SubagentHost {
     Partial<Record<Capability, (root: string) => readonly ChildTool[]>>
   >;
   worktrees?: WorktreeManager;
+  /** Native workspace identity for NativePolicy grant checks. */
+  identity: WorkspaceIdentityPort;
+  /** Liveness of children of other supervisors in this engine (claims). */
+  isChildLive?: (childId: string) => boolean;
   redact: Redactor;
   limits?: Partial<SubagentLimits>;
 }
@@ -252,10 +283,29 @@ export interface SpawnResult {
   team?: string;
   results: ChildResult[];
 }
+/** `subagent.diff` reply: the reviewable patch and the act apply binds to. */
+export interface SubagentDiff {
+  childId: string;
+  worktreeId: string;
+  files: WorktreeFile[];
+  /** Display copy: secret-shaped strings redacted, at most MAX_PATCH_BYTES. */
+  patch: string;
+  truncated: boolean;
+  /** UTF-8 bytes of the full, unredacted patch. */
+  bytes: number;
+  actionId: string;
+  argumentsDigest: string;
+}
 
 const MAX_SUMMARY = 2000;
 const MAX_CITATIONS = 64;
 const MAX_PROMPT = 16_384;
+const MAX_EVENT_FILES = 256;
+export const MAX_PATCH_BYTES = 262_144;
+const APPLY_PREFIX = "worktree.apply:";
+/** The digest an apply once grant binds: the worktree and its exact patch. */
+const applyDigest = (worktreeId: string, patchDigest: string): string =>
+  actionArgumentsDigest({ worktreeId, patchDigest });
 const CHILD_ADMISSION_CODES = new Set<string>([
   "CAPABILITY_DENIED",
   "PATH_OUTSIDE_WORKSPACE",
@@ -370,6 +420,26 @@ export function parseSpawnInput(
   return { tasks, ...(team ? { team } : {}), budget };
 }
 
+/** Identity carried on every child.* event; `limit` is the token budget. */
+interface ChildInfo {
+  childId: string;
+  team?: string;
+  role?: string;
+  limit: number;
+}
+
+/** `{childId}` request arguments (renderer input: a trust boundary). */
+function childIdOf(request: unknown): string {
+  if (
+    !isObject(request) ||
+    Object.keys(request).join() !== "childId" ||
+    typeof request.childId !== "string" ||
+    !request.childId
+  )
+    fail("request must be exactly {childId}");
+  return (request as { childId: string }).childId;
+}
+
 /** Stops are decided once; later causes do not overwrite the first. */
 export interface ChildRun {
   readonly childId: string;
@@ -385,33 +455,104 @@ export class SubagentSupervisor {
   /** Completed write children whose worktree awaits apply or discard. */
   private readonly applicable = new Map<string, string>();
 
-  constructor(host: SubagentHost) {
+  /** What the startup sweep could not remove (a locked worktree); empty when clean. */
+  swept: { removed: string[]; failed: { worktreeId: string; code: string }[] } =
+    { removed: [], failed: [] };
+
+  private constructor(host: SubagentHost) {
     this.host = host;
     this.limits = { ...DEFAULT_SUBAGENT_LIMITS, ...host.limits };
     for (const key of Object.keys(this.limits) as (keyof SubagentLimits)[])
       posInt(this.limits[key], `limits.${key}`);
   }
 
-  /** For WorktreeManager.isChildLive: running, or completed with a pending worktree. */
-  isChildLive(childId: string): boolean {
-    return this.running.has(childId) || this.applicable.has(childId);
+  /**
+   * The only way to build a supervisor: recovers what a crashed one left —
+   * releases claims whose owner is not live and sweeps orphan worktrees.
+   */
+  static async start(host: SubagentHost): Promise<SubagentSupervisor> {
+    const supervisor = new SubagentSupervisor(host);
+    for (const claim of supervisor.claimHeads())
+      if (
+        claim.releasedAt === null &&
+        !supervisor.isChildLive(claim.ownerChildId)
+      )
+        supervisor.release(claim.ownerChildId, claim.path);
+    if (host.worktrees) supervisor.swept = await host.worktrees.sweepOrphans();
+    return supervisor;
   }
 
-  /** What an approval for apply() must bind to: files and the patch act. */
-  async review(childId: string): Promise<{
-    files: WorktreeFile[];
-    actionId: string;
-    argumentsDigest: string;
-  }> {
+  /** For WorktreeManager.isChildLive: running, or completed with a pending worktree. */
+  isChildLive(childId: string): boolean {
+    return (
+      this.running.has(childId) ||
+      this.applicable.has(childId) ||
+      this.host.isChildLive?.(childId) === true
+    );
+  }
+
+  /** `subagent.diff {childId}`: the pending worktree's patch for review. */
+  async diff(request: unknown): Promise<SubagentDiff> {
+    const childId = childIdOf(request);
+    const { worktreeId, worktrees } = this.pendingReview(childId);
+    const diff = await worktrees.diff(worktreeId);
+    const encoder = new TextEncoder();
+    const shown = encoder.encode(this.host.redact(redactSecrets(diff.patch)));
+    const truncated = shown.byteLength > MAX_PATCH_BYTES;
+    return {
+      childId,
+      worktreeId,
+      files: diff.files,
+      patch: truncated
+        ? new TextDecoder()
+            .decode(shown.subarray(0, MAX_PATCH_BYTES))
+            .replace(/�$/u, "")
+        : new TextDecoder().decode(shown),
+      truncated,
+      bytes: encoder.encode(diff.patch).byteLength,
+      actionId: diff.actionId,
+      argumentsDigest: applyDigest(worktreeId, diff.argumentsDigest),
+    };
+  }
+
+  /**
+   * WorktreeManager `consumeGrant` port. apply()'s NativePolicy action already
+   * consumed the once grant with its running receipt; this re-checks it
+   * against the patch WorktreeManager recomputed just before `git apply`, so a
+   * worktree changed after approval is refused.
+   */
+  confirmApplyGrant(
+    grantId: string,
+    act: { actionId: string; argumentsDigest: string },
+  ): void {
+    if (!act.actionId.startsWith(APPLY_PREFIX))
+      throw new AdmissionError("GRANT_MISMATCH");
+    const worktreeId = act.actionId.slice(APPLY_PREFIX.length);
+    this.host.store.checkOnceGrantForActive({
+      grantId,
+      workspaceId: this.host.parent.workspaceId,
+      sessionId: this.host.caller.sessionId,
+      capability: "fs.write",
+      observedIdentity: this.host.identity.observe(
+        this.host.parent.workspaceId,
+      ),
+      actionId: act.actionId,
+      argumentsDigest: applyDigest(worktreeId, act.argumentsDigest),
+    });
+  }
+
+  private pendingReview(childId: string): {
+    worktreeId: string;
+    worktrees: WorktreeManager;
+  } {
     const worktreeId = this.applicable.get(childId);
-    if (worktreeId === undefined || !this.host.worktrees)
+    const worktrees = this.host.worktrees;
+    if (worktreeId === undefined || !worktrees)
       throw new SubagentError(
         "CHILD_NOT_APPLICABLE",
-        "child has no completed worktree",
+        "child has no worktree pending review",
       );
-    const { files, actionId, argumentsDigest } =
-      await this.host.worktrees.diff(worktreeId);
-    return { files, actionId, argumentsDigest };
+    return { worktreeId, worktrees };
   }
 
   /** Cancels one child; the parent and its siblings keep running. */
@@ -454,14 +595,25 @@ export class SubagentSupervisor {
             if (results.has(task.id) || active >= budget.concurrency) continue;
             if (started.has(task.id)) continue;
             const deps = task.after.map((d) => results.get(d));
+            const who = {
+              ...(input.team ? { team: input.team.name } : {}),
+              ...(task.role === undefined ? {} : { role: task.role }),
+              limit: budget.maxTokens,
+            };
             if (this.host.parent.signal.aborted) {
-              results.set(task.id, this.never(task.id, task.mode, "cancelled"));
+              results.set(
+                task.id,
+                this.never(task.id, task.mode, who, "cancelled"),
+              );
               progressed = true;
               continue;
             }
             if (deps.some((d) => d === undefined)) continue;
             if (deps.some((d) => d!.status !== "completed")) {
-              results.set(task.id, this.never(task.id, task.mode, "failed"));
+              results.set(
+                task.id,
+                this.never(task.id, task.mode, who, "failed"),
+              );
               progressed = true;
               continue;
             }
@@ -480,6 +632,7 @@ export class SubagentSupervisor {
             this.child(
               task.id,
               task.mode,
+              who,
               caps.get(task.id)!,
               budget,
               prefix + task.prompt + context,
@@ -501,36 +654,35 @@ export class SubagentSupervisor {
   }
 
   /**
-   * Merges a completed write child into the parent workspace: a parent action
-   * through NativePolicy that needs `grantId` in the current authority and the
-   * run's grants; the grant is consumed (revoked) once used.
+   * Merges a completed write child into the parent workspace: an `fs.write`
+   * NativePolicy action `worktree.apply:<worktreeId>` that consumes the once
+   * grant bound to subagent.diff's {actionId, argumentsDigest} with its
+   * running receipt. An unapproved grant is refused before any receipt, so
+   * the user can still approve and retry.
    */
   async apply(
     childId: string,
     { grantId }: { grantId: string },
   ): Promise<{ applied: true; files: WorktreeFile[] }> {
-    const worktreeId = this.applicable.get(childId);
-    const worktrees = this.host.worktrees;
-    if (worktreeId === undefined || !worktrees)
-      throw new SubagentError(
-        "CHILD_NOT_APPLICABLE",
-        "child has no completed worktree",
-      );
+    const { worktreeId, worktrees } = this.pendingReview(childId);
+    const diff = await worktrees.diff(worktreeId);
+    const args = { worktreeId, patchDigest: diff.argumentsDigest };
+    if (!this.host.fence.current().grantIds.includes(grantId))
+      throw new AdmissionError("POLICY_DENIED");
+    this.confirmApplyGrant(grantId, diff);
     const policy = this.policy();
-    const toolName = "subagent.apply";
-    // The receipt binds the exact patch the once-grant was approved for.
-    const { argumentsDigest } = await worktrees.diff(worktreeId);
-    const args = { childId, worktreeId, argumentsDigest };
+    const toolName = "worktree.apply";
     const toolCallId = `apply:${childId}:${randomUUID()}`;
-    this.permit(
-      policy,
+    this.permit(policy, {
       toolCallId,
       toolName,
-      "subagent.apply",
+      capabilityId: toolName,
+      capability: "fs.write",
       grantId,
       args,
-      toolCallId,
-    );
+      idempotencyKey: diff.actionId,
+      actionId: diff.actionId,
+    });
     policy.reserve(toolCallId, toolName, undefined);
     await policy.prepare(toolCallId, toolName, args, undefined, undefined);
     policy.finish(toolCallId, toolName, args, undefined);
@@ -550,13 +702,12 @@ export class SubagentSupervisor {
     return value;
   }
 
-  /** Discards a completed write child's worktree without applying it. */
-  async discard(childId: string): Promise<void> {
-    const worktreeId = this.applicable.get(childId);
-    if (worktreeId === undefined || !this.host.worktrees)
-      throw new SubagentError("CHILD_NOT_APPLICABLE", "child has no worktree");
+  /** `subagent.discard {childId}`: drops a pending worktree without applying it. */
+  async discard(request: unknown): Promise<void> {
+    const childId = childIdOf(request);
+    const { worktreeId, worktrees } = this.pendingReview(childId);
     this.applicable.delete(childId);
-    await this.host.worktrees.discard(worktreeId);
+    await worktrees.discard(worktreeId);
   }
 
   private capabilities(
@@ -582,20 +733,25 @@ export class SubagentSupervisor {
       this.host.store,
       this.host.caller,
       this.host.fence.current,
+      this.host.identity,
     );
   }
 
   private permit(
     policy: NativePolicy,
-    toolCallId: string,
-    toolName: string,
-    capabilityId: string,
-    grantId: string,
-    args: unknown,
-    idempotencyKey: string,
+    p: {
+      toolCallId: string;
+      toolName: string;
+      capabilityId: string;
+      capability: GrantRecord["capability"];
+      grantId: string;
+      args: unknown;
+      idempotencyKey: string;
+      actionId?: string;
+    },
   ): void {
     const { store, caller, parent } = this.host;
-    const digest = actionArgumentsDigest(args);
+    const digest = actionArgumentsDigest(p.args);
     const artifactId = randomUUID();
     // Describes the arguments by digest only; their content is not persisted.
     store.append(
@@ -606,25 +762,27 @@ export class SubagentSupervisor {
           artifactId,
           digest,
           mediaType: "application/json",
-          byteLength: new TextEncoder().encode(JSON.stringify(args)).byteLength,
+          byteLength: new TextEncoder().encode(JSON.stringify(p.args))
+            .byteLength,
           retentionClass: "workspace",
         },
       },
       caller,
     );
     policy.authorize({
-      toolCallId,
-      toolName,
-      actionId: randomUUID(),
+      toolCallId: p.toolCallId,
+      toolName: p.toolName,
+      actionId: p.actionId ?? randomUUID(),
       runRecordId: parent.runRecordId,
-      grantId,
+      grantId: p.grantId,
       parentActionId: null,
-      capabilityId,
+      capabilityId: p.capabilityId,
       capabilityVersion: "1",
+      capability: p.capability,
       argumentsArtifactId: artifactId,
       argumentsDigest: digest,
       targetScopeId: parent.scopeId,
-      idempotencyKey,
+      idempotencyKey: p.idempotencyKey,
       ownership: parent.ownership,
     });
   }
@@ -639,11 +797,28 @@ export class SubagentSupervisor {
     };
   }
 
-  private emit<K extends keyof EventPayloads>(
-    kind: K,
-    payload: EventPayloads[K],
+  private emit(
+    kind: keyof typeof CHILD_KIND_STATUS,
+    who: ChildInfo,
+    used: number,
+    detail: Pick<
+      Partial<ChildEventPayload>,
+      "summary" | "citations" | "diff" | "reason"
+    > = {},
   ): void {
     const { store, caller, parent } = this.host;
+    const payload: ChildEventPayload = {
+      childId: who.childId,
+      parentRunId: parent.runId,
+      ...(who.team === undefined ? {} : { team: who.team }),
+      ...(who.role === undefined ? {} : { role: who.role }),
+      status: CHILD_KIND_STATUS[kind],
+      budget: { used, limit: who.limit },
+      summary: detail.summary ?? "",
+      citations: detail.citations ?? [],
+      ...(detail.diff ? { diff: detail.diff } : {}),
+      ...(detail.reason ? { reason: detail.reason } : {}),
+    };
     const draft = {
       schemaVersion: CONTRACT_VERSION,
       protocolVersion: PROTOCOL_VERSION,
@@ -669,40 +844,34 @@ export class SubagentSupervisor {
   private never(
     taskId: string,
     mode: SubagentMode,
+    team: Omit<ChildInfo, "childId">,
     status: "failed" | "cancelled",
   ): ChildResult {
-    const childId = randomUUID();
-    const runId = this.host.parent.runId;
+    const who = { ...team, childId: randomUUID() };
+    const { childId } = who;
     if (status === "cancelled") {
-      this.emit("child.cancelled", { runId, childId, cleanedUp: true });
+      this.emit("child.cancelled", who, 0);
       return { taskId, childId, mode, status };
     }
-    const message = "a dependency did not complete";
-    this.emit("child.failed", {
-      runId,
-      childId,
-      reason: "DEPENDENCY_FAILED",
-      message,
-    });
-    return {
+    return this.failed(
       taskId,
-      childId,
+      who,
       mode,
-      status,
-      reason: "DEPENDENCY_FAILED",
-      message,
-    };
+      0,
+      "DEPENDENCY_FAILED",
+      "a dependency did not complete",
+    );
   }
 
   private async child(
     taskId: string,
     mode: SubagentMode,
+    team: Omit<ChildInfo, "childId">,
     capabilities: Capability[],
     budget: SubagentLimits,
     prompt: string,
   ): Promise<ChildResult> {
     const { host } = this;
-    const runId = host.parent.runId;
     const run: ChildRun = {
       childId: randomUUID(),
       controller: new AbortController(),
@@ -712,13 +881,16 @@ export class SubagentSupervisor {
     host.parent.signal.addEventListener("abort", onParent, { once: true });
     if (host.parent.signal.aborted) controller.abort();
     this.running.set(childId, run);
-    this.emit("child.started", { runId, childId, mode });
+    const who: ChildInfo = { ...team, childId };
+    let tokens = 0;
+    this.emit("child.started", who, 0);
     const unbind: Array<() => void> = [];
     const claims = new Set<string>();
     let worktreeId: string | undefined;
     let kept = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let result: ChildResult;
+    let result!: ChildResult;
+    let fault: unknown;
     try {
       let root = host.parent.workspaceRoot;
       if (mode === "write") {
@@ -762,7 +934,6 @@ export class SubagentSupervisor {
         agent.abort();
       };
       let turns = 0;
-      let tokens = 0;
       const citations: Citation[] = [];
       const reads = new Map<string, unknown>();
       agent.subscribe((event) => {
@@ -774,7 +945,7 @@ export class SubagentSupervisor {
             event as { message: { usage?: { totalTokens?: number } } }
           ).message.usage;
           tokens += usage?.totalTokens ?? 0;
-          this.emit("child.progress", { runId, childId, turns, tokens });
+          this.emit("child.progress", who, tokens);
           if (tokens > budget.maxTokens) stop("BUDGET_TOKENS");
         }
         if (event.type === "tool_execution_start") {
@@ -807,8 +978,9 @@ export class SubagentSupervisor {
       if (run.stop)
         result = this.failed(
           taskId,
-          childId,
+          who,
           mode,
+          tokens,
           run.stop,
           `${run.stop} after ${turns} turns and ${tokens} tokens`,
         );
@@ -820,8 +992,9 @@ export class SubagentSupervisor {
         result = denied
           ? this.failed(
               taskId,
-              childId,
+              who,
               mode,
+              tokens,
               CHILD_ADMISSION_CODES.has(denied.code)
                 ? (denied.code as FailureReason)
                 : "POLICY_DENIED",
@@ -829,8 +1002,9 @@ export class SubagentSupervisor {
             )
           : this.failed(
               taskId,
-              childId,
+              who,
               mode,
+              tokens,
               lastStop(agent.state.messages) === "error"
                 ? "PROVIDER_ERROR"
                 : "ENGINE_ERROR",
@@ -841,29 +1015,24 @@ export class SubagentSupervisor {
           ? (await host.worktrees!.diff(worktreeId)).files
           : undefined;
         const summary = this.text(lastText(agent.state.messages));
-        const kept_ = citations.slice(0, MAX_CITATIONS);
-        this.emit("child.completed", {
-          runId,
-          childId,
+        const cited = citations.slice(0, MAX_CITATIONS);
+        // A write child with changes waits for review; one without has nothing to apply.
+        kept = files !== undefined && files.length > 0;
+        if (kept) this.applicable.set(childId, worktreeId!);
+        this.emit("child.completed", who, tokens, {
           summary,
-          citations: kept_.map((c) =>
-            c.line === undefined ? c.path : `${c.path}:${c.line}`,
-          ),
-          ...(files
-            ? { files: files.map((f) => `${f.status} ${f.path}`) }
+          citations: cited,
+          ...(kept
+            ? { diff: { files: files!.slice(0, MAX_EVENT_FILES) } }
             : {}),
         });
-        if (worktreeId) {
-          this.applicable.set(childId, worktreeId);
-          kept = true;
-        }
         result = {
           taskId,
           childId,
           mode,
           status: "completed",
           summary,
-          citations: kept_,
+          citations: cited,
           ...(files ? { files } : {}),
         };
       }
@@ -874,16 +1043,18 @@ export class SubagentSupervisor {
         !(error instanceof AdmissionError) &&
         !(error instanceof Error && error.name === "WorktreeError")
       )
-        throw error;
-      result = this.failed(
-        taskId,
-        childId,
-        mode,
-        (error as { code?: unknown }).code === "CAPABILITY_DENIED"
-          ? "CAPABILITY_DENIED"
-          : "ENGINE_ERROR",
-        error.message,
-      );
+        fault = error;
+      else
+        result = this.failed(
+          taskId,
+          who,
+          mode,
+          tokens,
+          (error as { code?: unknown }).code === "CAPABILITY_DENIED"
+            ? "CAPABILITY_DENIED"
+            : "ENGINE_ERROR",
+          error.message,
+        );
     } finally {
       clearTimeout(timer);
       host.parent.signal.removeEventListener("abort", onParent);
@@ -891,33 +1062,49 @@ export class SubagentSupervisor {
       for (const release of unbind) release();
       for (const path of claims) this.release(childId, path);
     }
-    if (worktreeId && !kept) await host.worktrees!.discard(worktreeId);
+    // Ended without a pending review (failed, cancelled, empty or host fault):
+    // the worktree goes now, not at the next start-up sweep.
+    if (worktreeId && !kept)
+      try {
+        await host.worktrees!.discard(worktreeId);
+      } catch (error) {
+        throw fault === undefined
+          ? error
+          : new AggregateError(
+              [fault, error],
+              "child fault and worktree cleanup failed",
+            );
+      }
+    if (fault !== undefined) throw fault;
     if (result.status === "cancelled")
-      this.emit("child.cancelled", { runId, childId, cleanedUp: true });
+      this.emit("child.cancelled", who, tokens);
     return result;
   }
 
   private failed(
     taskId: string,
-    childId: string,
+    who: ChildInfo,
     mode: SubagentMode,
+    used: number,
     reason: FailureReason,
     message: string,
   ): ChildResult {
     const text = this.text(message);
-    this.emit("child.failed", {
-      runId: this.host.parent.runId,
-      childId,
+    this.emit("child.failed", who, used, { summary: text, reason });
+    return {
+      taskId,
+      childId: who.childId,
+      mode,
+      status: "failed",
       reason,
       message: text,
-    });
-    return { taskId, childId, mode, status: "failed", reason, message: text };
+    };
   }
 
   /** Records `path` as owned by `childId`; another active owner is a conflict. */
   claim(childId: string, path: string): void {
     const { store, parent, caller } = this.host;
-    const owners = this.activeClaims(path);
+    const owners = this.activeClaims(path, childId);
     if ([...owners].some((owner) => owner !== childId))
       throw new AdmissionError("FILE_CLAIM_CONFLICT");
     if (owners.has(childId)) return;
@@ -952,22 +1139,30 @@ export class SubagentSupervisor {
 
   // ponytail: scans the scope's records per claim; index claims if a scope
   // grows large. In-process the scan and append are one synchronous step.
-  private activeClaims(path: string): Set<string> {
+  /** The latest claim record per (owner, path) in this workspace. */
+  private claimHeads(): RecordByKind["fileClaim"][] {
     const latest = new Map<string, RecordByKind["fileClaim"]>();
     for (const { kind, record } of this.host.store.list(
       this.host.parent.scopeId,
     ).records) {
       if (kind !== "fileClaim") continue;
       const claim = record as RecordByKind["fileClaim"];
-      if (
-        claim.workspaceId === this.host.parent.workspaceId &&
-        lower(claim.path) === lower(path)
-      )
-        latest.set(claim.ownerChildId, claim);
+      if (claim.workspaceId === this.host.parent.workspaceId)
+        latest.set(`${claim.ownerChildId}\0${lower(claim.path)}`, claim);
     }
+    return [...latest.values()];
+  }
+
+  /** Owners holding `path`; a claim whose owner is not live (crash) is released. */
+  private activeClaims(path: string, childId: string): Set<string> {
     return new Set(
-      [...latest.values()]
-        .filter((c) => c.releasedAt === null)
+      this.claimHeads()
+        .filter(
+          (c) =>
+            c.releasedAt === null &&
+            lower(c.path) === lower(path) &&
+            (c.ownerChildId === childId || this.isChildLive(c.ownerChildId)),
+        )
         .map((c) => c.ownerChildId),
     );
   }
@@ -981,15 +1176,15 @@ export class SubagentSupervisor {
     cap: Capability,
     args: unknown,
   ): void {
-    this.permit(
-      policy,
+    this.permit(policy, {
       toolCallId,
       toolName,
-      cap,
-      this.host.parent.grants[cap]!,
+      capabilityId: cap,
+      capability: "fs.read",
+      grantId: this.host.parent.grants[cap]!,
       args,
-      `${run.childId}:${toolCallId}`,
-    );
+      idempotencyKey: `${run.childId}:${toolCallId}`,
+    });
   }
   /** @internal */
   newPolicy(): NativePolicy {

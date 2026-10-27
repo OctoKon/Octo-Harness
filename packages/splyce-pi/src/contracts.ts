@@ -389,6 +389,9 @@ type Rule =
   | "limits"
   | "portAvailability"
   | "eventEnvelope"
+  | "childBudget"
+  | "citations"
+  | "childDiff"
   | readonly string[];
 type Shape = { readonly [key: string]: Rule };
 export const RECORD_SCHEMAS = {
@@ -794,33 +797,54 @@ export interface EventPayloads {
     activeActionIds: string[];
     state: "ready" | "busy" | "waiting_approval" | "stopped";
   };
-  // TD-70 delegated children; runId is the parent run.
-  "child.started": {
-    runId: string;
-    childId: string;
-    mode: (typeof SUBAGENT_MODES)[number];
-  };
-  "child.progress": {
-    runId: string;
-    childId: string;
-    turns: number;
-    tokens: number;
-  };
-  "child.completed": {
-    runId: string;
-    childId: string;
-    summary: string;
-    citations: string[];
-    files?: string[];
-  };
-  "child.failed": {
-    runId: string;
-    childId: string;
-    reason: (typeof SUBAGENT_FAILURE_REASONS)[number];
-    message?: string;
-  };
-  "child.cancelled": { runId: string; childId: string; cleanedUp: boolean };
+  // TD-70 delegated children: one payload shape for every child.* kind.
+  "child.started": ChildEventPayload;
+  "child.progress": ChildEventPayload;
+  "child.completed": ChildEventPayload;
+  "child.failed": ChildEventPayload;
+  "child.cancelled": ChildEventPayload;
 }
+/** TD-70 child status; `budget` is tokens used against the child's limit. */
+export interface ChildEventPayload {
+  childId: string;
+  /** The parent run. */
+  parentRunId: string;
+  team?: string;
+  role?: string;
+  status: (typeof SUBAGENT_STATUSES)[number];
+  budget: { used: number; limit: number };
+  summary: string;
+  citations: { path: string; line?: number }[];
+  /** Write children: files changed in the worktree, pending review. */
+  diff?: {
+    files: { path: string; status: (typeof SUBAGENT_FILE_STATUSES)[number] }[];
+  };
+  /** child.failed only. */
+  reason?: (typeof SUBAGENT_FAILURE_REASONS)[number];
+}
+export const SUBAGENT_STATUSES = [
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+export const SUBAGENT_FILE_STATUSES = ["added", "modified", "deleted"] as const;
+export const CHILD_KIND_STATUS: Readonly<
+  Record<
+    | "child.started"
+    | "child.progress"
+    | "child.completed"
+    | "child.failed"
+    | "child.cancelled",
+    (typeof SUBAGENT_STATUSES)[number]
+  >
+> = {
+  "child.started": "running",
+  "child.progress": "running",
+  "child.completed": "completed",
+  "child.failed": "failed",
+  "child.cancelled": "cancelled",
+};
 export const SUBAGENT_MODES = ["read", "write"] as const;
 export const SUBAGENT_FAILURE_REASONS = [
   "BUDGET_TURNS",
@@ -836,6 +860,8 @@ export const SUBAGENT_FAILURE_REASONS = [
 ] as const;
 Object.freeze(SUBAGENT_MODES);
 Object.freeze(SUBAGENT_FAILURE_REASONS);
+Object.freeze(SUBAGENT_STATUSES);
+Object.freeze(SUBAGENT_FILE_STATUSES);
 export type EventKind = keyof EventPayloads;
 export type SplyceEvent = {
   [K in EventKind]: {
@@ -859,6 +885,20 @@ export type SplyceEventEnvelope = SplyceEvent;
 export type SplyceEventDraft = {
   [K in EventKind]: Omit<Extract<SplyceEvent, { kind: K }>, "seq">;
 }[EventKind];
+const CHILD_EVENT = {
+  childId: "id",
+  parentRunId: "ref",
+  status: SUBAGENT_STATUSES,
+  budget: "childBudget",
+  summary: "delta",
+  citations: "citations",
+} as const satisfies Shape;
+const CHILD_OPTIONAL: Shape = {
+  team: "text",
+  role: "text",
+  diff: "childDiff",
+  reason: SUBAGENT_FAILURE_REASONS,
+};
 const EVENT_SCHEMAS = {
   "turn.started": { runId: "ref", turnId: "ref" },
   "turn.stream_delta": { runId: "ref", delta: "delta" },
@@ -907,25 +947,11 @@ const EVENT_SCHEMAS = {
     activeActionIds: "refs",
     state: ["ready", "busy", "waiting_approval", "stopped"],
   },
-  "child.started": { runId: "ref", childId: "id", mode: SUBAGENT_MODES },
-  "child.progress": {
-    runId: "ref",
-    childId: "id",
-    turns: "uint",
-    tokens: "uint",
-  },
-  "child.completed": {
-    runId: "ref",
-    childId: "id",
-    summary: "text",
-    citations: "strings",
-  },
-  "child.failed": {
-    runId: "ref",
-    childId: "id",
-    reason: SUBAGENT_FAILURE_REASONS,
-  },
-  "child.cancelled": { runId: "ref", childId: "id", cleanedUp: "bool" },
+  "child.started": CHILD_EVENT,
+  "child.progress": CHILD_EVENT,
+  "child.completed": CHILD_EVENT,
+  "child.failed": CHILD_EVENT,
+  "child.cancelled": CHILD_EVENT,
 } as const satisfies { [K in EventKind]: Shape };
 const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
   "engine.status": { ports: "portAvailability" },
@@ -934,8 +960,11 @@ const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
   "turn.stream_delta": { turnId: "ref" },
   "turn.thought_delta": { turnId: "ref" },
   "run.reconnect_snapshot": { turnId: "ref" },
-  "child.completed": { files: "strings" },
-  "child.failed": { message: "text" },
+  "child.started": CHILD_OPTIONAL,
+  "child.progress": CHILD_OPTIONAL,
+  "child.completed": CHILD_OPTIONAL,
+  "child.failed": CHILD_OPTIONAL,
+  "child.cancelled": CHILD_OPTIONAL,
 };
 export const EVENT_KINDS = Object.freeze(
   Object.keys(EVENT_SCHEMAS) as EventKind[],
@@ -1230,6 +1259,40 @@ function rule(
       for (const item of value)
         spec === "refs" ? reference(item, field, context) : text(item, field);
       break;
+    case "childBudget":
+      shape(
+        object(value, field),
+        { used: "uint", limit: "uint" },
+        {},
+        context,
+        true,
+      );
+      break;
+    case "citations":
+      requireThat(Array.isArray(value), "INVALID_SHAPE", field);
+      for (const item of value) {
+        const citation = object(item, field);
+        shape(citation, { path: "text" }, { line: "uint" }, context, true);
+        requireThat(citation.line !== 0, "INVALID_SHAPE", "line");
+      }
+      break;
+    case "childDiff": {
+      const diff = object(value, field);
+      requireThat(
+        Object.keys(diff).join() === "files" && Array.isArray(diff.files),
+        "INVALID_SHAPE",
+        "files",
+      );
+      for (const file of diff.files)
+        shape(
+          object(file, "files"),
+          { path: "text", status: SUBAGENT_FILE_STATUSES },
+          {},
+          context,
+          true,
+        );
+      break;
+    }
     case "limits":
       for (const limit of Object.values(object(value, field)))
         requireThat(
@@ -1615,6 +1678,19 @@ export function validateEvent(
         "WRONG_SCOPE",
         "sessionId",
       );
+    if (kind.startsWith("child.")) {
+      requireThat(
+        payload.status ===
+          CHILD_KIND_STATUS[kind as keyof typeof CHILD_KIND_STATUS],
+        "INVALID_SHAPE",
+        "status",
+      );
+      requireThat(
+        (kind === "child.failed") === Object.hasOwn(payload, "reason"),
+        "INVALID_SHAPE",
+        "reason",
+      );
+    }
     if (kind === "stream.resync") validateCursor(payload.fromSeq, context);
     if (kind === "run.reconnect_snapshot")
       validateCursor(payload.lastDurableSeq, context);
