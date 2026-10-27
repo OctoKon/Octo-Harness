@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
 	type AgentMessage,
 	assertSplycePersistence,
@@ -22,10 +23,13 @@ import {
 	closeSync,
 	createReadStream,
 	existsSync,
+	fstatSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
+	readFileSync,
 	readSync,
+	realpathSync,
 	renameSync,
 	type Stats,
 	statSync,
@@ -1004,9 +1008,71 @@ interface PersistenceStage {
 	write: "none" | "append" | "rewrite";
 	existingFile: boolean;
 	target?: string;
+	fileReadPath?: string;
+	fileVersion?: PersistenceFileVersion;
+}
+interface PersistenceFileVersion {
+	canonicalPath: string;
+	device: bigint;
+	inode: bigint;
+	size: bigint;
+	modified: bigint;
+	changed: bigint;
+	bytes: string;
 }
 const persistenceStages = new WeakMap<SessionManager, PersistenceStage>();
+const persistenceChains = new AsyncLocalStorage<ReadonlySet<SessionManager>>();
 let ownedPersistenceStageDepth = 0;
+
+function persistenceFileVersion(path: string): PersistenceFileVersion | undefined {
+	if (!existsSync(path)) return undefined;
+	const fd = openSync(path, "r");
+	try {
+		const before = fstatSync(fd, { bigint: true });
+		if (!before.isFile()) persistenceUnavailable();
+		const bytes = readFileSync(fd, "utf8");
+		const after = fstatSync(fd, { bigint: true });
+		const canonicalPath = realpathSync.native(path);
+		const current = statSync(canonicalPath, { bigint: true });
+		if (
+			before.dev !== after.dev ||
+			before.ino !== after.ino ||
+			before.size !== after.size ||
+			before.mtimeNs !== after.mtimeNs ||
+			before.ctimeNs !== after.ctimeNs ||
+			current.dev !== after.dev ||
+			current.ino !== after.ino
+		)
+			persistenceUnavailable();
+		return {
+			canonicalPath,
+			device: after.dev,
+			inode: after.ino,
+			size: after.size,
+			modified: after.mtimeNs,
+			changed: after.ctimeNs,
+			bytes,
+		};
+	} finally {
+		closeSync(fd);
+	}
+}
+
+function assertPersistenceFileVersion(path: string, expected: PersistenceFileVersion | undefined): void {
+	const actual = persistenceFileVersion(path);
+	if (
+		!expected ||
+		!actual ||
+		actual.canonicalPath !== expected.canonicalPath ||
+		actual.device !== expected.device ||
+		actual.inode !== expected.inode ||
+		actual.size !== expected.size ||
+		actual.modified !== expected.modified ||
+		actual.changed !== expected.changed ||
+		actual.bytes !== expected.bytes
+	)
+		persistenceUnavailable();
+}
 
 /** Donor exporters cannot publish either a native manager or a pending/revoked draft. */
 export function assertUnownedSessionExport(manager: SessionManager): void {
@@ -1207,6 +1273,7 @@ export class SessionManager {
 	private _persistenceUncertain = false;
 	private _persistenceQualified = false;
 	private _persistenceBytes: string | undefined;
+	private _persistenceFileVersion: PersistenceFileVersion | undefined;
 
 	private constructor(
 		cwd: string,
@@ -1254,8 +1321,12 @@ export class SessionManager {
 
 	/** Native persistence is awaited; the synchronous callback only edits a detached draft. */
 	withPersistence<T>(stage: (manager: SessionManager) => T, signal?: AbortSignal): Promise<T> {
-		if (persistenceStages.has(this)) persistenceUnavailable();
-		const operation = this._persistenceTail.then(() => this._withPersistence(stage, signal));
+		if (persistenceStages.has(this) || persistenceChains.getStore()?.has(this)) persistenceUnavailable();
+		const chain = new Set(persistenceChains.getStore());
+		chain.add(this);
+		const operation = this._persistenceTail.then(() =>
+			persistenceChains.run(chain, () => this._withPersistence(stage, signal)),
+		);
 		this._persistenceTail = operation.then(
 			() => undefined,
 			() => undefined,
@@ -1272,6 +1343,13 @@ export class SessionManager {
 		};
 		try {
 			check();
+			const previousFile = this.sessionFile;
+			const previousVersion = this._persistenceFileVersion;
+			const checkPreviousFile = () => {
+				if (owned && this.persist && this.flushed && previousFile)
+					assertPersistenceFileVersion(previousFile, previousVersion);
+			};
+			checkPreviousFile();
 			const previous = persistenceSnapshot(this.fileEntries);
 			const previousSerialized = previous.length ? serializePersistence(previous) : "";
 			const previousBytes = this._persistenceBytes ?? previousSerialized;
@@ -1360,6 +1438,7 @@ export class SessionManager {
 			check();
 			const safeEntries = parseSanitizedPersistence(safe, entries);
 			if (persist && flushed && safe !== previousSerialized && write === "none") write = "rewrite";
+			if (owned && existingFile && plan.fileVersion?.bytes === safe) write = "none";
 			let safeResult = resultSnapshot;
 			if (resultSnapshot !== undefined) {
 				const projection = projectPersistenceResult(resultSnapshot, safeEntries);
@@ -1379,6 +1458,13 @@ export class SessionManager {
 			const safeLines = safe.split("\n");
 			const safePrefix = `${safeLines.slice(0, previous.length).join("\n")}\n`;
 			check();
+			const checkFiles = () => {
+				checkPreviousFile();
+				if (owned && existingFile && plan.fileReadPath)
+					assertPersistenceFileVersion(plan.fileReadPath, plan.fileVersion);
+			};
+			// This is optimistic validation, not a cross-process exclusive writer lease.
+			checkFiles();
 			if (persist && sessionDir && !existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
 			if (persist && sessionFile && write !== "none") {
 				if (write === "append" && sameFile && this.flushed && safePrefix === previousBytes) {
@@ -1402,6 +1488,7 @@ export class SessionManager {
 							closeSync(fd);
 						}
 						check();
+						checkFiles();
 						replacing = true;
 						renameSync(temporary, sessionFile);
 						created = false;
@@ -1427,6 +1514,14 @@ export class SessionManager {
 				}
 				flushed = true;
 			}
+			let committedVersion: PersistenceFileVersion | undefined;
+			if (owned && persist && flushed && sessionFile) {
+				committedVersion = persistenceFileVersion(sessionFile);
+				if (!committedVersion || committedVersion.bytes !== safe) {
+					this._persistenceUncertain = true;
+					persistenceUnavailable();
+				}
+			}
 			this.fileEntries = safeEntries;
 			this.sessionId = sessionId;
 			this.sessionFile = sessionFile;
@@ -1436,6 +1531,7 @@ export class SessionManager {
 			this.flushed = flushed;
 			this._persistenceQualified = owned;
 			this._persistenceBytes = safe;
+			this._persistenceFileVersion = committedVersion;
 			this._publishIndex();
 			this.leafId = leafId;
 			return safeResult;
@@ -1455,9 +1551,14 @@ export class SessionManager {
 		const staged = persistenceStages.get(this);
 		if (staged?.target !== undefined && staged.target !== resolvePath(sessionFile)) persistenceUnavailable();
 		this.sessionFile = resolvePath(sessionFile);
+		if (staged && staged.fileReadPath === undefined) {
+			staged.fileReadPath = this.sessionFile;
+			staged.fileVersion = persistenceFileVersion(this.sessionFile);
+		}
 		if (existsSync(this.sessionFile)) {
 			if (staged) staged.existingFile = true;
 			const entries = preloadedFileEntries ?? readEntriesFromFile(this.sessionFile, !staged);
+			if (staged) assertPersistenceFileVersion(this.sessionFile, staged.fileVersion);
 
 			// If file was empty, initialize it with a valid session header. If it was
 			// non-empty but did not parse as a pi session, fail without modifying it.
@@ -2264,6 +2365,10 @@ export class SessionManager {
 			bind(manager);
 			assertSplycePersistence(manager);
 			await manager.withPersistence((draft) => {
+				const plan = persistenceStages.get(draft);
+				if (!plan) persistenceUnavailable();
+				plan.fileReadPath = resolvedPath;
+				plan.fileVersion = persistenceFileVersion(resolvedPath);
 				const entries = readEntriesFromFile(resolvedPath, false);
 				const header = entries.find((entry): entry is SessionHeader => entry.type === "session");
 				draft.cwd = resolvePath(cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd());

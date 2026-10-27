@@ -223,15 +223,18 @@ and rerun these regressions after donor or wrapper changes.
 `0011-awaited-session-persistence.patch` applies to exact owned bootstrap base
 `0a700b32b0a0abe5c24194b61a854f9dd9bfe874` and records 17 vendor sources plus one
 extension-runner fixture through frozen WIP commit
-`07364732cd97992f0e4c99f6fe15faecb10a1e5f`. Native-owned
+`c2ea6a6ad267c8631de178d3cd798f3f9e9f2961`. Native-owned
 SessionManager writes await a sealed same-owner sanitizer per complete entry
 before filesystem effects or state publication. SDK/session/extension callers
 await those commits; unqualified owned exports/imports deny. Unowned donor APIs
 remain available outside owned stages. See the
 [persistence record](0011-awaited-session-persistence.md) for the exact canonical
 archive replay, scoped behavioral receipts, encoded-entry limit and outstanding
-native/installed/release qualification. The earlier scoped scripts passed
-97/97 cases with zero skips or cancellations. At the final source bytes, the full
-vendor check and 10 source persistence cases pass; the affected vendor runner
-fixture fails during unbound native-runtime setup. Earlier failures and unchanged
-mutation checks remain recorded. This patch activates no provider or grant.
+native/installed/release qualification. Review fixes reject same-chain sanitation
+reentry, refuse changed file baselines, and drain late custom/bash messages before
+settlement. They provide no cross-process atomic writer guarantee. The earlier
+97-case result and unqualified 56-case vendor fixture remain recorded; current
+15-case source and 8-case SDK component checks pass. The complete registered
+scripts pass 110/110 at the frozen source, with zero failures, skips or
+cancellations. The new full vendor check remains pending. This patch activates
+no provider or grant.

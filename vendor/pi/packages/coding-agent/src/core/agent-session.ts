@@ -1151,6 +1151,10 @@ export class AgentSession {
 
 	private async _emitAgentSettled(): Promise<void> {
 		this._cacheWarmer?.onAgentSettled();
+		// Close the queue window in the same synchronous step as the final empty check.
+		while (this._pendingBashMessages.length > 0 || this._pendingCustomMessages.length > 0) {
+			await this._flushPendingRunMessages();
+		}
 		this._isAgentRunActive = false;
 		this._isEmittingAgentSettled = true;
 		try {
@@ -2581,18 +2585,25 @@ export class AgentSession {
 		if (this._pendingCustomFlush) return this._pendingCustomFlush;
 		if (this._pendingCustomMessages.length === 0) return;
 		const drain = (async () => {
-			const pending = this._pendingCustomMessages.slice();
-			const entryIds = await this.sessionManager.withPersistence((manager) =>
-				pending.map((message) =>
-					manager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details),
-				),
-			);
-			this._pendingCustomMessages.splice(0, pending.length);
-			this._refreshFinalizedContext();
-			for (let i = 0; i < entryIds.length; i++) {
-				const message = this._readPersistedMessage(entryIds[i], pending[i]);
-				this._emit({ type: "message_start", message });
-				this._emit({ type: "message_end", message });
+			while (this._pendingCustomMessages.length > 0) {
+				const pending = this._pendingCustomMessages.slice();
+				const entryIds = await this.sessionManager.withPersistence((manager) =>
+					pending.map((message) =>
+						manager.appendCustomMessageEntry(
+							message.customType,
+							message.content,
+							message.display,
+							message.details,
+						),
+					),
+				);
+				this._pendingCustomMessages.splice(0, pending.length);
+				this._refreshFinalizedContext();
+				for (let i = 0; i < entryIds.length; i++) {
+					const message = this._readPersistedMessage(entryIds[i], pending[i]);
+					this._emit({ type: "message_start", message });
+					this._emit({ type: "message_end", message });
+				}
 			}
 		})();
 		this._pendingCustomFlush = drain;
@@ -4230,12 +4241,14 @@ export class AgentSession {
 		if (this._pendingBashFlush) return this._pendingBashFlush;
 		if (this._pendingBashMessages.length === 0) return;
 		const drain = (async () => {
-			const pending = this._pendingBashMessages.slice();
-			await this.sessionManager.withPersistence((manager) => {
-				for (const bashMessage of pending) manager.appendMessage(bashMessage);
-			});
-			this._pendingBashMessages.splice(0, pending.length);
-			this._refreshFinalizedContext();
+			while (this._pendingBashMessages.length > 0) {
+				const pending = this._pendingBashMessages.slice();
+				await this.sessionManager.withPersistence((manager) => {
+					for (const bashMessage of pending) manager.appendMessage(bashMessage);
+				});
+				this._pendingBashMessages.splice(0, pending.length);
+				this._refreshFinalizedContext();
+			}
 		})();
 		this._pendingBashFlush = drain;
 		try {
@@ -4247,8 +4260,10 @@ export class AgentSession {
 
 	private async _flushPendingRunMessages(): Promise<void> {
 		try {
-			await this._flushPendingBashMessages();
-			await this._flushPendingCustomMessages();
+			while (this._pendingBashMessages.length > 0 || this._pendingCustomMessages.length > 0) {
+				await this._flushPendingBashMessages();
+				await this._flushPendingCustomMessages();
+			}
 		} catch (error) {
 			this._isAgentRunActive = false;
 			this._resolveIdleWaitIfIdle();

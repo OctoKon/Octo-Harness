@@ -9,7 +9,7 @@ copyright. This patch changes no dependencies or package manifests.
 Apply `0011-awaited-session-persistence.patch` from the repository root to the
 owned bootstrap base `0a700b32b0a0abe5c24194b61a854f9dd9bfe874`. It captures all
 18 changed vendor paths (17 sources and one extension-runner fixture) through
-frozen source commit `07364732cd97992f0e4c99f6fe15faecb10a1e5f`, including the owner helpers,
+frozen source commit `c2ea6a6ad267c8631de178d3cd798f3f9e9f2961`, including the owner helpers,
 SessionManager, AgentSession/SDK, extension dispatcher, cache warmer, codemode
 callers and export/import/diagnostic guards. It includes earlier owner-helper
 changes already committed after that base. Existing patches alone are not a
@@ -66,6 +66,29 @@ possibly partial target write fences further mutation until an explicit fresh
 owned reopen. This is no fsync/crash-durability or cross-manager CAS guarantee.
 Trusted in-process plugins retain operating-system authority.
 
+## Review corrections
+
+Same-manager `withPersistence` reentry from its own asynchronous sanitation chain
+now rejects before entering the serialized queue. A private `AsyncLocalStorage`
+chain guard prevents a sanitizer from waiting on its own unfinished transaction;
+unrelated external callers still queue normally.
+
+Owned opens capture canonical path, file identity, timestamps, size and bytes at
+the read boundary. Mutations recheck that version before effects and rewrites
+recheck immediately before replacement. A changed baseline rejects instead of
+publishing stale state or erasing an acknowledged append; recovery requires a
+fresh owned reopen. This is optimistic local validation, with no cross-process
+atomic CAS or exclusive-writer promise. The native factory must enforce its
+writer/currentness contract across the remaining final-check/write window against
+foreign processes.
+
+Custom and bash queues now drain repeatedly, and the joint drain continues until
+both are empty. The final empty check and busy-flag transition share one
+synchronous continuation. Failed sanitation leaves the affected batch and late
+arrivals pending; successful batches are removed only after commit. These checks
+cover queued transcript persistence; `waitForIdle` is not a general barrier for
+every asynchronous sink.
+
 ## Canonical replay evidence
 
 The patch was generated directly from committed Git blobs, with no candidate EOL
@@ -73,10 +96,10 @@ normalization. An isolated archive of the exact base passed
 `git apply --check --whitespace=error` and strict forward application; all 18
 resulting paths matched the frozen source blobs
 byte for byte. Raw worktree hashes were recorded separately and happened to
-match those blobs. The patch has 1,086 insertions and 260 deletions.
+match those blobs. The patch has 1,206 insertions and 260 deletions.
 
-- Patch SHA-256: `2a721d1d5ce3f36953a669dcd2c6c7d1448f0596e1358e83dacc65a50207154d`.
-- Canonical source-manifest SHA-256: `c89d8c8b06eddb1d3ffff4038b7c4f0f27f4bc3716f2e9ef82099cf8df35071a`.
+- Patch SHA-256: `d6356a4b8e61be76974a7d84ba83e3b11aa7d4fe281c79280f171b469cdeff8a`.
+- Canonical source-manifest SHA-256: `e86816bf93d9ec7b7292cb7676204c47cae095103bc40d3883c14fb44bb440c9`.
 
 The source-manifest digest hashes JSON containing the exact base, frozen source
 commit and sorted path/status/SHA-256/byte-length/Git-blob-ID/base-membership
@@ -91,12 +114,9 @@ initial successful `npm run build:pi`, then successful builds with `npm run buil
 `npm run build --workspace=@earendil-works/pi-coding-agent` and
 `npm run build:contracts`.
 
-Focused commands and observed results at that earlier checkpoint:
-
-- `node --import ./vendor/pi/packages/coding-agent/src/experimental/source-resolver.ts --test tests/native-session-manager-persistence.test.mjs`: 10 passed, including structural rejection, detached/late aliases, filesystem refusal/recovery, per-entry historical rewrites, history above 1 MiB with a small append, and oversized-entry zero effects.
-- `node --test tests/native-persistence-owner.test.mjs`: 6 passed; two separate owner-guard removal checks each failed as required.
-- `node --test tests/native-persistence.test.mjs`: 9 built-module JSONL/export/import/diagnostic cases passed. A separate structural-role guard-removal check failed as required.
-- `node --test tests/native-extension-persistence.test.mjs`: 9 built-dispatcher cases passed; its persistence-refusal guard-removal check failed as required.
+Earlier component controls passed 10 source cases, 6 owner cases, 9 built JSONL/
+export/import cases and 9 dispatcher cases. Two separate owner-guard cuts, one
+structural-role cut and one dispatcher-refusal cut each failed as required.
 
 The first serial combined command,
 `node --test --test-concurrency=1 tests/native-persistence-owner.test.mjs tests/native-persistence.test.mjs tests/native-owned-session.test.mjs tests/native-extension-persistence.test.mjs`,
@@ -122,7 +142,7 @@ with zero failures, skips or cancellations:
 Those TAP receipts are retained separately from the initial failed-run logs.
 Public authentication denial is not authentication or provider qualification.
 
-At final source commit `0736473`, the full vendor `npm run check` passed, including
+At intermediate source commit `0736473`, the full vendor `npm run check` passed, including
 Biome (1,578 files, no fixes), pinned/runtime dependencies, TypeScript import forms,
 entry graphs, install-lock comparison, `tsc --noEmit` and browser smoke. The earlier
 failed check reported six fixture callbacks returning `void` instead of
@@ -130,9 +150,9 @@ failed check reported six fixture callbacks returning `void` instead of
 those six no-op callbacks asynchronous, uses three equivalent newline template
 expressions, and retains Biome's type-export ordering.
 
-The source persistence command above then passed 10/10 at the final source bytes
-in 2686.537 ms, with no failures, skips or cancellations. The earlier 97-case
-receipt is historical; that combined scope was not rerun after these final repairs.
+The source persistence suite then passed 10/10 at that intermediate source
+in 2686.537 ms, with no failures, skips or cancellations. These receipts predate
+the current combined review fixes.
 
 The affected vendor command, `node node_modules/vitest/vitest.mjs --run test/extensions-runner.test.ts`
 from `vendor/pi/packages/coding-agent`, failed 56/56 in 27.10 seconds. Every failure
@@ -141,6 +161,43 @@ occurs in shared setup: the unchanged in-memory registry helper calls
 rejects with `SPLYCE_UNAVAILABLE` before the callbacks or assertions execute. The
 runtime/helper source is unchanged from the exact base. No guard, assertion or
 skip was changed to conceal this result; this vendor fixture remains unqualified.
+
+## Current combined component evidence
+
+At frozen source `c2ea6a6`,
+`npm run build --workspace=@earendil-works/pi-coding-agent` passed and produced the
+83-file, 9.1 MiB SDK bundle.
+`node --import ./vendor/pi/packages/coding-agent/src/experimental/source-resolver.ts --test tests/native-session-manager-persistence.test.mjs`
+passed 15/15,
+including same-chain rejection, unrelated queueing, stale owned opens through
+canonical and junction paths, stale-manager refusal and fresh-reopen recovery.
+The first five added source cases produced one pass and four failures; a
+subsequently strengthened physical-byte assertion also failed against the prior
+source. Final loaded-source guard removals for the chain and file-version checks
+each produced one relevant failure, with disk implementation and verifier bytes
+unchanged.
+
+The targeted actual-SDK command,
+`node --test --test-name-pattern="owned SDK (drains|recovers).*awaited late persistence|owned SDK closes the final late-queue|removing late-queue drain guards" tests/native-owned-session.test.mjs`,
+passed 8/8 in 23536.5698 ms, with no failures, skips or cancellations. Seven cases
+cover custom/custom, bash/bash and custom/bash arrivals, refusal/recovery, and the
+final microtask settlement window. The eighth requires both loaded-module guard
+mutations to fail on missing persisted-message assertions. Their new child
+budgets are 60 seconds; the original guard budgets remain unchanged.
+
+The initial seven-case SDK verifier produced three passes and four missing-entry
+failures. Strengthening the successive-arrival case to require four real API
+messages also failed against the old SDK before the fix. This prevents a finite
+extra pass from satisfying a verifier intended to require complete draining.
+
+The complete registered scripts then passed 110/110 at the same frozen source,
+with zero failures, skips or cancellations:
+
+- `npm run test:native-owned-session`: 71/71 in 99582.4549 ms.
+- `npm run test:native-persistence`: 24/24 compiled cases in 22890.8813 ms, then 15/15 source cases in 7255.7544 ms.
+
+The complete vendor `npm run check` has not yet been rerun after these review
+fixes; its earlier intermediate-source pass does not qualify the current source.
 
 Local fixtures and canonical source replay do not establish live Rust inventory,
 complete native composition, installed Windows behavior, actual provider access,
