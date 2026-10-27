@@ -106,7 +106,7 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
-				throw new Error("Custom fetch is not supported by the Google Vertex adapter");
+				throw new CredentialPreflightError("Custom fetch is not supported by the Google Vertex adapter");
 			}
 			assertCredentialApiIdentity(model.api, "google-vertex", options);
 			assertCredentialOptions(options ?? {}, model.headers);

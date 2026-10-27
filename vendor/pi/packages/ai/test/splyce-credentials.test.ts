@@ -445,3 +445,96 @@ describe("shared credential helpers", () => {
 		expect(calls[0]!.redirect).toBe("error");
 	});
 });
+
+describe("fixed pre-send refusals never lease or run the native redactor", () => {
+	const counted = () => {
+		let uses = 0;
+		let redactions = 0;
+		return {
+			state: () => ({ uses, redactions }),
+			credentials: {
+				lease: {
+					use: async <T>(consume: (s: string) => T | Promise<T>) => {
+						uses += 1;
+						return consume(SECRET);
+					},
+				},
+				redact: (text: string) => {
+					redactions += 1;
+					return nativeRedact(text);
+				},
+			} as SplyceCredentials,
+		};
+	};
+	const cases: Array<[string, (extra: Record<string, unknown>) => Promise<{ stopReason: string }>]> = [
+		[
+			"Anthropic caller-supplied client",
+			(extra) =>
+				streamAnthropic(
+					model(
+						"anthropic",
+						"anthropic-messages",
+						"claude-haiku-4-5",
+						"https://api.anthropic.com",
+					) as Model<"anthropic-messages">,
+					context(),
+					{ client: {} as never, ...extra },
+				).result(),
+		],
+		[
+			"Anthropic github-copilot provider",
+			(extra) =>
+				streamAnthropic(
+					model(
+						"github-copilot",
+						"anthropic-messages",
+						"claude-haiku-4-5",
+						"https://api.anthropic.com",
+					) as Model<"anthropic-messages">,
+					context(),
+					extra,
+				).result(),
+		],
+		[
+			"Google custom fetch",
+			(extra) =>
+				streamGoogle(
+					model(
+						"google",
+						"google-generative-ai",
+						"gemini-3-flash-preview",
+						"https://generativelanguage.example/v1beta",
+					) as Model<"google-generative-ai">,
+					context(),
+					{ fetch: (async () => new Response("{}")) as unknown as typeof fetch, ...extra },
+				).result(),
+		],
+		[
+			"Vertex custom fetch",
+			(extra) =>
+				streamVertex(
+					model(
+						"google-vertex",
+						"google-vertex",
+						"gemini-3-flash-preview",
+						"https://vertex.example",
+					) as Model<"google-vertex">,
+					context(),
+					{
+						project: "p",
+						location: "us-central1",
+						fetch: (async () => new Response("{}")) as unknown as typeof fetch,
+						...extra,
+					},
+				).result(),
+		],
+	];
+	it.each(cases)("%s: error, zero lease uses, zero redactor calls, zero SDK calls", async (_name, run) => {
+		const c = counted();
+		const result = await run({ credentials: c.credentials });
+		expect(result.stopReason).toBe("error");
+		expect(c.state()).toEqual({ uses: 0, redactions: 0 });
+		expect(sdk.anthropicOpts).toHaveLength(0);
+		expect(sdk.googleOpts).toHaveLength(0);
+	});
+});
