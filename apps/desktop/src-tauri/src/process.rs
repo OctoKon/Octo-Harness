@@ -54,6 +54,16 @@ fn invalid_manifest() -> EngineError {
     )
 }
 
+fn bootstrap_request(app_data_dir: &Path) -> Result<Value, EngineError> {
+    let path = app_data_dir
+        .to_str()
+        .filter(|_| app_data_dir.is_absolute())
+        .ok_or_else(|| EngineError::new("ENGINE_START", "Invalid application data directory"))?;
+    Ok(
+        serde_json::json!({"id":"native-bootstrap","method":"native.bootstrap","params":{"appDataDir":path}}),
+    )
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Manifest {
@@ -538,7 +548,9 @@ mod windows {
         pub fn spawn(
             engine_dir: &Path,
             expected_manifest_digest: &str,
+            app_data_dir: &Path,
         ) -> Result<Self, EngineError> {
+            let bootstrap = bootstrap_request(app_data_dir)?;
             let (root, verified_files) = verify_bundle(engine_dir, expected_manifest_digest)?;
             let executable = launch_path(&root.join("node.exe"))?;
             let cwd = launch_path(&root)?;
@@ -758,6 +770,13 @@ mod windows {
                 child.stop()?;
                 return Err(EngineError::new("ENGINE_START", "Engine could not start"));
             }
+            let response = child.request(&bootstrap)?;
+            if response
+                != serde_json::json!({"id":"native-bootstrap","ok":true,"value":{"state":"initialized"}})
+            {
+                child.stop()?;
+                return Err(EngineError::new("ENGINE_START", "Engine bootstrap failed"));
+            }
             Ok(child)
         }
 
@@ -936,6 +955,24 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bootstrap_uses_only_absolute_unicode_application_data_path() {
+        let path = std::env::temp_dir().join("splyce-data");
+        let request = bootstrap_request(&path).unwrap();
+        assert_eq!(
+            request,
+            serde_json::json!({"id":"native-bootstrap","method":"native.bootstrap","params":{"appDataDir":path.to_str().unwrap()}})
+        );
+        assert!(bootstrap_request(Path::new("relative")).is_err());
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let invalid =
+                std::ffi::OsString::from_wide(&[b'C' as u16, b':' as u16, b'\\' as u16, 0xd800]);
+            assert!(bootstrap_request(Path::new(&invalid)).is_err());
+        }
+    }
 
     #[test]
     fn frames_round_trip_and_enforce_encoded_limit() {

@@ -5,6 +5,7 @@
 
 import {
   CONTRACT_VERSION,
+  PROTOCOL_VERSION,
   ContractError,
   type ContractContext,
   type RecordKind,
@@ -432,6 +433,112 @@ export class Store {
 
   private assertOpen(): void {
     if (this.closed) throw new StoreError("STORE_CLOSED", "store is closed");
+  }
+
+  /**
+   * Structural bootstrap audit, including historical and tombstoned rows.
+   * Reference syntax is checked, but reference authorization belongs to the
+   * live caller; historical references need not still be available today.
+   */
+  audit(): {
+    scopeIds: string[];
+    recordCount: number;
+    deletedRecordIds: string[];
+    records: StoredRecord[];
+  } {
+    this.assertOpen();
+    try {
+      const integrity = this.db.prepare("PRAGMA integrity_check").all();
+      if (
+        integrity.length !== 1 ||
+        (integrity[0] as { integrity_check?: unknown }).integrity_check !== "ok"
+      )
+        throw new StoreError("STORE_CORRUPT", "store integrity check failed");
+      const stamp = this.db
+        .prepare("SELECT value FROM store_meta WHERE key = 'layout_version'")
+        .get() as { value: string } | undefined;
+      Store.validateStamped(this.db, stamp?.value ?? "");
+      const rows = this.db
+        .prepare(
+          "SELECT seq, kind, record_id, schema_version, scope_id, session_id, created_at, payload FROM records ORDER BY seq",
+        )
+        .all() as Array<{
+        seq: number;
+        kind: RecordKind;
+        record_id: string;
+        schema_version: number;
+        scope_id: string;
+        session_id: string;
+        created_at: string;
+        payload: string;
+      }>;
+      const scopeIds = new Set<string>();
+      const records: StoredRecord[] = [];
+      for (const row of rows) {
+        if (row.schema_version !== CONTRACT_VERSION)
+          throw new StoreError(
+            "UNKNOWN_SCHEMA",
+            "audit cannot read an unknown record schema",
+          );
+        const parsed = this.decodeStoredPayload(row.kind, row.payload);
+        const record = validateRecord(row.kind, parsed, {
+          scopeId: row.scope_id,
+          // Empty attribution is retained for historical migrated rows.
+          sessionId: row.session_id || "historical",
+          configRevision: INITIAL_CONFIG_REVISION,
+          profileRevision: "audit",
+          policyRevision: "audit",
+          lastDurableSeq: Number.MAX_SAFE_INTEGER,
+          maxInlineBytes: this.maxInlineBytes,
+          resolveReference: () => true,
+        });
+        if (
+          !Number.isSafeInteger(row.seq) ||
+          row.seq < 1 ||
+          record.recordId !== row.record_id ||
+          record.scopeId !== row.scope_id ||
+          record.createdAt !== row.created_at ||
+          record.schemaVersion !== row.schema_version ||
+          typeof row.session_id !== "string" ||
+          (row.session_id !== "" && /\s|[\\/]/u.test(row.session_id))
+        )
+          throw new StoreError(
+            "STORE_ATTRIBUTION",
+            "stored row attribution differs from its payload",
+          );
+        scopeIds.add(row.scope_id);
+        records.push({ seq: row.seq, kind: row.kind, record });
+      }
+      const deletions = this.db
+        .prepare("SELECT record_id, generation, deleted_at FROM deletions")
+        .all() as Array<{
+        record_id: string;
+        generation: number;
+        deleted_at: string;
+      }>;
+      const epoch = this.deletionEpoch();
+      for (const deletion of deletions) {
+        if (
+          typeof deletion.record_id !== "string" ||
+          deletion.record_id.length === 0 ||
+          /\s|[\\/]/u.test(deletion.record_id) ||
+          !Number.isSafeInteger(deletion.generation) ||
+          deletion.generation < 1 ||
+          deletion.generation > epoch ||
+          typeof deletion.deleted_at !== "string" ||
+          !Number.isFinite(Date.parse(deletion.deleted_at))
+        )
+          throw new StoreError("STORE_LAYOUT", "invalid deletion tombstone");
+      }
+      return {
+        scopeIds: [...scopeIds].sort(),
+        recordCount: rows.length,
+        deletedRecordIds: deletions.map((row) => row.record_id),
+        records,
+      };
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
   }
 
   /** Write paths reject a read-only store explicitly before any write attempt. */
@@ -999,6 +1106,28 @@ export class Store {
     }
   }
 
+  /** Project the unchanged v1 stored envelope onto the current wire version;
+   * full validation still follows, and persisted bytes are never rewritten. */
+  private decodeStoredPayload(kind: string, payload: string): unknown {
+    let record: unknown;
+    try {
+      record = JSON.parse(payload);
+    } catch {
+      throw new StoreError("STORE_CORRUPT", "stored payload is not valid JSON");
+    }
+    if (
+      kind === "event" &&
+      isRecordObject(record) &&
+      isRecordObject(record.envelope) &&
+      record.envelope.protocolVersion === 1
+    )
+      return {
+        ...record,
+        envelope: { ...record.envelope, protocolVersion: PROTOCOL_VERSION },
+      };
+    return record;
+  }
+
   private readRow(row: unknown): StoredRecord {
     const r = row as {
       seq: number | bigint;
@@ -1012,7 +1141,7 @@ export class Store {
         `record ${r.kind} carries schemaVersion ${String(r.schema_version)}; this store reads ${String(CONTRACT_VERSION)}`,
       );
     }
-    const record: unknown = JSON.parse(r.payload);
+    const record = this.decodeStoredPayload(r.kind, r.payload);
     if (r.kind === "event") {
       const attribution = this.db
         .prepare("SELECT scope_id, session_id FROM records WHERE seq = ?")
