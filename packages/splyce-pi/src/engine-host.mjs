@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { createNativeHost } from "./native-host.mjs";
 import { NativeControl } from "./native-control.mjs";
+import { StoreError } from "../dist/store.js";
 import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
@@ -176,6 +177,32 @@ export async function runHost(
       reply = { id: request.id, ok: true, value: { state: "initialized" } };
     } else if (request.method === "native.bootstrap") {
       throw new FrameError();
+    } else if (request.method === "native.workspace.admit") {
+      try {
+        const workspace = host.admitWorkspace(request.params);
+        reply = { id: request.id, ok: true, value: workspace };
+      } catch (error) {
+        if (
+          !(error instanceof StoreError) ||
+          ![
+            "WORKSPACE_INPUT",
+            "WORKSPACE_PATH_INVALID",
+            "WORKSPACE_IDENTITY_CHANGED",
+            "WORKSPACE_ADMISSION_CHANGED",
+          ].includes(error.code)
+        )
+          throw error;
+        reply = {
+          id: request.id,
+          ok: false,
+          error: {
+            code: "POLICY_DENIED",
+            message: "Workspace admission unavailable",
+            correlationId: request.id,
+            retryable: false,
+          },
+        };
+      }
     } else if (
       request.method === "handshake" &&
       Object.keys(request.params).length === 1 &&

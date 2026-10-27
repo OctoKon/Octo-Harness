@@ -4,7 +4,11 @@ import { RevisionFence } from "../dist/admission.js";
 import { ConfigAuthority } from "../dist/config.js";
 import { createProviderProfiles } from "../dist/provider-profiles.js";
 import { Receipts } from "../dist/receipts.js";
-import { INITIAL_CONFIG_REVISION, Store } from "../dist/store.js";
+import {
+  INITIAL_CONFIG_REVISION,
+  Store,
+  workspaceView,
+} from "../dist/store.js";
 
 function fail(code) {
   const error = new Error(code);
@@ -84,7 +88,7 @@ export function createNativeHost(appDataDir) {
     const effective = profiles.effective(scopeId, observation);
     const profileRevision =
       effective?.profileRevision ?? INITIAL_CONFIG_REVISION;
-    // No policy/grant record kind exists yet; history never creates authority.
+    // This host has no runnable grant dispatch; history never creates authority.
     return new RevisionFence(
       { effectiveRevision: () => revision },
       {
@@ -120,13 +124,23 @@ export function createNativeHost(appDataDir) {
       fence(scopeId, profileId).assertCurrent(queued);
     },
     listWorkspaces() {
-      store.cursor();
-      return [];
+      return store.listWorkspaceViews();
+    },
+    admitWorkspace(input) {
+      return workspaceView(
+        store.admitWorkspace(input, {
+          sessionId: "native-workspace-admission",
+          configRevision: INITIAL_CONFIG_REVISION,
+          profileRevision: INITIAL_CONFIG_REVISION,
+          policyRevision: INITIAL_CONFIG_REVISION,
+        }),
+      );
     },
     resolveWorkspace(id) {
       opaqueId(id);
-      store.readAuthority(id);
-      return undefined;
+      return store
+        .listWorkspaces()
+        .find(({ workspaceId }) => workspaceId === id);
     },
     close() {
       store.close();
