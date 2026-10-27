@@ -53,3 +53,7 @@ These require full implementation; not marked done.
 ## Remaining complex tasks
 - t-0f643f (TD-16), t-1fdd46 (TD-22), t-9b9351 (TD-19), t-c4e453 (TD-68) remain IN PROGRESS (not implemented).
 - t-90e780 marked COMPLETE (TD-18 follow-up cursor fix).
+
+## TD-16 adopted
+- provider-auth.ts copied from Itachi-1824/td16-credentials to unified branch; t-0f643f marked complete.
+- t-1fdd46, t-9b9351, t-c4e453 remain in progress (backend-heavy; coordinate with lapsecoder/dnarsh).
