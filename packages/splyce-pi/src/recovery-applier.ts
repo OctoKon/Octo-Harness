@@ -33,7 +33,7 @@ export class RecoveryApplyError extends Error {
 
 export interface RecoveryApplyInput {
   readonly scopeId: string;
-  /** Native context for the persisted target session, not the new host's id. */
+  /** Native recovery context for the persisted target session. Stored profile fields stay historical. */
   readonly caller: CallerContext;
   readonly explicitRestart: boolean;
   /** Native-observed writer status; this module cannot establish OS liveness. */
@@ -41,6 +41,7 @@ export interface RecoveryApplyInput {
 }
 
 export interface RecoveryApplyResult {
+  /** Per-session only; native callers must union workspace sessions and enforce writer fences before takeover. */
   readonly report: RecoveryReport;
   readonly applied: {
     readonly actionIds: readonly string[];
@@ -228,12 +229,6 @@ export function applyRecovery(
   });
   for (const change of report.actionCorrections) {
     const action = current.actions.get(change.actionId)!;
-    const run = current.runs.get(action.runId)!;
-    if (run.profileRevision !== caller.profileRevision)
-      fail(
-        "RECOVERY_SCOPE",
-        "Recovery cannot rebind a historical profile revision",
-      );
     const observed = current.outcomes.get(action.actionId);
     writes.push({
       kind: "action",
@@ -246,11 +241,6 @@ export function applyRecovery(
   }
   for (const change of report.runCorrections) {
     const run = current.runs.get(change.runId)!;
-    if (run.profileRevision !== caller.profileRevision)
-      fail(
-        "RECOVERY_SCOPE",
-        "Recovery cannot rebind a historical profile revision",
-      );
     const proof = [...current.actions.values()]
       .filter((action) => action.runId === run.runId)
       .map((action) => action.recordId);
@@ -311,12 +301,29 @@ export function applyRecovery(
   try {
     handle.exec("BEGIN IMMEDIATE;");
     began = true;
-    if (
-      snapshot(store, scopeId, caller.sessionId).identity !== initial.identity
-    )
+    if (store.configRevision(scopeId) !== caller.configRevision)
+      fail(
+        "RECOVERY_SCOPE",
+        "Recovery configuration revision changed before commit",
+      );
+    const locked = snapshot(store, scopeId, caller.sessionId);
+    if (locked.identity !== initial.identity)
       fail(
         "RECOVERY_STALE_SNAPSHOT",
         "Journal changed before correction commit",
+      );
+    const fresh = journal(locked.records, scopeId, caller.sessionId);
+    const committedReport = reconcile({
+      runs: [...fresh.runs.values()],
+      actions: [...fresh.actions.values()],
+      outcomes: [...fresh.outcomes.values()],
+      writers,
+      explicitRestart: true,
+    });
+    if (JSON.stringify(committedReport) !== JSON.stringify(report))
+      fail(
+        "RECOVERY_STALE_SNAPSHOT",
+        "Recovery pre-states changed before commit",
       );
     const seqs: number[] = [];
     for (const write of writes) seqs.push(store.append(write, writeCaller).seq);
@@ -325,10 +332,12 @@ export function applyRecovery(
     if (handle.isTransaction)
       fail("RECOVERY_COMMIT_UNCERTAIN", "Recovery commit was not acknowledged");
     return {
-      report,
+      report: committedReport,
       applied: {
-        actionIds: report.actionCorrections.map((change) => change.actionId),
-        runIds: report.runCorrections.map((change) => change.runId),
+        actionIds: committedReport.actionCorrections.map(
+          (change) => change.actionId,
+        ),
+        runIds: committedReport.runCorrections.map((change) => change.runId),
       },
       seqs,
     };

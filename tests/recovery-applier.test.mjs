@@ -339,18 +339,100 @@ test("#137: stale configuration cannot acknowledge even an empty recovery", (t) 
 
 test("#137: recovery preserves the stored profile rather than rebinding it", (t) => {
   const f = fixture(t);
-  const before = f.store.list(scopeId);
-  assert.throws(
-    () =>
-      applyRecovery(
-        f.store,
-        input(f, {
-          caller: { ...f.caller, profileRevision: "another-profile" },
-        }),
-      ),
-    (error) => error.code === "RECOVERY_SCOPE",
+  const result = applyRecovery(
+    f.store,
+    input(f, {
+      caller: { ...f.caller, profileRevision: "another-profile" },
+    }),
   );
+  assert.deepEqual(result.applied.runIds, ["r1"]);
+  const recovered = latest(f.store, "run", "r1");
+  assert.equal(recovered.profileRevision, f.original.run.profileRevision);
+  assert.equal(recovered.profileId, f.original.run.profileId);
+  assert.deepEqual(recovered.grantIds, f.original.run.grantIds);
+  assert.equal(recovered.state, "uncertain");
+});
+
+test("#137: current authority must still allow the historical profile reference", (t) => {
+  const f = fixture(t);
+  const before = f.store.list(scopeId);
+  const resolve = f.caller.resolveReference;
+  let checkedHistoricalProfile = false;
+  const caller = {
+    ...f.caller,
+    profileRevision: "another-profile",
+    resolveReference(id, requestedScope) {
+      if (id === f.original.run.profileId) checkedHistoricalProfile = true;
+      return id !== f.original.run.profileId && resolve(id, requestedScope);
+    },
+  };
+  assert.throws(() => applyRecovery(f.store, input(f, { caller })));
+  assert.equal(checkedHistoricalProfile, true);
   assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#137: never-started approved work is durably canceled and never reapplied", (t) => {
+  const f = fixture(t, { seeded: false });
+  seed(f.store, { actionState: "approved" });
+  const result = applyRecovery(f.store, input(f));
+  assert.deepEqual(result.applied.actionIds, ["a1"]);
+  assert.equal(latest(f.store, "action", "a1").state, "canceled");
+  assert.equal(latest(f.store, "run", "r1").state, "failed");
+  f.store.close();
+  const reopened = f.open();
+  const durable = reopened.list(scopeId);
+  const repeat = applyRecovery(
+    reopened,
+    input(f, { caller: nativeCaller(reopened) }),
+  );
+  assert.deepEqual(repeat.seqs, []);
+  assert.deepEqual(reopened.list(scopeId), durable);
+});
+
+test("#137: a revision committed between precheck and snapshot rejects the stale caller", (t) => {
+  const f = fixture(t, { seeded: false });
+  const original = seed(f.store, {
+    runState: "completed",
+    actionState: "completed",
+    effectState: "observed-success",
+  });
+  const writer = f.open();
+  const ids = originalIds(f.store);
+  const request = input(f);
+  let advanced = false;
+  // A second real connection commits at the precheck/snapshot boundary.
+  Object.defineProperty(request.writers[0].lease, "writerId", {
+    get() {
+      if (!advanced) {
+        advanced = true;
+        writer.appendBatch(
+          [
+            {
+              kind: "configurationTransition",
+              record: row("configurationTransition", "cfg-between-read", {
+                expectedConfigRevision: "cfg-0",
+                acceptedConfigRevision: "cfg-1",
+                state: "applied",
+                intentRef: original.action.recordId,
+                changedValuesArtifactId: "e1",
+                outcomeRef: original.outcome.recordId,
+              }),
+            },
+          ],
+          nativeCaller(writer),
+          undefined,
+          undefined,
+          { scopeId, revision: "cfg-0" },
+        );
+      }
+      return "writer1";
+    },
+  });
+  assert.throws(() => applyRecovery(f.store, request));
+  assert.equal(advanced, true);
+  assert.equal(f.store.configRevision(scopeId), "cfg-1");
+  assert.deepEqual(changedRows(f.store, ids), []);
+  assert.equal(f.store.db.isTransaction, false);
 });
 
 test("#137: native denial of a body reference is checked before the write transaction", (t) => {
@@ -377,6 +459,14 @@ test("#137: native denial of a body reference is checked before the write transa
 test("#137: a caller-owned transaction is rejected without rollback or loss of its writes", (t) => {
   const f = fixture(t);
   const ids = originalIds(f.store);
+  let referenceCalls = 0;
+  const caller = {
+    ...f.caller,
+    resolveReference(id, requestedScope) {
+      referenceCalls++;
+      return f.caller.resolveReference(id, requestedScope);
+    },
+  };
   f.store.db.exec("BEGIN IMMEDIATE;");
   try {
     f.store.append(
@@ -386,7 +476,8 @@ test("#137: a caller-owned transaction is rejected without rollback or loss of i
       },
       f.caller,
     );
-    assert.throws(() => applyRecovery(f.store, input(f)));
+    assert.throws(() => applyRecovery(f.store, input(f, { caller })));
+    assert.equal(referenceCalls, 0);
     assert.equal(f.store.db.isTransaction, true);
     assert.equal(
       f.store.get("outer-transaction").record.recordId,
