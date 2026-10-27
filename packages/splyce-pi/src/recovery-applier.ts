@@ -62,13 +62,16 @@ function snapshot(store: Store, scopeId: string, sessionId: string) {
   // The fence values are read inside the same before/after stamp window as
   // the journal list: the returned values are exactly the ones the second
   // stamp verified consistent with the records, so a write inside the read
-  // window can never end up inside the fence.
-  const fence = {
-    scopeCursor: 0,
-    sessionCursor: 0,
-    deletionEpoch: 0,
+  // window can never end up inside the fence. Workspace ownership ROW epochs
+  // (not the store-global counter) are stamped with the cursors: an acquire
+  // advances no cursor, so only the row epoch can catch it inside the window.
+  const rowEpoch = (workspaceId: string): number => {
+    const row = store.db
+      .prepare("SELECT epoch FROM workspace_ownership WHERE workspace_id = ?")
+      .get(workspaceId) as { epoch: number | bigint } | undefined;
+    return row === undefined ? 0 : Number(row.epoch);
   };
-  const stamp = () => {
+  const stamp = (workspaceIds: readonly string[]) => {
     const values: [number, number, number, number, string] = [
       store.cursor(scopeId),
       store.sessionCursor(scopeId, sessionId),
@@ -76,15 +79,39 @@ function snapshot(store: Store, scopeId: string, sessionId: string) {
       store.ownershipEpoch(),
       store.configRevision(scopeId),
     ];
-    fence.scopeCursor = values[0];
-    fence.sessionCursor = values[1];
-    fence.deletionEpoch = values[2];
-    return JSON.stringify(values);
+    const captured = {
+      scopeCursor: values[0],
+      sessionCursor: values[1],
+      deletionEpoch: values[2],
+      workspaceEpochs: new Map<string, number>(),
+    };
+    const parts = [JSON.stringify(values)];
+    for (const workspaceId of [...workspaceIds].sort()) {
+      const epoch = rowEpoch(workspaceId);
+      captured.workspaceEpochs.set(workspaceId, epoch);
+      parts.push(JSON.stringify([workspaceId, epoch]));
+    }
+    return { captured, identity: parts.join("|") };
   };
-  const before = stamp();
+  const runWorkspaceIds = (records: readonly StoredRecord[]): Set<string> => {
+    const ids = new Set<string>();
+    for (const { kind, record } of records)
+      if (kind === "run" && record.piSessionId === sessionId)
+        ids.add(String(record.workspaceId));
+    return ids;
+  };
+  // A preliminary scoped-run list seeds the workspace set; both stamps carry
+  // their id lists, so a set change inside the window changes the identity.
+  const preliminary = store.list(scopeId, 0, sessionId);
+  let { captured: fence, identity } = stamp([
+    ...runWorkspaceIds(preliminary.records),
+  ]);
   const scope = store.list(scopeId);
   const target = store.list(scopeId, 0, sessionId);
-  if (before !== stamp())
+  const verifiedIds = runWorkspaceIds(target.records);
+  const second = stamp([...verifiedIds]);
+  fence = second.captured;
+  if (second.identity !== identity)
     fail("RECOVERY_STALE_SNAPSHOT", "Journal changed during recovery read");
   if (scope.skippedUnknownSchema || target.skippedUnknownSchema)
     fail("RECOVERY_UNKNOWN_SCHEMA", "Recovery cannot skip unknown records");
@@ -254,7 +281,9 @@ export function applyRecovery(
   // The ownership fence compares the TARGET workspace's own row epoch (the
   // same row commitBatch reads under the lock), never the store-global
   // ownership counter: another workspace's acquire must not block this
-  // recovery, and an unacquired target must not read a foreign epoch.
+  // recovery, and an unacquired target must not read a foreign epoch. The
+  // row epoch was captured inside the snapshot stamp window, so a takeover
+  // during the snapshot itself already failed the stamp.
   const workspaceIds = new Set(
     [...current.runs.values()].map((run) => run.workspaceId),
   );
@@ -264,13 +293,15 @@ export function applyRecovery(
       "Target session runs attribute inconsistent workspace ids",
     );
   const workspaceId = [...workspaceIds][0];
-  const ownershipEpoch = ((): number | undefined => {
-    if (workspaceId === undefined) return undefined;
-    const row = handle
-      .prepare("SELECT epoch FROM workspace_ownership WHERE workspace_id = ?")
-      .get(workspaceId) as { epoch: number | bigint } | undefined;
-    return row === undefined ? 0 : Number(row.epoch);
-  })();
+  const ownershipEpoch =
+    workspaceId === undefined
+      ? undefined
+      : initial.fence.workspaceEpochs.get(workspaceId);
+  if (workspaceId !== undefined && ownershipEpoch === undefined)
+    fail(
+      "RECOVERY_STALE_SNAPSHOT",
+      "Target workspace was not part of the verified snapshot",
+    );
   const report = reconcile({
     runs: [...current.runs.values()],
     actions: [...current.actions.values()],

@@ -951,9 +951,12 @@ test("#157 P1-A: a newer durable outcome committed inside the snapshot window fa
   let fired = false;
   f.store.db.prepare = (sql) => {
     const statement = originalPrepare(sql);
-    // The tombstone scan is the first applier step after the snapshot: a real
-    // competitor commits a newer observed-failure outcome exactly there.
-    if (!fired && /FROM deletions/.test(String(sql))) {
+    // The tombstone scan is the first applier step AFTER snapshot() ends: a
+    // real competitor commits a newer observed-failure outcome exactly there.
+    // (The epoch counter's own history probe also reads FROM deletions, so
+    // match the scan statement - firing inside the stamp window would only
+    // test the stamp, not the fence.)
+    if (!fired && /FROM deletions WHERE/.test(String(sql))) {
       fired = true;
       writer.append(
         {
@@ -1001,6 +1004,92 @@ test("#157 P1-B: a released target workspace still admits recovery at its own ep
   const result = applyRecovery(f.store, input(f));
   assert.deepEqual(result.applied.actionIds, ["a1"]);
   assert.equal(latest(f.store, "action", "a1").state, "uncertain");
+});
+
+test("#157 P2-1: an ownership change inside the snapshot window fails the fence closed", (t) => {
+  const f = fixture(t);
+  const ids = originalIds(f.store);
+  const writer = f.open();
+  const originalPrepare = f.store.db.prepare.bind(f.store.db);
+  let fired = false;
+  f.store.db.prepare = (sql) => {
+    const statement = originalPrepare(sql);
+    // The tombstone scan is the first applier step after the snapshot: a real
+    // competitor takes over the target workspace exactly there. An ownership
+    // change advances no cursor and no deletion epoch - only the row-epoch
+    // fence inside the snapshot window can catch it. (The epoch counter's own
+    // history probe also reads FROM deletions, so match the scan statement.)
+    if (!fired && /FROM deletions WHERE/.test(String(sql))) {
+      fired = true;
+      writer.acquireWorkspace(scopeId, "s-intruder");
+    }
+    return statement;
+  };
+  try {
+    assert.throws(
+      () => applyRecovery(f.store, input(f)),
+      (error) => error.code === "RECOVERY_STALE_SNAPSHOT",
+    );
+  } finally {
+    f.store.db.prepare = originalPrepare;
+  }
+  assert.equal(fired, true);
+  assert.deepEqual(changedRows(f.store, ids), []);
+  assert.equal(latest(f.store, "action", "a1").state, "running");
+});
+
+test("#157 P3: a tombstoned superseded outcome fails recovery at the snapshot check", (t) => {
+  const f = fixture(t);
+  // An older outcome that no correction cites: only the snapshot-level
+  // tombstone check can reject it; reference authorization never sees it.
+  const superseded = row("outcome", "superseded-failure", {
+    sourceIds: [f.original.action.recordId],
+    actionId: f.original.action.actionId,
+    resultArtifactId: "result1",
+    effectState: "observed-failure",
+    errorClass: "execution",
+  });
+  f.store.append({ kind: "outcome", record: superseded }, f.caller);
+  f.store.noteDeletion(superseded.recordId);
+  const before = f.store.list(scopeId);
+  const cursor = f.store.cursor();
+  assert.throws(
+    () => applyRecovery(f.store, input(f)),
+    (error) => error.code === "RECOVERY_DELETED_SOURCE",
+  );
+  assert.equal(f.store.cursor(), cursor);
+  assert.deepEqual(f.store.list(scopeId), before);
+});
+
+test("#157 P3: target runs attributing different workspaces are rejected", (t) => {
+  const f = fixture(t);
+  // The native authority also binds workspaces: w-other resolves for the
+  // seeded run, so only the applier's single-workspace rule can reject it.
+  const caller = {
+    ...f.caller,
+    resolveReference(id, requestedScope) {
+      if (id === "w-other") return requestedScope === scopeId;
+      return f.caller.resolveReference(id, requestedScope);
+    },
+  };
+  f.store.append(
+    {
+      kind: "run",
+      record: {
+        ...f.original.run,
+        recordId: "run-other-workspace",
+        runId: "r2",
+        workspaceId: "w-other",
+      },
+    },
+    caller,
+  );
+  const before = f.store.list(scopeId);
+  assert.throws(
+    () => applyRecovery(f.store, input(f)),
+    (error) => error.code === "RECOVERY_SCOPE",
+  );
+  assert.deepEqual(f.store.list(scopeId), before);
 });
 
 test("#157 P3: a tombstoned uncited outcome still fails recovery closed", (t) => {
