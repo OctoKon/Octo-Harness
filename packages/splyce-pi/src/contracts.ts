@@ -1231,24 +1231,8 @@ export function validateRecord<K extends RecordKind>(
   const record = object(value, "record");
   metadata(record, context);
   shape(record, RECORD_SCHEMAS[kind], {}, context, false);
-  if (kind === "profileSnapshot" && Object.hasOwn(record, "bindings")) {
-    requireThat(Array.isArray(record.bindings), "INVALID_SHAPE", "bindings");
-    const roles = new Set<string>();
-    for (const value of record.bindings as unknown[]) {
-      const binding = object(value, "binding");
-      shape(
-        binding,
-        { role: "id", providerConnectionId: "id", connectionRevision: "id" },
-        { modelId: "modelRef" },
-        context,
-        true,
-      );
-      const role = binding.role as string;
-      requireThat(!roles.has(role), "INVALID_SHAPE", "duplicate binding role");
-      roles.add(role);
-    }
-    requireThat(roles.has("chat"), "INVALID_SHAPE", "chat binding");
-  }
+  if (kind === "profileSnapshot" && Object.hasOwn(record, "bindings"))
+    validateProfileBindings(record.bindings, context);
   if (kind === "configurationTransition") {
     const hasProfile = Object.hasOwn(record, "profileId");
     const hasRevision = Object.hasOwn(record, "profileRevision");
@@ -1353,6 +1337,40 @@ export function validateRecord<K extends RecordKind>(
     requireThat(record.kind === kind, "UNKNOWN_KIND", "kind");
   return value as RecordByKind[K];
 }
+
+/** Binding-set invariants of a profile snapshot: strict shape, unique roles, a chat binding. */
+export function validateProfileBindings(
+  bindings: unknown,
+  context: ContractContext = BINDINGS_CONTEXT,
+): void {
+  requireThat(Array.isArray(bindings), "INVALID_SHAPE", "bindings");
+  const roles = new Set<string>();
+  for (const value of bindings as unknown[]) {
+    const binding = object(value, "binding");
+    shape(
+      binding,
+      { role: "id", providerConnectionId: "id", connectionRevision: "id" },
+      { modelId: "modelRef" },
+      context,
+      true,
+    );
+    const role = binding.role as string;
+    requireThat(!roles.has(role), "INVALID_SHAPE", "duplicate binding role");
+    roles.add(role);
+  }
+  requireThat(roles.has("chat"), "INVALID_SHAPE", "chat binding");
+}
+// Binding fields are ids and model references only, so nothing is ever resolved.
+const BINDINGS_CONTEXT: ContractContext = {
+  scopeId: "bindings",
+  sessionId: "bindings",
+  configRevision: "bindings",
+  profileRevision: "bindings",
+  policyRevision: "bindings",
+  lastDurableSeq: 0,
+  maxInlineBytes: 1,
+  resolveReference: () => false,
+};
 
 export function validateCursor(
   afterSeq: unknown,

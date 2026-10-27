@@ -615,6 +615,30 @@ const METADATA_CASES: Case[] = [
         "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-v2:1"),
     true,
   ],
+  [
+    "cjk model id",
+    (v) => void (v.profile.bindings[0]!.modelId = "org/模型:版本"),
+    true,
+  ],
+  [
+    "embedding-only bindings (no chat)",
+    (v) => void (v.profile.bindings[0]!.role = "embedding"),
+    false,
+  ],
+  [
+    "duplicate role bindings",
+    (v) => void v.profile.bindings.push({ ...v.profile.bindings[0]! }),
+    false,
+  ],
+  [
+    "chat plus distinct embedding",
+    (v) =>
+      void v.profile.bindings.push({
+        ...v.profile.bindings[0]!,
+        role: "embedding",
+      }),
+    true,
+  ],
   ["requestId 129", (v) => void (v.requestId = "r".repeat(129)), false],
   ["requestId secret shape", (v) => void (v.requestId = secretLike), false],
   [
@@ -678,11 +702,17 @@ test("validateSetupMetadata and commitSetup accept and reject the same cases", (
     const { store, caller } = fixture(t);
     const value = clone();
     mutate(value);
+    const pending = structuredClone(value);
+    delete (pending.connection as Record<string, unknown>).credentialRef;
+    const pendingCheck = () =>
+      validateSetupMetadata(pending, { credentialPending: true });
     if (valid) {
       assert.doesNotThrow(() => validateSetupMetadata(value), name);
+      assert.doesNotThrow(pendingCheck, name);
       assert.doesNotThrow(() => store.commitSetup(value, caller), name);
     } else {
       assert.throws(() => validateSetupMetadata(value), invalid, name);
+      assert.throws(pendingCheck, invalid, name);
       assert.throws(
         () => store.commitSetup(value, caller),
         code("SETUP_INVALID"),
@@ -716,4 +746,41 @@ test("the pure validator accepts a pending credential slot; commitSetup still re
     invalid,
   );
   assert.deepEqual(kinds(store), []);
+});
+
+test("a non-ASCII model id persists unchanged", (t) => {
+  const { store, caller } = fixture(t);
+  const value = clone();
+  value.profile.bindings[0]!.modelId = "org/模型:版本";
+  const done = store.commitSetup(value, caller);
+  assert.equal(
+    (
+      store.get(done.profile.recordId).record as {
+        bindings: { modelId: string }[];
+      }
+    ).bindings[0]!.modelId,
+    "org/模型:版本",
+  );
+});
+
+test("a replay never resurrects a record another handle deleted", (t) => {
+  const { store, caller, path } = fixture(t);
+  const first = store.commitSetup(input(), caller);
+  const other = Store.open(path);
+  other.noteDeletion(first.profile.recordId);
+  const cursor = store.cursor();
+  let returned: unknown;
+  assert.throws(() => {
+    returned = store.commitSetup(input(), caller);
+  }, code("SETUP_DELETED"));
+  assert.equal(returned, undefined);
+  assert.equal(store.cursor(), cursor);
+  for (const record of [first.endpoint, first.connection]) {
+    other.noteDeletion(record.recordId);
+    assert.throws(
+      () => store.commitSetup(input(), caller),
+      code("SETUP_DELETED"),
+    );
+  }
+  other.close();
 });

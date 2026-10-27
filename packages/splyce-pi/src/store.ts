@@ -1200,6 +1200,7 @@ export class Store {
           (ref === connection.endpointRef || ref === digestRef)) ||
         resolve(ref),
     };
+    let replayed: SetupResult | undefined;
     try {
       this.commitBatch(
         [
@@ -1214,6 +1215,13 @@ export class Store {
             workspaceId: scopeId,
             recordIds: Object.values(ids),
             digestRef,
+            onReplay: (records) => {
+              replayed = {
+                endpoint: records[0] as RecordByKind["providerEndpoint"],
+                connection: records[1] as RecordByKind["providerConnection"],
+                profile: records[2] as RecordByKind["profileSnapshot"],
+              };
+            },
             unresolved: (): string | undefined =>
               unresolved.find(([, ref]) => !resolve(ref))?.[0],
           },
@@ -1241,15 +1249,12 @@ export class Store {
       );
     } catch (error) {
       // The lock-time observation found all three records of this exact request.
-      if (error instanceof StoreError && error.code === "SETUP_REPLAY")
-        return {
-          endpoint: this.get(ids.endpoint)
-            .record as RecordByKind["providerEndpoint"],
-          connection: this.get(ids.connection)
-            .record as RecordByKind["providerConnection"],
-          profile: this.get(ids.profile)
-            .record as RecordByKind["profileSnapshot"],
-        };
+      if (
+        error instanceof StoreError &&
+        error.code === "SETUP_REPLAY" &&
+        replayed !== undefined
+      )
+        return replayed;
       throw error;
     }
     return {
@@ -1356,6 +1361,8 @@ export class Store {
         workspaceId: string;
         recordIds: readonly string[];
         digestRef: string;
+        /** Receives the stored records, read under the same lock, when the request is a replay. */
+        onReplay: (records: readonly unknown[]) => void;
         /** Re-resolves the setup references; returns the first failing field. */
         unresolved: () => string | undefined;
       };
@@ -1423,25 +1430,52 @@ export class Store {
             "SETUP_INVALID",
             "setup reference does not resolve: workspace",
           );
-        const seen = expectedSetup.recordIds.map(
+        // One observation of all participating rows (tombstones included) under the lock.
+        const rows = expectedSetup.recordIds.map(
           (id) =>
-            (
-              this.db
-                .prepare(
-                  "SELECT json_extract(payload, '$.sourceIds[0]') AS digest FROM records WHERE record_id = ?",
-                )
-                .get(id) as { digest: unknown } | undefined
-            )?.digest,
+            this.db
+              .prepare(
+                "SELECT seq, kind, schema_version, payload, json_extract(payload, '$.sourceIds[0]') AS digest, " +
+                  "EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = records.record_id) AS deleted " +
+                  "FROM records WHERE record_id = ?",
+              )
+              .get(id) as
+              | {
+                  seq: number;
+                  kind: string;
+                  schema_version: number;
+                  payload: string;
+                  digest: unknown;
+                  deleted: number | bigint;
+                }
+              | undefined,
         );
-        if (seen.some((digest) => digest !== undefined)) {
-          const same = seen.every(
-            (digest) => digest === expectedSetup.digestRef,
-          );
+        if (rows.some((row) => row !== undefined)) {
+          // A tombstoned record is never replayed or resurrected.
+          if (
+            rows.some((row) => row !== undefined && Number(row.deleted) !== 0)
+          )
+            throw new StoreError(
+              "SETUP_DELETED",
+              "a record of this setup request was deleted; nothing appended",
+            );
+          if (
+            rows.every(
+              (row) =>
+                row !== undefined && row.digest === expectedSetup.digestRef,
+            )
+          ) {
+            expectedSetup.onReplay(
+              rows.map((row) => this.readRow(row!).record),
+            );
+            throw new StoreError(
+              "SETUP_REPLAY",
+              "setup request already committed; nothing appended",
+            );
+          }
           throw new StoreError(
-            same ? "SETUP_REPLAY" : "SETUP_REQUEST_CONFLICT",
-            same
-              ? "setup request already committed; nothing appended"
-              : "requestId was already used with a different setup request; nothing appended",
+            "SETUP_REQUEST_CONFLICT",
+            "requestId was already used with a different setup request; nothing appended",
           );
         }
         // A descriptor removed after the early check must not commit.

@@ -1,6 +1,11 @@
 // TD-26 setup metadata validation: pure and Store-independent so the native
 // owner can run the exact check commitSetup runs before it stores a credential.
-import { canonicalEndpointUrl, modelRef } from "./contracts.js";
+import {
+  ContractError,
+  canonicalEndpointUrl,
+  modelRef,
+  validateProfileBindings,
+} from "./contracts.js";
 
 export class SetupMetadataError extends Error {
   readonly code = "SETUP_INVALID" as const;
@@ -250,6 +255,13 @@ export function validateSetupMetadata(
       modelId: setupModelRef(b.modelId, `profile.bindings[${index}].modelId`),
     };
   });
+  // The profileSnapshot contract's own binding-set check (unique roles, a chat binding).
+  try {
+    validateProfileBindings(bindings);
+  } catch (error) {
+    if (error instanceof ContractError) setupInvalid("profile.bindings");
+    throw error;
+  }
   return {
     workspaceId: setupId(top.workspaceId, "workspaceId"),
     requestId: setupRequestId(top.requestId),
