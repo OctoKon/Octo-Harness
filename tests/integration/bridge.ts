@@ -519,3 +519,74 @@ test("highestQueuedSeq counts durable frames only", () => {
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("overflow resync starts at the client applied cursor (saturation)", () => {
+  const { bridge, store } = makeBridge();
+  const caller = {
+    sessionId: "s1",
+    configRevision: "cfg1",
+    profileRevision: "profile1",
+    policyRevision: "policy1",
+    resolveReference: () => true,
+  };
+  const runFixtures = JSON.parse(
+    readFileSync(new URL("../fixtures/contracts/records.json", import.meta.url), "utf8"),
+  ) as Record<string, Record<string, unknown>>;
+  // Seed a source record so events have a resolvable source.
+  store.commitEvents(
+    [
+      {
+        kind: "run",
+        record: {
+          ...structuredClone(runFixtures.run),
+          recordId: "rec-sat-src",
+          scopeId: "w-demo",
+        },
+      },
+    ],
+    [],
+    caller,
+  );
+  const drafts = Array.from({ length: 1025 }, (_, i) => ({
+    schemaVersion: CONTRACT_VERSION,
+    protocolVersion: PROTOCOL_VERSION,
+    eventId: `evt-sat-${String(i + 1)}`,
+    recordId: "rec-sat-src",
+    createdAt: "2026-10-26T00:00:00.000Z",
+    sourceIds: ["rec-sat-src"],
+    sessionId: "s1",
+    scopeId: "w-demo",
+    durable: true,
+    kind: "engine.status",
+    payload: { state: "ready", activeWorkers: 0 },
+  }));
+  store.commitEvents([], drafts as never, caller);
+  bridge.clientAppliedSeq = 900;
+  const resync = bridge["resyncFrame"]();
+  assert.equal(resync.event.kind, "stream.resync");
+  assert.equal((resync.event.payload as { fromSeq: number }).fromSeq, 900);
+  assert.notEqual(
+    (resync.event.payload as { fromSeq: number }).fromSeq,
+    store.eventHighwater("w-demo", "s1"),
+  );
+  const replayed = store.list("w-demo", 900, "s1");
+  const seqs = replayed.records.map((r) => r.seq);
+  assert.equal(seqs.length, 126);
+  assert.equal(seqs[0], 901);
+  assert.equal(seqs[seqs.length - 1], 1026);
+  for (let i = 1; i < seqs.length; i += 1) {
+    assert.equal(seqs[i], seqs[i - 1] + 1);
+  }
+});
+
+test("fromSeq never exceeds Store.eventHighwater (INVALID_CURSOR)", () => {
+  const { bridge, store } = makeBridge();
+  const highwater = store.eventHighwater("w-demo", "s1");
+  bridge.clientAppliedSeq = highwater + 5;
+  assert.throws(
+    () => bridge["resyncFrame"](),
+    (error: unknown) =>
+      error instanceof BridgeError && error.code === "INVALID_CURSOR",
+  );
+});
+
