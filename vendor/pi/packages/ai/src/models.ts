@@ -20,6 +20,7 @@ import type {
 	ProviderAuth,
 } from "./auth/types.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
+import type { SplyceCredentials } from "./splyce-credentials.ts";
 import { observeModelRequest } from "./telemetry.ts";
 import type {
 	AnyModel,
@@ -61,6 +62,7 @@ import {
 	assertChatModel,
 	assertClassifierInputSupported,
 	assertClassifierModel,
+	assertCredentialsSupported,
 	assertImageModel,
 	classifierErrorResult,
 	getModelType,
@@ -864,6 +866,24 @@ class ModelsImpl implements MutableModels {
 		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
 	}> {
 		this.requireProvider(model);
+		// Splyce: a leased credential replaces stored, environment and provider-derived auth entirely. No key, header,
+		// base URL or env from the auth resolution is mixed in, so the admitted endpoint cannot be redirected.
+		const leased = (options as { credentials?: SplyceCredentials } | undefined)?.credentials;
+		if (leased) {
+			assertCredentialsSupported(model.api, { credentials: leased });
+			let leasedHeaders = options?.headers;
+			if (options?.transformHeaders) leasedHeaders = await options.transformHeaders(leasedHeaders ?? {});
+			const leasedIdentity = mergeClientIdentity(this.identity, options?.identity);
+			const { transformHeaders: _unused, ...leasedOptions } = options ?? {};
+			return {
+				requestModel: model,
+				requestOptions: {
+					...leasedOptions,
+					headers: leasedHeaders,
+					...(leasedIdentity === undefined ? {} : { identity: leasedIdentity }),
+				} as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>,
+			};
+		}
 		const resolution = await this.getAuth(model, {
 			apiKey: options?.apiKey,
 			env: options?.env,
