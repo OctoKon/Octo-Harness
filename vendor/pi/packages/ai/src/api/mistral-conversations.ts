@@ -1,6 +1,8 @@
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
+	CredentialPreflightError,
 	createLeasedFetch,
 	redactEventWithLease,
 	redactResponseWithLease,
@@ -145,6 +147,7 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 		const output = createOutput(model);
 
 		try {
+			assertCredentialApiIdentity(model.api, "mistral-conversations", options);
 			assertCredentialOptions(options ?? {}, model.headers);
 			// Splyce: with a lease the request carries a placeholder and a fetch that leases the real key on every send.
 			const credentials = leasedCredentials;
@@ -206,7 +209,10 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			// An errored or aborted response never carries tool calls into dispatch or persistence.
 			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = await redactWithLease(leasedCredentials, formatMistralError(error));
+			output.errorMessage = await redactWithLease(
+				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
+				formatMistralError(error),
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

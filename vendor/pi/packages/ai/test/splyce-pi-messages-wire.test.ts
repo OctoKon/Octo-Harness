@@ -76,6 +76,25 @@ describe("TD-23 Pi-native: credentials", () => {
 		expect(sent).toHaveLength(0);
 	});
 
+	it("refuses a model of another API with native credentials before any lease or send", async () => {
+		let uses = 0;
+		const counted = {
+			use: async <T>(consume: (s: string) => T | Promise<T>) => {
+				uses += 1;
+				return consume(SECRET);
+			},
+		};
+		const wrong = { ...model, api: "anthropic-messages" } as never;
+		const result = await streamPi(wrong, context() as never, {
+			fetch: serve(() => sse([start, done("stop")])),
+			credentials: { lease: counted, redact: (t: string) => t.split(SECRET).join("[REDACTED]") },
+		}).result();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage ?? "").toContain("API identity");
+		expect(uses).toBe(0);
+		expect(sent).toHaveLength(0);
+	});
+
 	it("rejects a caller-supplied auth header before anything is sent", async () => {
 		for (const name of ["Authorization", "X-Api-Key"]) {
 			const result = await run([done("stop")], { credentials: creds(), headers: { [name]: "caller-value" } });

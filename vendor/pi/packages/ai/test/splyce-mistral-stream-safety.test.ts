@@ -94,6 +94,25 @@ describe("TD-23 Mistral: credentials", () => {
 		expect(sent).toHaveLength(0);
 	});
 
+	it("refuses a model of another API with native credentials before any lease or send", async () => {
+		let uses = 0;
+		const counted = {
+			use: async <T>(consume: (s: string) => T | Promise<T>) => {
+				uses += 1;
+				return consume(SECRET);
+			},
+		};
+		const wrong = { ...model(), api: "anthropic-messages" } as never;
+		const result = await streamMistral(wrong, normalizeContext(context()), {
+			fetch: serve(() => sse([chunk({ content: "ok" }, "stop")])),
+			credentials: creds(counted),
+		}).result();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage ?? "").toContain("API identity");
+		expect(uses).toBe(0);
+		expect(sent).toHaveLength(0);
+	});
+
 	it("keeps the legacy apiKey path unchanged", async () => {
 		const result = await run({ apiKey: "legacy-key" });
 		expect(result.stopReason).toBe("stop");

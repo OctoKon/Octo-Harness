@@ -10,7 +10,9 @@
  */
 
 import {
+	assertCredentialApiIdentity,
 	assertCredentialOptions,
+	CredentialPreflightError,
 	createLeasedFetch,
 	redactEventWithLease,
 	redactResponseWithLease,
@@ -371,7 +373,10 @@ async function createErrorEvent(
 		stopReason: reason,
 		// A native redactor knows the secret only inside the lease: redact there, and if the lease is gone the message
 		// degrades to a generic one rather than risking raw provider text.
-		errorMessage: await redactWithLease(credentials, error instanceof Error ? error.message : String(error)),
+		errorMessage: await redactWithLease(
+			error instanceof CredentialPreflightError ? undefined : credentials,
+			error instanceof Error ? error.message : String(error),
+		),
 		timestamp: Date.now(),
 	};
 
@@ -418,6 +423,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 	const leasedCredentials = options?.credentials;
 	void (async () => {
 		try {
+			assertCredentialApiIdentity(model.api, "pi-messages", options);
 			assertCredentialOptions(options ?? {}, model.headers);
 			// Splyce: with a lease the request carries a placeholder and a fetch that leases the real key on every send.
 			const credentials = leasedCredentials;
