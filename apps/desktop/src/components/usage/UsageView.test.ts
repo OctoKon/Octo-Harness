@@ -34,7 +34,9 @@ describe("TD-76 UsageView states", () => {
     expect(byTestId(root, "usage-loading")?.textContent).toContain(
       "Loading usage",
     );
-    expect(byTestId(root, "usage-view")?.getAttribute("aria-busy")).toBe("true");
+    expect(byTestId(root, "usage-view")?.getAttribute("aria-busy")).toBe(
+      "true",
+    );
     // Loading is not a claim that the run used nothing.
     expect(byTestId(root, "usage-unavailable")).toBeNull();
     expect(byTestId(root, "usage-not-reported")).toBeNull();
