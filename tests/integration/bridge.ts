@@ -222,6 +222,7 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
     [seedDraft as never],
     caller,
   );
+  bridge.clientAppliedSeq = store.eventHighwater("w-demo", "s1");
 
   bridge.submit(event("turn.started", { runId: "r1", turnId: "t1" }));
   bridge.submit(
@@ -304,6 +305,7 @@ test("durable overflow emits exactly one resync and pauses delivery", () => {
     ],
     caller,
   );
+  bridge.clientAppliedSeq = store.eventHighwater("w-demo", "s1");
   const resync3 = bridge["resyncFrame"]();
   assert.equal(
     (resync3.event.payload as { fromSeq: number }).fromSeq,

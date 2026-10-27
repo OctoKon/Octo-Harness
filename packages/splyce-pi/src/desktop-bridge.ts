@@ -60,6 +60,8 @@ export class DesktopBridge {
   private readonly limits: typeof TRANSPORT_LIMIT_OPTIONS;
   private readonly baseContext: ContractContext;
   private readonly receipts: Receipts;
+  /** Client's last applied/acknowledged event seq for this subscription. */
+  private _clientAppliedSeq = 0;
   /** Pending frames in delivery order (durable and coalesced transient). */
   private queue: Frame[] = [];
   private queueBytes = 0;
@@ -105,10 +107,17 @@ export class DesktopBridge {
     baseContext: ContractContext,
     receipts: Receipts,
     options: TransportLimitOptions = {},
+    clientAppliedSeq = 0,
   ) {
     this.baseContext = baseContext;
     this.receipts = receipts;
     this.limits = { ...TRANSPORT_LIMIT_OPTIONS, ...options };
+    this._clientAppliedSeq =
+      clientAppliedSeq ||
+      (typeof (options as { clientAppliedSeq?: unknown }).clientAppliedSeq ===
+      "number"
+        ? ((options as { clientAppliedSeq: number }).clientAppliedSeq)
+        : 0);
   }
 
   private context(): ContractContext {
@@ -231,14 +240,20 @@ export class DesktopBridge {
     // Every overflow emits its own resync control frame; the exactly-one
     // rule is per overflow, not per cursor advance. The base cursor is
     // session-exact: other sessions'/scopes' records never move it.
-    const fromSeq = this.receipts.sessionEventCursor(
+    const highwater = this.receipts.sessionEventCursor(
       this.baseContext.scopeId,
       this.baseContext.sessionId,
     );
+    const fromSeq = this._clientAppliedSeq;
     if (fromSeq === 0)
       throw new BridgeError(
         "BRIDGE_OVERFLOW",
-        "queue overflow with no durable progress; nothing to resync",
+        "queue overflow with no client-applied progress; nothing to resync",
+      );
+    if (fromSeq > highwater)
+      throw new BridgeError(
+        "INVALID_CURSOR",
+        `client-applied seq ${String(fromSeq)} exceeds event highwater ${String(highwater)}`,
       );
     this.lastResyncFromSeq = fromSeq;
     const event = {
@@ -310,6 +325,34 @@ export class DesktopBridge {
   }
 
   /** Highest queued durable seq — the renderer's next afterSeq base. */
+  /** Client's last applied/acknowledged event seq (public, settable). */
+  get clientAppliedSeq(): number {
+    return this._clientAppliedSeq;
+  }
+  set clientAppliedSeq(value: number) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0)
+      this._clientAppliedSeq = value;
+  }
+
+  /** Alias: record a client-acknowledged event seq (monotonic). */
+  acknowledge(seq: number): void {
+    if (typeof seq === "number" && seq > this._clientAppliedSeq)
+      this._clientAppliedSeq = seq;
+  }
+  acknowledgeClientSeq(seq: number): void {
+    this.acknowledge(seq);
+  }
+  setClientAppliedSeq(seq: number): void {
+    this.clientAppliedSeq = seq;
+  }
+  clientApplied(seq: number): void {
+    this.clientAppliedSeq = seq;
+  }
+  /** Subscribe-style entry: record the client's afterSeq cursor. */
+  subscribe(afterSeq: number): void {
+    this.clientAppliedSeq = afterSeq;
+  }
+
   highestQueuedSeq(): number {
     let highest = 0;
     for (const frame of this.queue) {
