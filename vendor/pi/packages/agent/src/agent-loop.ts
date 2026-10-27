@@ -26,6 +26,7 @@ import {
 	assertSplyceToolCurrent,
 	getSplyceToolImplementation,
 	inheritSplyceLoopConfig,
+	rethrowSplycePersistenceError,
 } from "./splyce-readiness.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
@@ -841,6 +842,7 @@ async function prepareToolCall(
 		validatedArgs = validateToolArguments(tool, preparedToolCall);
 	} catch (error) {
 		requireSplyceToolAdmission(tool).discard(toolCall.id, signal?.aborted ? "canceled" : "denied");
+		rethrowSplycePersistenceError(error);
 		return {
 			kind: "immediate",
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
@@ -907,6 +909,7 @@ async function prepareToolCall(
 		}
 		hooksCompleted = true;
 	} catch (error) {
+		rethrowSplycePersistenceError(error);
 		return {
 			kind: "immediate",
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
@@ -1016,6 +1019,7 @@ async function executePreparedToolCall(
 				const durationMs = elapsed();
 				acceptingUpdates = false;
 				await Promise.all(updateEvents);
+				rethrowSplycePersistenceError(error);
 				return {
 					result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 					isError: true,
@@ -1071,6 +1075,7 @@ async function finalizeExecutedToolCall(
 				isError = executed.isError || (afterResult.isError ?? isError);
 			}
 		} catch (error) {
+			rethrowSplycePersistenceError(error);
 			result = createErrorToolResult(error instanceof Error ? error.message : String(error));
 			isError = true;
 		}

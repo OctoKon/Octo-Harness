@@ -382,24 +382,24 @@ function createExtensionAPI(
 		},
 
 		// Action methods - delegate to shared runtime
-		sendMessage(message, options): void {
+		sendMessage(message, options): Promise<void> {
 			assertActive();
-			runtime.sendMessage(message, options);
+			return runtime.sendMessage(message, options);
 		},
 
-		sendUserMessage(content, options): void {
+		sendUserMessage(content, options): Promise<void> {
 			assertActive();
-			runtime.sendUserMessage(content, options);
+			return runtime.sendUserMessage(content, options);
 		},
 
-		appendEntry(customType: string, data?: unknown): void {
+		appendEntry(customType: string, data?: unknown): Promise<void> {
 			assertActive();
-			runtime.appendEntry(customType, data);
+			return runtime.appendEntry(customType, data);
 		},
 
-		setSessionName(name: string): void {
+		setSessionName(name: string): Promise<void> {
 			assertActive();
-			runtime.setSessionName(name);
+			return runtime.setSessionName(name);
 		},
 
 		getSessionName(): string | undefined {
@@ -407,9 +407,9 @@ function createExtensionAPI(
 			return runtime.getSessionName();
 		},
 
-		setLabel(entryId: string, label: string | undefined): void {
+		setLabel(entryId: string, label: string | undefined): Promise<void> {
 			assertActive();
-			runtime.setLabel(entryId, label);
+			return runtime.setLabel(entryId, label);
 		},
 
 		exec(command: string, args: string[], options?: ExecOptions) {
@@ -452,9 +452,9 @@ function createExtensionAPI(
 			return runtime.getThinkingLevel();
 		},
 
-		setThinkingLevel(level) {
+		setThinkingLevel(level): Promise<void> {
 			assertActive();
-			runtime.setThinkingLevel(level);
+			return runtime.setThinkingLevel(level);
 		},
 
 		registerProvider(providerOrName: Provider | string, config?: ProviderConfig) {

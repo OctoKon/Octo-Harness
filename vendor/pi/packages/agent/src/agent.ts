@@ -18,6 +18,7 @@ import {
 	getSplyceAgentCallbacks,
 	inheritSplyceLoopConfig,
 	inheritSplyceOwner,
+	rethrowSplycePersistenceError,
 } from "./splyce-readiness.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
@@ -571,6 +572,7 @@ export class Agent {
 	}
 
 	private async handleRunFailure(error: unknown, aborted: boolean): Promise<void> {
+		rethrowSplycePersistenceError(error);
 		this._state.errorMessage = error instanceof Error ? error.message : String(error);
 		if (aborted) return;
 		try {

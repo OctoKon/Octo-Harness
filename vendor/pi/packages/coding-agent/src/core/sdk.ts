@@ -3,6 +3,7 @@ import {
 	type AgentMessage,
 	type AgentOptions,
 	assertSameSplyceOwner,
+	assertSplycePersistence,
 	assertSplyceReady,
 	inheritSplyceOwner,
 	setDefaultStreamFn,
@@ -200,6 +201,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	assertSameSplyceOwner(options, modelRuntime, "model-runtime");
 	assertSameSplyceOwner(options, settingsManager, "settings-manager");
 	assertSameSplyceOwner(options, sessionManager, "session-manager");
+	assertSplycePersistence(sessionManager);
 	assertSameSplyceOwner(options, resourceLoader, "resource-loader");
 	for (const scoped of options.scopedModels ?? []) assertSameSplyceOwner(options, scoped.model, "model");
 	const cwd = resolvePath(options.cwd);
@@ -392,20 +394,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 	};
 	inheritSplyceOwner(options, agentOptions, "agent-options");
-	const agent = new Agent(agentOptions);
 
-	// Restore missing settings metadata for older sessions.
-	if (hasExistingSession) {
-		if (!hasThinkingEntry) {
-			sessionManager.appendThinkingLevelChange(thinkingLevel);
+	// Commit setup metadata before exposing the session to callers or extensions.
+	await sessionManager.withPersistence((manager) => {
+		if (hasExistingSession) {
+			if (!hasThinkingEntry) manager.appendThinkingLevelChange(thinkingLevel);
+		} else {
+			if (model) manager.appendModelChange(model.provider, model.id);
+			manager.appendThinkingLevelChange(thinkingLevel);
 		}
-	} else {
-		// Save initial model and thinking level for new sessions so they can be restored on resume
-		if (model) {
-			sessionManager.appendModelChange(model.provider, model.id);
-		}
-		sessionManager.appendThinkingLevelChange(thinkingLevel);
-	}
+	});
+	if (agentOptions.initialState) agentOptions.initialState.messages = sessionManager.buildSessionContext().messages;
+	const agent = new Agent(agentOptions);
 
 	const sessionOptions: AgentSessionConfig = {
 		agent,

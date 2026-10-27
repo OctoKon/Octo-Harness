@@ -214,3 +214,21 @@ production factory, installed GUI readiness, provider admission, resource
 selection, credential lifecycle or executor containment is qualified. Trusted
 in-process code retains OS authority. Reapply against the exact owned source
 and rerun these regressions after donor or wrapper changes.
+
+## Awaited owned session persistence
+
+`0011-awaited-session-persistence.patch` applies to exact owned bootstrap base
+`0a700b32b0a0abe5c24194b61a854f9dd9bfe874` and records 17 vendor sources plus one
+extension-runner fixture through frozen WIP commit
+`07364732cd97992f0e4c99f6fe15faecb10a1e5f`. Native-owned
+SessionManager writes await a sealed same-owner sanitizer per complete entry
+before filesystem effects or state publication. SDK/session/extension callers
+await those commits; unqualified owned exports/imports deny. Unowned donor APIs
+remain available outside owned stages. See the
+[persistence record](0011-awaited-session-persistence.md) for the exact canonical
+archive replay, scoped behavioral receipts, encoded-entry limit and outstanding
+native/installed/release qualification. The earlier scoped scripts passed
+97/97 cases with zero skips or cancellations. At the final source bytes, the full
+vendor check and 10 source persistence cases pass; the affected vendor runner
+fixture fails during unbound native-runtime setup. Earlier failures and unchanged
+mutation checks remain recorded. This patch activates no provider or grant.
