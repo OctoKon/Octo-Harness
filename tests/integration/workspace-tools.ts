@@ -783,10 +783,12 @@ test("shell summary reports exit code, raw bytes, duration and preview", async (
 
 test("shell summary: capped output keeps the raw size and truncated true; preview is at most 2048 chars", async () => {
   const h = harness({ maxOutputBytes: 5000 });
-  const big = nodeCmd("process.stdout.write('a'.repeat(9000))");
+  const big = nodeCmd(
+    "process.stdout.write('a'.repeat(9000)),setTimeout(process.stdout.write.bind(process.stdout,'b'.repeat(500)),300)",
+  );
   approveSh(h, big);
   const r = await result(h, sh, { command: big });
-  assert.equal(r.summary.bytes, 9000);
+  assert.equal(r.summary.bytes, 9500);
   assert.equal(r.summary.truncated, true);
   assert.equal(r.summary.preview.length, 2048);
   assert.ok(r.text.length < 5100);
