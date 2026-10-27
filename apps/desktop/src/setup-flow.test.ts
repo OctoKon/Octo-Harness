@@ -1,4 +1,5 @@
 import { flushSync, mount, unmount } from "svelte";
+import { get } from "svelte/store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ipc = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -13,7 +14,8 @@ import { FOUNDATION, PI_REVISION } from "@splyce/pi/contracts";
 import App from "./App.svelte";
 import Composer from "./components/Composer.svelte";
 import Providers from "./routes/Providers.svelte";
-import { invoke, sendSetup } from "./stores/engine";
+import { dispatchEngineEvent, invoke, sendSetup } from "./stores/engine";
+import { selectedSession } from "./stores/session-selection";
 
 const profile = {
   profileId: "profile_1",
@@ -290,6 +292,48 @@ describe("native profile and session setup", () => {
     expect(
       document.getElementById("profile-status")?.textContent,
     ).not.toContain("Session ready");
+    expect(button("Send").disabled).toBe(true);
+  });
+
+  it("retains the last session when profile selection fails and blocks sending", async () => {
+    await configured();
+    dispatchEngineEvent({
+      kind: "session.tree_updated",
+      sessionId: "old_session",
+      scopeId: "old_scope",
+      seq: 1,
+      payload: {
+        sessionId: "old_session",
+        branchAnchorId: "b1",
+        leaves: ["e1"],
+      },
+    } as never);
+    await tick();
+    document.querySelector<HTMLElement>("[role=treeitem]")!.click();
+    await tick();
+    expect(get(selectedSession)?.sessionId).toBe("old_session");
+    reply = async () => {
+      throw new Error("private-native-message");
+    };
+    button("Use this profile").click();
+    await tick();
+    expect(get(selectedSession)?.sessionId).toBe("old_session");
+    expect(button("Send").disabled).toBe(true);
+    expect(document.body.textContent).not.toContain("private-native-message");
+  });
+
+  it("keeps the acknowledged profile selected when session start fails", async () => {
+    await configured();
+    reply = async (op) => {
+      if (op === "profile.select") return selection;
+      throw new Error("private-native-message");
+    };
+    button("Use this profile").click();
+    await tick();
+    expect(document.body.textContent).toContain("profile_1 (selected)");
+    expect(document.getElementById("profile-status")?.textContent).toContain(
+      "could not",
+    );
     expect(button("Send").disabled).toBe(true);
   });
 

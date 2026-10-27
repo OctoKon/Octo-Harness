@@ -232,7 +232,6 @@
     profilePending = true;
     profileSelection = null;
     startedSession = null;
-    clearSession();
     profileStatus = "Selecting profile…";
     try {
       const requestId = crypto.randomUUID();
@@ -247,6 +246,7 @@
       if (selected.selectedProfileId !== profile.profileId)
         throw new Error("Invalid selection");
       profileSelection = selected;
+      clearSession();
       profiles = profiles.map((p) => ({
         ...p,
         configRevision: selected.configRevision,
@@ -272,9 +272,10 @@
           : "Profile selected. The session is unavailable. Sending stays blocked.";
     } catch (error) {
       if (epoch === setupEpoch) {
-        profileSelection = null;
         startedSession = null;
-        profileStatus = setupErrorCopy(error);
+        profileStatus = profileSelection
+          ? `Profile selected. Session could not be started. ${setupErrorCopy(error)}`
+          : setupErrorCopy(error);
       }
     } finally {
       if (epoch === setupEpoch) profilePending = false;
