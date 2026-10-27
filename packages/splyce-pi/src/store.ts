@@ -17,6 +17,7 @@ import {
   validateRecord,
   snapshotPersistedJson,
   type AdmittedWorkspaceRecord,
+  type ActionRecord,
   type GrantRecord,
   type ProviderEndpointRecord,
 } from "./contracts.js";
@@ -198,6 +199,15 @@ export function workspaceView(
   };
 }
 
+/** Native identity encoding: canonical unsigned decimal (no sign, space or leading zero) within `max`. */
+function canonicalUnsigned(value: unknown, max: bigint): boolean {
+  return (
+    typeof value === "string" &&
+    /^(0|[1-9][0-9]*)$/u.test(value) &&
+    BigInt(value) <= max
+  );
+}
+
 export interface GrantInput {
   workspaceId: string;
   sessionId: string;
@@ -217,6 +227,8 @@ export interface GrantUse {
   observedIdentity: DirectoryIdentity;
   actionId?: string;
   argumentsDigest?: string;
+  /** net.provider only: the qualified `scheme://host:port` the dispatch targets. */
+  origin?: string;
 }
 
 export interface OnceGrantConsumption extends GrantUse {
@@ -2356,6 +2368,16 @@ export class Store {
     )
       throw new StoreError("WORKSPACE_INPUT", "unexpected admission fields");
     const { canonicalPath, volumeSerial, fileId } = input;
+    // Validated before the idempotent return: a stored row in any other
+    // encoding never equals decimal input, so it needs re-admission.
+    if (
+      !canonicalUnsigned(volumeSerial, 0xffff_ffffn) ||
+      !canonicalUnsigned(fileId, 0xffff_ffff_ffff_ffffn)
+    )
+      throw new StoreError(
+        "WORKSPACE_INPUT",
+        "directory identity must be canonical decimal u32 volumeSerial and u64 fileId",
+      );
     const displayName = workspaceDisplayName(canonicalPath);
     for (let attempt = 0; ; attempt += 1) {
       const currentId = this.currentWorkspaceIdForPath(canonicalPath);
@@ -2423,6 +2445,47 @@ export class Store {
   }
 
   /**
+   * Engine/native-only: current admitted workspaces (includes canonicalPath),
+   * excluding superseded and deleted ones, ordered by admittedAt then workspaceId.
+   */
+  listWorkspaces(): AdmittedWorkspace[] {
+    this.assertOpen();
+    if (!this.hasWorkspacePaths()) return [];
+    try {
+      return (
+        this.db
+          .prepare(
+            "SELECT p.canonical_path, r.seq, r.kind, r.schema_version, r.payload FROM workspace_paths p " +
+              "JOIN records r ON r.record_id = p.workspace_id || '.admitted' " +
+              "WHERE p.rowid = (SELECT MAX(q.rowid) FROM workspace_paths q WHERE q.canonical_path = p.canonical_path) " +
+              "AND NOT EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = r.record_id)",
+          )
+          .all() as Array<{ canonical_path: string }>
+      )
+        .map((row) => ({
+          ...(this.readRow(row).record as AdmittedWorkspaceRecord),
+          canonicalPath: row.canonical_path,
+        }))
+        .sort((a, b) =>
+          a.admittedAt < b.admittedAt
+            ? -1
+            : a.admittedAt > b.admittedAt
+              ? 1
+              : a.workspaceId < b.workspaceId
+                ? -1
+                : 1,
+        );
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  /** Renderer-safe listing: no path, no directory identity. */
+  listWorkspaceViews(): WorkspaceView[] {
+    return this.listWorkspaces().map(workspaceView);
+  }
+
+  /**
    * Mints a grant on a current admitted workspace. fs.read/fs.write/shell.run
    * require the Pi-derived session to already exist in this store.
    */
@@ -2459,6 +2522,22 @@ export class Store {
     this.assertOpen();
     try {
       return this.checkGrant(use, "session");
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  /**
+   * Read-only check for a once grant around effect handoff. Accepts the grant
+   * while unconsumed, or when it was consumed together with this action's
+   * running receipt and that receipt is still the action's latest (so the
+   * action's own consumption is not a replay). Every other state keeps the
+   * typed errors of consume.
+   */
+  checkOnceGrantForActive(use: OnceGrantConsumption): GrantRecord {
+    this.assertOpen();
+    try {
+      return this.checkGrant(use, "once", true);
     } catch (error) {
       throw mapSqliteError(error);
     }
@@ -2641,24 +2720,52 @@ export class Store {
   /** Folds a grant's append-only history: the mint plus any consumed/revoked revisions. */
   private grantState(
     grantId: string,
-  ): { grant: GrantRecord; consumed: boolean; revoked: boolean } | undefined {
+  ):
+    | { grant: GrantRecord; consumedSeq: number | undefined; revoked: boolean }
+    | undefined {
     const history = this.db
       .prepare(
         "SELECT seq, kind, schema_version, payload FROM records WHERE kind = 'grant' " +
           "AND json_extract(payload, '$.grantId') = ? ORDER BY seq ASC",
       )
       .all(grantId)
-      .map((row) => this.readRow(row).record as GrantRecord);
-    const grant = history.find((record) => record.recordId === grantId);
+      .map((row) => {
+        const { seq, record } = this.readRow(row);
+        return { seq, record: record as GrantRecord };
+      });
+    const grant = history.find(({ record }) => record.recordId === grantId);
     if (grant === undefined) return undefined;
     return {
-      grant,
-      consumed: history.some((record) => record.consumedAt !== undefined),
-      revoked: history.some((record) => record.revokedAt !== undefined),
+      grant: grant.record,
+      consumedSeq: history.find(({ record }) => record.consumedAt !== undefined)
+        ?.seq,
+      revoked: history.some(({ record }) => record.revokedAt !== undefined),
     };
   }
 
-  private checkGrant(use: GrantUse, scope: GrantRecord["scope"]): GrantRecord {
+  /** True when the consumption committed with this action's running receipt and nothing followed it. */
+  private consumedByActiveAction(consumedSeq: number, use: GrantUse): boolean {
+    const row = this.db
+      .prepare(
+        "SELECT seq, kind, schema_version, payload FROM records WHERE kind = 'action' " +
+          "AND json_extract(payload, '$.actionId') = ? ORDER BY seq DESC LIMIT 1",
+      )
+      .get(use.actionId ?? null);
+    if (row === undefined) return false;
+    const latest = this.readRow(row);
+    const action = latest.record as ActionRecord;
+    return (
+      latest.seq < consumedSeq &&
+      action.state === "running" &&
+      action.argumentsDigest === use.argumentsDigest
+    );
+  }
+
+  private checkGrant(
+    use: GrantUse,
+    scope: GrantRecord["scope"],
+    active = false,
+  ): GrantRecord {
     const state = this.grantState(use.grantId);
     if (state === undefined)
       throw new StoreError("GRANT_REQUIRED", "no such grant; nothing appended");
@@ -2667,7 +2774,10 @@ export class Store {
         "GRANT_REVOKED",
         "grant was revoked; nothing appended",
       );
-    if (state.consumed)
+    if (
+      state.consumedSeq !== undefined &&
+      !(active && this.consumedByActiveAction(state.consumedSeq, use))
+    )
       throw new StoreError(
         "GRANT_CONSUMED",
         "once grant was already consumed; nothing appended",
@@ -2679,7 +2789,8 @@ export class Store {
       grant.sessionId !== use.sessionId ||
       grant.capability !== use.capability ||
       grant.actionId !== use.actionId ||
-      grant.argumentsDigest !== use.argumentsDigest
+      grant.argumentsDigest !== use.argumentsDigest ||
+      grant.origin !== use.origin
     )
       throw new StoreError(
         "GRANT_MISMATCH",
