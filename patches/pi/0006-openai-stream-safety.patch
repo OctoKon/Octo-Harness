@@ -146,7 +146,7 @@ index 5165e1c..f2802e3 100644
  			// Keep callback failures out of Codex's WebSocket retry and SSE fallback path.
  			throw new ProviderStreamEventCallbackError(error);
 diff --git a/vendor/pi/packages/ai/src/api/openai-completions.ts b/vendor/pi/packages/ai/src/api/openai-completions.ts
-index 0e5b606..4e83fba 100644
+index 0e5b606..f13382c 100644
 --- a/vendor/pi/packages/ai/src/api/openai-completions.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-completions.ts
 @@ -12,6 +12,15 @@ import type {
@@ -266,13 +266,13 @@ index 0e5b606..4e83fba 100644
  
  	return new OpenAI({
  		apiKey,
-+		// Injected transports own diagnostic redaction; SDK logging bypasses it.
-+		...(fetch ? { logLevel: "off" as const } : {}),
++		// Injected transports own diagnostics and account metadata; do not add ambient SDK values.
++		...(fetch ? { logLevel: "off" as const, organization: null, project: null } : {}),
  		baseURL: model.baseUrl,
  		dangerouslyAllowBrowser: true,
  		fetch,
 diff --git a/vendor/pi/packages/ai/src/api/openai-responses.ts b/vendor/pi/packages/ai/src/api/openai-responses.ts
-index c29e6ad..c49deae 100644
+index c29e6ad..205abe2 100644
 --- a/vendor/pi/packages/ai/src/api/openai-responses.ts
 +++ b/vendor/pi/packages/ai/src/api/openai-responses.ts
 @@ -1,6 +1,16 @@
@@ -426,8 +426,8 @@ index c29e6ad..c49deae 100644
  
  	return new OpenAI({
  		apiKey,
-+		// Injected transports own diagnostic redaction; SDK logging bypasses it.
-+		...(fetch ? { logLevel: "off" as const } : {}),
++		// Injected transports own diagnostics and account metadata; do not add ambient SDK values.
++		...(fetch ? { logLevel: "off" as const, organization: null, project: null } : {}),
  		baseURL: model.baseUrl,
  		dangerouslyAllowBrowser: true,
  		fetch,

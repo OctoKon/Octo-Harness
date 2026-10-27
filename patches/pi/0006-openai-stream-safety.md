@@ -163,21 +163,23 @@ browser smoke checks and no Biome fixes. The native declaration build passes
 with TypeScript 6.0.3. These source and fixture results do not qualify the
 native final-send composition, installed application or actual provider cells.
 
-## Injected transport diagnostic boundary
+## Injected transport diagnostic and account boundary
 
 Chat Completions and Responses now disable OpenAI SDK logging when an explicit
-fetch transport is supplied. Native transports own diagnostic redaction; SDK
-logging otherwise bypasses that boundary. Calls without an injected transport
-retain their existing logging behavior. The adapter change is limited to the
-two client constructors; no environment variable or global logging setting is
-changed.
+fetch transport is supplied. They also explicitly set SDK organization and
+project values to null, so ambient SDK account metadata cannot enter the native
+request. Native transports own diagnostic redaction and account binding; SDK
+defaults otherwise bypass those boundaries. Calls without an injected transport
+retain their existing behavior. The adapter change is limited to the two client
+constructors; no environment variable or global SDK setting is changed.
 
 Two cases in `tests/native-openai-chat.test.mjs` exercise the actual pinned
 OpenAI SDK with a controlled service response and diagnostic collection. The
 reflected synthetic marker reached SDK diagnostics before the constructor guard;
-both cases pass with the guard. These are controlled transport fixtures, not
-actual-service or native-authority qualification. The complete native consumer
-and its cleanup boundary are recorded in
+both cases pass with the guard. Two later cases independently check that ambient
+organization and project values do not reach injected native request headers.
+These are controlled transport fixtures, not actual-service or native-authority
+qualification. The complete native consumer and its cleanup boundary are recorded in
 [patch 0010](0010-native-openai-consumer.md).
 
 ## Integration still required

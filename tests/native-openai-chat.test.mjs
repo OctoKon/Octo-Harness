@@ -1169,3 +1169,157 @@ for (const api of ["openai-completions", "openai-responses"]) {
     assert.equal(physicalRequest.headers.get("authorization"), `Bearer ${KEY}`);
   });
 }
+
+function publicKeyAndEndedBlockEvents(api, kind) {
+  if (api === "openai-completions") {
+    const chunks =
+      kind === "keys"
+        ? [
+            {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call-fixture",
+                  type: "function",
+                  function: {
+                    name: "fixture_tool",
+                    arguments: '{"conf":"public"}',
+                  },
+                },
+              ],
+            },
+          ]
+        : [{ content: "half" }, { reasoning_content: "half" }];
+    return [...chunks, {}].map((delta, index) => ({
+      id: "chat-fixture",
+      choices: [
+        {
+          index: 0,
+          delta,
+          finish_reason:
+            index === chunks.length
+              ? kind === "keys"
+                ? "tool_calls"
+                : "stop"
+              : null,
+        },
+      ],
+    }));
+  }
+  const items =
+    kind === "keys"
+      ? [
+          {
+            type: "function_call",
+            id: "fc_fixture",
+            call_id: "call-fixture",
+            name: "fixture_tool",
+            arguments: '{"conf":"public"}',
+          },
+        ]
+      : [
+          {
+            type: "message",
+            id: "msg-fixture",
+            role: "assistant",
+            status: "completed",
+            content: [{ type: "output_text", text: "half", annotations: [] }],
+          },
+          {
+            type: "reasoning",
+            id: "rs_fixture",
+            summary: [{ type: "summary_text", text: "half" }],
+          },
+        ];
+  const events = [responseEvents()[0]];
+  for (const [output_index, item] of items.entries()) {
+    events.push({
+      type: "response.output_item.added",
+      output_index,
+      item: { ...item, content: [], summary: [] },
+    });
+    if (item.type === "message")
+      events.push({
+        type: "response.output_text.delta",
+        output_index,
+        item_id: item.id,
+        delta: "half",
+      });
+    if (item.type === "reasoning")
+      events.push({
+        type: "response.reasoning_summary_text.delta",
+        output_index,
+        item_id: item.id,
+        delta: "half",
+      });
+    events.push({ type: "response.output_item.done", output_index, item });
+  }
+  events.push({
+    ...responseEvents()[5],
+    response: { ...responseEvents()[5].response, output: items },
+  });
+  return events;
+}
+
+for (const api of ["openai-completions", "openai-responses"]) {
+  test(`${api}: live tool-argument object keys retain legitimate credential-prefix suffixes`, async () => {
+    const f = fixture({
+      api,
+      fetch: () => response(publicKeyAndEndedBlockEvents(api, "keys")),
+    });
+    const result = await f.run();
+    assert.equal(result.stopReason, "toolUse");
+    assert.deepEqual(
+      result.content.find((part) => part.type === "toolCall").arguments,
+      { conf: "public" },
+    );
+    const snapshots = f.state.events
+      .filter((event) => event.partial)
+      .flatMap((event) =>
+        event.partial.content.filter((part) => part.type === "toolCall"),
+      )
+      .filter((part) => Object.values(part.arguments).includes("public"));
+    assert.ok(snapshots.length > 0);
+    for (const snapshot of snapshots)
+      assert.deepEqual(snapshot.arguments, { conf: "public" });
+  });
+
+  test(`${api}: completed text and thinking blocks retain legitimate credential-prefix suffixes`, async () => {
+    const f = fixture({
+      api,
+      fetch: () => response(publicKeyAndEndedBlockEvents(api, "ended")),
+    });
+    const result = await f.run();
+    assert.equal(result.stopReason, "stop");
+    const ended = new Set();
+    for (const event of f.state.events) {
+      if (event.type === "text_end" || event.type === "thinking_end") {
+        assert.equal(event.content, "half");
+        ended.add(event.contentIndex);
+      }
+      if (!event.partial) continue;
+      for (const index of ended) {
+        const block = event.partial.content[index];
+        assert.equal(
+          block.type === "text" ? block.text : block.thinking,
+          "half",
+        );
+      }
+    }
+    assert.equal(ended.size, 2);
+    assert.equal(textOf(result), "half");
+    assert.equal(
+      result.content.find((part) => part.type === "thinking").thinking,
+      "half",
+    );
+    for (const type of ["text_delta", "thinking_delta"]) {
+      assert.equal(
+        f.state.events
+          .filter((event) => event.type === type)
+          .map((event) => event.delta)
+          .join(""),
+        "half",
+      );
+    }
+  });
+}

@@ -158,8 +158,10 @@ core patch to `packages/ai`, recorded here per [core fusion](../../research/docs
 `0010-native-openai-consumer.patch` adds the owned Pi API consumer for the native
 request-port contract. It consumes Chat Completions or Responses inside the
 request lifetime, copies and redacts observer data, and waits for asynchronous
-response cancellation before releasing the callback. The refreshed 0006 patch
-also disables SDK logging for injected transports. See the
+response cancellation before releasing the callback. It reuses the existing
+auth-header preflight through an additive shared helper export. The refreshed
+0006 patch also disables SDK logging and ambient SDK account metadata for
+injected transports. See the
 [consumer record](0010-native-openai-consumer.md) for patch order, local fixture
 evidence and the remaining native/installed integration boundary.
 

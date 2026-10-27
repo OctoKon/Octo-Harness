@@ -27,7 +27,7 @@ export interface NativeOpenAIChatInput<TScope extends object> {
 	readonly onEvent: (event: AssistantMessageEvent) => void | Promise<void>;
 }
 
-function redactedCopy<T>(value: T, redact: (text: string) => string): T {
+function redactedCopy<T>(value: T, redact: (text: string) => string, redactKey: (text: string) => string = redact): T {
 	const seen = new WeakMap<object, unknown>();
 	const copy = (item: unknown): unknown => {
 		if (typeof item === "string") return redact(item);
@@ -46,7 +46,7 @@ function redactedCopy<T>(value: T, redact: (text: string) => string): T {
 			const descriptor = Object.getOwnPropertyDescriptor(item, key);
 			if (!descriptor || !("value" in descriptor)) throw new Error("Native OpenAI data is not serializable");
 			// Preserve schema symbols used by Pi's tool definitions, never inherited methods.
-			Object.defineProperty(result, typeof key === "string" ? redact(key) : key, {
+			Object.defineProperty(result, typeof key === "string" ? redactKey(key) : key, {
 				value: copy(descriptor.value),
 				enumerable: descriptor.enumerable,
 				configurable: true,
@@ -135,6 +135,7 @@ export async function runNativeOpenAIChat<TScope extends object>(
 				return safe.slice(0, safe.length - pendingSuffixLength(safe));
 			};
 			const channels = new Map<string, Channel>();
+			const completedBlocks = new WeakSet<object>();
 			const localAbort = new AbortController();
 			const signal = AbortSignal.any([request.signal, localAbort.signal]);
 			const pendingCleanup = new Set<Promise<void>>();
@@ -213,15 +214,20 @@ export async function runNativeOpenAIChat<TScope extends object>(
 				model.api === "openai-completions"
 					? streamChat(model as Model<"openai-completions">, context, options)
 					: streamResponses(model as Model<"openai-responses">, context, options);
+			// ponytail: Pi-compatible partial redaction is O(deltas * output); callers must bound model output.
+			// Incremental partial projection is deferred to preserve the current progress snapshot contract.
 			const emit = async (event: AssistantMessageEvent) => {
 				const safe = redactedCopy(event, redact);
-				if ("partial" in safe) {
+				if ("partial" in safe && "partial" in event) {
 					// Pi can populate a shared partial before its *_start observer runs.
 					// Sanitize live content independently of delta-channel registration.
-					for (const block of safe.partial.content) {
+					for (const [index, block] of safe.partial.content.entries()) {
+						const original = event.partial.content[index];
+						if (original && completedBlocks.has(original)) continue;
 						if (block.type === "text") block.text = liveContent(block.text);
 						else if (block.type === "thinking") block.thinking = liveContent(block.thinking);
-						else if (block.type === "toolCall") block.arguments = redactedCopy(block.arguments, liveContent);
+						else if (block.type === "toolCall")
+							block.arguments = redactedCopy(block.arguments, liveContent, redact);
 					}
 				}
 				await input.onEvent(safe);
@@ -248,8 +254,18 @@ export async function runNativeOpenAIChat<TScope extends object>(
 						continue;
 					}
 					if (event.type === "text_end" || event.type === "thinking_end") {
+						const block = event.partial.content[event.contentIndex];
+						if (
+							block &&
+							((event.type === "text_end" && block.type === "text" && block.text === event.content) ||
+								(event.type === "thinking_end" &&
+									block.type === "thinking" &&
+									block.thinking === event.content))
+						)
+							completedBlocks.add(block);
 						await flush(`${event.type.replace("_end", "_delta")}:${event.contentIndex}`);
 					} else if (event.type === "toolcall_end") {
+						completedBlocks.add(event.toolCall);
 						await flush(`toolcall_delta:${event.contentIndex}`);
 					} else if (event.type === "done" || event.type === "error") {
 						for (const key of [...channels.keys()]) {
