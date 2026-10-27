@@ -14,6 +14,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -603,4 +604,135 @@ test("grep stops at a scanned-bytes budget and at a time budget", async () => {
     await codeOf(run(t, "grep", { pattern: "needle" })),
     "GREP_BUDGET",
   );
+});
+
+// Windows confine regressions: each name is one guard in confine().
+const denied = async (h: H, paths: string[], tool = "read") => {
+  for (const path of paths)
+    assert.equal(
+      await codeOf(run(h, tool, { path })),
+      "WORKSPACE_ESCAPE",
+      JSON.stringify(path),
+    );
+};
+const winOnly = { skip: win ? false : "Windows path semantics only" };
+
+test(
+  "windows device names are denied, also with an extension or in a subdirectory",
+  winOnly,
+  async () => {
+    const h = harness();
+    mkdirSync(join(h.root, "sub"));
+    const names = ["CON", "NUL", "PRN", "AUX", "COM1", "LPT1", "nul", "Com9"];
+    await denied(h, [
+      ...names,
+      ...names.map((n) => `${n}.txt`),
+      ...names.map((n) => `sub/${n}.log`),
+    ]);
+    await denied(h, ["NUL.txt", "CON"], "ls");
+    h.grants.approve("fs.write", "NUL.txt");
+    assert.equal(
+      await codeOf(run(h, "write", { path: "NUL.txt", content: "x" })),
+      "WORKSPACE_ESCAPE",
+    );
+    assert.equal(h.log.length, 0);
+  },
+);
+
+test("windows alternate data streams are denied", winOnly, async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "foo.txt"), "plain");
+  await denied(h, ["foo.txt:stream", "foo.txt:stream:$DATA", "foo.txt::$DATA"]);
+  h.grants.approve("fs.write", "foo.txt:stream");
+  assert.equal(
+    await codeOf(run(h, "write", { path: "foo.txt:stream", content: "x" })),
+    "WORKSPACE_ESCAPE",
+  );
+  assert.equal(readFileSync(join(h.root, "foo.txt"), "utf8"), "plain");
+});
+
+test(
+  "windows extended-length, device-namespace and UNC prefixes are denied, even when they name the root",
+  winOnly,
+  async () => {
+    const h = harness();
+    const inside = join(h.ws.canonicalPath, "a.txt");
+    writeFileSync(inside, "x");
+    await denied(h, [
+      `\\\\?\\${inside}`,
+      `\\\\.\\${inside}`,
+      "\\\\?\\C:\\Windows\\win.ini",
+      "\\\\.\\C:\\Windows\\win.ini",
+      "\\\\?\\UNC\\server\\share\\x",
+      "\\\\server\\share",
+      "\\\\server\\share\\x",
+      "//server/share/x",
+      "C:a.txt",
+    ]);
+  },
+);
+
+test("windows trailing dot and space names are denied", winOnly, async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "a.txt"), "x");
+  mkdirSync(join(h.root, "d"));
+  await denied(h, ["a.txt.", "a.txt ", "d.", "d /x", "d\\x. ", "d/a. "]);
+  h.grants.approve("fs.write", "a.txt.");
+  assert.equal(
+    await codeOf(run(h, "write", { path: "a.txt.", content: "y" })),
+    "WORKSPACE_ESCAPE",
+  );
+  assert.equal(readFileSync(join(h.root, "a.txt"), "utf8"), "x");
+});
+
+test("a NUL byte in a path is denied for every path tool", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, "a.txt"), "x");
+  for (const tool of ["read", "ls", "find", "grep"])
+    assert.equal(
+      await codeOf(run(h, tool, { path: "a.txt\0.png", pattern: "x" })),
+      "WORKSPACE_ESCAPE",
+      tool,
+    );
+  h.grants.approve("fs.write", "a.txt");
+  assert.equal(
+    await codeOf(run(h, "write", { path: "a.txt\0.png", content: "y" })),
+    "WORKSPACE_ESCAPE",
+  );
+  assert.equal(readFileSync(join(h.root, "a.txt"), "utf8"), "x");
+});
+
+// 8.3 alias of `full` inside dir, read from `cmd /c dir /x`; undefined if the volume has none.
+const shortName = (dir: string, full: string): string | undefined => {
+  const r = spawnSync("cmd", ["/c", "dir", "/x", "/a"], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  for (const line of r.stdout.split(/\r?\n/)) {
+    const at = line.indexOf(` ${full}`);
+    const short =
+      at < 0 ? "" : (line.slice(0, at).trim().split(/\s+/).pop() ?? "");
+    if (short.includes("~")) return short;
+  }
+  return undefined;
+};
+
+test("a windows 8.3 alias is judged by where it points", winOnly, async (t) => {
+  const h = harness();
+  mkdirSync(join(h.root, "long_inside_directory"));
+  writeFileSync(join(h.root, "long_inside_directory", "in.txt"), "inside");
+  writeFileSync(join(h.outside, "long_secret_file.txt"), "secret");
+  assert.ok(link(h, "long_escape_junction", h.outside, "dir"));
+  const ok = shortName(h.root, "long_inside_directory");
+  const bad = shortName(h.root, "long_escape_junction");
+  if (!ok || !bad) return t.skip("8.3 short names are disabled on this volume");
+  assert.match(
+    String(await run(h, "read", { path: `${ok}/in.txt` })),
+    /inside/,
+  );
+  assert.equal(
+    await codeOf(run(h, "read", { path: `${bad}/long_secret_file.txt` })),
+    "WORKSPACE_ESCAPE",
+  );
+  assert.equal(await codeOf(run(h, "ls", { path: bad })), "WORKSPACE_ESCAPE");
 });
