@@ -475,7 +475,18 @@ for (const modelId of [
   });
 }
 
-for (const modelId of ["", " ", "a b", "a\nb", "\u0000abc", "x".repeat(257)]) {
+for (const modelId of [
+  "",
+  " ",
+  "a b",
+  "a\nb",
+  "\u0000abc",
+  "\u007fabc",
+  "\u0080abc",
+  "a\u0085b",
+  "a\u009fb",
+  "x".repeat(257),
+]) {
   test(`a malformed model reference ${JSON.stringify(modelId.slice(0, 12))} is rejected without a profile row`, (t) => {
     const f = setup(t);
     const profiles = f.profiles();

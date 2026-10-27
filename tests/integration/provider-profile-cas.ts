@@ -526,6 +526,12 @@ for (const [name, bindings] of [
   ["missing revision", [{ role: "chat", providerConnectionId: "conn1" }]],
   ["malformed model", [{ ...binding, modelId: "a b" }]],
   ["control character model", [{ ...binding, modelId: "a\u0000b" }]],
+  ["C1 control character model", [{ ...binding, modelId: "a\u0080b" }]],
+  ["C1 next-line model", [{ ...binding, modelId: "a\u0085b" }]],
+  [
+    "C1 application-program-command model",
+    [{ ...binding, modelId: "a\u009fb" }],
+  ],
   ["overlong model", [{ ...binding, modelId: "x".repeat(257) }]],
 ] as const) {
   test(`profile bindings reject ${name}`, () => {

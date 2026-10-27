@@ -190,7 +190,7 @@ function modelId(value: unknown): asserts value is string {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > 256 ||
-    /[\s\u0000-\u001f\u007f]/u.test(value)
+    /[\s\u0000-\u001f\u007f-\u009f]/u.test(value)
   )
     invalid();
 }
