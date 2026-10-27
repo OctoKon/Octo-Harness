@@ -24,6 +24,7 @@
     "src/provider-admission.ts",
     "src/receipts.ts",
     "src/config.ts",
+    "src/provider-profiles.ts",
     "src/desktop-bridge.ts",
     "src/session-map.ts",
     "src/node-sqlite.d.ts",
