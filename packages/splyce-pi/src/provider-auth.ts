@@ -97,7 +97,7 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED]"],
   [
     // No `.` in the key: `token.ts: summary` is a file path, not a credential.
-    /\b([A-Za-z0-9_-]{0,40}(?:key|secret|token|password|passwd|pwd)[A-Za-z0-9_-]{0,40})(\s{0,4}[:=]\s{0,4})("[^"\n]{0,512}"|'[^'\n]{0,512}'|[^\s,;&]+)/gi,
+    /\b([A-Za-z0-9_-]{0,40}(?:key|secret|token|password|passwd|pwd)[A-Za-z0-9_-]{0,40}|(?:[A-Za-z0-9]+[_-])*pass)(\s{0,4}[:=]\s{0,4})("(?:\\[^\r\n]|[^"\\\r\n])*"?|'(?:\\[^\r\n]|[^'\\\r\n])*'?|[^\s,;&]+)/gi,
     "$1$2[REDACTED]",
   ],
 ];

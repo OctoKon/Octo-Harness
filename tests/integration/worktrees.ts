@@ -18,6 +18,7 @@ import test from "node:test";
 import {
   type ApplyAct,
   assertPatchConfined,
+  MAX_WORKTREE_DIFF_BYTES,
   WorktreeManager,
 } from "../../packages/splyce-index/dist/worktrees.js";
 
@@ -288,6 +289,21 @@ test("apply with a valid grant updates the parent exactly", async () => {
   );
 });
 
+test("prepared apply is bound to one invocation", async () => {
+  const { mgr, grants } = setup(FILES);
+  const { worktreeId, root } = await mgr.create({
+    workspaceId: "w1",
+    childId: "c1",
+  });
+  change(root);
+  const diff = await mgr.diff(worktreeId);
+  const apply = await mgr.prepareApply(worktreeId);
+  await apply({ grantId: grants.issue(diff) });
+  assert.throws(() => apply({ grantId: grants.issue(diff) }), {
+    code: "GRANT_DENIED",
+  });
+});
+
 test("apply conflict: dirty touched file refused, no partial write, grant kept", async () => {
   const { ws, mgr, grants } = setup(FILES);
   const { worktreeId, root } = await mgr.create({
@@ -410,6 +426,105 @@ test("sweepOrphans at startup removes worktrees with no live child only", async 
     g(ws, "worktree", "list", "--porcelain").match(/^worktree /gm)?.length,
     2,
   );
+});
+
+test("discard and sweep refuse forged metadata directories without touching outside files", async () => {
+  for (const operation of ["discard", "sweep"] as const) {
+    const { ws, mgr, make } = setup(FILES);
+    const { worktreeId, root } = await mgr.create({
+      workspaceId: "w1",
+      childId: "dead",
+    });
+    const outside = join(dirname(ws), "outside");
+    write(outside, { "sentinel.txt": "preserve me\n" });
+    const file = `${root}.json`;
+    const meta = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...meta, dir: outside }));
+    if (operation === "discard") {
+      await assert.rejects(mgr.discard(worktreeId), {
+        code: "WORKTREE_PATH_INVALID",
+      });
+    } else {
+      assert.deepEqual(await make(() => false).sweepOrphans(), {
+        removed: [],
+        failed: [{ worktreeId, code: "WORKTREE_PATH_INVALID" }],
+      });
+    }
+    assert.equal(read(outside, "sentinel.txt"), "preserve me\n");
+    assert.ok(existsSync(root), "the original worktree is preserved too");
+    assert.ok(
+      existsSync(file),
+      "invalid metadata remains available for recovery",
+    );
+  }
+});
+
+test("sweep reports malformed metadata and continues removing valid orphans", async () => {
+  const { mgr, make } = setup(FILES);
+  const bad = await mgr.create({ workspaceId: "w1", childId: "bad" });
+  const good = await mgr.create({ workspaceId: "w1", childId: "good" });
+  writeFileSync(`${bad.root}.json`, "{broken");
+  const swept = await make(() => false).sweepOrphans();
+  assert.deepEqual(swept.removed, [good.worktreeId]);
+  assert.deepEqual(swept.failed, [
+    { worktreeId: bad.worktreeId, code: "WORKTREE_PATH_INVALID" },
+  ]);
+  assert.ok(existsSync(bad.root));
+  assert.ok(!existsSync(good.root));
+});
+
+test("discard and sweep refuse a redirected worktree directory", async () => {
+  for (const operation of ["discard", "sweep"] as const) {
+    const { ws, mgr, make } = setup(FILES, { git: false });
+    const { worktreeId, root } = await mgr.create({
+      workspaceId: "w1",
+      childId: "dead",
+    });
+    const outside = join(dirname(ws), "outside");
+    write(outside, { "sentinel.txt": "preserve me\n" });
+    rmSync(root, { recursive: true });
+    symlinkSync(
+      outside,
+      root,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    if (operation === "discard") {
+      await assert.rejects(mgr.discard(worktreeId), {
+        code: "WORKTREE_PATH_INVALID",
+      });
+    } else {
+      assert.deepEqual(await make(() => false).sweepOrphans(), {
+        removed: [],
+        failed: [{ worktreeId, code: "WORKTREE_PATH_INVALID" }],
+      });
+    }
+    assert.equal(read(outside, "sentinel.txt"), "preserve me\n");
+    assert.ok(existsSync(`${root}.json`));
+  }
+});
+
+test("oversized multibyte patches are refused before parent writes or grant consumption", async () => {
+  assert.equal(MAX_WORKTREE_DIFF_BYTES, 1_048_576);
+  const { ws, mgr, grants } = setup(FILES);
+  const { worktreeId, root } = await mgr.create({
+    workspaceId: "w1",
+    childId: "c1",
+  });
+  write(root, { "large.txt": "small\n" });
+  const approved = await mgr.diff(worktreeId);
+  const grantId = grants.issue(approved);
+  const content = `${"\u00e9".repeat(MAX_WORKTREE_DIFF_BYTES / 2)}\n`;
+  assert.ok(content.length < MAX_WORKTREE_DIFF_BYTES);
+  assert.ok(Buffer.byteLength(content) > MAX_WORKTREE_DIFF_BYTES);
+  write(root, { "large.txt": content });
+  await assert.rejects(mgr.diff(worktreeId), { code: "PATCH_TOO_LARGE" });
+  await assert.rejects(mgr.apply(worktreeId, { grantId }), {
+    code: "PATCH_TOO_LARGE",
+  });
+  assert.equal(grants.size, 1);
+  assert.ok(!existsSync(join(ws, "large.txt")));
+  assert.equal(read(ws, "edit.txt"), FILES["edit.txt"]);
+  assert.equal(g(ws, "status", "--porcelain"), "");
 });
 
 const PATCH = (a: string, b = a) =>
