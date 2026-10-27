@@ -5,6 +5,15 @@ import {
 	type ThinkingConfig,
 } from "@google/genai";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
+import {
+	assertCredentialApiIdentity,
+	assertCredentialOptions,
+	assertSafeLeasedGooglePayload,
+	CredentialPreflightError,
+	redactEventWithLease,
+	redactWithLease,
+	withLeasedSecret,
+} from "../splyce-credentials.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -64,6 +73,9 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 	const stream = new AssistantMessageEventStream();
 	const normalizedContext = collapseSystemMessages(context);
 
+	// Captured before any caller callback runs: onPayload may mutate options, and error/observer paths must keep the
+	// credentials the call was admitted with.
+	const leasedCredentials = options?.credentials;
 	(async () => {
 		const output: AssistantMessage = {
 			role: "assistant",
@@ -85,26 +97,44 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 
 		try {
 			if (options?.fetch && options.fetch !== globalThis.fetch) {
-				throw new Error("Custom fetch is not supported by the Google Generative AI adapter");
+				throw new CredentialPreflightError("Custom fetch is not supported by the Google Generative AI adapter");
 			}
+			assertCredentialApiIdentity(model.api, "google-generative-ai", options);
+			assertCredentialOptions(options ?? {}, model.headers);
+			const credentials = leasedCredentials;
 			const apiKey = options?.apiKey;
-			if (!apiKey) {
+			if (!credentials && !apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
-			const client = createClient(model, apiKey, options?.headers, options?.identity);
+			// Splyce: with a lease the key is taken per request attempt and no long-lived client holds it.
+			const client = credentials ? undefined : createClient(model, apiKey, options?.headers, options?.identity);
 			let params = buildParams(model, normalizedContext, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await retryGoogleRequest(() => client.models.generateContentStream(params), options);
+			if (credentials) assertSafeLeasedGooglePayload(params);
+			const googleStream = await retryGoogleRequest(
+				() =>
+					credentials
+						? withLeasedSecret(credentials, (secret) =>
+								createClient(model, secret, options?.headers, options?.identity).models.generateContentStream(
+									params,
+								),
+							)
+						: client!.models.generateContentStream(params),
+				options,
+			);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
-				await options?.onProviderStreamEvent?.(chunk, model);
+				await options?.onProviderStreamEvent?.(
+					(await redactEventWithLease(leasedCredentials, chunk)) as typeof chunk,
+					model,
+				);
 				// @google/genai documents GenerateContentResponse.responseId as an output-only field
 				// used to identify each response. Keep the first non-empty one from the stream.
 				output.responseId ||= chunk.responseId;
@@ -286,8 +316,13 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			// Splyce TD-20: an errored or aborted response never carries tool calls into dispatch or persistence.
+			output.content = output.content.filter((block) => block.type !== "toolCall");
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = formatProviderError(normalizeProviderError(error));
+			output.errorMessage = await redactWithLease(
+				error instanceof CredentialPreflightError ? undefined : leasedCredentials,
+				formatProviderError(normalizeProviderError(error)),
+			);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -302,7 +337,7 @@ export const streamSimple: StreamFunction<"google-generative-ai", SimpleStreamOp
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
 	const apiKey = options?.apiKey;
-	if (!apiKey) {
+	if (!apiKey && !options?.credentials) {
 		throw new Error(`No API key for provider: ${model.provider}`);
 	}
 

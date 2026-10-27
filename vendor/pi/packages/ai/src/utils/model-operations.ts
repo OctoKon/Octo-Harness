@@ -15,6 +15,25 @@ import type {
 import { ModelsError } from "./models-error.ts";
 
 /** The type of a model. Models without `type` are chat models. */
+/**
+ * APIs whose adapters honour `credentials` (the shared Splyce lease option, see splyce-credentials.ts). Any other API must
+ * refuse the option rather than ignore it: ignoring it would let the adapter fall back to an ambient key. The owner of
+ * each adapter adds its API here when it is bound.
+ */
+export const CREDENTIAL_APIS: ReadonlySet<string> = new Set([
+	"anthropic-messages",
+	"google-generative-ai",
+	"google-vertex",
+	"mistral-conversations",
+	"pi-messages",
+]);
+
+export function assertCredentialsSupported(api: string, options: { credentials?: unknown } | undefined): void {
+	if (options?.credentials && !CREDENTIAL_APIS.has(api)) {
+		throw new Error(`credentials are not supported for api ${api} yet`);
+	}
+}
+
 export function getModelType(model: AnyModel): ModelType {
 	return model.type ?? "chat";
 }
