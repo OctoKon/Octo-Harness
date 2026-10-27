@@ -82,13 +82,28 @@ export type ErrorCode =
 
 export class WorkspaceToolError extends Error {
   readonly code: ErrorCode;
-  constructor(code: ErrorCode, message: string) {
+  /** Set when a command was started and then killed. */
+  readonly summary?: ToolSummary;
+  constructor(code: ErrorCode, message: string, summary?: ToolSummary) {
     super(message);
     this.name = "WorkspaceToolError";
     this.code = code;
+    if (summary) this.summary = summary;
   }
 }
 
+/** Matches turn.tool_outcome.summary; bytes is the raw size before the output cap. */
+export interface ToolSummary {
+  exitCode?: number | null;
+  durationMs: number;
+  bytes: number;
+  truncated: boolean;
+  preview: string;
+}
+export interface ToolResult {
+  text: string;
+  summary: ToolSummary;
+}
 export interface WorkspaceTool {
   name: string;
   description: string;
@@ -98,6 +113,12 @@ export interface WorkspaceTool {
     signal?: AbortSignal,
     actionId?: string,
   ): Promise<string>;
+  /** Same call as execute, with the structured summary beside the text. */
+  result(
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+    actionId?: string,
+  ): Promise<ToolResult>;
 }
 
 export interface WorkspaceToolsOptions {
@@ -144,12 +165,14 @@ const encoder = new TextEncoder();
 function cap(
   text: string,
   maxBytes: number,
-): { text: string; truncated: boolean } {
+): { text: string; truncated: boolean; bytes: number } {
   const bytes = encoder.encode(text);
-  if (bytes.length <= maxBytes) return { text, truncated: false };
+  if (bytes.length <= maxBytes)
+    return { text, truncated: false, bytes: bytes.length };
   return {
     text: new TextDecoder().decode(bytes.slice(0, maxBytes)),
     truncated: true,
+    bytes: bytes.length,
   };
 }
 
@@ -297,13 +320,13 @@ export function createWorkspaceTools(
     return r.grantId;
   }
 
-  async function effect(
+  async function effect<T extends { summary: string; ok: boolean }>(
     capability: Capability,
     target: string,
     grantId: string,
     a: Act,
-    fn: () => Promise<{ summary: string; ok: boolean; text: string }>,
-  ): Promise<string> {
+    fn: () => Promise<T>,
+  ): Promise<T> {
     const intent = { ...req(capability, target, a), summary: "" };
     try {
       grants.consume(grantId, intent);
@@ -317,7 +340,7 @@ export function createWorkspaceTools(
     try {
       const out = await fn();
       receipts.record({ ...intent, summary: out.summary, ok: out.ok });
-      return out.text;
+      return out;
     } catch (e) {
       receipts.record({
         ...intent,
@@ -343,13 +366,35 @@ export function createWorkspaceTools(
     }
   }
 
-  const lines = (text: string, limit: number, more: string) => {
+  const PREVIEW = 2048;
+  const done = (
+    text: string,
+    started: number,
+    bytes: number,
+    truncated: boolean,
+    exitCode?: number | null,
+  ): ToolResult => ({
+    text,
+    summary: {
+      ...(exitCode === undefined ? {} : { exitCode }),
+      durationMs: Date.now() - started,
+      bytes,
+      truncated,
+      preview: text.slice(0, PREVIEW),
+    },
+  });
+  const lines = (text: string, started: number, more: string) => {
     const c = cap(text, maxBytes);
-    return c.truncated
-      ? `${c.text}\n[output truncated]`
-      : more
-        ? `${c.text}\n${more}`
-        : c.text;
+    return done(
+      c.truncated
+        ? `${c.text}\n[output truncated]`
+        : more
+          ? `${c.text}\n${more}`
+          : c.text,
+      started,
+      c.bytes,
+      c.truncated,
+    );
   };
 
   async function exec(
@@ -389,20 +434,27 @@ export function createWorkspaceTools(
           child.kill("SIGKILL");
         }
     };
+    const started = Date.now();
     let out = "";
     let used = 0;
     let truncated = false;
     const onData = (c: { length: number; toString(): string }) => {
+      const before = used;
+      used += c.length;
       if (truncated) return;
-      if (used + c.length > maxBytes) {
-        out += cap(c.toString(), maxBytes - used).text;
+      if (before + c.length > maxBytes) {
+        out += cap(c.toString(), maxBytes - before).text;
         truncated = true;
       } else out += c.toString();
-      used += c.length;
     };
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
-    return new Promise<{ code: number; text: string }>((done, reject) => {
+    return new Promise<{
+      code: number;
+      text: string;
+      bytes: number;
+      truncated: boolean;
+    }>((finish, reject) => {
       let settled = false;
       const settle = (f: () => void) => {
         if (settled) return;
@@ -418,6 +470,7 @@ export function createWorkspaceTools(
             new WorkspaceToolError(
               "SHELL_TIMEOUT",
               `command exceeded ${String(ms)}ms and was killed`,
+              done(out, started, used, truncated, null).summary,
             ),
           ),
         );
@@ -441,19 +494,19 @@ export function createWorkspaceTools(
       );
       child.on("close", (code) =>
         settle(() =>
-          done({
+          finish({
             code: code ?? 1,
             text: truncated ? `${out}\n[output truncated]` : out,
+            bytes: used,
+            truncated,
           }),
         ),
       );
     });
   }
 
-  const shell = (
-    kind: "bash" | "powershell",
-    label: string,
-  ): WorkspaceTool => ({
+  type Impl = Omit<WorkspaceTool, "execute">;
+  const shell = (kind: "bash" | "powershell", label: string): Impl => ({
     name: kind,
     description: `Run a ${label} command in the workspace root. Needs a one-time approval for this exact command; output is capped and the command is killed on timeout.`,
     parameters: obj(
@@ -463,7 +516,8 @@ export function createWorkspaceTools(
       },
       ["command"],
     ),
-    async execute(args, signal, actionId) {
+    async result(args, signal, actionId) {
+      const started = Date.now();
       if (signal?.aborted) fail("ABORTED", "aborted");
       const a = act(args, actionId);
       const command = str(args.command, "command");
@@ -471,19 +525,21 @@ export function createWorkspaceTools(
       const ms = Math.min(timeoutMs, optNum(args.timeout, Infinity) * 1000);
       const target = `${kind}:${command}`;
       const grantId = gate("shell.run", target, a);
-      return effect("shell.run", target, grantId, a, async () => {
+      const { r } = await effect("shell.run", target, grantId, a, async () => {
         const r = await exec(kind, command, ms, signal);
-        return {
-          summary: `exit ${String(r.code)}`,
-          ok: r.code === 0,
-          text:
-            r.code === 0 ? r.text : `${r.text}\n[exit code ${String(r.code)}]`,
-        };
+        return { summary: `exit ${String(r.code)}`, ok: r.code === 0, r };
       });
+      return done(
+        r.code === 0 ? r.text : `${r.text}\n[exit code ${String(r.code)}]`,
+        started,
+        r.bytes,
+        r.truncated,
+        r.code,
+      );
     },
   });
 
-  const tools: WorkspaceTool[] = [
+  const tools: Impl[] = [
     {
       name: "read",
       description:
@@ -496,7 +552,8 @@ export function createWorkspaceTools(
         },
         ["path"],
       ),
-      async execute(args, _signal, actionId) {
+      async result(args, _signal, actionId) {
+        const started = Date.now();
         const a = act(args, actionId);
         const { abs, rel } = await confine(str(args.path, "path"));
         gate("fs.read", rel, a);
@@ -510,7 +567,7 @@ export function createWorkspaceTools(
         const end = start + optNum(args.limit, 2000);
         return lines(
           all.slice(start, end).join("\n"),
-          0,
+          started,
           end < all.length
             ? `[${String(all.length - end)} more lines; continue with offset ${String(end + 1)}]`
             : "",
@@ -528,7 +585,8 @@ export function createWorkspaceTools(
         },
         [],
       ),
-      async execute(args, _signal, actionId) {
+      async result(args, _signal, actionId) {
+        const started = Date.now();
         const a = act(args, actionId);
         const { abs, rel } = await confine(optStr(args.path, "path") ?? ".");
         gate("fs.read", rel, a);
@@ -537,7 +595,11 @@ export function createWorkspaceTools(
         )
           .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
           .sort();
-        return lines(names.slice(0, optNum(args.limit, 500)).join("\n"), 0, "");
+        return lines(
+          names.slice(0, optNum(args.limit, 500)).join("\n"),
+          started,
+          "",
+        );
       },
     },
     {
@@ -552,7 +614,8 @@ export function createWorkspaceTools(
         },
         ["pattern"],
       ),
-      async execute(args, _signal, actionId) {
+      async result(args, _signal, actionId) {
+        const started = Date.now();
         const a = act(args, actionId);
         const glob = str(args.pattern, "pattern");
         const re = globToRegExp(glob);
@@ -567,7 +630,7 @@ export function createWorkspaceTools(
             if (hits.length >= limit) break;
           }
         });
-        return lines(hits.join("\n"), 0, "");
+        return lines(hits.join("\n"), started, "");
       },
     },
     {
@@ -585,7 +648,8 @@ export function createWorkspaceTools(
         },
         ["pattern"],
       ),
-      async execute(args, _signal, actionId) {
+      async result(args, _signal, actionId) {
+        const started = Date.now();
         const a = act(args, actionId);
         const pat = str(args.pattern, "pattern");
         if (
@@ -619,7 +683,7 @@ export function createWorkspaceTools(
           const files = st.isFile()
             ? [{ abs, rel, file: true }]
             : walk(abs, rel);
-          const started = Date.now();
+          const t0 = Date.now();
           let scanned = 0;
           for await (const e of files) {
             if (
@@ -634,7 +698,7 @@ export function createWorkspaceTools(
               fail("GREP_BUDGET", "search exceeded its scan budget");
             const ls = (await readFile(e.abs, "utf8")).split("\n");
             for (let i = 0; i < ls.length && hits.length < limit; i++) {
-              if (Date.now() - started > timeoutMs)
+              if (Date.now() - t0 > timeoutMs)
                 fail("GREP_BUDGET", "search exceeded its time budget");
               if (re.test((ls[i] as string).slice(0, MAX_GREP_LINE)))
                 hits.push(`${e.rel}:${String(i + 1)}:${ls[i] as string}`);
@@ -642,7 +706,7 @@ export function createWorkspaceTools(
             if (hits.length >= limit) break;
           }
         });
-        return lines(hits.join("\n"), 0, "");
+        return lines(hits.join("\n"), started, "");
       },
     },
     {
@@ -656,13 +720,14 @@ export function createWorkspaceTools(
         },
         ["path", "content"],
       ),
-      async execute(args, signal, actionId) {
+      async result(args, signal, actionId) {
+        const started = Date.now();
         const a = act(args, actionId);
         const content = str(args.content, "content");
         const path = str(args.path, "path");
         const { abs, rel } = await confine(path);
         const grantId = gate("fs.write", rel, a);
-        return effect("fs.write", rel, grantId, a, () =>
+        const o = await effect("fs.write", rel, grantId, a, () =>
           io(rel, async () => {
             await mkdir(dirname(abs), { recursive: true });
             await recheck(path, abs, signal);
@@ -672,9 +737,11 @@ export function createWorkspaceTools(
               summary: `wrote ${String(n)} bytes`,
               ok: true,
               text: `Wrote ${String(n)} bytes to ${rel}`,
+              bytes: n,
             };
           }),
         );
+        return done(o.text, started, o.bytes, false);
       },
     },
     {
@@ -697,7 +764,8 @@ export function createWorkspaceTools(
         },
         ["path", "edits"],
       ),
-      async execute(args, signal, actionId) {
+      async result(args, signal, actionId) {
+        const started = Date.now();
         const a = act(args, actionId);
         const list = Array.isArray(args.edits)
           ? (args.edits as Record<string, unknown>[])
@@ -715,7 +783,7 @@ export function createWorkspaceTools(
             fail("EDIT_AMBIGUOUS", `oldText matches more than once in ${rel}`);
           text = text.slice(0, at) + n + text.slice(at + o.length);
         }
-        return effect("fs.write", rel, grantId, a, () =>
+        const o = await effect("fs.write", rel, grantId, a, () =>
           io(rel, async () => {
             await recheck(path, abs, signal);
             await writeFile(abs, text);
@@ -723,13 +791,20 @@ export function createWorkspaceTools(
               summary: `edited ${String(list.length)} block(s)`,
               ok: true,
               text: `Edited ${rel}`,
+              bytes: encoder.encode(text).length,
             };
           }),
         );
+        return done(o.text, started, o.bytes, false);
       },
     },
     shell("bash", "bash"),
     shell("powershell", "PowerShell"),
   ];
-  return Object.fromEntries(tools.map((t) => [t.name, t]));
+  return Object.fromEntries(
+    tools.map((t) => [
+      t.name,
+      { ...t, execute: async (...a) => (await t.result(...a)).text },
+    ]),
+  );
 }

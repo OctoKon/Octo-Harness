@@ -736,3 +736,110 @@ test("a windows 8.3 alias is judged by where it points", winOnly, async (t) => {
   );
   assert.equal(await codeOf(run(h, "ls", { path: bad })), "WORKSPACE_ESCAPE");
 });
+
+type Summary = {
+  exitCode?: number | null;
+  durationMs: number;
+  bytes: number;
+  truncated: boolean;
+  preview: string;
+};
+const result = (h: H, name: string, args: object) =>
+  (
+    h.tools[name] as {
+      result(a: object): Promise<{ text: string; summary: Summary }>;
+    }
+  ).result(args);
+const approveSh = (h: H, cmd: string) =>
+  h.grants.approve("shell.run", `${sh}:${cmd}`);
+
+test("shell summary reports exit code, raw bytes, duration and preview", async () => {
+  const h = harness();
+  const ok = nodeCmd("process.stdout.write('hello')");
+  approveSh(h, ok);
+  const r = await result(h, sh, { command: ok });
+  assert.deepEqual(
+    { ...r.summary, durationMs: 0 },
+    {
+      exitCode: 0,
+      durationMs: 0,
+      bytes: 5,
+      truncated: false,
+      preview: "hello",
+    },
+  );
+  assert.ok(
+    Number.isInteger(r.summary.durationMs) && r.summary.durationMs >= 0,
+  );
+  assert.equal(r.text, "hello");
+  const bad = `${nodeCmd("process.stdout.write('x'),process.exitCode=3")}${win ? "; exit $LASTEXITCODE" : ""}`;
+  approveSh(h, bad);
+  const f = await result(h, sh, { command: bad });
+  assert.equal(f.summary.exitCode, 3);
+  assert.match(f.text, /\[exit code 3\]/);
+  assert.equal(f.summary.bytes, 1);
+  assert.equal(h.log[1]?.ok, false);
+});
+
+test("shell summary: capped output keeps the raw size and truncated true; preview is at most 2048 chars", async () => {
+  const h = harness({ maxOutputBytes: 5000 });
+  const big = nodeCmd("process.stdout.write('a'.repeat(9000))");
+  approveSh(h, big);
+  const r = await result(h, sh, { command: big });
+  assert.equal(r.summary.bytes, 9000);
+  assert.equal(r.summary.truncated, true);
+  assert.equal(r.summary.preview.length, 2048);
+  assert.ok(r.text.length < 5100);
+});
+
+test("a killed shell command reports exitCode null on the error", async () => {
+  const h = harness();
+  const cmd = win
+    ? "Write-Output started; Start-Sleep 30"
+    : "echo started; sleep 30";
+  approveSh(h, cmd);
+  const err = await (h.tools[sh] as { execute(a: object): Promise<unknown> })
+    .execute({ command: cmd, timeout: 3 })
+    .then(
+      () => undefined,
+      (e: { code: string; summary?: Summary }) => e,
+    );
+  assert.equal(err?.code, "SHELL_TIMEOUT");
+  assert.equal(err.summary?.exitCode, null);
+  assert.equal(err.summary.truncated, false);
+  assert.ok(err.summary.durationMs >= 2500, String(err.summary.durationMs));
+  await new Promise((r) => setTimeout(r, 1000));
+});
+
+test("read, ls, find, grep, write and edit carry a summary without an exit code", async () => {
+  const h = harness({ maxOutputBytes: 30 });
+  writeFileSync(join(h.root, "a.txt"), "one\ntwo\nthree");
+  writeFileSync(join(h.root, "long.txt"), `${"x".repeat(100)}\nneedle`);
+  const read = await result(h, "read", { path: "a.txt" });
+  assert.deepEqual(
+    { ...read.summary, durationMs: 0 },
+    { durationMs: 0, bytes: 13, truncated: false, preview: "one\ntwo\nthree" },
+  );
+  const cut = await result(h, "read", { path: "long.txt" });
+  assert.equal(cut.summary.bytes, 107);
+  assert.equal(cut.summary.truncated, true);
+  assert.match(cut.text, /\[output truncated\]/);
+  const ls = await result(h, "ls", {});
+  assert.deepEqual([ls.summary.bytes, ls.summary.truncated], [14, false]);
+  const find = await result(h, "find", { pattern: "a.*" });
+  assert.deepEqual([find.summary.bytes, find.summary.truncated], [5, false]);
+  const grep = await result(h, "grep", { pattern: "two" });
+  assert.deepEqual([grep.summary.bytes, grep.summary.truncated], [11, false]);
+  h.grants.approve("fs.write", "w.txt");
+  const w = await result(h, "write", { path: "w.txt", content: "héllo" });
+  assert.deepEqual([w.summary.bytes, w.summary.truncated], [6, false]);
+  h.grants.approve("fs.write", "w.txt");
+  const e = await result(h, "edit", {
+    path: "w.txt",
+    edits: [{ oldText: "llo", newText: "llo!" }],
+  });
+  assert.deepEqual([e.summary.bytes, e.summary.truncated], [7, false]);
+  for (const r of [read, cut, ls, find, grep, w, e])
+    assert.equal("exitCode" in r.summary, false);
+  assert.equal(await run(h, "read", { path: "a.txt" }), "one\ntwo\nthree");
+});
