@@ -3,7 +3,7 @@
 // never both). Single authority for operational receipts; everything else is a
 // rebuildable projection. Erasable-syntax-only (runs under Node type stripping).
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
 	copyFileSync,
 	existsSync,
@@ -21,6 +21,7 @@ import {
 	ContractError,
 	canonicalEndpointUrl,
 	type GrantRecord,
+	modelRef,
 	PROTOCOL_VERSION,
 	type ProviderEndpointRecord,
 	RECORD_SCHEMAS,
@@ -361,7 +362,6 @@ export interface SetupInput {
 	connection: {
 		providerConnectionId: string;
 		revision: string;
-		displayName: string;
 		apiFamily: string;
 		locality: "local" | "hosted";
 		endpointRef: string;
@@ -398,6 +398,11 @@ export interface SetupResult {
 	profile: RecordByKind["profileSnapshot"];
 }
 
+const SETUP_API_FAMILIES: readonly string[] = [
+	"openai-completions",
+	"openai-responses",
+];
+
 function setupInvalid(field: string): never {
 	throw new StoreError("SETUP_INVALID", `invalid setup input: ${field}`);
 }
@@ -425,6 +430,14 @@ function setupId(value: unknown, field: string, max = 128): string {
 	)
 		setupInvalid(field);
 	return value;
+}
+function setupModelRef(value: unknown, field: string): string {
+	try {
+		modelRef(value, field);
+	} catch {
+		return setupInvalid(field);
+	}
+	return value as string;
 }
 function setupRevision(value: unknown, field: string): string | null {
 	return value === null ? null : setupId(value, field);
@@ -459,7 +472,6 @@ function parseSetup(raw: unknown): SetupInput {
 	const c = setupObject(top.connection, "connection", [
 		"providerConnectionId",
 		"revision",
-		"displayName",
 		"apiFamily",
 		"locality",
 		"endpointRef",
@@ -489,17 +501,13 @@ function parseSetup(raw: unknown): SetupInput {
 	}
 	if (canonical !== canonicalUrl) setupInvalid("endpoint.canonicalUrl");
 	const apiFamily = setupId(e.apiFamily, "endpoint.apiFamily");
+	if (!SETUP_API_FAMILIES.includes(apiFamily))
+		setupInvalid("endpoint.apiFamily");
 	const connectionId = setupId(
 		c.providerConnectionId,
 		"connection.providerConnectionId",
 	);
 	const connectionRevision = setupId(c.revision, "connection.revision");
-	if (
-		typeof c.displayName !== "string" ||
-		c.displayName.trim().length === 0 ||
-		c.displayName.length > 128
-	)
-		setupInvalid("connection.displayName");
 	if (c.apiFamily !== apiFamily) setupInvalid("connection.apiFamily");
 	if (c.locality !== (locality === "loopback" ? "local" : "hosted"))
 		setupInvalid("connection.locality");
@@ -524,7 +532,7 @@ function parseSetup(raw: unknown): SetupInput {
 			role: setupId(b.role, `profile.bindings[${index}].role`),
 			providerConnectionId: connectionId,
 			connectionRevision,
-			modelId: setupId(b.modelId, `profile.bindings[${index}].modelId`, 256),
+			modelId: setupModelRef(b.modelId, `profile.bindings[${index}].modelId`),
 		};
 	});
 	return {
@@ -540,7 +548,6 @@ function parseSetup(raw: unknown): SetupInput {
 		connection: {
 			providerConnectionId: connectionId,
 			revision: connectionRevision,
-			displayName: c.displayName,
 			apiFamily,
 			locality: c.locality as "local" | "hosted",
 			endpointRef: c.endpointRef as string,
@@ -1268,12 +1275,16 @@ export class Store {
 			connection: `setup:${setup.requestId}:connection`,
 			profile: `setup:${setup.requestId}:profile`,
 		};
+		// Identity of the whole accepted request; replays compare it under the write lock.
+		const digestRef = `setup-request:sha256:${createHash("sha256")
+			.update(JSON.stringify(setup))
+			.digest("hex")}`;
 		const base = (recordId: string) => ({
 			schemaVersion: CONTRACT_VERSION,
 			recordId,
 			createdAt: new Date().toISOString(),
 			scopeId,
-			sourceIds: [] as string[],
+			sourceIds: [digestRef],
 		});
 		const endpoint = {
 			...base(ids.endpoint),
@@ -1307,37 +1318,6 @@ export class Store {
 			egressPolicyRefs: [...setup.descriptors.egressPolicyRefs],
 			limitsArtifactId: setup.descriptors.limitsArtifactId,
 		};
-		const replay = (): SetupResult | undefined => {
-			const stored = [ids.endpoint, ids.connection, ids.profile].map((id) =>
-				this.findRecord(id),
-			);
-			if (stored.every((row) => row === undefined)) return undefined;
-			// createdAt and the observed configRevision are not part of the request.
-			const same = (a: unknown, b: unknown) =>
-				JSON.stringify({
-					...(a as object),
-					createdAt: 0,
-					configRevision: 0,
-				}) ===
-				JSON.stringify({ ...(b as object), createdAt: 0, configRevision: 0 });
-			const wanted = [endpoint, connection, profile];
-			if (
-				!stored.every(
-					(row, i) => row !== undefined && same(row.record, wanted[i]),
-				)
-			)
-				throw new StoreError(
-					"SETUP_REQUEST_CONFLICT",
-					"requestId was already used with a different setup payload; nothing appended",
-				);
-			return {
-				endpoint: stored[0]!.record as RecordByKind["providerEndpoint"],
-				connection: stored[1]!.record as RecordByKind["providerConnection"],
-				profile: stored[2]!.record as RecordByKind["profileSnapshot"],
-			};
-		};
-		const replayed = replay();
-		if (replayed !== undefined) return replayed;
 		const resolve = (ref: string): boolean => {
 			try {
 				return caller.resolveReference?.(ref, scopeId) === true;
@@ -1364,7 +1344,8 @@ export class Store {
 		const batchCaller: CallerContext = {
 			...caller,
 			resolveReference: (ref, refScope) =>
-				(ref === connection.endpointRef && refScope === scopeId) ||
+				(refScope === scopeId &&
+					(ref === connection.endpointRef || ref === digestRef)) ||
 				resolve(ref),
 		};
 		try {
@@ -1377,6 +1358,7 @@ export class Store {
 				[],
 				batchCaller,
 				{
+					expectedSetup: { recordIds: Object.values(ids), digestRef },
 					expectedEntityRevision: [
 						{
 							kind: "providerEndpoint",
@@ -1400,14 +1382,16 @@ export class Store {
 				},
 			);
 		} catch (error) {
-			// A concurrent identical retry that won the lock is a replay, not a conflict.
-			if (
-				error instanceof StoreError &&
-				error.code === "ENTITY_STALE_REVISION"
-			) {
-				const raced = replay();
-				if (raced !== undefined) return raced;
-			}
+			// The lock-time observation found all three records of this exact request.
+			if (error instanceof StoreError && error.code === "SETUP_REPLAY")
+				return {
+					endpoint: this.get(ids.endpoint)
+						.record as RecordByKind["providerEndpoint"],
+					connection: this.get(ids.connection)
+						.record as RecordByKind["providerConnection"],
+					profile: this.get(ids.profile)
+						.record as RecordByKind["profileSnapshot"],
+				};
 			throw error;
 		}
 		return {
@@ -1415,16 +1399,6 @@ export class Store {
 			connection: connection as RecordByKind["providerConnection"],
 			profile: profile as RecordByKind["profileSnapshot"],
 		};
-	}
-
-	private findRecord(recordId: string): StoredRecord | undefined {
-		try {
-			return this.get(recordId);
-		} catch (error) {
-			if (error instanceof StoreError && error.code === "STORE_NOT_FOUND")
-				return undefined;
-			throw error;
-		}
 	}
 
 	/**
@@ -1512,6 +1486,7 @@ export class Store {
 			expectedActionReservation,
 			expectedDeletionEpoch,
 			expectedEntityRevision,
+			expectedSetup,
 			expectedOnceGrant,
 			expectedGrantMint,
 			expectedActiveGrants,
@@ -1520,6 +1495,7 @@ export class Store {
 			expectedEntityRevision?:
 				| EntityRevisionExpectation
 				| readonly EntityRevisionExpectation[];
+			expectedSetup?: { recordIds: readonly string[]; digestRef: string };
 		} & NativeGrantPreconditions,
 		importedWatermarks: readonly EventWatermark[] = [],
 	): AppendBatchResult & { events: SplyceEvent[] } {
@@ -1577,6 +1553,29 @@ export class Store {
 		}
 		try {
 			this.db.exec("BEGIN IMMEDIATE;");
+			if (expectedSetup !== undefined) {
+				const seen = expectedSetup.recordIds.map(
+					(id) =>
+						(
+							this.db
+								.prepare(
+									"SELECT json_extract(payload, '$.sourceIds[0]') AS digest FROM records WHERE record_id = ?",
+								)
+								.get(id) as { digest: unknown } | undefined
+						)?.digest,
+				);
+				if (seen.some((digest) => digest !== undefined)) {
+					const same = seen.every(
+						(digest) => digest === expectedSetup.digestRef,
+					);
+					throw new StoreError(
+						same ? "SETUP_REPLAY" : "SETUP_REQUEST_CONFLICT",
+						same
+							? "setup request already committed; nothing appended"
+							: "requestId was already used with a different setup request; nothing appended",
+					);
+				}
+			}
 			const expectations: readonly EntityRevisionExpectation[] =
 				expectedEntityRevision === undefined
 					? []
