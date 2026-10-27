@@ -22,6 +22,7 @@ if (args.length === 0) {
     "tests/integration/snapshots.ts",
     "tests/integration/events.ts",
     "tests/integration/credentials.ts",
+    "tests/integration/code-index.ts",
   ];
 } else if (args.length === 2 && args[0] === "--case") {
   if (args[1] === "J0_store_contract") files = ["tests/integration/store.ts"];
@@ -47,13 +48,15 @@ if (args.length === 0) {
     files = ["tests/integration/memory-capture.ts"];
   else if (args[1] === "M2_memory_recall")
     files = ["tests/integration/memory-recall.ts"];
+  else if (args[1] === "CTX_code_index")
+    files = ["tests/integration/code-index.ts"];
   else {
     console.error(`unknown case ${args[1]}`);
     process.exit(2);
   }
 } else {
   console.error(
-    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C5_dirty_snapshot | --case C6_event_ledger | --case M1_memory_capture | --case M2_memory_recall]",
+    "Usage: node scripts/run-store.mjs [--case J0_store_contract | --case C1_reconnect_cursor | --case C1_session_catalog | --case C2_desktop_bridge | --case C3_crash_matrix | --case C4_config_transition | --case C4_credential_resolution | --case C5_dirty_snapshot | --case C6_event_ledger | --case M1_memory_capture | --case M2_memory_recall | --case CTX_code_index]",
   );
   process.exit(2);
 }
@@ -70,6 +73,7 @@ for (const command of [
         [tsc, "-p", "packages/splyce-memory/tsconfig.json"],
       ]
     : []),
+  [tsc, "-p", "packages/splyce-index/tsconfig.json"],
   ["--test", "--test-timeout=120000", ...files],
 ]) {
   const result = spawnSync(process.execPath, command, {
