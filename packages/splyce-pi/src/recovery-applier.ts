@@ -43,6 +43,7 @@ export interface RecoveryApplyInput {
 export interface RecoveryApplyResult {
   /** Per-session only; native callers must union workspace sessions and enforce writer fences before takeover. */
   readonly report: RecoveryReport;
+  /** Committed corrections only; these IDs do not authorize workspace takeover. */
   readonly applied: {
     readonly actionIds: readonly string[];
     readonly runIds: readonly string[];

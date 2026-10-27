@@ -15,6 +15,7 @@ import { join, sep } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { applyRecovery } from "@splyce/pi/recovery-applier";
+import { admissionOpen } from "@splyce/pi/recovery";
 import { Store } from "../packages/splyce-pi/dist/store.js";
 
 const fixtures = JSON.parse(
@@ -221,6 +222,25 @@ test("#137: corrections commit as new versions with immutable identity and sourc
   const result = applyRecovery(f.store, input(f));
   assert.deepEqual(result.applied.actionIds, ["a1"]);
   assert.deepEqual(result.applied.runIds, ["r1"]);
+  assert.equal(
+    admissionOpen(result.report, { actionIds: [], runIds: [] }),
+    false,
+  );
+  assert.equal(
+    admissionOpen(result.report, { ...result.applied, actionIds: [] }),
+    false,
+  );
+  assert.equal(
+    admissionOpen(result.report, { ...result.applied, runIds: [] }),
+    false,
+  );
+  assert.equal(admissionOpen(result.report, result.applied), true);
+  assert.ok(
+    result.report.takeoverBlocked.some(
+      ({ piSessionId }) => piSessionId === targetSession,
+    ),
+    "committed corrections do not clear uncertain workspace effects",
+  );
   assert.deepEqual(result.report.redispatch, []);
   assert.equal(result.report.admissionOpen, false);
   assert.deepEqual(result.report.uncertain, ["a1"]);
