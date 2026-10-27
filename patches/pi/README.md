@@ -109,6 +109,15 @@ core patch to `packages/ai`, recorded here per [core fusion](../../research/docs
   Limits: within one Google/Vertex attempt the SDK holds the key until that attempt ends and its redirects are internal, so the
   native transport (TD-13) must still do the final per-send check there; Vertex application-default credentials are not
   covered by this option.
+- **Lease-scoped redaction, API identity and observers.** A native redactor may only know the secret while the lease is active,
+  so provider error text goes through `redactWithLease` (generic text if the lease is gone; there is no local fallback), and
+  response headers and provider stream events are sanitized inside the lease (`redactResponseWithLease`, `redactEventWithLease`)
+  before any `onResponse` / `onProviderStreamEvent` callback sees them. The credentials a call was admitted with are captured
+  before `onPayload` runs, so a callback that mutates the caller's options cannot swap them. With native credentials every
+  adapter refuses a model of another API (`assertCredentialApiIdentity`) before anything is leased, and fixed secret-free
+  refusals throw `CredentialPreflightError`, which is never lease-redacted (zero lease uses, zero redactor calls). The
+  `CREDENTIAL_APIS` set lives in `src/utils/model-operations.ts`. Regression tests: the family loops in
+  `splyce-credentials.test.ts` (scoped redactor, wrong API, four pre-send refusals) fail if any of these guards is removed.
 - **No tool calls from errored responses.** Anthropic returns a tool call only after its `content_block_stop`; a stream that ends
   with an unfinished tool call is an error, and the error path drops unfinished calls. The Google and Vertex error paths drop all
   tool calls, so a malformed-function-call finish or a stream without a finish reason cannot reach dispatch.
