@@ -44,7 +44,7 @@ Each member works with AI coding agents; work is credited to the member whose ag
 ### [@lapsecoder](https://github.com/lapsecoder)
 
 - TD-15 desktop bridge ledger and resync work (#152, closed; continued in the open #159).
-- TD-25 recovery fail-closed corrections (#157, open, approved by two reviewers).
+- TD-25 recovery fail-closed corrections (#157, open, in review).
 - TD-22 Bedrock and Azure adapters (branch, in review).
 - Independent reviews of the code index, grants store and workspace tools.
 
