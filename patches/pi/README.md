@@ -1,5 +1,8 @@
 # Pi native bootstrap patches
 
+The [owned native model runtime record](0012-native-model-runtime.md) describes
+patch 0012, its local composition evidence and pending SDK/session qualification.
+
 Donor: [earendil-works/pi](https://github.com/earendil-works/pi/tree/d5b3de22d0e24a3e9c38a9410d3329b099717283),
 commit `d5b3de22d0e24a3e9c38a9410d3329b099717283`.
 The audited `@earendil-works/pi-agent-core` and coding-agent packages are 1.4.0.
