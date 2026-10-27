@@ -191,16 +191,12 @@ export function onEvent(callback: EventCallback): Unsubscribe {
  * Internal/testing event dispatcher used by Tauri IPC or fixture harnesses
  */
 export function dispatchEngineEvent(event: SplyceEvent): void {
-  if (
-    lastHandshake &&
-    event.protocolVersion === PROTOCOL_VERSION &&
-    event.kind === "engine.status" &&
-    event.payload &&
-    event.payload.ports !== undefined
-  ) {
+  if (lastHandshake && event.kind === "engine.status") {
     try {
       const payload = event.payload;
       if (
+        event.protocolVersion !== PROTOCOL_VERSION ||
+        !payload ||
         !["ready", "busy", "stopping", "stopped"].includes(payload.state) ||
         !Number.isSafeInteger(payload.activeWorkers) ||
         payload.activeWorkers < 0 ||
@@ -208,13 +204,13 @@ export function dispatchEngineEvent(event: SplyceEvent): void {
           (key) => !["state", "activeWorkers", "ports"].includes(key),
         )
       )
-        return;
+        throw new Error("Invalid engine status");
       const ports = validatePortAvailability(payload.ports);
       if (
         lastHandshake.readiness.state !== "ready" &&
         Object.values(ports).some(Boolean)
       )
-        return;
+        throw new Error("Invalid engine status");
       notifyPorts(ports);
       notifyState(
         projectPorts(ports) && payload.state === "ready"
@@ -224,8 +220,13 @@ export function dispatchEngineEvent(event: SplyceEvent): void {
             : "unavailable",
       );
     } catch {
+      lastHandshake = null;
+      notifyPorts(null);
+      notifyState("error");
       return;
     }
+  } else if (event.kind === "engine.status" && !lastHandshake) {
+    return;
   }
   for (const listener of eventListeners) {
     listener(event);

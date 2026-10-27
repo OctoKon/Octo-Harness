@@ -237,12 +237,6 @@ test("status ports update from subscription and late events cannot resurrect an 
     emit({ state: "ready", activeWorkers: 0, ports: enabled });
     assert.equal(current, "ready");
     assert.deepEqual(latest, enabled);
-    emit({
-      state: "ready",
-      activeWorkers: 0,
-      ports: { ...enabled, extra: true },
-    });
-    assert.deepEqual(latest, enabled);
     emit({ state: "ready", activeWorkers: 0, ports });
     assert.equal(current, "unavailable");
     callbacks[0]({
@@ -264,6 +258,91 @@ test("status ports update from subscription and late events cannot resurrect an 
     offState();
     offPorts();
     delete globalThis.window;
+  }
+});
+
+test("malformed live port status fails closed without consumer delivery", async () => {
+  const ports = {
+    generation: true,
+    provider: true,
+    workspace: true,
+    modules: true,
+  };
+  const verified = {
+    protocolVersion: PROTOCOL_VERSION,
+    schemaVersion: CONTRACT_VERSION,
+    engineProtocolVersion: PROTOCOL_VERSION,
+    bridgeProtocolVersion: PROTOCOL_VERSION,
+    piRevision: PI_REVISION,
+    entryMode: FOUNDATION.entryMode,
+    disabledBuiltinExtensions: [...FOUNDATION.disabledBuiltinExtensions],
+    readiness: {
+      state: "ready",
+      policy: true,
+      store: true,
+      receipts: true,
+      ports,
+    },
+  };
+  for (const [version, invalid] of [
+    [PROTOCOL_VERSION, { generation: true, provider: true, workspace: true }],
+    [PROTOCOL_VERSION, { ...ports, extra: true }],
+    [PROTOCOL_VERSION, { ...ports, generation: "true" }],
+    [PROTOCOL_VERSION, undefined],
+    [999, ports],
+    [999, { ...ports, extra: true }],
+    [1, ports],
+    [1, { ...ports, generation: "true" }],
+    [undefined, ports],
+    [undefined, undefined],
+  ]) {
+    const callbacks = [];
+    globalThis.window = {
+      __TAURI_INTERNALS__: {
+        transformCallback: (callback) => {
+          callbacks.push(callback);
+          return callbacks.length;
+        },
+        invoke: async (cmd) => (cmd === "handshake" ? verified : null),
+      },
+    };
+    let current, latest;
+    const received = [];
+    const offState = connectionState.subscribe((value) => {
+      current = value;
+    });
+    const offPorts = portAvailability.subscribe((value) => {
+      latest = value;
+    });
+    const offEvents = engine.onEvent((event) => received.push(event));
+    try {
+      await handshake();
+      const dispose = await subscribe("invalid-status");
+      let index = 0;
+      const emit = (value, protocolVersion = PROTOCOL_VERSION) =>
+        callbacks[1]({
+          index: index++,
+          message: {
+            ...(protocolVersion === null ? {} : { protocolVersion }),
+            kind: "engine.status",
+            payload: { state: "ready", activeWorkers: 0, ports: value },
+          },
+        });
+      emit(invalid, version === undefined ? null : version);
+      assert.equal(current, "error");
+      assert.equal(latest, null);
+      assert.deepEqual(received, []);
+      emit(ports);
+      assert.equal(current, "error");
+      assert.equal(latest, null);
+      assert.deepEqual(received, []);
+      dispose();
+    } finally {
+      offState();
+      offPorts();
+      offEvents();
+      delete globalThis.window;
+    }
   }
 });
 
