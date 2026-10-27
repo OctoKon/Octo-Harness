@@ -8,8 +8,8 @@ copyright. This patch changes no dependencies or package manifests.
 
 Apply `0011-awaited-session-persistence.patch` from the repository root to the
 owned bootstrap base `0a700b32b0a0abe5c24194b61a854f9dd9bfe874`. It captures all
-17 changed vendor source paths through frozen source commit
-`e3fe29f1b2917c742182691cccae1f2610c8da75`, including the owner helpers,
+18 changed vendor paths (17 sources and one extension-runner fixture) through
+frozen source commit `07364732cd97992f0e4c99f6fe15faecb10a1e5f`, including the owner helpers,
 SessionManager, AgentSession/SDK, extension dispatcher, cache warmer, codemode
 callers and export/import/diagnostic guards. It includes earlier owner-helper
 changes already committed after that base. Existing patches alone are not a
@@ -69,13 +69,14 @@ Trusted in-process plugins retain operating-system authority.
 ## Canonical replay evidence
 
 The patch was generated directly from committed Git blobs, with no candidate EOL
-normalization. An isolated archive of the exact base passed `git apply --check`
-and forward application; all 17 resulting paths matched the frozen source blobs
+normalization. An isolated archive of the exact base passed
+`git apply --check --whitespace=error` and strict forward application; all 18
+resulting paths matched the frozen source blobs
 byte for byte. Raw worktree hashes were recorded separately and happened to
-match those blobs. The patch has 1,080 insertions and 254 deletions.
+match those blobs. The patch has 1,086 insertions and 260 deletions.
 
-- Patch SHA-256: `3a3dbbeb889360db3fbe591cd5c536c4b9eafe650e2a1d372ff0626e34ffe120`.
-- Canonical source-manifest SHA-256: `2536a3dedeab218a0c2107d01d5d996ebb94e972a6a0242a8cc6c33207917bd4`.
+- Patch SHA-256: `2a721d1d5ce3f36953a669dcd2c6c7d1448f0596e1358e83dacc65a50207154d`.
+- Canonical source-manifest SHA-256: `c89d8c8b06eddb1d3ffff4038b7c4f0f27f4bc3716f2e9ef82099cf8df35071a`.
 
 The source-manifest digest hashes JSON containing the exact base, frozen source
 commit and sorted path/status/SHA-256/byte-length/Git-blob-ID/base-membership
@@ -85,12 +86,12 @@ to `git show <source-commit>:<path>` bytes before rerunning behavioral gates.
 
 ## Local checks and outstanding qualification
 
-The integration owner reported an initial successful `npm run build:pi`, then
-successful final-source builds with `npm run build --workspace=@earendil-works/pi-agent-core`,
+At the earlier `e3fe29f` source checkpoint, the integration owner reported an
+initial successful `npm run build:pi`, then successful builds with `npm run build --workspace=@earendil-works/pi-agent-core`,
 `npm run build --workspace=@earendil-works/pi-coding-agent` and
 `npm run build:contracts`.
 
-Focused commands and observed results:
+Focused commands and observed results at that earlier checkpoint:
 
 - `node --import ./vendor/pi/packages/coding-agent/src/experimental/source-resolver.ts --test tests/native-session-manager-persistence.test.mjs`: 10 passed, including structural rejection, detached/late aliases, filesystem refusal/recovery, per-entry historical rewrites, history above 1 MiB with a small append, and oversized-entry zero effects.
 - `node --test tests/native-persistence-owner.test.mjs`: 6 passed; two separate owner-guard removal checks each failed as required.
@@ -112,16 +113,34 @@ mutation block before the 62 SDK fixtures. Its body SHA-256 remained
 `6b1f6b48ba8af03bceab365dc80ef50419f955d28c25e95fa42f95dd39eacc2e`. Mutation
 targets, assertions and 30,000 ms child budgets were unchanged, with no skips.
 
-The final registered scripts passed all 97 scoped cases, with zero failures, skips
-or cancellations:
+The registered scripts at the earlier checkpoint passed all 97 scoped cases,
+with zero failures, skips or cancellations:
 
 - `npm run test:native-owned-session`: 63/63 passed in 119978.627 ms.
 - `npm run test:native-persistence`: 24/24 compiled-module cases passed in 9543.2659 ms, followed by 10/10 source cases in 4273.644 ms.
 
-The final TAP receipts are retained separately from the initial failed-run logs.
-Vendor source bytes remain the frozen commit's bytes; the harness change does not
-alter this patch. Public authentication denial is not authentication or provider
-qualification.
+Those TAP receipts are retained separately from the initial failed-run logs.
+Public authentication denial is not authentication or provider qualification.
+
+At final source commit `0736473`, the full vendor `npm run check` passed, including
+Biome (1,578 files, no fixes), pinned/runtime dependencies, TypeScript import forms,
+entry graphs, install-lock comparison, `tsc --noEmit` and browser smoke. The earlier
+failed check reported six fixture callbacks returning `void` instead of
+`Promise<void>` and three string-template style diagnostics. The repair makes only
+those six no-op callbacks asynchronous, uses three equivalent newline template
+expressions, and retains Biome's type-export ordering.
+
+The source persistence command above then passed 10/10 at the final source bytes
+in 2686.537 ms, with no failures, skips or cancellations. The earlier 97-case
+receipt is historical; that combined scope was not rerun after these final repairs.
+
+The affected vendor command, `node node_modules/vitest/vitest.mjs --run test/extensions-runner.test.ts`
+from `vendor/pi/packages/coding-agent`, failed 56/56 in 27.10 seconds. Every failure
+occurs in shared setup: the unchanged in-memory registry helper calls
+`ModelRuntime.create` without a native owner, and the actual readiness guard
+rejects with `SPLYCE_UNAVAILABLE` before the callbacks or assertions execute. The
+runtime/helper source is unchanged from the exact base. No guard, assertion or
+skip was changed to conceal this result; this vendor fixture remains unqualified.
 
 Local fixtures and canonical source replay do not establish live Rust inventory,
 complete native composition, installed Windows behavior, actual provider access,

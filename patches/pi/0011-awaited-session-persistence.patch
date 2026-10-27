@@ -63,10 +63,10 @@ index 565761376eabcd8b21c211632c148adbadd50ea0..59a553abb7b14a4e7f1c9de92928abaa
  		if (aborted) return;
  		try {
 diff --git a/vendor/pi/packages/agent/src/index.ts b/vendor/pi/packages/agent/src/index.ts
-index 02dd8ca0ffe38eb498760843b93369a268b6d6d2..e074398c8da58d0857091dd08cd0f66259b32cfa 100644
+index 02dd8ca0ffe38eb498760843b93369a268b6d6d2..d5cedb796986f4e7c34ec215ffb537f13378d178 100644
 --- a/vendor/pi/packages/agent/src/index.ts
 +++ b/vendor/pi/packages/agent/src/index.ts
-@@ -4,10 +4,14 @@ export * from "./proxy.ts";
+@@ -4,9 +4,13 @@ export * from "./proxy.ts";
  export { bindSplyceToolAdmission, type SplyceToolAdmission } from "./splyce-admission.ts";
  export {
  	assertSameSplyceOwner,
@@ -75,12 +75,11 @@ index 02dd8ca0ffe38eb498760843b93369a268b6d6d2..e074398c8da58d0857091dd08cd0f662
  	disposeSplyceOwner,
  	inheritSplyceOwner,
 +	isSplyceOwned,
++	type SplycePersistenceSanitizer,
 +	sanitizeSplycePersistence,
  	sealSplyceAgentCallbacks,
-+	type SplycePersistenceSanitizer,
  } from "./splyce-readiness.ts";
  export { setDefaultStreamFn } from "./stream-fn.ts";
- export * from "./types.ts";
 diff --git a/vendor/pi/packages/agent/src/splyce-readiness.ts b/vendor/pi/packages/agent/src/splyce-readiness.ts
 index 8fc5a9dbcfad782dd5cbb2a805d5975a29753437..7e3bbce3bb8b340cb30bcaf77397709e476ea8c5 100644
 --- a/vendor/pi/packages/agent/src/splyce-readiness.ts
@@ -1645,7 +1644,7 @@ index 878446ae5b8b90974c10dca63b76b190b6ce5dab..36bc95919e6f0bffba1da6917fec65ee
  		outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`,
  		process.cwd(),
 diff --git a/vendor/pi/packages/coding-agent/src/core/session-manager.ts b/vendor/pi/packages/coding-agent/src/core/session-manager.ts
-index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..8434a23580fe45b8d1f7f4bf070548f95eb780ca 100644
+index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..7b442da085ecd08e1419d8faaaf6f494fa3f2aae 100644
 --- a/vendor/pi/packages/coding-agent/src/core/session-manager.ts
 +++ b/vendor/pi/packages/coding-agent/src/core/session-manager.ts
 @@ -1,4 +1,9 @@
@@ -1786,7 +1785,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..8434a23580fe45b8d1f7f4bf070548f9
 +}
 +
 +function serializePersistence(entries: readonly FileEntry[]): string {
-+	return entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
++	return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 +}
 +
 +function assertSanitizedShape(original: unknown, sanitized: unknown): void {
@@ -2055,7 +2054,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..8434a23580fe45b8d1f7f4bf070548f9
 +				safeEntryLines.push(owned ? await sanitizeSplycePersistence(this, line, signal) : line);
 +				check();
 +			}
-+			const safe = safeEntryLines.join("\n") + "\n";
++			const safe = `${safeEntryLines.join("\n")}\n`;
 +			check();
 +			const safeEntries = parseSanitizedPersistence(safe, entries);
 +			if (persist && flushed && safe !== previousSerialized && write === "none") write = "rewrite";
@@ -2076,7 +2075,7 @@ index 57f9655baa2cfd84a2a0c152d424c62c6c75296d..8434a23580fe45b8d1f7f4bf070548f9
 +			}
 +			const sameFile = sessionFile === this.sessionFile;
 +			const safeLines = safe.split("\n");
-+			const safePrefix = safeLines.slice(0, previous.length).join("\n") + "\n";
++			const safePrefix = `${safeLines.slice(0, previous.length).join("\n")}\n`;
 +			check();
 +			if (persist && sessionDir && !existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
 +			if (persist && sessionFile && write !== "none") {
@@ -2496,3 +2495,34 @@ index 51034e0e30a4a91803732ec351d806fa1ae13bcc..c2fbbff3e838e5e8cacced9f7f760d70
  	const options = await promptForOptions(context, initialHint);
  	if (!options) {
  		context.showStatus("Bug report cancelled");
+diff --git a/vendor/pi/packages/coding-agent/test/extensions-runner.test.ts b/vendor/pi/packages/coding-agent/test/extensions-runner.test.ts
+index 7c4a5f4289d25274c1cec97b2ccab2c674776763..2b0f340cc61ada5c407ad4552c504ec17e6be0ff 100644
+--- a/vendor/pi/packages/coding-agent/test/extensions-runner.test.ts
++++ b/vendor/pi/packages/coding-agent/test/extensions-runner.test.ts
+@@ -80,12 +80,12 @@ describe("ExtensionRunner", () => {
+ 	};
+ 
+ 	const extensionActions: ExtensionActions = {
+-		sendMessage: () => {},
+-		sendUserMessage: () => {},
+-		appendEntry: () => {},
+-		setSessionName: () => {},
++		sendMessage: async () => {},
++		sendUserMessage: async () => {},
++		appendEntry: async () => {},
++		setSessionName: async () => {},
+ 		getSessionName: () => undefined,
+-		setLabel: () => {},
++		setLabel: async () => {},
+ 		getActiveTools: () => [],
+ 		getAllTools: () => [],
+ 		getSettings: () => ({}),
+@@ -94,7 +94,7 @@ describe("ExtensionRunner", () => {
+ 		getCommands: () => [],
+ 		setModel: async () => false,
+ 		getThinkingLevel: () => "off",
+-		setThinkingLevel: () => {},
++		setThinkingLevel: async () => {},
+ 	};
+ 
+ 	const extensionContextActions: ExtensionContextActions = {
