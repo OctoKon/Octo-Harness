@@ -3,6 +3,7 @@
   import type { SplyceEvent } from "@splyce/pi/contracts";
   import Composer from "./components/Composer.svelte";
   import SessionTree from "./components/SessionTree.svelte";
+  import SessionActions from "./components/SessionActions.svelte";
   import TurnStream from "./components/TurnStream.svelte";
   import Shell from "./components/shell/Shell.svelte";
   import UsageView from "./components/usage/UsageView.svelte";
@@ -43,6 +44,7 @@
     type SessionNavState,
     type TreeEventLike,
   } from "./stores/sessions";
+  import type { SessionActionsContext } from "./stores/session-actions";
   import {
     createTurnStreamTransport,
     createTurnsState,
@@ -119,6 +121,40 @@
   const permissionModeState = $derived(
     initialPermissionMode($selectedSession?.sessionId ?? null),
   );
+
+  // TD-33: the actions target the branch the tree actually selected. The engine
+  // still does not deliver the revisions a lifecycle request needs, and a
+  // rewind/code restore is not admitted yet, so every action is visibly disabled
+  // with its own reason instead of pretending to run.
+  const sessionActionContext: SessionActionsContext = $derived.by(() => {
+    const key = nav.selectedKey;
+    const node =
+      key === null ? undefined : visibleNodes(nav).find((n) => n.key === key);
+    return {
+      engine: {
+        status: "unavailable",
+        reason: "Session revisions are not delivered to the renderer yet.",
+      },
+      rewind: {
+        status: "unavailable",
+        reason:
+          "A rewind request is not admitted yet: TD-25 restore receipts are not wired.",
+      },
+      codeRestore: {
+        status: "unavailable",
+        reason:
+          "Code restore is not available yet: TD-25 restore receipts are not wired.",
+      },
+      selected: node
+        ? {
+            sessionId: node.sessionId,
+            branchAnchorId: node.branchAnchorId,
+            leaves: node.leaves,
+          }
+        : null,
+      draft: "",
+    };
+  });
 
   function applyTree(event: SplyceEvent) {
     if (event.kind !== "session.tree_updated") return;
@@ -229,6 +265,7 @@
       else handshake().catch(() => {});
     }}
   />
+  <SessionActions context={sessionActionContext} />
   <section class="supervisor" aria-label="Supervisor" data-testid="supervisor">
     <h2>Supervisor</h2>
     <PermissionModeSelect modeState={permissionModeState} context={permissionContext} />

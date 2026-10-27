@@ -146,6 +146,49 @@ describe("App wiring", () => {
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
   });
 
+  it("mounts the TD-33 session actions disabled with their own reasons", async () => {
+    await boot();
+    const actions = q("[data-testid=session-actions]")!;
+    expect(actions).not.toBeNull();
+    expect(q("[data-testid=fork-point]")?.textContent).toBe(
+      "No branch selected",
+    );
+    for (const id of ["resume", "fork", "rewind"]) {
+      expect(
+        (q(`[data-testid=action-${id}]`) as HTMLButtonElement).disabled,
+      ).toBe(true);
+    }
+    const reasons = q("[data-testid=action-reasons]")!.textContent ?? "";
+    expect(reasons).toContain(
+      "Session revisions are not delivered to the renderer yet.",
+    );
+    // One stated reason per disabled action, not one shared banner.
+    expect(
+      q("[data-testid=action-reasons]")!.querySelectorAll("li"),
+    ).toHaveLength(3);
+    // Initial state: no request can have been produced.
+    expect(q("[data-testid=action-busy]")).toBeNull();
+    expect(q("[data-testid=rewind-dialog]")).toBeNull();
+  });
+
+  it("shows the action target only from the ancestry the tree delivered", async () => {
+    ipc.ready = true;
+    await boot();
+    dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
+    await settle();
+    q("[role=treeitem]")!.click();
+    await settle();
+
+    expect(q("[data-testid=fork-point]")?.textContent).toBe(
+      "Fork point: ses_1 / b1",
+    );
+    expect(q("[data-testid=fork-leaves]")?.textContent).toBe("Leaves: e1");
+    // The ancestry is known, but the engine still cannot admit the request.
+    expect((q("[data-testid=action-fork]") as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
   it("selecting a session follows and subscribes exactly once, and the composer binds to it", async () => {
     ipc.ready = true;
     await boot();
