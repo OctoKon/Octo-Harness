@@ -296,4 +296,25 @@ describe("TD-23 Pi-native: revoked lease at error time", () => {
 		expect(result.stopReason).toBe("error");
 		expect(JSON.stringify(result)).not.toContain(SECRET);
 	});
+
+	it("redacts a provider error event's errorMessage and rewrite diagnostic before they reach the message", async () => {
+		const rewrite = {
+			policyId: `policy-${SECRET}`,
+			policyVersion: 1,
+			changed: true,
+			tokenCountChange: 0,
+			messageCountChange: 0,
+			systemPromptChanged: false,
+		};
+		const errored = await run([start, { ...failed(), errorMessage: `denied for ${SECRET}`, rewrite }], {
+			credentials: creds(),
+		});
+		expect(errored.stopReason).toBe("error");
+		expect(JSON.stringify(errored)).not.toContain(SECRET);
+		expect(errored.errorMessage).toContain("[REDACTED]");
+		const completed = await run([start, { ...done("stop"), rewrite }], { credentials: creds() });
+		expect(completed.stopReason).toBe("stop");
+		expect(JSON.stringify(completed)).not.toContain(SECRET);
+		expect(JSON.stringify(completed)).toContain("pi_messages_rewrite");
+	});
 });

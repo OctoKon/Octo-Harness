@@ -489,11 +489,11 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 			}
 
 			for await (const piEvent of readPiMessagesEvents(response.body)) {
-				await options?.onProviderStreamEvent?.(
-					(await redactEventWithLease(leasedCredentials, piEvent)) as typeof piEvent,
-					model,
-				);
-				const event = convertEvent(piEvent);
+				// Sanitized once inside the lease and used for BOTH the observer and the conversion: a provider error
+				// event's errorMessage and rewrite diagnostic must not carry the credential into the message.
+				const safeEvent = (await redactEventWithLease(leasedCredentials, piEvent)) as typeof piEvent;
+				await options?.onProviderStreamEvent?.(safeEvent, model);
+				const event = convertEvent(safeEvent);
 				eventStream.push(event);
 				if (event.type === "done" || event.type === "error") {
 					return;
