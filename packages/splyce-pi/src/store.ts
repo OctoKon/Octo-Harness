@@ -443,7 +443,13 @@ function setupModelRef(value: unknown, field: string): string {
   }
   return value as string;
 }
-/** Short plain label (requestId, apiVersion, adapterRevision): never a place for a secret. */
+/** Opaque id that must not look like a secret (requestId). */
+function setupRequestId(value: unknown): string {
+  const id = setupId(value, "requestId");
+  if (SETUP_SECRET.test(id)) setupInvalid("requestId");
+  return id;
+}
+/** Short plain label (apiVersion, adapterRevision): never a place for a secret. */
 function setupToken(value: unknown, field: string): string {
   if (
     typeof value !== "string" ||
@@ -551,7 +557,7 @@ function parseSetup(raw: unknown): SetupInput {
   });
   return {
     workspaceId: setupId(top.workspaceId, "workspaceId"),
-    requestId: setupToken(top.requestId, "requestId"),
+    requestId: setupRequestId(top.requestId),
     endpoint: {
       endpointId,
       canonicalUrl: canonical,
@@ -981,6 +987,80 @@ export class Store {
     }
   }
 
+  /**
+   * Native-only: everything setup needs from one scope, observed in ONE read
+   * transaction. `workspace` is the current admitted workspace (private
+   * canonicalPath and directory identity) or null if superseded/deleted/unknown.
+   */
+  readSetupState(workspaceId: string): {
+    records: StoredRecord[];
+    deletedRecordIds: string[];
+    workspace: AdmittedWorkspace | null;
+  } {
+    this.assertOpen();
+    const kinds = [
+      "providerEndpoint",
+      "providerConnection",
+      "profileSnapshot",
+      "artifact",
+      "configurationTransition",
+      "admittedWorkspace",
+    ];
+    try {
+      this.db.exec("BEGIN;");
+      try {
+        const rows = this.db
+          .prepare(
+            "SELECT r.*, d.record_id AS deleted_record_id, d.generation, d.deleted_at, " +
+              "(SELECT value FROM store_meta WHERE key = 'deletion_epoch') AS deletion_epoch " +
+              "FROM records r LEFT JOIN deletions d ON d.record_id = r.record_id " +
+              `WHERE r.scope_id = ? AND r.kind IN (${kinds.map(() => "?").join(",")}) ORDER BY r.seq`,
+          )
+          .all(workspaceId, ...kinds) as Array<
+          Parameters<Store["validateStructuralRow"]>[0] & {
+            deleted_record_id: string | null;
+            generation: number | null;
+            deleted_at: string | null;
+            deletion_epoch: string | null;
+          }
+        >;
+        const records: StoredRecord[] = [];
+        const deletedRecordIds: string[] = [];
+        for (const row of rows) {
+          const record = this.validateStructuralRow(row);
+          if (row.deleted_record_id !== null) {
+            const epoch =
+              Store.parseEpoch(
+                row.deletion_epoch ?? undefined,
+                "deletion_epoch",
+              ) ?? 0;
+            if (
+              !Number.isSafeInteger(row.generation) ||
+              row.generation! < 1 ||
+              row.generation! > epoch ||
+              typeof row.deleted_at !== "string" ||
+              !Number.isFinite(Date.parse(row.deleted_at))
+            )
+              throw new StoreError(
+                "STORE_LAYOUT",
+                "invalid deletion tombstone",
+              );
+            deletedRecordIds.push(row.deleted_record_id);
+          }
+          records.push({ seq: row.seq, kind: row.kind, record });
+        }
+        const workspace = this.currentWorkspace(workspaceId) ?? null;
+        this.db.exec("COMMIT;");
+        return { records, deletedRecordIds, workspace };
+      } catch (error) {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+        throw error;
+      }
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
   private validateStructuralRow(row: {
     seq: number;
     kind: RecordKind;
@@ -1283,10 +1363,15 @@ export class Store {
   commitSetup(input: unknown, caller: CallerContext): SetupResult {
     const setup = parseSetup(input);
     const scopeId = setup.workspaceId;
+    // Hashed so a 128-character requestId still fits the recordId bound.
+    const key = createHash("sha256")
+      .update(setup.requestId)
+      .digest("hex")
+      .slice(0, 32);
     const ids = {
-      endpoint: `setup:${setup.requestId}:endpoint`,
-      connection: `setup:${setup.requestId}:connection`,
-      profile: `setup:${setup.requestId}:profile`,
+      endpoint: `setup:${key}:endpoint`,
+      connection: `setup:${key}:connection`,
+      profile: `setup:${key}:profile`,
     };
     // Identity of the whole accepted request; replays compare it under the write lock.
     const digestRef = `setup-request:sha256:${createHash("sha256")
@@ -1372,6 +1457,7 @@ export class Store {
         batchCaller,
         {
           expectedSetup: {
+            workspaceId: scopeId,
             recordIds: Object.values(ids),
             digestRef,
             unresolved: (): string | undefined =>
@@ -1513,6 +1599,7 @@ export class Store {
       expectedEntityRevision?:
         EntityRevisionExpectation | readonly EntityRevisionExpectation[];
       expectedSetup?: {
+        workspaceId: string;
         recordIds: readonly string[];
         digestRef: string;
         /** Re-resolves the setup references; returns the first failing field. */
@@ -1576,6 +1663,12 @@ export class Store {
     try {
       this.db.exec("BEGIN IMMEDIATE;");
       if (expectedSetup !== undefined) {
+        // The target must still be the current admitted, non-superseded, non-deleted workspace.
+        if (this.currentWorkspace(expectedSetup.workspaceId) === undefined)
+          throw new StoreError(
+            "SETUP_INVALID",
+            "setup reference does not resolve: workspace",
+          );
         const seen = expectedSetup.recordIds.map(
           (id) =>
             (
@@ -3149,6 +3242,22 @@ export class Store {
     return row === undefined
       ? undefined
       : (this.readRow(row).record as AdmittedWorkspaceRecord);
+  }
+
+  /** The admitted workspace if it is still current: path mapped to it, not superseded, not deleted. */
+  private currentWorkspace(workspaceId: string): AdmittedWorkspace | undefined {
+    const record = this.workspaceRecord(workspaceId);
+    const path = this.workspacePath(workspaceId);
+    if (
+      record === undefined ||
+      path === undefined ||
+      this.currentWorkspaceIdForPath(path) !== workspaceId ||
+      this.db
+        .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+        .get(record.recordId) !== undefined
+    )
+      return undefined;
+    return { ...record, canonicalPath: path };
   }
 
   /** Fails unless the workspace was admitted natively and is not superseded. */

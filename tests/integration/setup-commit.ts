@@ -9,6 +9,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { Store, StoreError } from "../../packages/splyce-pi/dist/store.js";
 
+// Every setup targets a real admitted workspace; fixture() sets it.
+let W = "w1";
 const base = {
   sessionId: "s1",
   configRevision: "cfg-0",
@@ -22,7 +24,7 @@ const artifact = (recordId: string) => ({
   schemaVersion: 1,
   recordId,
   createdAt: "2026-10-27T00:00:00.000Z",
-  scopeId: "w1",
+  scopeId: W,
   sourceIds: [],
   artifactId: recordId,
   digest: "sha256:" + "0".repeat(64),
@@ -34,7 +36,7 @@ const code = (expected: string) => (error: unknown) =>
   error instanceof StoreError && error.code === expected;
 
 const input = (overrides: Record<string, unknown> = {}) => ({
-  workspaceId: "w1",
+  workspaceId: W,
   requestId: "req1",
   endpoint: {
     endpointId: "ep1",
@@ -87,6 +89,11 @@ function fixture(t: { after(callback: () => void): void }) {
     resolveReference: (id: string, scopeId: string) =>
       store.list(scopeId).records.some(({ record }) => record.recordId === id),
   };
+  const admitted = store.admitWorkspace(
+    { canonicalPath: join(dir, "ws"), volumeSerial: "1", fileId: "2" },
+    caller,
+  );
+  W = admitted.workspaceId;
   for (const id of DESCRIPTORS)
     store.append({ kind: "artifact", record: artifact(id) }, caller);
   t.after(() => {
@@ -96,15 +103,16 @@ function fixture(t: { after(callback: () => void): void }) {
     assert.ok(basename(target).startsWith("td26-setup-"));
     rmSync(target, { recursive: true, force: true });
   });
-  return { path, store, caller };
+  return { path, store, caller, dir };
 }
 const kinds = (store: Store) =>
   store
-    .list("w1")
+    .list(W)
     .records.map(({ kind }) => kind)
-    .filter((kind) => kind !== "artifact");
+    .filter((kind) => kind !== "artifact" && kind !== "admittedWorkspace");
 
 if (process.argv[2] === "setup-child") {
+  W = process.argv[4]!;
   const store = Store.open(process.argv[3]!);
   const childCaller = {
     ...base,
@@ -362,7 +370,7 @@ test("two real processes racing the identical request: one appends, the other re
       (resolve, reject) => {
         const child = spawn(
           process.execPath,
-          [fileURLToPath(import.meta.url), "setup-child", path],
+          [fileURLToPath(import.meta.url), "setup-child", path, W],
           {
             stdio: ["ignore", "pipe", "pipe"],
             windowsHide: true,
@@ -465,10 +473,11 @@ test("requestId, apiVersion and adapterRevision are bounded, plain and secret-fr
     "semi;colon",
   ];
   for (const value of bad) {
-    assert.throws(
-      () => store.commitSetup(input({ requestId: value }), caller),
-      code("SETUP_INVALID"),
-    );
+    if (!["x".repeat(65), "semi;colon"].includes(value))
+      assert.throws(
+        () => store.commitSetup(input({ requestId: value }), caller),
+        code("SETUP_INVALID"),
+      );
     for (const field of ["apiVersion", "adapterRevision"])
       assert.throws(
         () =>
@@ -501,4 +510,89 @@ test("a descriptor that stops resolving between check and commit cannot commit",
   );
   assert.equal(store.cursor(), cursor);
   assert.deepEqual(kinds(store), []);
+});
+
+test("requestId is opaque up to 128 characters and still rejects secret shapes", (t) => {
+  const { store, caller } = fixture(t);
+  const secret = ["s", "k-ant-api03-abcdefghijklmnop"].join("");
+  for (const bad of ["x".repeat(129), "a b", "a/b", "a\\b", "a\u0007b", secret])
+    assert.throws(
+      () => store.commitSetup(input({ requestId: bad }), caller),
+      code("SETUP_INVALID"),
+    );
+  assert.deepEqual(kinds(store), []);
+  store.commitSetup(input({ requestId: "r".repeat(128) }), caller);
+  assert.equal(kinds(store).length, 3);
+});
+
+test("setup into a workspace superseded between prepare and commit is rejected", (t) => {
+  const { store, caller, dir } = fixture(t);
+  let superseded = false;
+  const racing = {
+    ...caller,
+    resolveReference: (id: string, scopeId: string) => {
+      if (!superseded) {
+        superseded = true;
+        store.admitWorkspace(
+          { canonicalPath: join(dir, "ws"), volumeSerial: "1", fileId: "3" },
+          caller,
+          { readmit: true },
+        );
+      }
+      return caller.resolveReference(id, scopeId);
+    },
+  };
+  const cursor = store.cursor();
+  assert.throws(
+    () => store.commitSetup(input(), racing),
+    (error: unknown) =>
+      error instanceof StoreError &&
+      error.code === "SETUP_INVALID" &&
+      error.message.includes("workspace"),
+  );
+  assert.equal(superseded, true);
+  assert.deepEqual(kinds(store), []);
+  assert.equal(
+    store.list(W).records.some(({ kind }) => kind === "providerEndpoint"),
+    false,
+  );
+  assert.ok(store.cursor() > cursor, "only the re-admission was appended");
+});
+
+test("an unadmitted workspace cannot receive setup", (t) => {
+  const { store, caller } = fixture(t);
+  assert.throws(
+    () => store.commitSetup(input({ workspaceId: "ws-unknown" }), caller),
+    code("SETUP_INVALID"),
+  );
+});
+
+test("readSetupState returns scoped setup records and the current workspace in one read", (t) => {
+  const { store, caller, dir } = fixture(t);
+  store.commitSetup(input(), caller);
+  const state = store.readSetupState(W);
+  assert.deepEqual([...new Set(state.records.map(({ kind }) => kind))].sort(), [
+    "admittedWorkspace",
+    "artifact",
+    "profileSnapshot",
+    "providerConnection",
+    "providerEndpoint",
+  ]);
+  assert.deepEqual(state.deletedRecordIds, []);
+  assert.equal(state.workspace?.workspaceId, W);
+  assert.equal(state.workspace?.canonicalPath, join(dir, "ws"));
+  assert.equal(state.workspace?.volumeSerial, "1");
+  assert.equal(state.workspace?.fileId, "2");
+});
+
+test("readSetupState reports no workspace once it is superseded", (t) => {
+  const { store, caller, dir } = fixture(t);
+  store.admitWorkspace(
+    { canonicalPath: join(dir, "ws"), volumeSerial: "1", fileId: "3" },
+    caller,
+    { readmit: true },
+  );
+  const state = store.readSetupState(W);
+  assert.equal(state.workspace, null);
+  assert.equal(store.readSetupState("ws-unknown").workspace, null);
 });
