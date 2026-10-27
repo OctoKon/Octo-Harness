@@ -759,6 +759,7 @@ export class Store {
     records: StoredRecord[];
     deletedRecordIds: string[];
     workspace: AdmittedWorkspace | null;
+    deletionEpoch: number;
   } {
     this.assertOpen();
     const kinds = [
@@ -813,8 +814,9 @@ export class Store {
           records.push({ seq: row.seq, kind: row.kind, record });
         }
         const workspace = this.currentWorkspace(workspaceId) ?? null;
+        const deletionEpoch = this.deletionEpoch();
         this.db.exec("COMMIT;");
-        return { records, deletedRecordIds, workspace };
+        return { records, deletedRecordIds, workspace, deletionEpoch };
       } catch (error) {
         if (this.db.isTransaction) this.db.exec("ROLLBACK;");
         throw error;
@@ -1123,7 +1125,11 @@ export class Store {
    * nothing; the same requestId with a different payload is SETUP_REQUEST_CONFLICT.
    * Only a credentialRef is accepted: unknown fields (apiKey, ...) are rejected.
    */
-  commitSetup(input: unknown, caller: CallerContext): SetupResult {
+  commitSetup(
+    input: unknown,
+    caller: CallerContext,
+    expectedDeletionEpoch?: number,
+  ): SetupResult {
     let setup: SetupInput;
     try {
       setup = validateSetupMetadata(
@@ -1262,6 +1268,7 @@ export class Store {
         {
           expectedSetup: {
             workspaceId: scopeId,
+            expectedDeletionEpoch,
             recordIds: [
               ...Object.values(ids),
               ...descriptorArtifacts.map((a) => a.recordId),
@@ -1419,6 +1426,7 @@ export class Store {
         EntityRevisionExpectation | readonly EntityRevisionExpectation[];
       expectedSetup?: {
         workspaceId: string;
+        expectedDeletionEpoch: number | undefined;
         recordIds: readonly string[];
         digestRef: string;
         /** Receives the stored records, read under the same lock, when the request is a replay. */
@@ -1486,6 +1494,16 @@ export class Store {
     try {
       this.db.exec("BEGIN IMMEDIATE;");
       if (expectedSetup !== undefined) {
+        if (
+          expectedSetup.expectedDeletionEpoch !== undefined &&
+          (!Number.isSafeInteger(expectedSetup.expectedDeletionEpoch) ||
+            expectedSetup.expectedDeletionEpoch < 0 ||
+            this.deletionEpoch() !== expectedSetup.expectedDeletionEpoch)
+        )
+          throw new StoreError(
+            "SETUP_INVALID",
+            "deletion epoch changed before setup commit",
+          );
         // The target must still be the current admitted, non-superseded, non-deleted workspace.
         if (this.currentWorkspace(expectedSetup.workspaceId) === undefined)
           throw new StoreError(
