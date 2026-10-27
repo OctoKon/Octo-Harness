@@ -84,7 +84,9 @@ describe("MemoryList", () => {
     );
     // An unloaded list is not an empty one.
     expect(q('[data-testid="memory-empty"]')).toBeNull();
-    expect(document.body.textContent).not.toContain("Nothing is remembered yet");
+    expect(document.body.textContent).not.toContain(
+      "Nothing is remembered yet",
+    );
     expect(
       document.querySelectorAll('[data-testid="memory-item"]').length,
     ).toBe(0);
@@ -107,7 +109,9 @@ describe("MemoryList", () => {
     expect(alert.getAttribute("role")).toBe("alert");
     expect(alert.textContent).toContain("could not be loaded");
     expect(q('[data-testid="memory-empty"]')).toBeNull();
-    expect(document.body.textContent).not.toContain("Nothing is remembered yet");
+    expect(document.body.textContent).not.toContain(
+      "Nothing is remembered yet",
+    );
     expect(
       document.querySelectorAll('[data-testid="memory-item"]').length,
     ).toBe(0);
