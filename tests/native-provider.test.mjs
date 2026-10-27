@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
@@ -31,9 +32,6 @@ async function fixture(t, options = {}) {
     policyRevision: "policy1",
     resolveReference: () => true,
   };
-  store.append({ kind: "run", record: records.run }, caller);
-  let active = { ...caller, grantIds: ["grant1"], planMode: false };
-  const policy = new NativePolicy(store, caller, () => active);
   const args = { model: "fixture-model", stream: true, messages: [] };
   const semantic = {
     schema: "splyce-provider-request-v1",
@@ -43,22 +41,6 @@ async function fixture(t, options = {}) {
     context: { messages: [], tools: [] },
     options: {},
   };
-  const permit = {
-    toolCallId: "call-1",
-    toolName: "provider_request",
-    actionId: "a1",
-    runRecordId: "rec-run",
-    grantId: "grant1",
-    parentActionId: null,
-    capabilityId: "cap1",
-    capabilityVersion: "1",
-    argumentsArtifactId: "args1",
-    argumentsDigest: actionArgumentsDigest(semantic),
-    targetScopeId: "w-demo",
-    idempotencyKey: "request-1",
-    ownership: store.acquireWorkspace("w-demo", "s1"),
-  };
-  policy.authorize(permit);
   const controller = new AbortController();
   let connection = {
     ...records.providerConnection,
@@ -103,6 +85,63 @@ async function fixture(t, options = {}) {
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const url = `http://127.0.0.1:${server.address().port}/chat/completions`;
+  const observeIdentity = () => {
+    const stat = statSync(dir, { bigint: true });
+    assert.ok(stat.isDirectory());
+    return { volumeSerial: String(stat.dev), fileId: String(stat.ino) };
+  };
+  const workspace = store.admitWorkspace(
+    { canonicalPath: dir, ...observeIdentity() },
+    caller,
+  );
+  const origin = new URL(url).origin;
+  const grant = store.mintGrant(
+    {
+      workspaceId: workspace.workspaceId,
+      sessionId: caller.sessionId,
+      capability: "net.provider",
+      scope: "session",
+      origin: options.grantOrigin ?? origin,
+    },
+    caller,
+  );
+  store.append(
+    {
+      kind: "run",
+      record: {
+        ...records.run,
+        workspaceId: workspace.workspaceId,
+        grantIds: [grant.grantId],
+      },
+    },
+    caller,
+  );
+  const active = { ...caller, grantIds: [grant.grantId], planMode: false };
+  const identity = {
+    observe(workspaceId) {
+      assert.equal(workspaceId, workspace.workspaceId);
+      return observeIdentity();
+    },
+  };
+  const policy = new NativePolicy(store, caller, () => active, identity);
+  const permit = {
+    toolCallId: "call-1",
+    toolName: "provider_request",
+    actionId: "a1",
+    runRecordId: "rec-run",
+    grantId: grant.grantId,
+    parentActionId: null,
+    capabilityId: "cap1",
+    capabilityVersion: "1",
+    argumentsArtifactId: "args1",
+    argumentsDigest: actionArgumentsDigest(semantic),
+    targetScopeId: "w-demo",
+    idempotencyKey: "request-1",
+    ownership: store.acquireWorkspace(workspace.workspaceId, caller.sessionId),
+    capability: "net.provider",
+    origin,
+  };
+  policy.authorize(permit);
   const frames = [];
   let control;
   control = new NativeControl(async (frame) => {
@@ -162,7 +201,6 @@ async function fixture(t, options = {}) {
     credentialTarget: target,
     allowLocalLoopback: true,
   };
-  const scope = owner.createScope(binding);
   t.after(async () => {
     control.shutdown();
     server.closeAllConnections();
@@ -170,6 +208,7 @@ async function fixture(t, options = {}) {
     store.close();
     await rm(dir, { recursive: true, force: true });
   });
+  const scope = options.deferScope ? undefined : owner.createScope(binding);
   return {
     owner,
     resolver,
@@ -197,7 +236,8 @@ async function fixture(t, options = {}) {
       return received;
     },
     revoke() {
-      active = { ...active, grantIds: [] };
+      store.revokeGrant(grant.grantId, caller);
+      assert.deepEqual(active.grantIds, [grant.grantId]);
     },
     change() {
       connection = { ...connection, revision: "revision2" };
@@ -612,4 +652,23 @@ test("explicit header deadline aborts an awaited send without external cancellat
       .effectState,
     "uncertain",
   );
+});
+
+test("a Store-minted grant for another origin cannot reach credentials or the server", async (t) => {
+  const f = await fixture(t, {
+    grantOrigin: "https://other.invalid:443",
+    deferScope: true,
+  });
+  let failure;
+  try {
+    const scope = f.owner.createScope(f.binding);
+    await f.owner.port.withRequest(scope, async (request) =>
+      (await f.fetch(request)).text(),
+    );
+  } catch (error) {
+    failure = error;
+  }
+  assert.equal(f.received, 0);
+  assert.equal(f.frames.length, 0);
+  assert.equal(failure?.code, "GRANT_MISMATCH");
 });
