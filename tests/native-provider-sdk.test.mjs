@@ -698,6 +698,69 @@ test("native provider rejects forged scope and failed credential close", async (
   );
 });
 
+test("native adapter rejects hidden and inherited options before admission", async (t) => {
+  const model = {
+    api: "openai-completions",
+    id: "fixture-model",
+    name: "Fixture",
+    provider: "openai",
+    baseUrl: "http://127.0.0.1",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 8192,
+    maxTokens: 1024,
+  };
+  const f = await fixture(t, { model });
+  let admissions = 0,
+    getters = 0;
+  const provider = createNativeModelProvider({
+    model,
+    credentialRef: target,
+    control: f.control,
+    requests: f.owner,
+    admit: async () => {
+      admissions++;
+      return f.scope;
+    },
+    assertCurrent() {},
+  });
+  const accessor = Object.defineProperty({}, "signal", {
+    enumerable: true,
+    get() {
+      getters++;
+      return undefined;
+    },
+  });
+  for (const options of [
+    Object.create({ temperature: 0.5 }),
+    Object.defineProperty({}, "temperature", { value: 0.5 }),
+    { [Symbol("semantic")]: true },
+    accessor,
+    [],
+  ]) {
+    assert.equal(
+      (await provider.stream(model, f.semantic.context, options).result())
+        .stopReason,
+      "error",
+    );
+  }
+  assert.equal(admissions, 0);
+  assert.equal(getters, 0);
+  assert.equal(f.received, 0);
+  assert.equal(f.frames.includes("credential.read"), false);
+  const options = Object.assign(Object.create(null), {
+    signal: f.controller.signal,
+  });
+  assert.equal(
+    (await provider.stream(model, f.semantic.context, options).result())
+      .stopReason,
+    "stop",
+  );
+  assert.equal(admissions, 1);
+  assert.equal(f.received, 1);
+});
+
 test("native provider status uses private control and cancellation prevents admission", async (t) => {
   const model = {
     api: "openai-completions",

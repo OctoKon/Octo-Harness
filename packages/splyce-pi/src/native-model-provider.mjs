@@ -45,8 +45,18 @@ export function createNativeModelProvider({
   const stream = (selected, context, options = {}) => {
     let input;
     try {
-      const { signal, ...rest } = options;
-      if (Object.keys(rest).length) throw failure();
+      if (options === null || typeof options !== "object") throw failure();
+      const prototype = Object.getPrototypeOf(options);
+      if (
+        (prototype !== null && prototype !== Object.prototype) ||
+        Reflect.ownKeys(options).some((key) => key !== "signal")
+      )
+        throw failure();
+      const descriptor = Object.getOwnPropertyDescriptor(options, "signal");
+      if (descriptor && !Object.hasOwn(descriptor, "value")) throw failure();
+      const signal = descriptor?.value;
+      if (signal !== undefined && !(signal instanceof AbortSignal))
+        throw failure();
       input = {
         model: structuredClone(selected),
         context: structuredClone(context),
