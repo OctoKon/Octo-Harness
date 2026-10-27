@@ -7,6 +7,14 @@
   },
   "type": "module",
   "exports": {
+    "./recovery-applier": {
+      "types": "./dist/recovery-applier.d.ts",
+      "import": "./dist/recovery-applier.js"
+    },
+    "./recovery": {
+      "types": "./dist/recovery.d.ts",
+      "import": "./dist/recovery.js"
+    },
     "./contracts": {
       "types": "./dist/contracts.d.ts",
       "import": "./dist/contracts.js"

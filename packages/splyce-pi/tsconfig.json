@@ -24,6 +24,8 @@
     "src/provider-admission.ts",
     "src/admission.ts",
     "src/receipts.ts",
+    "src/recovery.ts",
+    "src/recovery-applier.ts",
     "src/config.ts",
     "src/desktop-bridge.ts",
     "src/session-map.ts",
