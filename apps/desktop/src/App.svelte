@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import type { Handshake, SplyceEvent } from "@splyce/pi/contracts";
+  import type {
+    Handshake,
+    PortAvailability,
+    SplyceEvent,
+  } from "@splyce/pi/contracts";
   import Composer from "./components/Composer.svelte";
   import SessionTree from "./components/SessionTree.svelte";
   import SessionActions from "./components/SessionActions.svelte";
@@ -26,6 +30,7 @@
     connectionState,
     handshake,
     onEvent,
+    portAvailability,
     subscribe,
     type EngineConnectionState,
   } from "./stores/engine";
@@ -111,6 +116,12 @@
 
   let status = $state<EngineConnectionState>("disconnected");
   let readiness = $state<Handshake["readiness"] | null>(null);
+  let ports = $state<PortAvailability | null>(null);
+  let generationReady = $derived(
+    ports === null
+      ? undefined
+      : ports.generation && ports.provider && ports.workspace,
+  );
   let engineConnected = $state(false);
   let stopped = $derived(engineConnected && status === "disconnected");
   let mounted = false;
@@ -231,7 +242,13 @@
     const binding = bindSelection(transport, subscribe);
     const unsubState = connectionState.subscribe((val) => {
       status = val;
-      if (val === "disconnected") readiness = null;
+      if (val === "disconnected") {
+        readiness = null;
+        ports = null;
+      }
+    });
+    const unsubPorts = portAvailability.subscribe((val) => {
+      ports = val;
     });
     const unsubBinding = binding.status.subscribe((next) => {
       subscription = next;
@@ -247,6 +264,7 @@
     return () => {
       mounted = false;
       unsubState();
+      unsubPorts();
       unsubEvents();
       unsubBinding();
       binding.dispose();
@@ -262,6 +280,7 @@
   data-readiness-policy={readiness ? readiness.policy : "unknown"}
   data-readiness-store={readiness ? readiness.store : "unknown"}
   data-readiness-receipts={readiness ? readiness.receipts : "unknown"}
+  data-readiness-generation={ports ? ports.generation : "unknown"}
 >
   <Shell {rail} {transcript} {composer} {evidence} />
 </div>
@@ -273,7 +292,7 @@
       {stopped ? "engine stopped" : status}
     </span>
   </div>
-  <nav aria-label="Views">
+  <nav class="views-nav" aria-label="Views">
     {#each VIEWS as [id, label] (id)}
       <button type="button" aria-current={view === id ? "page" : undefined} onclick={() => (view = id)}>
         {label}
@@ -283,11 +302,11 @@
   <SessionTree
     {nav}
     {onSelect}
+    canRetry={status === "ready"}
     onFocus={(key) => dispatchNav({ type: "focus", key })}
     onMove={(to) => dispatchNav({ type: "move", to })}
     onRetry={() => {
       if (status === "ready" && loadSessions) void runLoad();
-      else void connect();
     }}
   />
   <SessionActions context={sessionActionContext} />
@@ -334,11 +353,14 @@
           <h2>{stopped ? "Engine stopped" : readiness?.state === "ready" ? "Generation unconfigured" : "Engine Unavailable"}</h2>
           <p>
             {stopped
-              ? "The native engine exited. Restart the app to reconnect; the last transcript may be incomplete."
+              ? "The native engine exited. Reconnect to resume or restart the app; the last transcript may be incomplete."
               : readiness?.state === "ready"
                 ? "Generation requires a configured provider and workspace."
               : "Backend native services (policy, durable store, and receipts) are currently initializing or unavailable. Release qualification requires all three subsystems verified before task execution."}
           </p>
+          {#if stopped || status === "unavailable" || status === "error"}
+            <button type="button" class="retry-btn" onclick={() => void connect()}>Retry</button>
+          {/if}
         </div>
       {/if}
       {#if currentRun}
@@ -362,12 +384,12 @@
 
 {#snippet composer()}
   <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so
-       sending is disabled. generationReady is deliberately omitted: the engine does not
-       report readiness.ports.generation yet, and an omitted flag means "not reported",
-       not "unconfigured". Wire it the moment the parser lands in stores/engine.ts. -->
+       sending is disabled. generationReady is derived from portAvailability; fail closed
+       when false or unreported. -->
   <Composer
     connection={status}
     sessionId={$selectedSession?.sessionId ?? null}
+    {generationReady}
     unavailable="Sending is not available yet"
     send={async () => {
       throw new Error("Sending is unavailable: session revisions are not wired.");
@@ -391,12 +413,41 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px;
+    padding: 12px 16px;
   }
   .brand h1 {
     font-size: 1.125rem;
     margin: 0;
     font-weight: 700;
+  }
+  .views-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 0 12px 12px 12px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .views-nav button {
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: #4b5563;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .views-nav button:hover {
+    background: #f3f4f6;
+    color: #111827;
+  }
+  .views-nav button[aria-current="page"] {
+    background: #ffffff;
+    color: #111827;
+    font-weight: 600;
+    border-color: #d1d5db;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
   .status-badge {
     padding: 2px 8px;
@@ -483,5 +534,20 @@
     color: #4b5563;
     font-size: 0.875rem;
     line-height: 1.5;
+    margin-bottom: 20px;
+  }
+  .retry-btn {
+    padding: 8px 20px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #ffffff;
+    background: #111827;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .retry-btn:hover {
+    background: #374151;
   }
 </style>
