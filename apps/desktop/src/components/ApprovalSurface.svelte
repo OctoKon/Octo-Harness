@@ -16,6 +16,7 @@
   import {
     activeApproval,
     type ApprovalContext,
+    type ApprovalDismissCause,
     type ApprovalRequestView,
     type ApprovalResponsePayload,
   } from "../stores/approvals";
@@ -33,23 +34,32 @@
     $props();
 
   const active = $derived(activeApproval(requests));
-  let dismissed: string | null = $state(null);
+  type DismissedPrompt = {
+    readonly approvalRequestId: string;
+    readonly cause: ApprovalDismissCause;
+  };
+  let dismissed = $state<DismissedPrompt | null>(null);
 
   const visible = $derived(
-    active && active.request.approvalRequestId !== dismissed ? active : null,
+    active && dismissed?.approvalRequestId !== active.request.approvalRequestId
+      ? active
+      : null,
   );
 
-  function dismiss() {
-    if (active) dismissed = active.request.approvalRequestId;
-    onDismiss(active?.request.approvalRequestId ?? "");
+  function dismiss(cause: ApprovalDismissCause) {
+    if (!active) return;
+    dismissed = { approvalRequestId: active.request.approvalRequestId, cause };
+    onDismiss(active.request.approvalRequestId);
   }
 
-  // The dialog self-dismisses when the run is canceled; say so instead of
-  // letting the prompt vanish with no explanation.
+  // The dialog reports why it went away. Only the run ending the question is
+  // worth explaining; a person closing the prompt - including one whose
+  // decision was already submitted - gets no "no decision" notice, because the
+  // run state says nothing about who dismissed what.
   const closedByCanceledRun = $derived(
     active !== null &&
-      dismissed === active.request.approvalRequestId &&
-      context.runCanceled,
+      dismissed?.approvalRequestId === active.request.approvalRequestId &&
+      dismissed.cause === "canceled",
   );
 </script>
 

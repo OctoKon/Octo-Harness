@@ -208,4 +208,33 @@ describe("TD-30 ApprovalSurface", () => {
       "No action was approved",
     );
   });
+
+  it("never claims no decision was made when the user closes a submitted prompt", async () => {
+    const onRespond = vi.fn();
+    const surface = await render([approvalRequest], approvalMatching, {
+      onRespond,
+    });
+
+    (byTestId("approval-approve") as HTMLButtonElement).click();
+    flushSync();
+    await tick();
+    flushSync();
+    expect(onRespond).toHaveBeenCalledTimes(1);
+
+    // The decision was submitted first, so the run ending afterwards leaves the
+    // prompt up: its own outcome is still pending.
+    await push(surface, [approvalRequest], approvalRunCanceled);
+    expect(maybeTestId("approval-submitted")).not.toBeNull();
+
+    // Closing it now is the person's own dismissal. Their submitted approval is
+    // not retracted, and nothing may claim that no decision was made.
+    (byTestId("approval-close") as HTMLButtonElement).click();
+    flushSync();
+    await tick();
+    flushSync();
+
+    expect(maybeTestId("approval-dialog")).toBeNull();
+    expect(maybeTestId("approval-closed-canceled")).toBeNull();
+    expect(onRespond).toHaveBeenCalledTimes(1);
+  });
 });

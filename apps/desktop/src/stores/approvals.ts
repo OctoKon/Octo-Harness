@@ -55,6 +55,14 @@ export interface ApprovalActionState {
   readonly reason: string | null;
 }
 
+/**
+ * Why the prompt went away. `canceled` means the run ended the question itself;
+ * `user` means the person closed it (Close or Escape). The cause is reported by
+ * the dialog that saw it and is never inferred from the run state: a dialog the
+ * user closes by hand after the run ended is still a user dismissal.
+ */
+export type ApprovalDismissCause = "canceled" | "user";
+
 const READY: ApprovalActionState = Object.freeze({
   enabled: true,
   reason: null,

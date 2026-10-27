@@ -18,6 +18,7 @@
     approvalDecisionState,
     approvalResponse,
     type ApprovalContext,
+    type ApprovalDismissCause,
     type ApprovalRequestView,
     type ApprovalResponsePayload,
   } from "../stores/approvals";
@@ -27,8 +28,11 @@
     context: ApprovalContext;
     /** Receives only a payload the store validated. */
     onRespond?: (payload: ApprovalResponsePayload) => void;
-    /** Dismissal (Escape or Close): never an approval. */
-    onDismiss?: () => void;
+    /**
+     * Dismissal (Escape or Close): never an approval. The cause is what this
+     * dialog observed, so a caller never has to guess it from the run state.
+     */
+    onDismiss?: (cause: ApprovalDismissCause) => void;
   }
 
   let { request, context, onRespond = () => {}, onDismiss = () => {} }: Props =
@@ -63,15 +67,16 @@
 
   // A canceled run can no longer accept a decision, so keeping a modal open
   // would ask the user to answer a question that no longer exists. Close it,
-  // return focus to where it came from, and report the dismissal. A decision
-  // already submitted stays visible instead: its own outcome is still pending.
+  // return focus to where it came from, and report the dismissal as the run's
+  // doing. A decision already submitted stays visible instead: its own outcome
+  // is still pending, and the user closing that prompt later is a user action.
   let runEnded = false;
   $effect(() => {
     if (!context.runCanceled || runEnded || submitted !== null) return;
     runEnded = true;
     if (dialog?.open) dialog.close();
     if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-    onDismiss();
+    onDismiss("canceled");
   });
 
   function submit(decision: "approve" | "deny") {
@@ -89,15 +94,16 @@
     onRespond(result.payload);
   }
 
-  function dismiss() {
+  function dismiss(cause: ApprovalDismissCause) {
     if (dialog?.open) dialog.close();
-    onDismiss();
+    onDismiss(cause);
   }
 
   function oncancel(event: Event) {
-    // Escape closes the prompt; it must never approve or submit a decision.
+    // Escape closes the prompt; it is the person's own dismissal and must never
+    // approve or submit a decision.
     event.preventDefault();
-    dismiss();
+    dismiss("user");
   }
 </script>
 
@@ -119,7 +125,11 @@
       shown as executed until the engine reports the outcome.
     </p>
     <div class="actions">
-      <button type="button" onclick={dismiss} data-testid="approval-close">
+      <button
+        type="button"
+        onclick={() => dismiss("user")}
+        data-testid="approval-close"
+      >
         Close
       </button>
     </div>
@@ -160,7 +170,11 @@
       >
         Approve once
       </button>
-      <button type="button" onclick={dismiss} data-testid="approval-dismiss">
+      <button
+        type="button"
+        onclick={() => dismiss("user")}
+        data-testid="approval-dismiss"
+      >
         {inert ? "Close" : "Cancel"}
       </button>
     </div>

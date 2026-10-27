@@ -277,6 +277,40 @@ test.describe("TD-30 D3_approval_revision and FUI-W5", () => {
     expect(await calls(page)).toHaveLength(1);
   });
 
+  test("closing a submitted prompt after the run ended claims no decision was retracted", async ({
+    page,
+  }) => {
+    await page.goto(url);
+    await page.getByTestId("approval-approve").click();
+    await expect(page.getByTestId("approval-submitted")).toContainText("act-1");
+
+    // The run ends after the decision was submitted: the prompt stays up because
+    // that decision's own outcome is still pending.
+    await setContext(page, "run-canceled");
+    await expect(dialog(page)).toHaveCount(1);
+    await expect(page.getByTestId("approval-submitted")).toContainText("act-1");
+
+    // The person closes it. The approval they already submitted is not undone,
+    // so nothing may say that no decision was made.
+    await page.getByTestId("approval-close").click();
+    await expect(dialog(page)).toHaveCount(0);
+    await expect(page.getByTestId("approval-closed-canceled")).toHaveCount(0);
+    expect(await calls(page)).toEqual([
+      {
+        name: "onRespond",
+        args: [
+          {
+            approvalRequestId: "apr-1",
+            runId: "run-1",
+            actionId: "act-1",
+            decision: "approve",
+          },
+        ],
+      },
+      { name: "onDismiss", args: ["apr-1"] },
+    ]);
+  });
+
   test("a replacement request remounts the dialog and the older one never resurfaces", async ({
     page,
   }) => {
