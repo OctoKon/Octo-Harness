@@ -81,33 +81,29 @@ async function getTauriInvoke(): Promise<
     };
     return core.invoke;
   } catch {
-    if (
-      typeof window !== "undefined" &&
-      (
-        window as unknown as {
-          __TAURI__?: {
-            core?: {
-              invoke: (
-                cmd: string,
-                args?: Record<string, unknown>,
-              ) => Promise<unknown>;
-            };
+    if (typeof window !== "undefined") {
+      const win = window as unknown as {
+        __TAURI_INTERNALS__?: {
+          invoke?: (
+            cmd: string,
+            args?: Record<string, unknown>,
+          ) => Promise<unknown>;
+        };
+        __TAURI__?: {
+          core?: {
+            invoke: (
+              cmd: string,
+              args?: Record<string, unknown>,
+            ) => Promise<unknown>;
           };
-        }
-      ).__TAURI__?.core
-    ) {
-      return (
-        window as unknown as {
-          __TAURI__: {
-            core: {
-              invoke: (
-                cmd: string,
-                args?: Record<string, unknown>,
-              ) => Promise<unknown>;
-            };
-          };
-        }
-      ).__TAURI__.core.invoke;
+        };
+      };
+      if (win.__TAURI_INTERNALS__?.invoke) {
+        return win.__TAURI_INTERNALS__.invoke;
+      }
+      if (win.__TAURI__?.core?.invoke) {
+        return win.__TAURI__.core.invoke;
+      }
     }
     return null;
   }
