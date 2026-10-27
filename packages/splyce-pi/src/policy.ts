@@ -412,8 +412,7 @@ export class NativePolicy {
           fences,
           intentDrafts,
         );
-      else
-        this.store.commitEvents(receipts, intentDrafts, this.caller, fences);
+      else this.store.commitEvents(receipts, intentDrafts, this.caller, fences);
     } catch (error) {
       if (
         error instanceof StoreError &&

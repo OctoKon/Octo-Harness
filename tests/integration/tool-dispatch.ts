@@ -48,10 +48,14 @@ const SECRET = "sk-live1234567890abcdef";
 type Options = {
   approve?: (r: ApprovalRequest) => boolean;
   nativeRedact?: (text: string) => Promise<string | { text: string }>;
+  registrationFails?: boolean;
   memory?: { capture(scopeId: string, sessionId: string): unknown[] };
 };
 
-async function setup(t: { after(fn: () => void): void }, options: Options = {}) {
+async function setup(
+  t: { after(fn: () => void): void },
+  options: Options = {},
+) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "td-dispatch-")));
   const store = Store.open(join(dir, "store.db"));
   t.after(() => {
@@ -124,6 +128,7 @@ async function setup(t: { after(fn: () => void): void }, options: Options = {}) 
   );
   const approvals: ApprovalRequest[] = [];
   const bound: object[] = [];
+  let registered = 0;
   const dispatch = createToolDispatch({
     store,
     policy,
@@ -135,13 +140,18 @@ async function setup(t: { after(fn: () => void): void }, options: Options = {}) 
     ownership,
     readGrantId: readGrant,
     attachGrant,
+    registerNativeProvider: async () => {
+      if (options.registrationFails) throw new Error("registration down");
+      registered += 1;
+    },
     approve: async (r) => {
       approvals.push(r);
       return (options.approve ?? (() => true))(r);
     },
     redact: (text) => text.split(SECRET).join("[LIVE]"),
     nativeRedact:
-      options.nativeRedact ?? (async (text) => ({ text, redactedCount: 0 }) as never),
+      options.nativeRedact ??
+      (async (text) => ({ text, redactedCount: 0 }) as never),
     bindTool: (tool) => {
       bound.push(tool);
       return () => undefined;
@@ -206,6 +216,7 @@ async function setup(t: { after(fn: () => void): void }, options: Options = {}) 
     workDir,
     approvals,
     bound,
+    registrations: () => registered,
     workspaceId,
     scope,
   };
@@ -225,7 +236,9 @@ test("write needs approval: denied call runs nothing and leaves a denied receipt
   assert.equal(f.approvals.length, 1);
   assert.deepEqual(f.actions("call-1").map(state), ["denied"]);
   assert.equal(
-    f.grants().filter(({ record }) => (record as { scope: string }).scope === "once")
+    f
+      .grants()
+      .filter(({ record }) => (record as { scope: string }).scope === "once")
       .length,
     0,
   );
@@ -246,22 +259,43 @@ test("approved write: once grant consumed exactly once, one receipt per effect, 
   ]);
   const once = f
     .grants()
-    .map(({ record }) => record as { scope: string; consumedAt?: string; actionId?: string; argumentsDigest?: string });
-  assert.equal(once.filter((g) => g.scope === "once" && !g.consumedAt).length, 1);
-  assert.equal(once.filter((g) => g.scope === "once" && g.consumedAt).length, 1);
-  assert.equal(once.find((g) => g.scope === "once")?.argumentsDigest, actionArgumentsDigest(args));
-  const outcomes = f
-    .store.list(f.scope)
+    .map(
+      ({ record }) =>
+        record as {
+          scope: string;
+          consumedAt?: string;
+          actionId?: string;
+          argumentsDigest?: string;
+        },
+    );
+  assert.equal(
+    once.filter((g) => g.scope === "once" && !g.consumedAt).length,
+    1,
+  );
+  assert.equal(
+    once.filter((g) => g.scope === "once" && g.consumedAt).length,
+    1,
+  );
+  assert.equal(
+    once.find((g) => g.scope === "once")?.argumentsDigest,
+    actionArgumentsDigest(args),
+  );
+  const outcomes = f.store
+    .list(f.scope)
     .records.filter(
       ({ kind, record }) =>
-        kind === "outcome" && (record as { actionId: string }).actionId === "call-1",
+        kind === "outcome" &&
+        (record as { actionId: string }).actionId === "call-1",
     );
   assert.equal(outcomes.length, 1);
   // a second call needs its own approval and its own grant; the first stays consumed
   await f.drive("call-2", "write", { path: "b.txt", content: "two" });
   assert.equal(f.approvals.length, 2);
   assert.equal(
-    f.grants().filter(({ record }) => (record as { consumedAt?: string }).consumedAt).length,
+    f
+      .grants()
+      .filter(({ record }) => (record as { consumedAt?: string }).consumedAt)
+      .length,
     2,
   );
 });
@@ -279,22 +313,39 @@ test("tool_intent and tool_outcome(+summary) commit in the same batch as the rec
     { recordId: string; payload: Record<string, unknown> },
   ];
   const all = f.store.list(f.scope).records;
-  const seq = (id: string) => all.find(({ record }) => (record as { recordId: string }).recordId === id)!.seq;
+  const seq = (id: string) =>
+    all.find(({ record }) => (record as { recordId: string }).recordId === id)!
+      .seq;
   const actions = f.actions("call-1");
   const running = actions.find((r) => state(r) === "running")!;
   const approved = actions.find((r) => state(r) === "approved")!;
   const completed = actions.find((r) => state(r) === "completed")!;
   const outcomeReceipt = all.find(({ kind }) => kind === "outcome")!;
-  assert.equal(intent.recordId, (running.record as { recordId: string }).recordId);
-  assert.equal(outcome.recordId, (completed.record as { recordId: string }).recordId);
+  assert.equal(
+    intent.recordId,
+    (running.record as { recordId: string }).recordId,
+  );
+  assert.equal(
+    outcome.recordId,
+    (completed.record as { recordId: string }).recordId,
+  );
   // contiguous seqs: approved, running, grant.consumed, intent event / outcome, completed, outcome event
-  const intentSeq = seq(`event:${(events[0] as unknown as { eventId: string }).eventId}`);
+  const intentSeq = seq(
+    `event:${(events[0] as unknown as { eventId: string }).eventId}`,
+  );
   assert.ok(intentSeq - approved.seq <= 3 && intentSeq > running.seq);
-  const outcomeSeq = seq(`event:${(events[1] as unknown as { eventId: string }).eventId}`);
+  const outcomeSeq = seq(
+    `event:${(events[1] as unknown as { eventId: string }).eventId}`,
+  );
   assert.ok(outcomeSeq - outcomeReceipt.seq <= 2 && outcomeSeq > completed.seq);
   assert.equal(intent.payload.actionId, "call-1");
   assert.equal(outcome.payload.status, "success");
-  const summary = outcome.payload.summary as { bytes: number; truncated: boolean; durationMs: number; preview: string };
+  const summary = outcome.payload.summary as {
+    bytes: number;
+    truncated: boolean;
+    durationMs: number;
+    preview: string;
+  };
   assert.equal(typeof summary.durationMs, "number");
   assert.equal(summary.truncated, false);
   assert.ok(summary.preview.length <= 2048);
@@ -305,8 +356,16 @@ test("read runs on the session grant with a redacted preview and no receipts bes
   const out = await f.drive("call-r", "read", { path: "hello.txt" });
   assert.equal(out.isError, false);
   assert.equal(f.approvals.length, 0);
-  assert.equal(f.grants().filter(({ record }) => (record as { scope: string }).scope === "once").length, 0);
-  const [, outcome] = f.events() as unknown as { payload: { summary: { preview: string } } }[];
+  assert.equal(
+    f
+      .grants()
+      .filter(({ record }) => (record as { scope: string }).scope === "once")
+      .length,
+    0,
+  );
+  const [, outcome] = f.events() as unknown as {
+    payload: { summary: { preview: string } };
+  }[];
   assert.ok(!JSON.stringify(f.events()).includes(SECRET));
   assert.match(outcome!.payload.summary.preview, /hello/);
 });
@@ -321,7 +380,9 @@ test("preview redaction fails closed when the native lane rejects", async (t) =>
   const events = JSON.stringify(f.events());
   assert.ok(!events.includes("hello"));
   assert.ok(!events.includes(SECRET));
-  const outcome = f.events()[1] as unknown as { payload: { summary: { preview: string } } };
+  const outcome = f.events()[1] as unknown as {
+    payload: { summary: { preview: string } };
+  };
   assert.equal(outcome.payload.summary.preview, "[unavailable]");
 });
 
@@ -330,7 +391,9 @@ test("preview uses the native lane's redacted text", async (t) => {
     nativeRedact: async (text) => ({ text: text.replace(/hello/gu, "NATIVE") }),
   });
   await f.drive("call-r", "read", { path: "hello.txt" });
-  const outcome = f.events()[1] as unknown as { payload: { summary: { preview: string } } };
+  const outcome = f.events()[1] as unknown as {
+    payload: { summary: { preview: string } };
+  };
   assert.match(outcome.payload.summary.preview, /NATIVE/);
   assert.ok(!outcome.payload.summary.preview.includes("hello"));
 });
@@ -349,7 +412,8 @@ test("an argument digest mismatch between prepare and execute is denied and noth
   assert.equal(existsSync(join(f.workDir, "a.txt")), false);
   assert.ok(f.actions("call-1").map(state).includes("denied"));
   assert.equal(
-    f.store.list(f.scope).records.filter(({ kind }) => kind === "outcome").length,
+    f.store.list(f.scope).records.filter(({ kind }) => kind === "outcome")
+      .length,
     0,
   );
 });
@@ -375,19 +439,22 @@ test("bind attaches the admission to every session tool and freezes the registry
     },
     _refreshToolRegistry: () => undefined,
   };
-  f.dispatch.bind(session);
+  await f.dispatch.bind(session);
+  assert.equal(f.registrations(), 1);
   assert.equal(f.bound.length, tools.length);
-  assert.throws(() => (session.reload as () => void)(), rejects("TOOL_REGISTRY_FROZEN"));
+  assert.throws(
+    () => (session.reload as () => void)(),
+    rejects("TOOL_REGISTRY_FROZEN"),
+  );
   assert.throws(
     () => (session._refreshToolRegistry as () => void)(),
     rejects("TOOL_REGISTRY_FROZEN"),
   );
   assert.equal(reloaded, 0);
-  assert.throws(
-    () =>
-      f.dispatch.bind({
-        agent: { state: { tools: [{ name: "extension_tool" }] } },
-      }),
+  await assert.rejects(
+    f.dispatch.bind({
+      agent: { state: { tools: [{ name: "extension_tool" }] } },
+    }),
     rejects("TOOL_REGISTRY_FOREIGN"),
   );
 });
@@ -424,7 +491,13 @@ test("unknown tool names and nested calls are denied before any permit", async (
     rejects("CAPABILITY_REQUIRED"),
   );
   await assert.rejects(
-    f.dispatch.admission.prepare("c2", "read", { path: "x" }, "parent", undefined),
+    f.dispatch.admission.prepare(
+      "c2",
+      "read",
+      { path: "x" },
+      "parent",
+      undefined,
+    ),
     rejects("INVALID_PARENT"),
   );
 });
@@ -462,9 +535,48 @@ test("an invalid or throwing outcome event never costs the receipts of an effect
       "completed",
     ]);
     assert.equal(
-      f.store.list(f.scope).records.filter(({ kind }) => kind === "outcome").length,
+      f.store.list(f.scope).records.filter(({ kind }) => kind === "outcome")
+        .length,
       1,
     );
     assert.equal(f.events().length, 0);
   }
+});
+
+test("a prepared but not yet admitted call cannot run its tool directly", async (t) => {
+  const f = await setup(t);
+  const adm = f.dispatch.admission;
+  const args = { path: "a.txt", content: "x" };
+  adm.reserve("c", "write", undefined);
+  await adm.prepare("c", "write", args, undefined, undefined);
+  adm.finish("c", "write", args, undefined);
+  const write = f.dispatch.tools.find((x) => x.name === "write")!;
+  await assert.rejects(write.execute("c", args), rejects("POLICY_DENIED"));
+  assert.equal(existsSync(join(f.workDir, "a.txt")), false);
+});
+
+test("a rejecting provider registration fails the start typed; nothing is bound or frozen", async (t) => {
+  const f = await setup(t, { registrationFails: true });
+  let reloaded = 0;
+  const session = {
+    agent: {
+      state: { tools: f.dispatch.tools.map((x) => ({ name: x.name })) },
+    },
+    reload: () => {
+      reloaded += 1;
+    },
+  };
+  await assert.rejects(
+    f.dispatch.bind(session),
+    rejects("SESSION_REGISTRATION_FAILED"),
+  );
+  assert.equal(f.bound.length, 0);
+  (session.reload as () => void)();
+  assert.equal(reloaded, 1);
+  assert.equal(f.registrations(), 0);
+  assert.equal(
+    f.store.list(f.scope).records.filter(({ kind }) => kind === "action")
+      .length,
+    0,
+  );
 });

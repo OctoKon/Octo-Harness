@@ -64,7 +64,10 @@ const ARGS_SUMMARY_MAX = 512;
 const UNAVAILABLE = "[unavailable]";
 
 export class ToolDispatchError extends Error {
-  readonly code: "TOOL_REGISTRY_FROZEN" | "TOOL_REGISTRY_FOREIGN";
+  readonly code:
+    | "TOOL_REGISTRY_FROZEN"
+    | "TOOL_REGISTRY_FOREIGN"
+    | "SESSION_REGISTRATION_FAILED";
   constructor(code: ToolDispatchError["code"]) {
     super(code);
     this.name = "ToolDispatchError";
@@ -165,6 +168,12 @@ export interface ToolDispatchDeps {
     text: string,
     signal?: AbortSignal,
   ): Promise<string | { text: string }>;
+  /**
+   * The native provider registration of the session being started (Codex's factory passes
+   * the real, awaitable `registerNativeProvider`). Awaited before any tool is bound; a
+   * rejection fails the start with SESSION_REGISTRATION_FAILED and nothing is bound.
+   */
+  registerNativeProvider(): Promise<void>;
   /** Pi's bindSplyceToolAdmission. */
   bindTool(tool: object, admission: ToolAdmission): () => void;
   argumentsArtifactId?(actionId: string, digest: string): string;
@@ -196,8 +205,11 @@ export interface ToolDispatch {
   /** Tool names for the Pi `tools` allowlist (customTools only; no built-ins). */
   allowlist: readonly string[];
   admission: ToolAdmission;
-  /** Binds the admission to every tool of the session and freezes its registry. */
-  bind(session: PiSessionLike): () => void;
+  /**
+   * Awaits registerNativeProvider, then binds the admission to every tool of the session
+   * and freezes its registry. No detached async: any failure rejects the returned promise.
+   */
+  bind(session: PiSessionLike): Promise<() => void>;
   /** Call once per turn end; memory capture runs only after a completed turn. */
   onTurnEnd(turn: { state: "completed" | "failed" | "canceled" }): number;
 }
@@ -231,8 +243,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     },
     consume(_grantId, intent: Act) {
       const call = byAction.get(intent.actionId);
-      if (!call?.admitted || call.consumed)
-        throw new Error("GRANT_CONSUMED");
+      if (!call?.admitted || call.consumed) throw new Error("GRANT_CONSUMED");
       call.consumed = true;
     },
   };
@@ -257,8 +268,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     },
   };
 
-  const redactSync = (text: string): string =>
-    scrubSecrets(deps.redact(text));
+  const redactSync = (text: string): string => scrubSecrets(deps.redact(text));
   /** Sync scrub, then the Rust lane; a lane failure yields a placeholder, never raw text. */
   const redactFinal = async (
     text: string,
@@ -370,7 +380,8 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
 
   const admission: ToolAdmission = {
     check(toolCallId, toolName, signal, phase) {
-      if (calls.has(toolCallId)) policy.check(toolCallId, toolName, signal, phase);
+      if (calls.has(toolCallId))
+        policy.check(toolCallId, toolName, signal, phase);
     },
     reserve() {
       // The permit needs the validated arguments' digest; reservation happens in prepare.
@@ -456,7 +467,13 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
       byAction.set(actionId, calls.get(toolCallId)!);
       policy.reserve(toolCallId, toolName, signal);
       need(toolCallId).reserved = true;
-      await policy.prepare(toolCallId, toolName, validatedArgs, undefined, signal);
+      await policy.prepare(
+        toolCallId,
+        toolName,
+        validatedArgs,
+        undefined,
+        signal,
+      );
     },
     finish(toolCallId, toolName, args, signal) {
       need(toolCallId);
@@ -548,7 +565,12 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     tools,
     allowlist: tools.map((t) => t.name),
     admission,
-    bind(session) {
+    async bind(session) {
+      try {
+        await deps.registerNativeProvider();
+      } catch {
+        throw new ToolDispatchError("SESSION_REGISTRATION_FAILED");
+      }
       const names = new Set(tools.map((t) => t.name));
       const live = session.agent.state.tools;
       for (const tool of live)
