@@ -6,6 +6,7 @@
 import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
+  RECORD_SCHEMAS,
   ContractError,
   type ContractContext,
   type RecordKind,
@@ -14,6 +15,7 @@ import {
   type SplyceEventDraft,
   validateEvent,
   validateRecord,
+  snapshotPersistedJson,
 } from "./contracts.js";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -88,6 +90,13 @@ export interface AppendInput {
 export interface Appended {
   seq: number;
   recordId: string;
+}
+
+export interface EntityRevisionExpectation {
+  kind: "providerConnection" | "profileSnapshot";
+  scopeId: string;
+  entityId: string;
+  expectedRevision: string | null;
 }
 
 export interface StoredRecord {
@@ -475,37 +484,7 @@ export class Store {
       const scopeIds = new Set<string>();
       const records: StoredRecord[] = [];
       for (const row of rows) {
-        if (row.schema_version !== CONTRACT_VERSION)
-          throw new StoreError(
-            "UNKNOWN_SCHEMA",
-            "audit cannot read an unknown record schema",
-          );
-        const parsed = this.decodeStoredPayload(row.kind, row.payload);
-        const record = validateRecord(row.kind, parsed, {
-          scopeId: row.scope_id,
-          // Empty attribution is retained for historical migrated rows.
-          sessionId: row.session_id || "historical",
-          configRevision: INITIAL_CONFIG_REVISION,
-          profileRevision: "audit",
-          policyRevision: "audit",
-          lastDurableSeq: Number.MAX_SAFE_INTEGER,
-          maxInlineBytes: this.maxInlineBytes,
-          resolveReference: () => true,
-        });
-        if (
-          !Number.isSafeInteger(row.seq) ||
-          row.seq < 1 ||
-          record.recordId !== row.record_id ||
-          record.scopeId !== row.scope_id ||
-          record.createdAt !== row.created_at ||
-          record.schemaVersion !== row.schema_version ||
-          typeof row.session_id !== "string" ||
-          (row.session_id !== "" && /\s|[\\/]/u.test(row.session_id))
-        )
-          throw new StoreError(
-            "STORE_ATTRIBUTION",
-            "stored row attribution differs from its payload",
-          );
+        const record = this.validateStructuralRow(row);
         scopeIds.add(row.scope_id);
         records.push({ seq: row.seq, kind: row.kind, record });
       }
@@ -539,6 +518,102 @@ export class Store {
     } catch (error) {
       throw mapSqliteError(error);
     }
+  }
+
+  /** One SQLite observation of scoped authority and its tombstones, excluding event history. */
+  readAuthority(scopeId: string): {
+    records: StoredRecord[];
+    deletedRecordIds: string[];
+  } {
+    this.assertOpen();
+    try {
+      const knownKinds = Object.keys(RECORD_SCHEMAS);
+      const rows = this.db
+        .prepare(
+          "SELECT r.*, d.record_id AS deleted_record_id, d.generation, d.deleted_at, " +
+            "(SELECT value FROM store_meta WHERE key = 'deletion_epoch') AS deletion_epoch " +
+            "FROM records r LEFT JOIN deletions d ON d.record_id = r.record_id " +
+            "WHERE r.scope_id = ? AND (r.kind IN ('profileSnapshot', 'providerConnection', 'configurationTransition') " +
+            `OR r.kind NOT IN (${knownKinds.map(() => "?").join(",")}) OR r.schema_version != ?) ORDER BY r.seq`,
+        )
+        .all(scopeId, ...knownKinds, CONTRACT_VERSION) as Array<
+        Parameters<Store["validateStructuralRow"]>[0] & {
+          deleted_record_id: string | null;
+          generation: number | null;
+          deleted_at: string | null;
+          deletion_epoch: string | null;
+        }
+      >;
+      const records: StoredRecord[] = [];
+      const deletedRecordIds: string[] = [];
+      for (const row of rows) {
+        const record = this.validateStructuralRow(row);
+        if (row.deleted_record_id !== null) {
+          const epoch =
+            Store.parseEpoch(
+              row.deletion_epoch ?? undefined,
+              "deletion_epoch",
+            ) ?? 0;
+          if (
+            !Number.isSafeInteger(row.generation) ||
+            row.generation! < 1 ||
+            row.generation! > epoch ||
+            typeof row.deleted_at !== "string" ||
+            !Number.isFinite(Date.parse(row.deleted_at))
+          )
+            throw new StoreError("STORE_LAYOUT", "invalid deletion tombstone");
+          deletedRecordIds.push(row.deleted_record_id);
+        }
+        records.push({ seq: row.seq, kind: row.kind, record });
+      }
+      return { records, deletedRecordIds };
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  private validateStructuralRow(row: {
+    seq: number;
+    kind: RecordKind;
+    record_id: string;
+    schema_version: number;
+    scope_id: string;
+    session_id: string;
+    created_at: string;
+    payload: string;
+  }): RecordByKind[RecordKind] {
+    if (row.schema_version !== CONTRACT_VERSION)
+      throw new StoreError(
+        "UNKNOWN_SCHEMA",
+        "audit cannot read an unknown record schema",
+      );
+    const parsed = this.decodeStoredPayload(row.kind, row.payload);
+    const record = validateRecord(row.kind, parsed, {
+      scopeId: row.scope_id,
+      // Empty attribution is retained for historical migrated rows.
+      sessionId: row.session_id || "historical",
+      configRevision: INITIAL_CONFIG_REVISION,
+      profileRevision: "audit",
+      policyRevision: "audit",
+      lastDurableSeq: Number.MAX_SAFE_INTEGER,
+      maxInlineBytes: this.maxInlineBytes,
+      resolveReference: () => true,
+    });
+    if (
+      !Number.isSafeInteger(row.seq) ||
+      row.seq < 1 ||
+      record.recordId !== row.record_id ||
+      record.scopeId !== row.scope_id ||
+      record.createdAt !== row.created_at ||
+      record.schemaVersion !== row.schema_version ||
+      typeof row.session_id !== "string" ||
+      (row.session_id !== "" && /\s|[\\/]/u.test(row.session_id))
+    )
+      throw new StoreError(
+        "STORE_ATTRIBUTION",
+        "stored row attribution differs from its payload",
+      );
+    return record;
   }
 
   /** Write paths reject a read-only store explicitly before any write attempt. */
@@ -761,6 +836,33 @@ export class Store {
     }
   }
 
+  /** Atomic CAS for profile writers; ordinary append APIs retain their existing semantics. */
+  compareAndAppend(
+    input: AppendInput,
+    caller: CallerContext,
+    expected: EntityRevisionExpectation,
+  ): Appended {
+    let record: unknown;
+    try {
+      // Reference callbacks can mutate their original input, never this copy.
+      record = snapshotPersistedJson(input.record);
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+    const { seqs } = this.commitBatch(
+      [{ kind: input.kind, record }],
+      [],
+      caller,
+      {
+        expectedEntityRevision: { ...expected },
+      },
+    );
+    return {
+      seq: seqs[0]!,
+      recordId: (record as Record<string, unknown>).recordId as string,
+    };
+  }
+
   /**
    * Ordered, atomic receipt commits: every input is validated first, then all
    * are committed in input order in one transaction. Any failure — including a
@@ -843,7 +945,10 @@ export class Store {
       expectedConfigRevision,
       expectedActionReservation,
       expectedDeletionEpoch,
-    }: EventPreconditions,
+      expectedEntityRevision,
+    }: EventPreconditions & {
+      expectedEntityRevision?: EntityRevisionExpectation;
+    },
     importedWatermarks: readonly EventWatermark[] = [],
   ): AppendBatchResult & { events: SplyceEvent[] } {
     this.assertWritable();
@@ -855,7 +960,8 @@ export class Store {
       expectedOwnershipEpoch === undefined &&
       expectedConfigRevision === undefined &&
       expectedActionReservation === undefined &&
-      expectedDeletionEpoch === undefined
+      expectedDeletionEpoch === undefined &&
+      expectedEntityRevision === undefined
     )
       return { seqs: [], events: [] };
     const prepared: Array<[RecordKind, RecordByKind[RecordKind]]> = [];
@@ -899,6 +1005,68 @@ export class Store {
     }
     try {
       this.db.exec("BEGIN IMMEDIATE;");
+      if (expectedEntityRevision !== undefined) {
+        const { kind, scopeId, entityId, expectedRevision } =
+          expectedEntityRevision;
+        const entityField =
+          kind === "providerConnection" ? "providerConnectionId" : "profileId";
+        const revisionField =
+          kind === "providerConnection" ? "revision" : "profileRevision";
+        const input = prepared[0];
+        const opaque = (value: unknown) =>
+          typeof value === "string" &&
+          value.length > 0 &&
+          !/\s|[\\/]/u.test(value);
+        if (
+          !["providerConnection", "profileSnapshot"].includes(kind) ||
+          prepared.length !== 1 ||
+          input?.[0] !== kind ||
+          !opaque(scopeId) ||
+          !opaque(entityId) ||
+          (expectedRevision !== null && !opaque(expectedRevision)) ||
+          input[1].scopeId !== scopeId ||
+          input[1][entityField] !== entityId ||
+          !opaque(input[1][revisionField])
+        )
+          throw new StoreError(
+            "ENTITY_GUARD_MISMATCH",
+            "entity guard must match the inserted kind, scope, identity and revision",
+          );
+        // A future writer may have changed the entity shape, so even an
+        // unidentifiable future row in this kind/scope makes "latest" unknown.
+        const unreadable = this.db
+          .prepare(
+            "SELECT 1 FROM records WHERE kind = ? AND scope_id = ? AND schema_version != ? LIMIT 1",
+          )
+          .get(kind, scopeId, CONTRACT_VERSION);
+        if (unreadable !== undefined)
+          throw new StoreError(
+            "UNKNOWN_SCHEMA",
+            "entity revision is unknowable for this schema",
+          );
+        const latest = this.db
+          .prepare(
+            `SELECT json_extract(payload, '$.${revisionField}') AS revision FROM records WHERE kind = ? AND scope_id = ? AND json_extract(payload, '$.${entityField}') = ? ORDER BY seq DESC LIMIT 1`,
+          )
+          .get(kind, scopeId, entityId) as { revision: unknown } | undefined;
+        const revision = latest === undefined ? null : latest.revision;
+        if (revision !== expectedRevision)
+          throw new StoreError(
+            "ENTITY_STALE_REVISION",
+            "entity revision changed; nothing appended",
+          );
+        const nextRevision = prepared[0]![1][revisionField];
+        const reused = this.db
+          .prepare(
+            `SELECT 1 FROM records WHERE kind = ? AND scope_id = ? AND json_extract(payload, '$.${entityField}') = ? AND json_extract(payload, '$.${revisionField}') = ? LIMIT 1`,
+          )
+          .get(kind, scopeId, entityId, nextRevision as string);
+        if (reused !== undefined)
+          throw new StoreError(
+            "ENTITY_REVISION_REUSED",
+            "entity revision is immutable; nothing appended",
+          );
+      }
       if (
         expectedDeletionEpoch !== undefined &&
         (!Number.isSafeInteger(expectedDeletionEpoch) ||

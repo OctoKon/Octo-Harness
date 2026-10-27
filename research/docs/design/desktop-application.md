@@ -73,7 +73,11 @@ At this bootstrap checkpoint the workspace registry is empty, no persisted grant
 schema supplies authority, and all runnable ports remain unavailable. Profile and
 configuration reads use the authoritative Store. The structural audit validates
 local record shape, attribution and database integrity; it does not establish live
-reference access or continuing grants. Real workspace admission, credential writes,
+reference access or continuing grants. The full audit runs at bootstrap; later
+authority reads validate scoped snapshots without rescanning historical events.
+Profile selection follows the exact applied configuration transition, including
+its pinned profile revision, rather than the latest written profile snapshot.
+Real workspace admission, credential writes,
 provider dispatch and port-flip production require their separate implementations
 and qualification.
 

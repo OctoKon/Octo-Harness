@@ -235,6 +235,12 @@ export interface RecordBodies {
     installedModuleRefs: string[];
     egressPolicyRefs: string[];
     limitsArtifactId: string;
+    /** Exact connection revisions; absent on historical snapshots. */
+    bindings?: {
+      role: string;
+      providerConnectionId: string;
+      connectionRevision: string;
+    }[];
   };
   selectionTransition: {
     transitionId: string;
@@ -269,6 +275,9 @@ export interface RecordBodies {
     changedValuesArtifactId: string;
     state: (typeof CONFIGURATION_STATES)[number];
     outcomeRef: string | null;
+    /** Present together only for an explicit provider-profile selection. */
+    profileId?: string;
+    profileRevision?: string;
   };
   sessionWriterLease: {
     piSessionId: string;
@@ -875,6 +884,12 @@ function json(
   ancestors.delete(value);
 }
 
+/** Preserve strict JSON admissibility before cloning, without reference callbacks. */
+export function snapshotPersistedJson(value: unknown): unknown {
+  json(value, true);
+  return structuredClone(value);
+}
+
 function contextValid(context: ContractContext): void {
   requireThat(
     context !== null &&
@@ -1047,6 +1062,37 @@ export function validateRecord<K extends RecordKind>(
   const record = object(value, "record");
   metadata(record, context);
   shape(record, RECORD_SCHEMAS[kind], {}, context, false);
+  if (kind === "profileSnapshot" && Object.hasOwn(record, "bindings")) {
+    requireThat(Array.isArray(record.bindings), "INVALID_SHAPE", "bindings");
+    const roles = new Set<string>();
+    for (const value of record.bindings as unknown[]) {
+      const binding = object(value, "binding");
+      shape(
+        binding,
+        { role: "id", providerConnectionId: "id", connectionRevision: "id" },
+        {},
+        context,
+        true,
+      );
+      const role = binding.role as string;
+      requireThat(!roles.has(role), "INVALID_SHAPE", "duplicate binding role");
+      roles.add(role);
+    }
+    requireThat(roles.has("chat"), "INVALID_SHAPE", "chat binding");
+  }
+  if (kind === "configurationTransition") {
+    const hasProfile = Object.hasOwn(record, "profileId");
+    const hasRevision = Object.hasOwn(record, "profileRevision");
+    requireThat(
+      hasProfile === hasRevision,
+      "INVALID_SHAPE",
+      "profile identity",
+    );
+    if (hasProfile) {
+      opaque(record.profileId, "profileId");
+      opaque(record.profileRevision, "profileRevision");
+    }
+  }
   if (kind === "event") {
     const envelope = object(record.envelope, "envelope");
     requireThat(
