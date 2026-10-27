@@ -35,6 +35,11 @@ export interface CurrentPolicy {
   planMode: boolean;
 }
 
+// Version the complete immutable native ruleset; bump whenever those rules change.
+export const NATIVE_POLICY_REVISION = "0";
+export const currentNativePolicyRevision = (_workspaceId: string): string =>
+  NATIVE_POLICY_REVISION;
+
 /** Created by the native host after target and capability qualification. */
 export interface ActionPermit {
   toolCallId: string;
