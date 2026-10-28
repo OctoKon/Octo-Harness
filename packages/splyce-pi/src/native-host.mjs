@@ -1,10 +1,11 @@
-import { mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { RevisionFence } from "../dist/admission.js";
 import { ConfigAuthority } from "../dist/config.js";
 import { createProviderProfiles } from "../dist/provider-profiles.js";
 import { Receipts } from "../dist/receipts.js";
+import { captureMemoryAfterTurn as captureTurn } from "../dist/agent-context-tools.js";
 import { createNativeProviderSetup } from "./native-provider-setup.mjs";
 import { createNativeSessionSetup } from "./native-session-setup.mjs";
 import { NativeControl } from "./native-control.mjs";
@@ -121,6 +122,147 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
   const receipts = new Receipts(store);
   const profiles = createProviderProfiles({ store, config });
   const providerSetup = createNativeProviderSetup(store, directory);
+  const indexes = new Map();
+  const memories = new Map();
+  const openMemories = new Set();
+  const pendingContext = new Set();
+  let contextClosed = false;
+
+  function contextWorkspace(workspaceId) {
+    if (contextClosed) fail("NATIVE_CONTEXT_CLOSED");
+    opaqueId(workspaceId);
+    const workspace = store
+      .listWorkspaces()
+      .find((w) => w.workspaceId === workspaceId);
+    if (!workspace) fail("NATIVE_WORKSPACE_UNAVAILABLE");
+    let stat, canonical;
+    try {
+      stat = lstatSync(workspace.canonicalPath, { bigint: true });
+      canonical = realpathSync.native(workspace.canonicalPath);
+    } catch {
+      fail("NATIVE_WORKSPACE_CHANGED");
+    }
+    if (
+      !stat.isDirectory() ||
+      stat.isSymbolicLink() ||
+      String(stat.dev) !== workspace.volumeSerial ||
+      String(stat.ino) !== workspace.fileId ||
+      (process.platform === "win32"
+        ? canonical.toLowerCase() !== workspace.canonicalPath.toLowerCase()
+        : canonical !== workspace.canonicalPath)
+    )
+      fail("NATIVE_WORKSPACE_CHANGED");
+    return workspace;
+  }
+
+  async function contextFor(cache, workspaceId, open) {
+    contextWorkspace(workspaceId);
+    let loading = cache.get(workspaceId);
+    if (!loading) {
+      loading = open();
+      cache.set(workspaceId, loading);
+      pendingContext.add(loading);
+      loading.then(
+        () => pendingContext.delete(loading),
+        () => {
+          pendingContext.delete(loading);
+          cache.delete(workspaceId);
+        },
+      );
+    }
+    const resource = await loading;
+    contextWorkspace(workspaceId);
+    return resource;
+  }
+
+  // Optional modules are imported only when the native factory requests them.
+  async function codeIndexFor(workspaceId) {
+    return contextFor(indexes, workspaceId, async () => {
+      const { CodeIndex } = await import("../../splyce-index/dist/index.js");
+      const workspace = contextWorkspace(workspaceId);
+      const index = await CodeIndex.open({
+        root: workspace.canonicalPath,
+        cacheDir: join(
+          directory,
+          "code-index",
+          createHash("sha256").update(workspaceId).digest("hex"),
+        ),
+        maxFiles: 2000,
+        maxFileBytes: 128 * 1024,
+      });
+      return new Proxy(index, {
+        get(target, key) {
+          contextWorkspace(workspaceId);
+          const value = Reflect.get(target, key, target);
+          if (typeof value !== "function") return value;
+          return (...args) => {
+            contextWorkspace(workspaceId);
+            const result = value.apply(target, args);
+            return result instanceof Promise
+              ? result.then((output) => {
+                  contextWorkspace(workspaceId);
+                  return output;
+                })
+              : result;
+          };
+        },
+      });
+    });
+  }
+
+  async function codeToolsFor(workspaceId) {
+    const index = await codeIndexFor(workspaceId);
+    const { codeIndexTools } = await import("../../splyce-index/dist/index.js");
+    contextWorkspace(workspaceId);
+    return codeIndexTools(index);
+  }
+
+  async function memoryFor(workspaceId) {
+    return contextFor(memories, workspaceId, async () => {
+      const { Memory } = await import("../../splyce-memory/dist/memory.js");
+      contextWorkspace(workspaceId);
+      const path = join(
+        directory,
+        "memory",
+        createHash("sha256").update(workspaceId).digest("hex"),
+      );
+      mkdirSync(path, { recursive: true });
+      const memory = Memory.open(store, join(path, "memory.db"));
+      openMemories.add(memory);
+      const assertScope = (scopeId) => {
+        contextWorkspace(workspaceId);
+        if (scopeId !== workspaceId) fail("NATIVE_MEMORY_SCOPE_MISMATCH");
+      };
+      return Object.freeze({
+        async query(scopeId, ...args) {
+          assertScope(scopeId);
+          const hits = await memory.query(scopeId, ...args);
+          assertScope(scopeId);
+          return hits;
+        },
+        capture(scopeId, sessionId) {
+          assertScope(scopeId);
+          opaqueId(sessionId);
+          return memory.capture(scopeId, sessionId);
+        },
+      });
+    });
+  }
+
+  async function captureMemoryAfterTurn(workspaceId, sessionId) {
+    opaqueId(sessionId);
+    const memory = await memoryFor(workspaceId);
+    contextWorkspace(workspaceId);
+    return captureTurn(memory, workspaceId, sessionId);
+  }
+
+  function closeContext() {
+    contextClosed = true;
+    for (const memory of openMemories) memory.close();
+    openMemories.clear();
+    memories.clear();
+    indexes.clear();
+  }
   const providerCapability = (selected) => {
     const workspaceId = selected.state.workspace.workspaceId;
     const { apiFamily, adapterRevision } = selected.connection;
@@ -208,6 +350,10 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
           control: nativeControl,
           directory,
           providerCapability,
+          codeIndexFor,
+          codeToolsFor,
+          memoryFor,
+          captureMemoryAfterTurn,
           currentPolicyRevision: currentNativePolicyRevision,
         })
       : undefined);
@@ -315,6 +461,10 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
         .listWorkspaces()
         .find(({ workspaceId }) => workspaceId === id);
     },
+    codeIndexFor,
+    codeToolsFor,
+    memoryFor,
+    captureMemoryAfterTurn,
     prepareProviderSetup: providerSetup.prepare,
     commitProviderSetup: providerSetup.commit,
     readProviderSetup: providerSetup.read,
@@ -355,15 +505,26 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
       return factory?.onEvents?.(listener) ?? (() => {});
     },
     async shutdown() {
+      contextClosed = true;
       try {
         await sessions.close();
       } finally {
-        store.close();
+        await Promise.allSettled([...pendingContext]);
+        try {
+          closeContext();
+        } finally {
+          store.close();
+        }
       }
     },
     close() {
-      if (factory) fail("NATIVE_ASYNC_SHUTDOWN_REQUIRED");
-      store.close();
+      if (factory || pendingContext.size > 0)
+        fail("NATIVE_ASYNC_SHUTDOWN_REQUIRED");
+      try {
+        closeContext();
+      } finally {
+        store.close();
+      }
     },
   });
 }

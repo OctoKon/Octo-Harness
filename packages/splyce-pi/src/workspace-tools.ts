@@ -665,7 +665,7 @@ export function createWorkspaceTools(
           void closed.then(
             () => reject(new WorkspaceToolError("ABORTED", "command aborted")),
             reject,
-        );
+          );
         });
       };
       signal?.addEventListener("abort", onAbort, { once: true });
