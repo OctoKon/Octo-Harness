@@ -30,7 +30,7 @@ import {
   resolve,
   sep,
 } from "node:path";
-import type { Redactor } from "./provider-auth.js";
+export type Redactor = (text: string) => string | Promise<string>;
 
 export type Capability = "fs.read" | "fs.write" | "shell.run";
 export type GrantDenial = "GRANT_REQUIRED" | "GRANT_CONSUMED" | "GRANT_REVOKED";
@@ -86,6 +86,7 @@ export type ErrorCode =
   | "PATTERN_REJECTED"
   | "GREP_BUDGET"
   | "RECEIPT_FAILED"
+  | "REDACTION_UNAVAILABLE"
   | "ABORTED"
   | "IO_ERROR";
 
@@ -139,7 +140,7 @@ export interface WorkspaceToolsOptions {
   sessionId: string;
   workspaceId: string;
   limits?: { timeoutMs: number; maxOutputBytes: number };
-  /** TD-16 redactor for active credentials; applied before the built-in scrub. */
+  /** TD-16 redactor for active credentials; applied after the built-in scrub. */
   redact?: Redactor;
 }
 
@@ -158,7 +159,7 @@ const SECRET_PATTERNS: readonly [RegExp, string][] = [
   [/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, MASK],
   [/\beyJ[\w-]{5,}\.eyJ[\w-]{5,}\.[\w-]*/g, MASK],
   [
-    /([\w.-]*(?:key|secret|token|passw(?:or)?d|pwd)[\w.-]*["']?[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;]+)/gi,
+    /(?<![\w.-])([\w.-]*(?:key|secret|token|passw(?:or)?d|pwd)[\w.-]*["']?[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;]+)/gi,
     `$1${MASK}`,
   ],
 ];
@@ -197,6 +198,8 @@ const NESTED_QUANTIFIER = /\([^()]*(?:[+*]|\{\d+,\})[^()]*\)(?:[+*]|\{\d+,\})/;
 const fail = (code: ErrorCode, message: string): never => {
   throw new WorkspaceToolError(code, message);
 };
+const redactionUnavailable = () =>
+  new WorkspaceToolError("REDACTION_UNAVAILABLE", "[unavailable]");
 const escape = (): never =>
   fail("WORKSPACE_ESCAPE", "path escapes the workspace");
 
@@ -430,7 +433,7 @@ export function createWorkspaceTools(
     fn: () => Promise<T>,
   ): Promise<T> {
     // The grant check matches the exact target above; durable intent/receipt text is redacted.
-    const intent = { ...req(capability, clean(target), a), summary: "" };
+    const intent = { ...req(capability, await clean(target), a), summary: "" };
     try {
       grants.consume(grantId, intent);
     } catch {
@@ -518,39 +521,49 @@ export function createWorkspaceTools(
 
   const PREVIEW = 2048;
   // Redact the whole text first so a secret straddling the preview cut is never half-kept.
-  const clean = (t: string) => scrubSecrets(opts.redact ? opts.redact(t) : t);
-  const done = (
+  const clean = async (text: string): Promise<string> => {
+    try {
+      const first = scrubSecrets(text);
+      const safe = opts.redact ? await opts.redact(first) : first;
+      if (typeof safe === "string") return scrubSecrets(safe);
+    } catch {
+      // Redactor failures must never publish the input or their own message.
+    }
+    throw redactionUnavailable();
+  };
+  const done = async (
     text: string,
     started: number,
     bytes: number,
     truncated: boolean,
     exitCode?: number | null,
-  ): ToolResult => {
-    const safe = clean(text);
+  ): Promise<ToolResult> => {
+    const capped = cap(await clean(text), maxBytes);
+    const safe = capped.truncated
+      ? `${capped.text}\n[output truncated]`
+      : capped.text;
     return {
       text: safe,
       summary: {
         ...(exitCode === undefined ? {} : { exitCode }),
         durationMs: Date.now() - started,
         bytes,
-        truncated,
+        truncated: truncated || capped.truncated,
         preview: safe.slice(0, PREVIEW),
       },
     };
   };
-  const lines = (text: string, started: number, more: string) => {
-    const c = cap(text, maxBytes);
+  const lines = (
+    text: string,
+    started: number,
+    more: string,
+    rawBytes?: number,
+  ) => {
     return done(
-      c.truncated
-        ? `${c.text}\n[output truncated]`
-        : more
-          ? c.text
-            ? `${c.text}\n${more}`
-            : more
-          : c.text,
+      more ? (text ? `${text}\n${more}` : more) : text,
       started,
-      c.bytes,
-      c.truncated,
+      rawBytes ?? encoder.encode(text).length,
+      false,
     );
   };
 
@@ -574,6 +587,9 @@ export function createWorkspaceTools(
       detached: !win,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const closed = new Promise<void>((complete) =>
+      child.on("close", () => complete()),
+    );
     const killTree = () => {
       if (child.pid === undefined) return;
       if (win)
@@ -592,26 +608,33 @@ export function createWorkspaceTools(
         }
     };
     const started = Date.now();
-    let out = "";
-    let used = 0;
-    let truncated = false;
-    const onData = (c: { length: number; toString(): string }) => {
-      const before = used;
-      used += c.length;
-      if (truncated) return;
-      if (before + c.length > maxBytes) {
-        out += cap(c.toString(), maxBytes - before).text;
-        truncated = true;
-      } else out += c.toString();
+    const output = { stdout: "", stderr: "" };
+    let bytes = 0;
+    let overflow = false;
+    const stdoutDecoder = new TextDecoder();
+    const stderrDecoder = new TextDecoder();
+    const onData = (
+      c: Uint8Array,
+      stream: "stdout" | "stderr",
+      decoder: TextDecoder,
+    ) => {
+      bytes += c.length;
+      if (overflow) return;
+      // shortcut: suppress output over the file-read budget; larger output needs bounded streaming redaction.
+      if (bytes > MAX_READ_BYTES) {
+        overflow = true;
+        output.stdout = output.stderr = "";
+        killTree();
+      } else output[stream] += decoder.decode(c, { stream: true });
     };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
+    child.stdout?.on("data", (c) => onData(c, "stdout", stdoutDecoder));
+    child.stderr?.on("data", (c) => onData(c, "stderr", stderrDecoder));
     return new Promise<{
       code: number;
       text: string;
       bytes: number;
       truncated: boolean;
-    }>((finish, reject) => {
+    }>((complete, reject) => {
       let settled = false;
       const settle = (f: () => void) => {
         if (settled) return;
@@ -622,15 +645,17 @@ export function createWorkspaceTools(
       };
       const timer = setTimeout(() => {
         killTree();
-        settle(() =>
-          reject(
-            new WorkspaceToolError(
-              "SHELL_TIMEOUT",
-              `command exceeded ${String(ms)}ms and was killed`,
-              done(out, started, used, truncated, null).summary,
-            ),
-          ),
-        );
+        settle(() => {
+          if (overflow) return reject(redactionUnavailable());
+          // A killed command may have emitted only part of a credential.
+          void closed
+            .then(() => done("[unavailable]", started, bytes, false, null))
+            .then((r) => {
+              const message = `command exceeded ${String(ms)}ms and was killed`;
+              const code: ErrorCode = "SHELL_TIMEOUT";
+              reject(new WorkspaceToolError(code, message, r.summary));
+            }, reject);
+        });
       }, ms);
       const onAbort = () => {
         killTree();
@@ -649,16 +674,22 @@ export function createWorkspaceTools(
           ),
         ),
       );
-      child.on("close", (code) =>
-        settle(() =>
-          finish({
-            code: code ?? 1,
-            text: truncated ? `${out}\n[output truncated]` : out,
-            bytes: used,
-            truncated,
-          }),
-        ),
-      );
+      child.on("close", (exitCode) => {
+        settle(() => {
+          if (overflow) return reject(redactionUnavailable());
+          void Promise.all([
+            clean(output.stdout + stdoutDecoder.decode()),
+            clean(output.stderr + stderrDecoder.decode()),
+          ]).then(([stdout, stderr]) => {
+            complete({
+              code: exitCode ?? 1,
+              text: stdout + stderr,
+              bytes,
+              truncated: false,
+            });
+          }, reject);
+        });
+      });
     });
   }
 
@@ -725,15 +756,20 @@ export function createWorkspaceTools(
             await handle.close();
           }
         });
-        const all = text.split("\n");
+        const original = text.split("\n");
+        const originalLines = original.length;
+        const all = (await clean(text)).split("\n");
         const start = optNum(args.offset, 1) - 1;
         const end = start + optNum(args.limit, 2000);
+        if (all.length !== originalLines && (start > 0 || end < originalLines))
+          throw redactionUnavailable();
         return lines(
           all.slice(start, end).join("\n"),
           started,
           end < all.length
             ? `[${String(all.length - end)} more lines; continue with offset ${String(end + 1)}]`
             : "",
+          encoder.encode(original.slice(start, end).join("\n")).length,
         );
       },
     },
@@ -846,6 +882,7 @@ export function createWorkspaceTools(
         const limit = optNum(args.limit, 100);
         const hits: string[] = [];
         let skipped = 0;
+        let rawBytes = 0;
         if (signal?.aborted) fail("ABORTED", "aborted");
         // Matching runs in a worker so a catastrophic regex can be killed.
         const m = matcher(re, signal);
@@ -876,24 +913,33 @@ export function createWorkspaceTools(
               if (left <= 0)
                 fail("GREP_BUDGET", "search exceeded its time budget");
               const text = await readFile(e.abs, "utf8");
-              const ls = text.split("\n");
+              const original = text.split("\n");
+              const ls = (await clean(text)).split("\n");
+              const sameLines = ls.length === original.length;
               // shortcut: one file may use 400ms of regex time, raise it if real searches hit it.
               for (const i of await m.test(
                 text,
                 limit - hits.length,
                 Math.min(GREP_FILE_MS, left),
-              ))
-                hits.push(`${e.rel}:${String(i + 1)}:${ls[i] as string}`);
+              )) {
+                rawBytes +=
+                  encoder.encode(`${e.rel}:${String(i + 1)}:${original[i]}`)
+                    .length + (hits.length ? 1 : 0);
+                hits.push(
+                  `${e.rel}:${String(i + 1)}:${sameLines ? ls[i] : "[unavailable]"}`,
+                );
+              }
               if (hits.length >= limit) break;
             }
           });
         } finally {
           m.close();
         }
-        const r = lines(
+        const r = await lines(
           hits.join("\n"),
           started,
           skipped ? `[skipped ${String(skipped)} file(s) over 1 MiB]` : "",
+          rawBytes,
         );
         return skipped ? { ...r, skipped } : r;
       },
@@ -1017,8 +1063,14 @@ export function createWorkspaceTools(
         try {
           return await t.result(...a);
         } catch (e) {
-          if (e instanceof WorkspaceToolError)
-            throw new WorkspaceToolError(e.code, clean(e.message), e.summary);
+          if (e instanceof WorkspaceToolError) {
+            if (e.code === "REDACTION_UNAVAILABLE") throw e;
+            throw new WorkspaceToolError(
+              e.code,
+              await clean(e.message),
+              e.summary,
+            );
+          }
           throw e;
         }
       };

@@ -7,6 +7,7 @@ import {
   type JsonValue,
   type RecordByKind,
   type RunRecord,
+  type SplyceEventDraft,
 } from "./contracts.js";
 import {
   Store,
@@ -59,6 +60,22 @@ export interface ActionPermit {
   capability: GrantRecord["capability"];
   /** net.provider only: the qualified `scheme://host:port` origin. */
   origin?: string;
+}
+
+/**
+ * Optional durable events committed in the SAME transaction as the receipts:
+ * `intent` with the approved+running receipts, `outcome` with the outcome and
+ * completion receipts. A callback that throws loses only its event, never a receipt.
+ */
+export interface ExecuteEvents<T> {
+  intent?: (running: ActionRecord) => SplyceEventDraft;
+  outcome?: (done: {
+    /** The completion (or uncertain) action receipt committed with the event. */
+    action: ActionRecord;
+    uncertain: boolean;
+    /** Absent when the effect threw (EFFECT_UNCERTAIN). */
+    result?: T;
+  }) => SplyceEventDraft | Promise<SplyceEventDraft>;
 }
 
 /** Native read of the admitted workspace directory's current identity. */
@@ -333,6 +350,7 @@ export class NativePolicy {
     args: unknown,
     invoke: (admittedArgs: unknown) => Promise<T>,
     signal: AbortSignal | undefined,
+    events?: ExecuteEvents<T>,
   ): Promise<T> {
     this.check(toolCallId, toolName, signal);
     const permit = this.permits.get(toolCallId)!;
@@ -373,6 +391,13 @@ export class NativePolicy {
         },
       },
     ];
+    let intentDrafts: SplyceEventDraft[] = [];
+    try {
+      const draft = events?.intent?.(receipts[1]!.record as ActionRecord);
+      if (draft) intentDrafts = [draft];
+    } catch {
+      // the intent event is best-effort; the receipts are not
+    }
     const fences = {
       expectedOwnershipEpoch: {
         workspaceId: permit.ownership.workspaceId,
@@ -392,8 +417,9 @@ export class NativePolicy {
           receipts,
           this.caller,
           fences,
+          intentDrafts,
         );
-      else this.store.commitEvents(receipts, [], this.caller, fences);
+      else this.store.commitEvents(receipts, intentDrafts, this.caller, fences);
     } catch (error) {
       if (
         error instanceof StoreError &&
@@ -410,10 +436,15 @@ export class NativePolicy {
     try {
       result = await invoke(admittedArgs);
     } catch {
-      this.commitOutcome(action, true);
+      await this.commitOutcome(action, true, events);
       throw new AdmissionError("EFFECT_UNCERTAIN");
     }
-    this.commitOutcome(action, result.isError || signal?.aborted === true);
+    await this.commitOutcome(
+      action,
+      result.isError || signal?.aborted === true,
+      events,
+      result,
+    );
     return result;
   }
 
@@ -489,7 +520,12 @@ export class NativePolicy {
     };
   }
 
-  private commitOutcome(action: ActionRecord, uncertain: boolean): void {
+  private async commitOutcome<T>(
+    action: ActionRecord,
+    uncertain: boolean,
+    events?: ExecuteEvents<T>,
+    result?: T,
+  ): Promise<void> {
     const record: RecordByKind["outcome"] = {
       schemaVersion: CONTRACT_VERSION,
       recordId: randomUUID(),
@@ -503,19 +539,37 @@ export class NativePolicy {
       cleanupState: uncertain ? "uncertain" : "not-required",
       errorClass: uncertain ? "execution" : "none",
     };
-    this.store.appendBatch(
-      [
-        { kind: "outcome", record },
-        {
-          kind: "action",
-          record: {
-            ...action,
-            recordId: randomUUID(),
-            state: uncertain ? "uncertain" : "completed",
-          },
-        },
-      ],
-      this.caller,
-    );
+    const completion: ActionRecord = {
+      ...action,
+      recordId: randomUUID(),
+      state: uncertain ? "uncertain" : "completed",
+    };
+    const batch = [
+      { kind: "outcome" as const, record },
+      { kind: "action" as const, record: completion },
+    ];
+    let drafts: SplyceEventDraft[] = [];
+    if (events?.outcome) {
+      try {
+        drafts = [
+          await events.outcome({
+            action: completion,
+            uncertain,
+            ...(result === undefined ? {} : { result }),
+          }),
+        ];
+      } catch {
+        // the outcome event is best-effort; the receipts are not
+      }
+    }
+    if (drafts.length === 0) this.store.appendBatch(batch, this.caller);
+    else {
+      try {
+        this.store.commitEvents(batch, drafts, this.caller);
+      } catch {
+        // an invalid event must never cost the receipts of an effect that already ran
+        this.store.appendBatch(batch, this.caller);
+      }
+    }
   }
 }

@@ -27,6 +27,7 @@ import {
   type GrantPort,
   type ReceiptPort,
   type WorkspacePort,
+  type Redactor,
 } from "../../packages/splyce-pi/dist/workspace-tools.js";
 
 const win = process.platform === "win32";
@@ -44,7 +45,7 @@ interface Grant {
 
 function harness(
   limits?: { timeoutMs?: number; maxOutputBytes?: number },
-  redact?: (t: string) => string,
+  redact?: Redactor,
 ) {
   const dir = mkdtempSync(join(base, "case-"));
   const root = join(dir, "root");
@@ -1119,4 +1120,172 @@ test("ordinary text passes through unchanged", async () => {
   const r = await result(h, "read", { path: "n.txt" });
   assert.equal(r.text, text);
   assert.equal(r.summary.preview, text);
+});
+
+for (const spaced of [false, true])
+  for (const route of ["read", "grep", "shell"])
+    test(`${route} redacts a complete credential across the output cap (space=${spaced})`, async () => {
+      const credential = ["vaultAAA", "vaultZZZ"].join(spaced ? " " : "");
+      const inputs: string[] = [];
+      const h = harness({ maxOutputBytes: 51_200 }, (text) => {
+        inputs.push(text);
+        return text.replaceAll(credential, "[X]");
+      });
+      const prefix = route === "grep" ? "boundary.txt:1:".length : 0;
+      const raw = `${" ".repeat(51_200 - 8 - prefix)}${credential}${"t".repeat(200)}`;
+      writeFileSync(join(h.root, "boundary.txt"), raw);
+      const command = nodeCmd(
+        "process.stdout.write(require('fs').readFileSync('boundary.txt','utf8'))",
+      );
+      if (route === "shell") approveSh(h, command);
+      const r = await result(
+        h,
+        route === "shell" ? sh : route,
+        route === "shell"
+          ? { command }
+          : route === "grep"
+            ? { path: "boundary.txt", pattern: "^ " }
+            : { path: "boundary.txt" },
+      );
+      const published = JSON.stringify([r, h.log]);
+      assert.ok(
+        !published.includes("vaultAAA") && !published.includes("vaultZZZ"),
+      );
+      assert.ok(
+        inputs.some((text) => text.includes(credential)),
+        "redactor receives the complete credential",
+      );
+      assert.equal(r.summary.truncated, true);
+      assert.equal(r.summary.bytes, Buffer.byteLength(raw) + prefix);
+    });
+
+test("async native redaction runs after the built-in scrub and before previews", async () => {
+  const credential = "native fixture credential";
+  const inputs: string[] = [];
+  const h = harness(undefined, async (text) => {
+    await Promise.resolve();
+    inputs.push(text);
+    return text.replaceAll(credential, "[X]");
+  });
+  writeFileSync(join(h.root, "async.txt"), `${apiKey} ${credential}`);
+  const r = await result(h, "read", { path: "async.txt" });
+  assert.ok(
+    inputs.length > 0 && inputs.every((text) => !text.includes(apiKey)),
+  );
+  assert.equal(r.text, "[REDACTED] [X]");
+  assert.equal(r.summary.preview, r.text);
+  const error = await run(h, "read", { path: `missing-${credential}` }).catch(
+    (e: unknown) => e,
+  );
+  assert.ok(error instanceof Error && !error.message.includes(credential));
+});
+
+for (const [kind, redact] of [
+  [
+    "throw",
+    () => {
+      throw new Error("private redactor failure");
+    },
+  ],
+  [
+    "reject",
+    async () => {
+      throw new Error("private redactor failure");
+    },
+  ],
+  ["non-string", () => undefined],
+  ["async non-string", async () => ({ text: "private output" })],
+] as const)
+  test(`native redactor ${kind} suppresses all workspace output`, async () => {
+    const h = harness(undefined, redact as unknown as Redactor);
+    writeFileSync(join(h.root, "private.txt"), "private output");
+    for (const invoke of [
+      () => result(h, "read", { path: "private.txt" }),
+      () => run(h, "read", { path: "missing-private-output" }),
+    ])
+      await assert.rejects(
+        invoke,
+        (e: Error & { code?: string; summary?: unknown }) =>
+          e.code === "REDACTION_UNAVAILABLE" &&
+          e.message === "[unavailable]" &&
+          e.summary === undefined,
+      );
+  });
+
+test("shell collection overflow suppresses output instead of retaining a prefix", async () => {
+  const h = harness(undefined, (text) =>
+    text.replaceAll("private-prefix", "[X]"),
+  );
+  const command = nodeCmd(
+    "process.stdout.write('private-prefix'+ 'x'.repeat(9*1024*1024))",
+  );
+  approveSh(h, command);
+  await assert.rejects(
+    () => result(h, sh, { command }),
+    (e: Error & { code?: string; summary?: unknown }) =>
+      e.code === "REDACTION_UNAVAILABLE" &&
+      e.message === "[unavailable]" &&
+      e.summary === undefined,
+  );
+  assert.ok(!JSON.stringify(h.log).includes("private-prefix"));
+});
+
+test("read and grep redact multiline credentials before selecting lines", async () => {
+  const credential = ["vaultAAA", "vaultZZZ"].join("\n");
+  const h = harness(undefined, (text) => text.replaceAll(credential, "[X]"));
+  writeFileSync(join(h.root, "lines.txt"), `before\n${credential}\nafter`);
+  await assert.rejects(
+    () =>
+      result(h, "read", {
+        path: "lines.txt",
+        offset: 2,
+        limit: 1,
+      }),
+    (e: Error & { code?: string }) =>
+      e.code === "REDACTION_UNAVAILABLE" && e.message === "[unavailable]",
+  );
+  const read = await result(h, "read", { path: "lines.txt" });
+  const grep = await result(h, "grep", {
+    path: "lines.txt",
+    pattern: "vaultAAA",
+    limit: 1,
+  });
+  for (const r of [read, grep]) {
+    assert.ok(!JSON.stringify(r).includes("vaultAAA"));
+    assert.ok(!JSON.stringify(r).includes("vaultZZZ"));
+  }
+  assert.ok(read.text.includes("[X]"));
+  assert.ok(grep.text.includes("[unavailable]"));
+});
+
+test("shell preserves complete UTF-8 streams despite interleaved output", async () => {
+  const credential = "vaultAAAé vaultZZZ";
+  const h = harness(undefined, (text) => text.replaceAll(credential, "[X]"));
+  const command = nodeCmd(
+    `const b=Buffer.from('${credential}');process.stdout.write(b.subarray(0,9));setTimeout(()=>process.stderr.write('notice'),75);setTimeout(()=>process.stdout.write(b.subarray(9)),150)`,
+  );
+  approveSh(h, command);
+  const r = await result(h, sh, { command });
+  assert.ok(r.text.includes("[X]") && r.text.includes("notice"));
+  assert.ok(
+    !JSON.stringify(r).includes("vaultAAA") &&
+      !JSON.stringify(r).includes("vaultZZZ"),
+  );
+  assert.ok(!JSON.stringify(h.log).includes("vaultAAA"));
+});
+
+test("timeout summaries suppress incomplete credential output", async () => {
+  const credential = "vaultAAA vaultZZZ";
+  const h = harness(undefined, (text) => text.replaceAll(credential, "[X]"));
+  const command = nodeCmd(
+    "process.stdout.write('vaultAAA');setTimeout(()=>{},30000)",
+  );
+  approveSh(h, command);
+  await assert.rejects(
+    () => result(h, sh, { command, timeout: 2 }),
+    (e: Error & { code?: string; summary?: Summary }) =>
+      e.code === "SHELL_TIMEOUT" &&
+      e.summary?.preview === "[unavailable]" &&
+      !JSON.stringify(e).includes("vaultAAA"),
+  );
 });
