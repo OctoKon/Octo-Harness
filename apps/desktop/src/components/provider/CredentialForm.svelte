@@ -38,6 +38,8 @@
   let endpoint = $state("");
   let apiFamily = $state<ApiFamily>("openai-completions");
   let modelId = $state("");
+  let modelTouched = false;
+  let pollinationsDefault = false;
   let contextWindow = $state("");
   let maxOutputTokens = $state("");
   let reasoning = $state(false);
@@ -126,6 +128,21 @@
         id="setup-endpoint"
         type="url"
         bind:value={endpoint}
+        oninput={(e) => {
+          try {
+            if (!modelTouched && new URL(e.currentTarget.value).origin === "https://gen.pollinations.ai") {
+              modelId = "stealth/glyph-cluster";
+              contextWindow = "256000";
+              maxOutputTokens = "8192";
+              pollinationsDefault = true;
+            } else if (!modelTouched && pollinationsDefault) {
+              modelId = "";
+              contextWindow = "";
+              maxOutputTokens = "";
+              pollinationsDefault = false;
+            }
+          } catch { /* incomplete URL */ }
+        }}
         autocomplete="off"
         aria-invalid={errors.endpoint ? "true" : undefined}
         aria-describedby={errors.endpoint ? "setup-endpoint-error" : undefined}
@@ -145,6 +162,7 @@
       <input
         id="setup-model"
         bind:value={modelId}
+        oninput={() => (modelTouched = true)}
         autocomplete="off"
         aria-invalid={errors.modelId ? "true" : undefined}
         aria-describedby={errors.modelId ? "setup-model-error" : undefined}

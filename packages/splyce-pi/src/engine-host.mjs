@@ -5,6 +5,11 @@ import { NativeControl } from "./native-control.mjs";
 import { validateNativeSessionSetup } from "./native-session-setup.mjs";
 import { StoreError } from "../dist/store.js";
 import {
+  ModelsListError,
+  validateModelsListRequest,
+  validateModelsListResult,
+} from "../dist/model-data.js";
+import {
   PAGE_READ_OPS,
   PageReadError,
   validatePageReadRequest,
@@ -375,6 +380,34 @@ export async function runHost(
             readiness: host.handshakeReadiness,
           },
         };
+      } else if (params.command === "models.list") {
+        try {
+          if (
+            !exact(params, ["frame", "command", "requestId", "payload"]) ||
+            !validId ||
+            params.payload?.requestId !== params.requestId
+          )
+            throw new ModelsListError("MODEL_CATALOG_INVALID");
+          const input = validateModelsListRequest(params.payload);
+          const value = validateModelsListResult(
+            await host.listModels(input, lifetime.signal),
+          );
+          reply = { id: request.id, ok: true, value };
+        } catch (error) {
+          reply = {
+            id: request.id,
+            ok: false,
+            error: {
+              code:
+                error instanceof ModelsListError
+                  ? error.code
+                  : "MODEL_CATALOG_UNAVAILABLE",
+              message: "Model catalog unavailable",
+              correlationId: validId ? params.requestId : request.id,
+              retryable: false,
+            },
+          };
+        }
       } else if (PAGE_READ_OPS.includes(params.command)) {
         try {
           if (

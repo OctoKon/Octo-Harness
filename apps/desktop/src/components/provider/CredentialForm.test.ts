@@ -53,6 +53,16 @@ const button = () =>
   document.querySelector<HTMLButtonElement>("button[type=submit]")!;
 
 describe("provider setup form", () => {
+  it("defaults Pollinations limits without replacing an explicit model", () => {
+    render(async () => {});
+    set("setup-endpoint", "https://gen.pollinations.ai");
+    expect(field("setup-model").value).toBe("stealth/glyph-cluster");
+    expect(field("setup-context").value).toBe("256000");
+    expect(field("setup-output").value).toBe("8192");
+    set("setup-model", "chosen-model");
+    set("setup-endpoint", "https://gen.pollinations.ai/v1");
+    expect(field("setup-model").value).toBe("chosen-model");
+  });
   it("stays disabled and names the missing native route when no seam is injected", () => {
     render();
     expect(button().disabled).toBe(true);
