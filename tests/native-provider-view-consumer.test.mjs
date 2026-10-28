@@ -10,6 +10,7 @@ import { ConfigAuthority } from "../packages/splyce-pi/dist/config.js";
 import { Store } from "../packages/splyce-pi/dist/store.js";
 import { createNativeHost } from "../packages/splyce-pi/src/native-host.mjs";
 import { createNativeProviderSetup } from "../packages/splyce-pi/src/native-provider-setup.mjs";
+import { configuredProfileResult as currentConfiguredProfileResult } from "../apps/desktop/src/stores/profiles.ts";
 import {
   configuredProfileResult,
   profileSelectPayload,
@@ -120,6 +121,7 @@ for (const route of ["commit", "read", "prepare-replay"]) {
           ? f.setup.read(f.input)
           : f.setup.prepare(f.metadata);
     const parsed = configuredProfileResult(response.view);
+    assert.deepEqual(currentConfiguredProfileResult(response.view), parsed);
     assert.equal(
       parsed.configRevision,
       f.store.configRevision(f.metadata.workspaceId),
@@ -152,6 +154,7 @@ for (const route of ["commit", "read", "prepare-replay"]) {
           ? f.setup.read(f.input)
           : f.setup.prepare(f.metadata);
     const parsed = configuredProfileResult(response.view);
+    assert.deepEqual(currentConfiguredProfileResult(response.view), parsed);
     assert.equal(parsed.configRevision, "cfg-after-setup");
     assert.equal(f.store.cursor(), before, "replay/read must not write");
     assert.equal(

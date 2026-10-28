@@ -39,10 +39,14 @@ impl BridgeError {
     fn setup(code: &'static str) -> Self {
         Self {
             code,
-            message: if code == "SETUP_MODEL_METADATA_REQUIRED" {
-                "Explicit model metadata required; catalog entry unavailable"
-            } else {
-                "Provider setup unavailable"
+            message: match code {
+                "SETUP_MODEL_METADATA_REQUIRED" => {
+                    "Explicit model metadata required; catalog entry unavailable"
+                }
+                "SETUP_CREDENTIAL_INVENTORY_UNAVAILABLE" => {
+                    "Windows credential inventory could not be validated"
+                }
+                _ => "Provider setup unavailable",
             },
             correlation_id: "native-validation".into(),
             retryable: false,
@@ -971,7 +975,7 @@ fn configure_provider(
     let (metadata, secret) = setup_metadata(payload)?;
     let encoded = setup_text(&metadata);
     let (_, redacted) = crate::credentials::redact_owned(&encoded)
-        .map_err(|_| BridgeError::setup("SETUP_CREDENTIAL_UNAVAILABLE"))?;
+        .map_err(|_| BridgeError::setup("SETUP_CREDENTIAL_INVENTORY_UNAVAILABLE"))?;
     if redacted != 0 {
         return Err(BridgeError::setup("SETUP_INVALID"));
     }
@@ -1625,6 +1629,10 @@ mod tests {
 
     impl SetupSourcePipe {
         fn start(directory: &Path) -> Self {
+            Self::start_entry(directory, "packages/splyce-pi/src/engine-host.mjs")
+        }
+
+        fn start_entry(directory: &Path, entry: &str) -> Self {
             use std::os::windows::process::CommandExt;
             use std::process::{Command, Stdio};
             let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1632,7 +1640,7 @@ mod tests {
                 .nth(3)
                 .unwrap();
             let child = Command::new(root.join("apps/desktop/src-tauri/resources/engine/node.exe"))
-                .arg(root.join("packages/splyce-pi/src/engine-host.mjs"))
+                .arg(root.join(entry))
                 .env("NODE_NO_WARNINGS", "1")
                 .creation_flags(0x0800_0000)
                 .stdin(Stdio::piped())
@@ -1783,6 +1791,120 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
         fn drop(&mut self) {
             let _ = self.child.kill();
             let _ = self.child.wait();
+        }
+    }
+
+    #[test]
+    fn provider_setup_corrupt_inventory_blocks_source_and_bundled_host_before_save() {
+        use crate::credentials::{delete_owned, write_generated};
+        use windows_sys::Win32::Security::Credentials::{
+            CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
+        };
+        let _inventory = crate::credentials::fixture_guard();
+        let reference = write_generated("synthetic-inventory-fixture").unwrap();
+        struct Cleanup(crate::credentials::CredentialRef);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                assert!(matches!(
+                    delete_owned(&self.0),
+                    Ok(()) | Err(crate::credentials::CredentialError::NotFound)
+                ));
+            }
+        }
+        let cleanup = Cleanup(reference);
+        let mut target: Vec<u16> = format!(
+            "Splyce/credentials/v1/{}",
+            cleanup
+                .0
+                .as_str()
+                .strip_prefix("splyce-credential:v1:")
+                .unwrap()
+        )
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+        let mut invalid = [0xff_u8];
+        let corrupt = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            TargetName: target.as_mut_ptr(),
+            CredentialBlobSize: invalid.len() as u32,
+            CredentialBlob: invalid.as_mut_ptr(),
+            Persist: CRED_PERSIST_LOCAL_MACHINE,
+            ..Default::default()
+        };
+        assert_ne!(unsafe { CredWriteW(&corrupt, 0) }, 0);
+        for entry in [
+            "packages/splyce-pi/src/engine-host.mjs",
+            "apps/desktop/src-tauri/resources/engine/host.mjs",
+        ] {
+            let directory = std::env::temp_dir().join(format!(
+                "splyce-inventory-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&directory).unwrap();
+            let mut source = SetupSourcePipe::start_entry(&directory.join("app-data"), entry);
+            let spec: Value = serde_json::from_str(PROTOCOL).unwrap();
+            let handshake = source
+                .call(
+                    "handshake",
+                    json!({"protocolVersion":spec["protocolVersion"]}),
+                )
+                .ok()
+                .unwrap();
+            assert!(valid_handshake(&handshake, &spec));
+            assert_eq!(handshake["readiness"]["state"], "ready");
+            assert_eq!(handshake["readiness"]["ports"]["provider"], false);
+            let admitted = crate::workspace::qualify_directory(&directory).unwrap();
+            let identity = admitted.identity();
+            let workspace = source.call("native.workspace.admit", json!({"canonicalPath":admitted.path(),"volumeSerial":identity.volume_serial.to_string(),"fileId":identity.file_id.to_string()})).ok().unwrap();
+            let mut input = provider_setup_fixture();
+            input["workspaceId"] = workspace["workspaceId"].clone();
+            let (metadata, _) = setup_metadata(input.clone()).ok().unwrap();
+            let prepared = source
+                .call("native.provider.prepare", metadata)
+                .ok()
+                .unwrap();
+            assert_eq!(prepared["state"], "prepared");
+            let _prepared_cleanup = Cleanup(
+                crate::credentials::CredentialRef::parse(
+                    prepared["credentialRef"].as_str().unwrap(),
+                )
+                .unwrap(),
+            );
+            let before = source.frames.len();
+            let source = std::cell::RefCell::new(source);
+            let secret = input["credential"]["secret"].as_str().unwrap();
+            let count = crate::credentials::count_fixture_value(secret).unwrap();
+            let error = configure_provider(input.clone(), |method, params| {
+                source.borrow_mut().call(method, params)
+            })
+            .err()
+            .unwrap();
+            assert_eq!(error.code, "SETUP_CREDENTIAL_INVENTORY_UNAVAILABLE");
+            assert_eq!(
+                error.message,
+                "Windows credential inventory could not be validated"
+            );
+            assert_eq!(
+                source.borrow().frames.len(),
+                before,
+                "failed inventory must stop before Node or credential creation"
+            );
+            assert_eq!(
+                crate::credentials::count_fixture_value(secret).unwrap(),
+                count
+            );
+            let encoded = serde_json::to_string(&error).unwrap();
+            assert!(!encoded.contains(secret));
+            assert!(!encoded.contains("Splyce/credentials/"));
+            eprintln!("{entry}: {encoded}");
+            drop(source);
+            drop(admitted);
+            std::fs::remove_dir_all(directory).unwrap();
         }
     }
 
