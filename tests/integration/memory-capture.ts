@@ -159,7 +159,7 @@ test("M1: a summary that lands after a deletion of its source is rejected", asyn
   assert.deepEqual(await fx.memory.query("w-demo", "src a done", 5), []);
 });
 
-test("M1: module absent: no engine or desktop source imports the optional memory or retrieval packages", () => {
+test("M1: optional memory imports are limited to request-time native host loading", () => {
   const root = new URL("../../", import.meta.url);
   const importsOptional =
     /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)["'][^"']*(?:splyce-memory|splyce-retrieval|@splyce\/(?:memory|retrieval))/;
@@ -170,11 +170,15 @@ test("M1: module absent: no engine or desktop source imports the optional memory
         continue;
       const path = join(dir, name);
       if (statSync(path).isDirectory()) walk(path);
-      else if (
-        /\.(ts|mts|mjs|js|svelte)$/.test(name) &&
-        importsOptional.test(readFileSync(path, "utf8"))
-      )
-        offenders.push(path);
+      else if (/\.(ts|mts|mjs|js|svelte)$/.test(name)) {
+        const source = readFileSync(path, "utf8");
+        // The native provider loads selected memory on request; startup is independently checked by a runtime import guard.
+        const checked =
+          name === "native-host.mjs"
+            ? source.replace(/\bimport\s*\(\s*["'][^"']+["']\s*\)/g, "")
+            : source;
+        if (importsOptional.test(checked)) offenders.push(path);
+      }
     }
   };
   for (const dir of ["packages/splyce-pi/src", "apps/desktop/src"])
