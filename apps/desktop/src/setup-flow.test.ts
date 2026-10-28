@@ -126,6 +126,44 @@ async function configured() {
 }
 
 describe("native profile and session setup", () => {
+  it("does not claim Local only in Work after selecting a hosted provider", async () => {
+    reply = async (op) =>
+      op === "setup.read"
+        ? {
+            configRevision: "cfg_1",
+            selectedProfileId: null,
+            profiles: [
+              {
+                profileId: "profile_1",
+                profileRevision: "pr_1",
+                apiFamily: "openai-responses",
+                modelId: "hosted-model",
+                endpointOrigin: "https://example.test",
+                credential: "configured",
+              },
+            ],
+          }
+        : op === "profile.select"
+          ? selection
+          : session;
+    app = mount(App, { target: document.body });
+    await tick();
+    button("Choose project").click();
+    await tick();
+    button("Models").click();
+    flushSync();
+    expect(document.body.textContent).toContain("https://example.test");
+    button("Use this profile").click();
+    await tick();
+    expect(sends("profile.select")).toHaveLength(1);
+    expect(sends("session.start")).toHaveLength(1);
+    button("Work").click();
+    flushSync();
+    const footer = document.querySelector(".work-hint")!.textContent!;
+    expect(footer).not.toMatch(/Local only/i);
+    expect(footer).toContain("https://example.test");
+  });
+
   it("recovers profiles with provider port unavailable and blocks generation", async () => {
     const initial = ipc.invoke.getMockImplementation()!;
     ipc.invoke.mockImplementation(async (cmd, args) => {

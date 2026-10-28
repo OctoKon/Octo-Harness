@@ -76,6 +76,25 @@ describe("TD-71 composer", () => {
     expect(c.ta.value).toBe("");
   });
 
+  it("preserves newer draft text when a delayed send succeeds", async () => {
+    let release!: () => void;
+    const send = vi.fn(
+      () => new Promise<void>((resolve) => (release = resolve)),
+    );
+    const c = setup({ send });
+    c.type("submitted task");
+    c.key({ key: "Enter" });
+    await tick();
+    expect(send).toHaveBeenCalledExactlyOnceWith({ text: "submitted task" });
+    c.type("newer task written while waiting");
+    expect(c.sendBtn().disabled).toBe(true);
+    release();
+    await tick();
+    await tick();
+    expect(c.ta.value).toBe("newer task written while waiting");
+    expect(send).toHaveBeenCalledOnce();
+  });
+
   it("includes context artifact ids in the payload", async () => {
     const c = setup({ contextArtifactIds: ["art_1"] });
     c.type("x");

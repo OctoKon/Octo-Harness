@@ -606,6 +606,9 @@
   const selectedProfile = $derived(
     profiles.find((p) => p.profileId === profileSelection?.selectedProfileId),
   );
+  const providerLabel = $derived(
+    `${profileSelection ? (selectedProfile?.endpointOrigin ?? "Selected provider") : "No provider selected"} · no automatic fallback`,
+  );
   function unavailableModelSwitch() {
     throw new Error("The model catalog is unavailable.");
   }
@@ -695,9 +698,7 @@
           <div class="work-hint">
             <span
               ><Icon name="shield" size={11} /> Policy checked before dispatch</span
-            ><span
-              ><Icon name="lock" size={11} /> Local only · no cloud fallback</span
-            >
+            ><span><Icon name="lock" size={11} /> {providerLabel}</span>
           </div>
           <p class="locality-note">
             Local workspace and engine. Requests use your explicitly selected
