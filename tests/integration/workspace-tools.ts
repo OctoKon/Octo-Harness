@@ -422,7 +422,76 @@ test("shell timeout kills the process tree and reports SHELL_TIMEOUT", async () 
   assert.equal(h.log[0]?.ok, false);
 });
 
-const nodeCmd = (js: string) => `node -e "${js}"`;
+const nodeCmd = (js: string) =>
+  `${win ? `& '${process.execPath.replace(/'/g, "''")}'` : "node"} -e "${js}"`;
+
+test(
+  "Windows shell runs with the production SystemRoot-only engine environment",
+  { skip: !win },
+  () => {
+    const h = harness();
+    const script = `
+    import assert from 'node:assert/strict';
+    import { readdirSync, existsSync } from 'node:fs';
+    import { join } from 'node:path';
+    import { createWorkspaceTools } from ${JSON.stringify(new URL("../../packages/splyce-pi/dist/workspace-tools.js", import.meta.url).href)};
+    const root = process.argv[1];
+    // Node's Windows spawn adds parent defaults; Rust's explicit block does not.
+    for (const name of Object.keys(process.env)) if (name !== 'SystemRoot') delete process.env[name];
+    assert.deepEqual(Object.keys(process.env), ['SystemRoot']);
+    const receipts = [];
+    let consumed = false;
+    const tools = createWorkspaceTools({
+      workspaces: { workspace: () => ({ workspaceId: 'w1', canonicalPath: root, revision: 1 }) },
+      grants: {
+        check: () => consumed ? { ok: false, reason: 'GRANT_CONSUMED' } : { ok: true, grantId: 'g1', scope: 'once' },
+        consume: () => { assert.equal(consumed, false); consumed = true; },
+      },
+      receipts: { record: r => { receipts.push(r); return 'r1'; } },
+      sessionId: 's1', workspaceId: 'w1',
+    });
+    const run = async command => { consumed = false; return tools.powershell.result({ command }); };
+    const echo = await run('echo splyce');
+    assert.equal(echo.text.trim(), 'splyce');
+    assert.equal(echo.summary.exitCode, 0);
+    const external = await run('& $env:ComSpec /d /c echo child-splyce');
+    assert.equal(external.text.trim(), 'child-splyce');
+    const probe = await run(${JSON.stringify("[System.IO.File]::WriteAllText((Join-Path $env:TEMP probe.txt), 'temp-ok'); @{ Cwd = (Get-Location).Path; TempExists = (Test-Path $env:TEMP); Env = [Environment]::GetEnvironmentVariables() } | ConvertTo-Json -Compress")});
+    const info = JSON.parse(probe.text);
+    assert.equal(info.Cwd.toLowerCase(), root.toLowerCase());
+    assert.equal(info.TempExists, true);
+    assert.equal(info.Env.TEMP, info.Env.TMP);
+    assert.ok(info.Env.TEMP.startsWith(join(root, '.splyce-shell-')));
+    assert.equal(existsSync(info.Env.TEMP), false, 'owned temp is cleaned');
+    const sys = join(process.env.SystemRoot, 'System32');
+    assert.equal(info.Env.PATH, [sys, process.env.SystemRoot, join(sys, 'WindowsPowerShell', 'v1.0')].join(';'));
+    assert.equal(info.Env.ComSpec, join(sys, 'cmd.exe'));
+    // Windows PowerShell appends .CPL at startup.
+    assert.equal(info.Env.PATHEXT, '.COM;.EXE;.BAT;.CMD;.CPL');
+    consumed = false;
+    await assert.rejects(tools.powershell.result({ command: 'Start-Sleep 60', timeout: 1 }), { code: 'SHELL_TIMEOUT' });
+    await assert.rejects(tools.powershell.result({ command: 'echo splyce' }), { code: 'GRANT_CONSUMED' });
+    process.env.SystemRoot = join(root, 'missing-windows');
+    await assert.rejects(run('echo splyce'), { code: 'SHELL_START_FAILED', message: 'Cannot start powershell: ENOENT. Check the system shell installation.' });
+    assert.equal(receipts.at(-1).ok, false);
+    assert.equal(receipts.at(-1).summary, 'SHELL_START_FAILED');
+    assert.deepEqual(readdirSync(root), []);
+    console.log('restricted-shell: splyce; child-env; cwd; temp-cleanup; typed-spawn-error passed');
+  `;
+    const child = spawnSync(
+      process.execPath,
+      ["--input-type=module", "-e", script, h.ws.canonicalPath],
+      {
+        env: { SystemRoot: process.env.SystemRoot! },
+        encoding: "utf8",
+        timeout: 30_000,
+      },
+    );
+    assert.equal(child.error, undefined);
+    assert.equal(child.status, 0, child.stderr || child.stdout);
+    assert.match(child.stdout, /restricted-shell: splyce/);
+  },
+);
 
 test("shell output is capped with a truncation marker", async () => {
   const h = harness({ maxOutputBytes: 100 });

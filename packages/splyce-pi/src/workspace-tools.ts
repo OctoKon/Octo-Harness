@@ -12,6 +12,7 @@ import { Worker } from "node:worker_threads";
 import { createHash, randomUUID } from "node:crypto";
 import {
   lstat,
+  mkdtemp,
   mkdir,
   open,
   rename,
@@ -80,6 +81,7 @@ export type ErrorCode =
   | "WORKSPACE_UNKNOWN"
   | "STALE_REVISION"
   | "SHELL_TIMEOUT"
+  | "SHELL_START_FAILED"
   | "EDIT_NOT_FOUND"
   | "EDIT_AMBIGUOUS"
   | "BAD_ARGS"
@@ -574,130 +576,160 @@ export function createWorkspaceTools(
     ms: number,
     signal?: AbortSignal,
   ) {
+    const cwd = root();
+    const systemRoot = process.env.SystemRoot;
+    if (win && (!systemRoot || !isAbsolute(systemRoot)))
+      fail(
+        "SHELL_START_FAILED",
+        "The Windows system shell location is unavailable.",
+      );
+    const system32 = join(systemRoot ?? "", "System32");
+    const powershellDir = join(system32, "WindowsPowerShell", "v1.0");
     const [file, args] =
       kind === "bash"
-        ? ["bash", ["-c", command]]
+        ? [win ? join(system32, "bash.exe") : "bash", ["-c", command]]
         : [
-            win ? "powershell.exe" : "pwsh",
+            win ? join(powershellDir, "powershell.exe") : "pwsh",
             ["-NoProfile", "-NonInteractive", "-Command", command],
           ];
     if (signal?.aborted) fail("ABORTED", "aborted");
-    const child = spawn(file as string, args as string[], {
-      cwd: root(),
-      env: scrubbedEnv(),
-      windowsHide: true,
-      detached: !win,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const closed = new Promise<void>((complete) =>
-      child.on("close", () => complete()),
-    );
-    const killTree = () => {
-      if (child.pid === undefined) return;
-      if (win)
-        spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-          windowsHide: true,
-          stdio: ["ignore", "ignore", "ignore"],
-        });
-      else
-        try {
-          (process as unknown as { kill(pid: number, sig: string): void }).kill(
-            -child.pid,
-            "SIGKILL",
-          );
-        } catch {
-          child.kill("SIGKILL");
-        }
-    };
-    const started = Date.now();
-    const output = { stdout: "", stderr: "" };
-    let bytes = 0;
-    let overflow = false;
-    const stdoutDecoder = new TextDecoder();
-    const stderrDecoder = new TextDecoder();
-    const onData = (
-      c: Uint8Array,
-      stream: "stdout" | "stderr",
-      decoder: TextDecoder,
-    ) => {
-      bytes += c.length;
-      if (overflow) return;
-      // shortcut: suppress output over the file-read budget; larger output needs bounded streaming redaction.
-      if (bytes > MAX_READ_BYTES) {
-        overflow = true;
-        output.stdout = output.stderr = "";
-        killTree();
-      } else output[stream] += decoder.decode(c, { stream: true });
-    };
-    child.stdout?.on("data", (c) => onData(c, "stdout", stdoutDecoder));
-    child.stderr?.on("data", (c) => onData(c, "stderr", stderrDecoder));
-    return new Promise<{
-      code: number;
-      text: string;
-      bytes: number;
-      truncated: boolean;
-    }>((complete, reject) => {
-      let settled = false;
-      const settle = (f: () => void) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        f();
+    const temp = win ? await mkdtemp(join(cwd, ".splyce-shell-")) : undefined;
+    try {
+      const env = win
+        ? {
+            SystemRoot: systemRoot!,
+            ComSpec: join(system32, "cmd.exe"),
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            PATH: [system32, systemRoot!, powershellDir].join(";"),
+            TEMP: temp!,
+            TMP: temp!,
+          }
+        : scrubbedEnv();
+      if (signal?.aborted) fail("ABORTED", "aborted");
+      const child = spawn(file as string, args as string[], {
+        cwd,
+        env,
+        windowsHide: true,
+        detached: !win,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const closed = new Promise<void>((complete) =>
+        child.on("close", () => complete()),
+      );
+      const killTree = () => {
+        if (child.pid === undefined) return;
+        if (win)
+          spawn(
+            join(system32, "taskkill.exe"),
+            ["/pid", String(child.pid), "/T", "/F"],
+            {
+              env,
+              windowsHide: true,
+              stdio: ["ignore", "ignore", "ignore"],
+            },
+          ).on("error", () => child.kill("SIGKILL"));
+        else
+          try {
+            (
+              process as unknown as { kill(pid: number, sig: string): void }
+            ).kill(-child.pid, "SIGKILL");
+          } catch {
+            child.kill("SIGKILL");
+          }
       };
-      const timer = setTimeout(() => {
-        killTree();
-        settle(() => {
-          if (overflow) return reject(redactionUnavailable());
-          // A killed command may have emitted only part of a credential.
-          void closed
-            .then(() => done("[unavailable]", started, bytes, false, null))
-            .then((r) => {
-              const message = `command exceeded ${String(ms)}ms and was killed`;
-              const code: ErrorCode = "SHELL_TIMEOUT";
-              reject(new WorkspaceToolError(code, message, r.summary));
-            }, reject);
-        });
-      }, ms);
-      const onAbort = () => {
-        killTree();
-        settle(() => {
-          void closed.then(
-            () => reject(new WorkspaceToolError("ABORTED", "command aborted")),
-            reject,
-          );
-        });
+      const started = Date.now();
+      const output = { stdout: "", stderr: "" };
+      let bytes = 0;
+      let overflow = false;
+      const stdoutDecoder = new TextDecoder();
+      const stderrDecoder = new TextDecoder();
+      const onData = (
+        c: Uint8Array,
+        stream: "stdout" | "stderr",
+        decoder: TextDecoder,
+      ) => {
+        bytes += c.length;
+        if (overflow) return;
+        // shortcut: suppress output over the file-read budget; larger output needs bounded streaming redaction.
+        if (bytes > MAX_READ_BYTES) {
+          overflow = true;
+          output.stdout = output.stderr = "";
+          killTree();
+        } else output[stream] += decoder.decode(c, { stream: true });
       };
-      signal?.addEventListener("abort", onAbort, { once: true });
-      if (signal?.aborted) onAbort();
-      child.on("error", (e) =>
-        settle(() =>
-          reject(
-            new WorkspaceToolError(
-              "IO_ERROR",
-              `cannot start ${kind}: ${(e as { code?: string }).code ?? "error"}`,
+      child.stdout?.on("data", (c) => onData(c, "stdout", stdoutDecoder));
+      child.stderr?.on("data", (c) => onData(c, "stderr", stderrDecoder));
+      return await new Promise<{
+        code: number;
+        text: string;
+        bytes: number;
+        truncated: boolean;
+      }>((complete, reject) => {
+        let settled = false;
+        const settle = (f: () => void) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          f();
+        };
+        const timer = setTimeout(() => {
+          killTree();
+          settle(() => {
+            if (overflow) return reject(redactionUnavailable());
+            // A killed command may have emitted only part of a credential.
+            void closed
+              .then(() => done("[unavailable]", started, bytes, false, null))
+              .then((r) => {
+                const message = `command exceeded ${String(ms)}ms and was killed`;
+                const code: ErrorCode = "SHELL_TIMEOUT";
+                reject(new WorkspaceToolError(code, message, r.summary));
+              }, reject);
+          });
+        }, ms);
+        const onAbort = () => {
+          killTree();
+          settle(() => {
+            void closed.then(
+              () =>
+                reject(new WorkspaceToolError("ABORTED", "command aborted")),
+              reject,
+            );
+          });
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+        child.on("error", (e) =>
+          settle(() =>
+            reject(
+              new WorkspaceToolError(
+                "SHELL_START_FAILED",
+                `Cannot start ${kind}: ${(e as { code?: string }).code ?? "error"}. Check the system shell installation.`,
+              ),
             ),
           ),
-        ),
-      );
-      child.on("close", (exitCode) => {
-        settle(() => {
-          if (overflow) return reject(redactionUnavailable());
-          void Promise.all([
-            clean(output.stdout + stdoutDecoder.decode()),
-            clean(output.stderr + stderrDecoder.decode()),
-          ]).then(([stdout, stderr]) => {
-            complete({
-              code: exitCode ?? 1,
-              text: stdout + stderr,
-              bytes,
-              truncated: false,
-            });
-          }, reject);
+        );
+        child.on("close", (exitCode) => {
+          settle(() => {
+            if (overflow) return reject(redactionUnavailable());
+            void Promise.all([
+              clean(output.stdout + stdoutDecoder.decode()),
+              clean(output.stderr + stderrDecoder.decode()),
+            ]).then(([stdout, stderr]) => {
+              complete({
+                code: exitCode ?? 1,
+                text: stdout + stderr,
+                bytes,
+                truncated: false,
+              });
+            }, reject);
+          });
         });
+        if (signal?.aborted) onAbort();
       });
-      if (signal?.aborted) onAbort();
-    });
+    } finally {
+      if (temp) await rm(temp, { recursive: true, force: true });
+    }
   }
 
   type Impl = Omit<WorkspaceTool, "execute">;

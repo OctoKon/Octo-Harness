@@ -15,8 +15,12 @@ declare module "node:fs/promises" {
   export function readFile(path: string, encoding: "utf8"): Promise<string>;
   export function writeFile(path: string, data: string): Promise<void>;
   export function mkdir(path: string): Promise<unknown>;
+  export function mkdtemp(prefix: string): Promise<string>;
   export function rename(from: string, to: string): Promise<void>;
-  export function rm(path: string, options: { force: true }): Promise<void>;
+  export function rm(
+    path: string,
+    options: { force: true; recursive?: boolean },
+  ): Promise<void>;
   export function readdir(
     path: string,
     options: { withFileTypes: true },
