@@ -1,26 +1,35 @@
 <script lang="ts">
   import ConnectionCard from "../components/provider/ConnectionCard.svelte";
-  import CredentialForm from "../components/provider/CredentialForm.svelte";
   import CustomEndpointForm from "../components/provider/CustomEndpointForm.svelte";
+  import ProfileSelect from "../components/profile/ProfileSelect.svelte";
   import {
     groupByFamily,
     type ConnectionInput,
-    type CredentialDraft,
     type CustomEndpointDraft,
   } from "../stores/profiles";
+  import type { ProfileAvailability } from "../stores/profile-selection";
 
   let {
     connections,
     families,
     onAddCustom,
-    credentialSubmit,
+    profileAvailability,
+    profileSelect,
   }: {
     connections: readonly ConnectionInput[];
     families: readonly string[];
     onAddCustom: (draft: CustomEndpointDraft) => void;
-    /** Injected once the native credential writer exists; omitted means unavailable. */
-    credentialSubmit?: (draft: CredentialDraft) => Promise<void>;
+    profileAvailability?: ProfileAvailability;
+    profileSelect?: (request: unknown) => void;
   } = $props();
+
+  const availability = $derived(
+    profileAvailability ?? {
+      profiles: null,
+      effective: null,
+      requested: null,
+    },
+  );
 
   const groups = $derived(groupByFamily(connections, families));
   const existing = $derived(
@@ -33,7 +42,7 @@
 
 <main aria-labelledby="providers-title">
   <h2 id="providers-title">Provider connections</h2>
-  <CredentialForm submit={credentialSubmit} />
+  <ProfileSelect availability={availability} onSelect={profileSelect} />
   {#each groups as group (group.apiFamily)}
     <section aria-labelledby={`fam-${group.apiFamily}`} data-testid="family">
       <h3 id={`fam-${group.apiFamily}`}>{group.apiFamily}</h3>
