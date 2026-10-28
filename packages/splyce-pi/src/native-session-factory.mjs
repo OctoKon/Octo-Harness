@@ -2159,6 +2159,22 @@ export function createNativeSessionFactory({
       morePending: drained.morePending,
     };
   }
+  function isScopeReady(scopeId) {
+    for (const state of sessions.values()) {
+      if (
+        state.deliveryError ||
+        (scopeId !== undefined && state.key.scopeId !== scopeId)
+      )
+        continue;
+      try {
+        state.runtime.assertCurrent();
+        return true;
+      } catch (error) {
+        state.deliveryError ??= error;
+      }
+    }
+    return false;
+  }
   return Object.freeze({
     prepare,
     restore,
@@ -2171,17 +2187,9 @@ export function createNativeSessionFactory({
     subscribe,
     unsubscribe,
     drainEvents,
+    isScopeReady,
     get hasReadySession() {
-      for (const state of sessions.values()) {
-        if (state.deliveryError) continue;
-        try {
-          state.runtime.assertCurrent();
-          return true;
-        } catch (error) {
-          state.deliveryError ??= error;
-        }
-      }
-      return false;
+      return isScopeReady();
     },
     get hasWorkspaceReadySession() {
       for (const state of sessions.values()) {
