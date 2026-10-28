@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { validatePermissionResult } from "@splyce/pi/contracts";
   import type {
     Handshake,
@@ -167,28 +167,58 @@
     const epoch = ++catalogEpoch;
     catalogProfileId = profileId;
     catalog = null;
-    if (!project || !profileId) { catalogStatus = "Choose a configured profile to load its models."; return; }
+    if (!project || !profileId) {
+      catalogStatus = "Choose a configured profile to load its models.";
+      return;
+    }
     catalogPending = true;
     catalogStatus = "Loading models…";
     try {
-      const result = await readModels(project.workspaceId, profileId, crypto.randomUUID());
+      const result = await readModels(
+        project.workspaceId,
+        profileId,
+        crypto.randomUUID(),
+      );
       if (epoch !== catalogEpoch) return;
       catalog = result;
-      catalogStatus = result.truncated ? "The catalog is truncated; some models may be missing." : "Models loaded.";
+      catalogStatus = result.truncated
+        ? "The catalog is truncated; some models may be missing."
+        : "Models loaded.";
     } catch (error) {
-      if (epoch === catalogEpoch) catalogStatus = (error as { code?: string })?.code === "MODEL_CATALOG_DENIED"
-        ? "Access to this catalog was denied. Select the configured profile and start a session, then try again."
-        : "The model catalog could not be loaded. Try again.";
-    } finally { if (epoch === catalogEpoch) catalogPending = false; }
+      if (epoch === catalogEpoch)
+        catalogStatus =
+          (error as { code?: string })?.code === "MODEL_CATALOG_DENIED"
+            ? "Access to this catalog was denied. Select the configured profile and start a session, then try again."
+            : "The model catalog could not be loaded. Try again.";
+    } finally {
+      if (epoch === catalogEpoch) catalogPending = false;
+    }
   }
 
   async function useModel(model: ModelSummary) {
     const project = workspace;
     const profile = profiles.find((p) => p.profileId === catalogProfileId);
-    if (!project || !profile?.providerConnectionId || !profile.connectionRevision || !profile.endpointRevision || !profile.endpoint || !profile.locality || !profile.apiFamily || profile.credential !== "configured" || switchPending || profilePending || configuring) return;
+    if (
+      !project ||
+      !profile?.providerConnectionId ||
+      !profile.connectionRevision ||
+      !profile.endpointRevision ||
+      !profile.endpoint ||
+      !profile.locality ||
+      !profile.apiFamily ||
+      profile.credential !== "configured" ||
+      switchPending ||
+      profilePending ||
+      configuring
+    )
+      return;
     const known = model.modelId === profile.modelId ? profile.model : undefined;
     const context = model.contextWindow ?? known?.contextWindow;
-    if (!context) { catalogStatus = "This model has no context limit. It cannot be configured safely."; return; }
+    if (!context) {
+      catalogStatus =
+        "This model has no context limit. It cannot be configured safely.";
+      return;
+    }
     const epoch = ++setupEpoch;
     ++catalogEpoch;
     switchPending = true;
@@ -198,36 +228,78 @@
     catalogStatus = "Saving model…";
     const requestId = crypto.randomUUID();
     try {
-      const result = configuredProfileResult(await sendSetup("provider.configure", requestId, {
-        requestId, workspaceId: project.workspaceId, providerConnectionId: profile.providerConnectionId,
-        profileId: profile.profileId, apiFamily: profile.apiFamily, endpoint: profile.endpoint,
-        locality: profile.locality, chat: { modelId: model.modelId, model: { contextWindow: context, maxOutputTokens: Math.min(8192, context), reasoning: known?.reasoning ?? false, input: known?.input ?? ["text"] } },
-        accountScopeRef: "provider-default", credential: { kind: "keep" },
-        expectedConnectionRevision: profile.connectionRevision, expectedProfileRevision: profile.profileRevision, expectedEndpointRevision: profile.endpointRevision,
-      }));
+      const result = configuredProfileResult(
+        await sendSetup("provider.configure", requestId, {
+          requestId,
+          workspaceId: project.workspaceId,
+          providerConnectionId: profile.providerConnectionId,
+          profileId: profile.profileId,
+          apiFamily: profile.apiFamily,
+          endpoint: profile.endpoint,
+          locality: profile.locality,
+          chat: {
+            modelId: model.modelId,
+            model: {
+              contextWindow: context,
+              maxOutputTokens: Math.min(8192, context),
+              reasoning: known?.reasoning ?? false,
+              input: known?.input ?? ["text"],
+            },
+          },
+          accountScopeRef: "provider-default",
+          credential: { kind: "keep" },
+          expectedConnectionRevision: profile.connectionRevision,
+          expectedProfileRevision: profile.profileRevision,
+          expectedEndpointRevision: profile.endpointRevision,
+        }),
+      );
       if (epoch !== setupEpoch) return;
-      if (result.profileId !== profile.profileId) throw new Error("Invalid profile");
-      profiles = profiles.map((p) => p.profileId === result.profileId ? { ...p, ...result, modelId: model.modelId } : { ...p, configRevision: result.configRevision });
+      if (result.profileId !== profile.profileId)
+        throw new Error("Invalid profile");
+      profiles = profiles.map((p) =>
+        p.profileId === result.profileId
+          ? { ...p, ...result, modelId: model.modelId }
+          : { ...p, configRevision: result.configRevision },
+      );
       catalogStatus = "Model saved. Selecting profile…";
       await useProfile({ ...profile, ...result, modelId: model.modelId }, true);
       if (setupEpoch !== epoch + 1) return;
       try {
-        const refreshed = await readProfiles(project.workspaceId, crypto.randomUUID());
+        const refreshed = await readProfiles(
+          project.workspaceId,
+          crypto.randomUUID(),
+        );
         if (setupEpoch !== epoch + 1) return;
-        if (!refreshed.profiles.some((p) => p.profileId === profile.profileId)) throw new Error("Profile missing");
+        if (!refreshed.profiles.some((p) => p.profileId === profile.profileId))
+          throw new Error("Profile missing");
         profiles = refreshed.profiles;
         catalogStatus = "Model selection finished. Check session status.";
       } catch {
         if (setupEpoch !== epoch + 1) return;
-        profiles = profiles.map(({ providerConnectionId: _id, connectionRevision: _connection, endpointRevision: _endpointRevision, endpoint: _endpoint, locality: _locality, model: _model, ...p }) => p);
-        catalogStatus = "Model selection finished, but profile details could not be refreshed. Reload before switching again.";
+        profiles = profiles.map(
+          ({
+            providerConnectionId: _id,
+            connectionRevision: _connection,
+            endpointRevision: _endpointRevision,
+            endpoint: _endpoint,
+            locality: _locality,
+            model: _model,
+            ...p
+          }) => p,
+        );
+        catalogStatus =
+          "Model selection finished, but profile details could not be refreshed. Reload before switching again.";
       }
     } catch (error) {
       if (epoch === setupEpoch) {
         catalogStatus = setupErrorCopy(error);
-        profileStatus = "Model change could not be confirmed. Sending stays blocked.";
+        profileStatus =
+          "Model change could not be confirmed. Sending stays blocked.";
       }
-    } finally { if (setupEpoch === epoch || setupEpoch === epoch + 1) switchPending = false; }
+    } finally {
+      if (setupEpoch === epoch || setupEpoch === epoch + 1)
+        switchPending = false;
+    }
   }
   let composerKey = $state(0);
   let permissionModeState = $state(initialPermissionMode(null));
@@ -359,12 +431,17 @@
         result,
       ];
       try {
-        const refreshed = await readProfiles(project.workspaceId, crypto.randomUUID());
+        const refreshed = await readProfiles(
+          project.workspaceId,
+          crypto.randomUUID(),
+        );
         if (epoch !== setupEpoch) throw { code: "WORKSPACE_SUPERSEDED" };
-        if (refreshed.profiles.some((p) => p.profileId === result.profileId)) profiles = refreshed.profiles;
+        if (refreshed.profiles.some((p) => p.profileId === result.profileId))
+          profiles = refreshed.profiles;
       } catch (error) {
         if (epoch !== setupEpoch) throw error;
-        profileStatus = "Provider saved, but profile details could not be refreshed.";
+        profileStatus =
+          "Provider saved, but profile details could not be refreshed.";
       }
     } finally {
       if (epoch === setupEpoch) configuring = false;
@@ -631,6 +708,14 @@
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
+  let transcriptEnd: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    turns.lastSeq;
+    if (view === "work")
+      void tick().then(() =>
+        transcriptEnd?.scrollIntoView?.({ block: "nearest" }),
+      );
+  });
   // TD-33: the actions target the branch the tree actually selected. The engine
   // still does not deliver the revisions a lifecycle request needs, and a
   // rewind/code restore is not admitted yet, so every action is visibly disabled
@@ -967,7 +1052,12 @@
     profiles.find((p) => p.profileId === profileSelection?.selectedProfileId),
   );
   $effect(() => {
-    if (view === "models" && startedSession?.readiness.state === "ready" && profileSelection && untrack(() => catalogProfileId) !== profileSelection.selectedProfileId)
+    if (
+      view === "models" &&
+      startedSession?.readiness.state === "ready" &&
+      profileSelection &&
+      untrack(() => catalogProfileId) !== profileSelection.selectedProfileId
+    )
       void loadCatalog(profileSelection.selectedProfileId);
   });
   const providerLabel = $derived(
@@ -1066,14 +1156,17 @@
           {/if}
           {#if currentRun}
             <section class="turn-pane" aria-label="Transcript">
-              <TurnStream
-                run={currentRun}
-                stale={turns.stale ||
-                  turns.needsResync ||
-                  (status !== "ready" && status !== "busy")}
-                {canRespond}
-                {onApproval}
-              />
+              {#each Object.values(turns.runs) as run (run.runId)}
+                <TurnStream
+                  {run}
+                  stale={turns.stale ||
+                    turns.needsResync ||
+                    (status !== "ready" && status !== "busy")}
+                  {canRespond}
+                  {onApproval}
+                />
+              {/each}
+              <div bind:this={transcriptEnd}></div>
             </section>
           {:else if $selectedSession}
             <p class="session-empty">
@@ -1170,7 +1263,16 @@
             />
           </div>
           <div class="surface-card">
-            <ModelCatalog {profiles} {catalogProfileId} {catalog} {catalogStatus} {catalogPending} {switchPending} onLoad={loadCatalog} onUse={useModel} />
+            <ModelCatalog
+              {profiles}
+              {catalogProfileId}
+              {catalog}
+              {catalogStatus}
+              {catalogPending}
+              {switchPending}
+              onLoad={loadCatalog}
+              onUse={useModel}
+            />
           </div>
           <SupportStatus cells={null} />
         {:else if view === "extensions"}

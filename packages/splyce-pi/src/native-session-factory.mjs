@@ -2053,7 +2053,7 @@ export function createNativeSessionFactory({
         state,
         active,
         "turn.started",
-        { runId: active.runId, turnId: active.turnId },
+        { runId: active.runId, turnId: active.turnId, userPrompt: task.text },
         true,
       );
       return { accepted: true, runId: active.runId, turnId: active.turnId };

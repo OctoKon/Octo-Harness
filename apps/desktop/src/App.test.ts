@@ -39,6 +39,85 @@ const button = (name: string) =>
 const subscribes = () =>
   ipc.invoke.mock.calls.filter(([c]) => c === "subscribe");
 
+it("keeps the conversation through navigation and reopening from Runs", async () => {
+  ipc.ready = true;
+  await boot();
+  dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
+  await settle();
+  q("[role=treeitem]")!.click();
+  await settle();
+  const frames = [
+    [
+      "turn.started",
+      { runId: "run_1", turnId: "turn_1", userPrompt: "My name is Itachi." },
+    ],
+    ["turn.stream_delta", { runId: "run_1", delta: "ok" }],
+    [
+      "turn.completed",
+      { runId: "run_1", candidateSnapshotId: "snap_1", finalRevision: "rev_1" },
+    ],
+    [
+      "turn.started",
+      { runId: "run_2", turnId: "turn_2", userPrompt: "What is my name?" },
+    ],
+    ["turn.stream_delta", { runId: "run_2", delta: "Itachi" }],
+    [
+      "turn.completed",
+      { runId: "run_2", candidateSnapshotId: "snap_2", finalRevision: "rev_2" },
+    ],
+  ] as const;
+  for (const [index, [kind, payload]] of frames.entries()) {
+    dispatchEngineEvent({
+      schemaVersion: 1,
+      protocolVersion: 2,
+      recordId: `rec_${index}`,
+      eventId: `evt_${index}`,
+      createdAt: "2026-10-26T00:00:00.000Z",
+      sourceIds: [],
+      scopeId: "scope_1",
+      sessionId: "ses_1",
+      seq: index + 1,
+      durable: kind !== "turn.stream_delta",
+      kind,
+      payload,
+    } as SplyceEvent);
+    await settle();
+  }
+  const transcript = () =>
+    [
+      ...document.querySelectorAll(
+        '[data-testid="turn-user"], [data-testid="turn-text"]',
+      ),
+    ].map((node) => node.textContent?.trim().replace(/\s+/g, " "));
+  const expected = [
+    "USER My name is Itachi.",
+    "ok",
+    "USER What is my name?",
+    "Itachi",
+  ];
+  expect(transcript()).toEqual(expected);
+  button("Models").click();
+  await settle();
+  button("Work").click();
+  await settle();
+  expect(transcript()).toEqual(expected);
+  dispatchEngineEvent(treeEvent("ses_2", "scope_1"));
+  await settle();
+  button("Runs").click();
+  await settle();
+  [...document.querySelectorAll<HTMLElement>("[role=treeitem]")]
+    .find((node) => node.textContent?.includes("ses_2"))!
+    .click();
+  await settle();
+  [...document.querySelectorAll<HTMLElement>("[role=treeitem]")]
+    .find((node) => node.textContent?.includes("ses_1"))!
+    .click();
+  await settle();
+  button("Work").click();
+  await settle();
+  expect(transcript()).toEqual(expected);
+});
+
 let app: object | undefined;
 const readyHandshake = {
   protocolVersion: 2,

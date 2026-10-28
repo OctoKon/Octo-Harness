@@ -946,7 +946,7 @@ test(
       expectedProfileRevision: "p1",
       expectedPolicyRevision: currentNativePolicyRevision(input.workspaceId),
       op: "session.prompt",
-      payload: { text: "hello user" },
+      payload: { text: `hello user ${fixtureCredential}` },
     };
     const ack = await factory.preparePrompt(command);
     assert.equal(ack.accepted, true);
@@ -954,6 +954,10 @@ test(
     ackReceived = true;
     collect();
     await Promise.race([incoming, early]);
+    assert.equal(
+      events.find((event) => event.kind === "turn.started").payload.userPrompt,
+      "hello user [redacted]",
+    );
     assert.equal(observedRunning, true);
     assert.equal(closed, false);
     assert.equal(
@@ -1009,6 +1013,21 @@ test(
     });
     assert.equal(second.accepted, true);
     await incomingSecond;
+    assert.deepEqual(
+      body.messages
+        .filter((message) => ["user", "assistant"].includes(message.role))
+        .map((message) => [
+          message.role,
+          typeof message.content === "string"
+            ? message.content
+            : message.content.map((block) => block.text ?? "").join(""),
+        ]),
+      [
+        ["user", "hello user [redacted]"],
+        ["assistant", "hello from provider"],
+        ["user", "cancel request"],
+      ],
+    );
     let cancellationSettled = false;
     const cancellation = factory.cancel({
       sessionId: value.piSessionId,

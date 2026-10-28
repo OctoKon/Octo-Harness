@@ -231,6 +231,40 @@ const context = {
     scopeId === "w-demo" && referenceIds.has(id),
 };
 const copy = (value) => structuredClone(value);
+
+test("turn.started accepts an optional text prompt and rejects malformed prompt fields", () => {
+  const base = fixture("events").find((value) => value.kind === "turn.started");
+  const event = {
+    schemaVersion: 1,
+    protocolVersion: 2,
+    recordId: "r1",
+    eventId: "r1",
+    createdAt: "2026-10-26T00:00:00.000Z",
+    sourceIds: [],
+    scopeId: "w-demo",
+    sessionId: "s1",
+    seq: 1,
+    durable: true,
+    ...base,
+  };
+  assert.doesNotThrow(() => validateEvent(event, context));
+  assert.doesNotThrow(() =>
+    validateEvent(
+      {
+        ...event,
+        payload: { ...event.payload, userPrompt: "hello [redacted]" },
+      },
+      context,
+    ),
+  );
+  for (const userPrompt of [null, 12, {}, ""])
+    assert.throws(() =>
+      validateEvent(
+        { ...event, payload: { ...event.payload, userPrompt } },
+        context,
+      ),
+    );
+});
 const rejects = (call) =>
   assert.throws(
     call,

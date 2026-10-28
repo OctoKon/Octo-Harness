@@ -854,7 +854,7 @@ export interface SplyceErrorPayload {
     "RESTART_ENGINE" | "SWITCH_PROFILE" | "REVERT_HUNK" | "RETRY_SAFE";
 }
 export interface EventPayloads {
-  "turn.started": { runId: string; turnId: string };
+  "turn.started": { runId: string; turnId: string; userPrompt?: string };
   "turn.stream_delta": { runId: string; delta: string };
   "turn.thought_delta": { runId: string; delta: string };
   "turn.tool_intent": {
@@ -1068,6 +1068,7 @@ const EVENT_SCHEMAS = {
   "child.cancelled": CHILD_EVENT,
 } as const satisfies { [K in EventKind]: Shape };
 const EVENT_OPTIONAL: Partial<Record<EventKind, Shape>> = {
+  "turn.started": { userPrompt: "text" },
   "engine.status": { ports: "portAvailability" },
   "turn.tool_outcome": {
     outcomeRef: "ref",
