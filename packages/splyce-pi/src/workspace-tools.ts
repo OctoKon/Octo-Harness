@@ -585,13 +585,50 @@ export function createWorkspaceTools(
       );
     const system32 = join(systemRoot ?? "", "System32");
     const powershellDir = join(system32, "WindowsPowerShell", "v1.0");
-    const [file, args] =
-      kind === "bash"
-        ? [win ? join(system32, "bash.exe") : "bash", ["-c", command]]
-        : [
-            win ? join(powershellDir, "powershell.exe") : "pwsh",
-            ["-NoProfile", "-NonInteractive", "-Command", command],
-          ];
+    let file = win ? join(powershellDir, "powershell.exe") : "pwsh";
+    let args = [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      command,
+    ];
+    if (kind === "bash") {
+      file = "bash";
+      args = ["--noprofile", "--norc", "-c", command];
+      if (win) {
+        // Resolve Git Bash without PATH; the engine receives only SystemRoot.
+        file = "";
+        for (const programs of ["Program Files", "Program Files (x86)"]) {
+          const candidate = join(
+            systemRoot!,
+            "..",
+            programs,
+            "Git",
+            "bin",
+            "bash.exe",
+          );
+          try {
+            if ((await lstat(candidate)).isFile()) {
+              file = candidate;
+              break;
+            }
+          } catch (e) {
+            if ((e as { code?: string }).code !== "ENOENT")
+              fail(
+                "SHELL_START_FAILED",
+                "Cannot access the Git Bash installation.",
+              );
+          }
+        }
+        if (!file)
+          fail(
+            "SHELL_START_FAILED",
+            "Git Bash is unavailable. Use powershell.",
+          );
+      }
+    }
     if (signal?.aborted) fail("ABORTED", "aborted");
     const temp = win ? await mkdtemp(join(cwd, ".splyce-shell-")) : undefined;
     try {
@@ -606,7 +643,7 @@ export function createWorkspaceTools(
           }
         : scrubbedEnv();
       if (signal?.aborted) fail("ABORTED", "aborted");
-      const child = spawn(file as string, args as string[], {
+      const child = spawn(file, args, {
         cwd,
         env,
         windowsHide: true,
@@ -735,7 +772,7 @@ export function createWorkspaceTools(
   type Impl = Omit<WorkspaceTool, "execute">;
   const shell = (kind: "bash" | "powershell", label: string): Impl => ({
     name: kind,
-    description: `Run a ${label} command in the workspace root. Needs a one-time approval for this exact command; output is capped and the command is killed on timeout.`,
+    description: `Run a ${label} command in the workspace root.${win ? " PowerShell is the default Windows shell; request bash only for Git Bash commands." : ""} Needs a one-time approval for this exact command; output is capped and the command is killed on timeout.`,
     parameters: obj(
       {
         command: S("Command to execute"),
@@ -964,11 +1001,14 @@ export function createWorkspaceTools(
               const ls = (await clean(text)).split("\n");
               const sameLines = ls.length === original.length;
               // shortcut: one file may use 400ms of regex time, raise it if real searches hit it.
-              for (const i of await m.test(
+              const matches = await m.test(
                 text,
                 limit - hits.length,
                 Math.min(GREP_FILE_MS, left),
-              )) {
+              );
+              if (Date.now() - t0 >= timeoutMs)
+                fail("GREP_BUDGET", "search exceeded its time budget");
+              for (const i of matches) {
                 rawBytes +=
                   encoder.encode(`${e.rel}:${String(i + 1)}:${original[i]}`)
                     .length + (hits.length ? 1 : 0);
@@ -1101,8 +1141,8 @@ export function createWorkspaceTools(
         return done(o.text, started, o.bytes, false);
       },
     },
-    shell("bash", "bash"),
-    shell("powershell", "PowerShell"),
+    shell(win ? "powershell" : "bash", win ? "PowerShell" : "bash"),
+    shell(win ? "bash" : "powershell", win ? "Git Bash" : "PowerShell"),
   ];
   return Object.fromEntries(
     tools.map((t) => {

@@ -432,7 +432,7 @@ test(
     const h = harness();
     const script = `
     import assert from 'node:assert/strict';
-    import { readdirSync, existsSync } from 'node:fs';
+    import { readdirSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
     import { join } from 'node:path';
     import { createWorkspaceTools } from ${JSON.stringify(new URL("../../packages/splyce-pi/dist/workspace-tools.js", import.meta.url).href)};
     const root = process.argv[1];
@@ -449,11 +449,36 @@ test(
       },
       receipts: { record: r => { receipts.push(r); return 'r1'; } },
       sessionId: 's1', workspaceId: 'w1',
+      limits: { timeoutMs: 10000, maxOutputBytes: 512 * 1024 },
     });
-    const run = async command => { consumed = false; return tools.powershell.result({ command }); };
+    const run = async command => { consumed = false; return tools.powershell.result({ command, timeout: 3 }); };
     const echo = await run('echo splyce');
     assert.equal(echo.text.trim(), 'splyce');
     assert.equal(echo.summary.exitCode, 0);
+    assert.ok(echo.summary.durationMs < 3000);
+    const stdin = await run('[Console]::In.ReadLine(); Write-Output stdin-closed');
+    assert.equal(stdin.text.trim(), 'stdin-closed');
+    consumed = false;
+    const bash = await tools.bash.result({ command: 'echo splyce', timeout: 3 });
+    assert.equal(bash.text.trim(), 'splyce');
+    assert.equal(bash.summary.exitCode, 0);
+    assert.ok(bash.summary.durationMs < 3000);
+    consumed = false;
+    const bashStdin = await tools.bash.result({ command: 'read -r line; echo stdin-closed', timeout: 3 });
+    assert.equal(bashStdin.text.trim(), 'stdin-closed');
+    consumed = false;
+    const bashIdentity = await tools.bash.result({ command: '/usr/bin/cygpath -m "$BASH"; /usr/bin/uname -s', timeout: 3 });
+    assert.match(bashIdentity.text, /Git\\/.*bash/);
+    assert.match(bashIdentity.text, /MINGW|MSYS/);
+    assert.deepEqual(Object.keys(tools).filter(name => ['powershell', 'bash'].includes(name)), ['powershell', 'bash']);
+    const pipes = await run(${JSON.stringify(nodeCmd("process.stdout.write('o'.repeat(131072));process.stderr.write('e'.repeat(131072))"))});
+    assert.equal(pipes.summary.exitCode, 0);
+    assert.ok(pipes.text.includes('o'.repeat(65536)));
+    assert.ok(pipes.text.includes('e'.repeat(65536)));
+    await assert.rejects(run(${JSON.stringify(nodeCmd("const{spawn}=require('node:child_process');const{writeFileSync}=require('node:fs');const child=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{stdio:'inherit'});writeFileSync('tree.json',JSON.stringify([process.pid,child.pid]));setTimeout(()=>{},60000)"))}), { code: 'SHELL_TIMEOUT' });
+    for (const pid of JSON.parse(readFileSync(join(root, 'tree.json'), 'utf8')))
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    unlinkSync(join(root, 'tree.json'));
     const external = await run('& $env:ComSpec /d /c echo child-splyce');
     assert.equal(external.text.trim(), 'child-splyce');
     const probe = await run(${JSON.stringify("[System.IO.File]::WriteAllText((Join-Path $env:TEMP probe.txt), 'temp-ok'); @{ Cwd = (Get-Location).Path; TempExists = (Test-Path $env:TEMP); Env = [Environment]::GetEnvironmentVariables() } | ConvertTo-Json -Compress")});
@@ -475,8 +500,10 @@ test(
     await assert.rejects(run('echo splyce'), { code: 'SHELL_START_FAILED', message: 'Cannot start powershell: ENOENT. Check the system shell installation.' });
     assert.equal(receipts.at(-1).ok, false);
     assert.equal(receipts.at(-1).summary, 'SHELL_START_FAILED');
+    consumed = false;
+    await assert.rejects(tools.bash.result({ command: 'echo splyce', timeout: 3 }), { code: 'SHELL_START_FAILED' });
     assert.deepEqual(readdirSync(root), []);
-    console.log('restricted-shell: splyce; child-env; cwd; temp-cleanup; typed-spawn-error passed');
+    console.log('restricted-shell: splyce; stdin-EOF; Git-Bash; pipes; tree-cleanup; child-env; cwd; temp-cleanup; typed-spawn-error passed');
   `;
     const child = spawnSync(
       process.execPath,
