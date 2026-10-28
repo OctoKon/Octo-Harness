@@ -888,7 +888,7 @@ export class CodeIndex {
       return {
         path,
         line: li + 1,
-        preview: (d.lines[li] ?? "").trim().slice(0, 200),
+        preview: d.lines[li] ?? "",
         score,
         signals,
       };
@@ -1007,7 +1007,7 @@ export class CodeIndex {
           references.push({
             path,
             line: i + 1,
-            preview: l.trim().slice(0, 200),
+            preview: l,
           });
       });
     }
@@ -1076,7 +1076,10 @@ export interface CodeIndexTool {
   readOnly: true;
   /** JSON Schema for the model-supplied arguments. */
   parameters: Record<string, unknown>;
-  execute(args: unknown): Promise<unknown>;
+  execute(
+    args: unknown,
+    prepareOutput?: (value: unknown) => Promise<unknown>,
+  ): Promise<unknown>;
 }
 
 /**
@@ -1136,10 +1139,15 @@ export function codeIndexTools(index: CodeIndex): readonly CodeIndexTool[] {
     description,
     readOnly: true,
     parameters,
-    async execute(args: unknown) {
+    async execute(args, prepareOutput) {
       const a = obj(args);
       await index.refresh();
-      return capOutput(await run(a), index.truncated);
+      const value = await run(a);
+      // Prepare complete previews before the structured output cap can discard hits.
+      return capOutput(
+        prepareOutput ? await prepareOutput(value) : value,
+        index.truncated,
+      );
     },
   });
   return Object.freeze([

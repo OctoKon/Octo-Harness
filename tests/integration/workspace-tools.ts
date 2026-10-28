@@ -1159,7 +1159,7 @@ for (const spaced of [false, true])
       assert.equal(r.summary.bytes, Buffer.byteLength(raw) + prefix);
     });
 
-test("async native redaction runs after the built-in scrub and before previews", async () => {
+test("async native redaction runs on original text before the built-in scrub and previews", async () => {
   const credential = "native fixture credential";
   const inputs: string[] = [];
   const h = harness(undefined, async (text) => {
@@ -1169,15 +1169,53 @@ test("async native redaction runs after the built-in scrub and before previews",
   });
   writeFileSync(join(h.root, "async.txt"), `${apiKey} ${credential}`);
   const r = await result(h, "read", { path: "async.txt" });
-  assert.ok(
-    inputs.length > 0 && inputs.every((text) => !text.includes(apiKey)),
-  );
+  assert.ok(inputs.some((text) => text.includes(apiKey)));
   assert.equal(r.text, "[REDACTED] [X]");
   assert.equal(r.summary.preview, r.text);
   const error = await run(h, "read", { path: `missing-${credential}` }).catch(
     (e: unknown) => e,
   );
   assert.ok(error instanceof Error && !error.message.includes(credential));
+});
+
+test("native redaction sees overlapping secret shapes before the built-in scrub", async () => {
+  const credential = ["left", "right-tail"].join(" ");
+  const h = harness(undefined, async (text) =>
+    text.replaceAll(credential, "[X]"),
+  );
+  writeFileSync(join(h.root, "overlap.txt"), `token=${credential}`);
+  const r = await result(h, "read", { path: "overlap.txt" });
+  assert.equal(r.text, "token=[REDACTED]");
+  assert.ok(!JSON.stringify(r).includes("right-tail"));
+});
+
+test("shell abort during target redaction preserves the grant and never spawns", async () => {
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const command = "echo spawned > abort-marker.txt";
+  const target = `${sh}:${command}`;
+  const h = harness(undefined, async (text) => {
+    if (text === target) {
+      entered.resolve();
+      await release.promise;
+    }
+    return text;
+  });
+  const grantId = h.grants.approve("shell.run", target);
+  const controller = new AbortController();
+  const pending = h.tools[sh]!.result({ command }, controller.signal);
+  const outcome = codeOf(pending);
+  await entered.promise;
+  controller.abort();
+  release.resolve();
+  const errorCode = await outcome;
+  assert.equal(existsSync(join(h.root, "abort-marker.txt")), false);
+  assert.equal(h.grants.all.find((g) => g.id === grantId)?.consumed, undefined);
+  assert.equal(h.log.length, 0);
+  assert.equal(errorCode, "ABORTED");
+  await run(h, sh, { command });
+  assert.equal(existsSync(join(h.root, "abort-marker.txt")), true);
+  assert.equal(h.grants.all.find((g) => g.id === grantId)?.consumed, true);
 });
 
 for (const [kind, redact] of [

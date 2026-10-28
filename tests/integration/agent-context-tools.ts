@@ -179,6 +179,52 @@ test("C2: native scrub guard is live for credentials outside the built-in patter
   );
 });
 
+for (const name of ["code_search", "code_symbol"])
+  for (const tail of [100, MAX_OUTPUT_BYTES + 100])
+    test(`C2: ${name} redacts real index previews before the 200-char cut (tail=${tail})`, async () => {
+      const credential = ["boundaryLeft", "boundaryRight"].join(" ");
+      const prefix = "alphaWidget('".padEnd(195, ".");
+      const line = `${prefix}${credential}${"z".repeat(tail)}');`;
+      const inputs: string[] = [];
+      const { by } = await build({ "src/cut.ts": line }, (text) => {
+        inputs.push(text);
+        return text.replaceAll(credential, "[X]");
+      });
+      const r = await by(name).result(
+        name === "code_search"
+          ? { query: "alphaWidget" }
+          : { name: "alphaWidget" },
+      );
+      const value = JSON.parse(r.text);
+      const hits = name === "code_search" ? value.results : value.references;
+      assert.equal(hits.length, 1);
+      assert.ok(
+        inputs.includes(line),
+        "native redactor receives the full line",
+      );
+      assert.ok(!JSON.stringify(r).includes("bound"));
+      assert.ok(hits[0].preview.includes("[X]"));
+      assert.equal(hits[0].preview.length, 200);
+      assert.equal(r.summary.truncated, true);
+    });
+
+test("C2: native redaction sees overlapping secret shapes before the built-in scrub", async () => {
+  const credential = ["left", "right-tail"].join(" ");
+  const { by } = await build(
+    { "src/overlap.ts": `alphaWidget('token=${credential}');` },
+    async (text) => text.replaceAll(credential, "[X]"),
+  );
+  for (const name of ["code_search", "code_symbol"]) {
+    const r = await by(name).result(
+      name === "code_search"
+        ? { query: "alphaWidget" }
+        : { name: "alphaWidget" },
+    );
+    assert.ok(!JSON.stringify(r).includes("right-tail"));
+    assert.ok(r.text.includes("[REDACTED]"));
+  }
+});
+
 test("C2: output is capped at the index 64 KB, also for oversized tool text", async () => {
   const files: Record<string, string> = {};
   for (let i = 0; i < 400; i += 1)

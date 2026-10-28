@@ -140,7 +140,7 @@ export interface WorkspaceToolsOptions {
   sessionId: string;
   workspaceId: string;
   limits?: { timeoutMs: number; maxOutputBytes: number };
-  /** TD-16 redactor for active credentials; applied after the built-in scrub. */
+  /** TD-16 redactor for active credentials; applied to original text before the built-in scrub. */
   redact?: Redactor;
 }
 
@@ -431,9 +431,11 @@ export function createWorkspaceTools(
     grantId: string,
     a: Act,
     fn: () => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
     // The grant check matches the exact target above; durable intent/receipt text is redacted.
     const intent = { ...req(capability, await clean(target), a), summary: "" };
+    if (signal?.aborted) fail("ABORTED", "aborted");
     try {
       grants.consume(grantId, intent);
     } catch {
@@ -523,8 +525,7 @@ export function createWorkspaceTools(
   // Redact the whole text first so a secret straddling the preview cut is never half-kept.
   const clean = async (text: string): Promise<string> => {
     try {
-      const first = scrubSecrets(text);
-      const safe = opts.redact ? await opts.redact(first) : first;
+      const safe = opts.redact ? await opts.redact(text) : text;
       if (typeof safe === "string") return scrubSecrets(safe);
     } catch {
       // Redactor failures must never publish the input or their own message.
@@ -580,6 +581,7 @@ export function createWorkspaceTools(
             win ? "powershell.exe" : "pwsh",
             ["-NoProfile", "-NonInteractive", "-Command", command],
           ];
+    if (signal?.aborted) fail("ABORTED", "aborted");
     const child = spawn(file as string, args as string[], {
       cwd: root(),
       env: scrubbedEnv(),
@@ -694,6 +696,7 @@ export function createWorkspaceTools(
           }, reject);
         });
       });
+      if (signal?.aborted) onAbort();
     });
   }
 
@@ -717,10 +720,18 @@ export function createWorkspaceTools(
       const ms = Math.min(timeoutMs, optNum(args.timeout, Infinity) * 1000);
       const target = `${kind}:${command}`;
       const grantId = gate("shell.run", target, a);
-      const { r } = await effect("shell.run", target, grantId, a, async () => {
+      const execute = async () => {
         const r = await exec(kind, command, ms, signal);
         return { summary: `exit ${String(r.code)}`, ok: r.code === 0, r };
-      });
+      };
+      const { r } = await effect(
+        "shell.run",
+        target,
+        grantId,
+        a,
+        execute,
+        signal,
+      );
       return done(
         r.code === 0 ? r.text : `${r.text}\n[exit code ${String(r.code)}]`,
         started,
