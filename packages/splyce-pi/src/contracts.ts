@@ -33,6 +33,114 @@ export class ContractError extends Error {
   }
 }
 
+export const PERMISSION_MODES = ["manual", "auto", "bypass"] as const;
+export type NativePermissionMode = (typeof PERMISSION_MODES)[number];
+export interface PermissionReadRequest {
+  readonly requestId: string;
+  readonly workspaceId: string;
+  readonly sessionId: string;
+}
+export interface PermissionSetRequest extends PermissionReadRequest {
+  readonly mode: NativePermissionMode;
+}
+export interface PermissionResult {
+  readonly workspaceId: string;
+  readonly sessionId: string;
+  readonly mode: NativePermissionMode;
+}
+
+function permissionFields(value: unknown, fields: readonly string[]) {
+  json(value, false);
+  const input = object(value, "permission");
+  requireThat(
+    Reflect.ownKeys(input).length === fields.length &&
+      fields.every((field) => Object.hasOwn(input, field)),
+    "INVALID_PERMISSION_MODE",
+    "fields",
+  );
+  for (const field of fields.filter((field) => field !== "mode")) {
+    const id = input[field];
+    requireThat(
+      typeof id === "string" &&
+        id.length <= 128 &&
+        /^[\x21-\x7e]+$/u.test(id) &&
+        !/[/\\]/u.test(id),
+      "INVALID_PERMISSION_MODE",
+      field,
+    );
+  }
+  if (fields.includes("mode"))
+    requireThat(
+      PERMISSION_MODES.some((mode) => mode === input.mode),
+      "INVALID_PERMISSION_MODE",
+      "mode",
+    );
+  return input;
+}
+
+export function validatePermissionRead(
+  value: unknown,
+  requestId: string,
+): Readonly<PermissionReadRequest> {
+  const input = permissionFields(value, [
+    "requestId",
+    "workspaceId",
+    "sessionId",
+  ]);
+  requireThat(
+    input.requestId === requestId,
+    "INVALID_PERMISSION_MODE",
+    "requestId",
+  );
+  return Object.freeze({
+    requestId: input.requestId as string,
+    workspaceId: input.workspaceId as string,
+    sessionId: input.sessionId as string,
+  });
+}
+
+export function validatePermissionSet(
+  value: unknown,
+  requestId: string,
+): Readonly<PermissionSetRequest> {
+  const input = permissionFields(value, [
+    "requestId",
+    "workspaceId",
+    "sessionId",
+    "mode",
+  ]);
+  requireThat(
+    input.requestId === requestId,
+    "INVALID_PERMISSION_MODE",
+    "requestId",
+  );
+  return Object.freeze({
+    requestId: input.requestId as string,
+    workspaceId: input.workspaceId as string,
+    sessionId: input.sessionId as string,
+    mode: input.mode as NativePermissionMode,
+  });
+}
+
+export function validatePermissionResult(
+  value: unknown,
+  request: PermissionReadRequest | PermissionSetRequest,
+): Readonly<PermissionResult> {
+  const result = permissionFields(value, ["workspaceId", "sessionId", "mode"]);
+  requireThat(
+    result.workspaceId === request.workspaceId &&
+      result.sessionId === request.sessionId &&
+      (!("mode" in request) || result.mode === request.mode),
+    "INVALID_PERMISSION_MODE",
+    "result",
+  );
+  return Object.freeze({
+    workspaceId: result.workspaceId as string,
+    sessionId: result.sessionId as string,
+    mode: result.mode as NativePermissionMode,
+  });
+}
+
 export interface ContractContext {
   scopeId: string;
   sessionId: string;

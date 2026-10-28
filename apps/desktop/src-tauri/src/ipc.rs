@@ -322,7 +322,14 @@ impl BridgeState {
         let selection = method == "send"
             && matches!(
                 params["command"].as_str(),
-                Some("profile.select" | "session.start" | "setup.read")
+                Some(
+                    "profile.select"
+                        | "session.start"
+                        | "session.resume"
+                        | "setup.read"
+                        | "permission.set"
+                        | "permission.read"
+                )
             )
             && valid_setup(params["command"].as_str().unwrap(), &params);
         let mut inner = self.inner.lock().map_err(|_| BridgeError::engine())?;
@@ -573,6 +580,8 @@ fn valid_setup(op: &str, value: &Value) -> bool {
                 && value["payload"]["requestId"] == value["requestId"]
                 && setup_id(&value["payload"]["requestId"])
                 && setup_id(&value["payload"]["workspaceId"]))
+            || (matches!(op, "permission.set" | "permission.read" | "session.resume")
+                && valid_permission_request(op, value))
             || (is_page_read(op) && valid_page_read_request(op, value))
             || (matches!(op, "profile.select" | "session.start") && {
                 let fields: &[&str] = if op == "profile.select" {
@@ -596,6 +605,36 @@ fn valid_setup(op: &str, value: &Value) -> bool {
                     && payload["requestId"] == value["requestId"]
                     && fields.iter().all(|field| setup_id(&payload[*field]))
             }))
+}
+
+fn valid_permission_request(op: &str, frame: &Value) -> bool {
+    let fields: &[&str] = if op == "permission.set" {
+        &["requestId", "workspaceId", "sessionId", "mode"]
+    } else {
+        &["requestId", "workspaceId", "sessionId"]
+    };
+    let payload = &frame["payload"];
+    exact_fields(payload, fields)
+        && payload["requestId"] == frame["requestId"]
+        && ["requestId", "workspaceId", "sessionId"]
+            .iter()
+            .all(|field| permission_id(&payload[*field]))
+        && (op != "permission.set"
+            || matches!(payload["mode"].as_str(), Some("manual" | "auto" | "bypass")))
+}
+
+fn valid_permission_result(value: &Value, request: &Value) -> bool {
+    exact_fields(value, &["workspaceId", "sessionId", "mode"])
+        && permission_id(&value["workspaceId"])
+        && permission_id(&value["sessionId"])
+        && value["workspaceId"] == request["workspaceId"]
+        && value["sessionId"] == request["sessionId"]
+        && matches!(value["mode"].as_str(), Some("manual" | "auto" | "bypass"))
+        && (request.get("mode").is_none() || value["mode"] == request["mode"])
+}
+
+fn permission_id(value: &Value) -> bool {
+    setup_id(value) && value.as_str().is_some_and(str::is_ascii)
 }
 
 fn exact_fields(value: &Value, fields: &[&str]) -> bool {
@@ -1347,6 +1386,11 @@ pub async fn send(
     } else if setup && op == "setup.read" {
         state.call_with_response("send", payload, |reply| {
             reply["ok"] != true || valid_setup_read_view(&reply["value"])
+        })
+    } else if setup && matches!(op.as_str(), "permission.set" | "permission.read") {
+        let request = payload["payload"].clone();
+        state.call_with_response("send", payload, |reply| {
+            reply["ok"] != true || valid_permission_result(&reply["value"], &request)
         })
     } else {
         state.call("send", payload)
@@ -2800,6 +2844,74 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
             "/../../../tests/fixtures/contracts/page-reads.json"
         )))
         .unwrap()
+    }
+
+    #[test]
+    fn permission_modes_require_strict_requests_and_matching_results() {
+        let fixtures: Vec<Value> = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/fixtures/contracts/permission-modes.json"
+        )))
+        .unwrap();
+        for case in fixtures {
+            let op = case["op"].as_str().unwrap();
+            let request = &case["request"];
+            let result = &case["result"];
+            let frame = json!({"frame":"setup", "command":op, "requestId":request["requestId"], "payload":request});
+            assert!(valid_setup(op, &frame));
+            assert!(valid_permission_result(result, request));
+            assert!(!valid_setup("unknown", &frame));
+            if op == "permission.read" {
+                let mut resume = frame.clone();
+                resume["command"] = json!("session.resume");
+                assert!(valid_setup("session.resume", &resume));
+                resume["payload"]["extra"] = json!(true);
+                assert!(!valid_setup("session.resume", &resume));
+            }
+            for field in request.as_object().unwrap().keys() {
+                let mut missing = frame.clone();
+                missing["payload"].as_object_mut().unwrap().remove(field);
+                assert!(!valid_setup(op, &missing));
+                for value in [
+                    json!(null),
+                    json!(""),
+                    json!("bad/id"),
+                    json!("bad\\id"),
+                    json!("bad id"),
+                    json!("bad\u{200b}id"),
+                    json!("λ".repeat(65)),
+                    json!("x".repeat(129)),
+                ] {
+                    let mut invalid = frame.clone();
+                    invalid["payload"][field] = value;
+                    assert!(!valid_setup(op, &invalid), "{op}: {field}");
+                }
+            }
+            let mut mismatch = frame.clone();
+            mismatch["payload"]["requestId"] = json!("other");
+            assert!(!valid_setup(op, &mismatch));
+            for field in ["grantIds", "approvedBy", "path", "secret", "extra"] {
+                let mut invalid = frame.clone();
+                invalid["payload"][field] = json!("untrusted");
+                assert!(!valid_setup(op, &invalid));
+                let mut invalid = result.clone();
+                invalid[field] = json!("untrusted");
+                assert!(!valid_permission_result(&invalid, request));
+            }
+            for field in ["workspaceId", "sessionId"] {
+                let mut invalid = result.clone();
+                invalid[field] = json!("other");
+                assert!(!valid_permission_result(&invalid, request));
+            }
+            for mode in ["accept-edits", "plan", "unknown"] {
+                let mut invalid = frame.clone();
+                invalid["payload"]["mode"] = json!(mode);
+                assert!(!valid_setup(op, &invalid));
+                let mut invalid = result.clone();
+                invalid["mode"] = json!(mode);
+                assert!(!valid_permission_result(&invalid, request));
+            }
+        }
     }
 
     #[test]

@@ -611,6 +611,15 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
     startSession(input, requestId, signal) {
       return sessions.handle("session.start", input, requestId, signal);
     },
+    resumeSession(input, requestId, signal) {
+      return sessions.handle("session.resume", input, requestId, signal);
+    },
+    setPermission(input, requestId, signal) {
+      return sessions.handle("permission.set", input, requestId, signal);
+    },
+    readPermission(input, requestId, signal) {
+      return sessions.handle("permission.read", input, requestId, signal);
+    },
     preparePrompt(command, signal) {
       if (!factory?.preparePrompt) fail("NATIVE_SESSION_UNAVAILABLE");
       return factory.preparePrompt(command, signal);

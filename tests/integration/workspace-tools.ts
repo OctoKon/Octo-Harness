@@ -1059,13 +1059,13 @@ const leaks = (t: string) => t.includes(apiKey) || t.includes(passwd);
 
 test("read, grep and shell results never carry secrets in text or preview", async () => {
   const h = harness();
-  writeFileSync(join(h.root, ".env"), planted);
-  const r = await result(h, "read", { path: ".env" });
+  writeFileSync(join(h.root, "redaction.txt"), planted);
+  const r = await result(h, "read", { path: "redaction.txt" });
   assert.ok(!leaks(r.text) && !leaks(r.summary.preview), "read");
   assert.match(r.summary.preview, /NAME=plain/);
   const g = await result(h, "grep", { pattern: "OPENAI|password" });
   assert.ok(!leaks(g.text) && !leaks(g.summary.preview), "grep");
-  const cmd = win ? "Get-Content .env" : "cat .env";
+  const cmd = win ? "Get-Content redaction.txt" : "cat redaction.txt";
   approveSh(h, cmd);
   const s = await result(h, sh, { command: cmd });
   assert.ok(!leaks(s.text) && !leaks(s.summary.preview), "shell");
@@ -1326,4 +1326,46 @@ test("timeout summaries suppress incomplete credential output", async () => {
       e.summary?.preview === "[unavailable]" &&
       !JSON.stringify(e).includes("vaultAAA"),
   );
+});
+
+test("protected files and canonical aliases are denied and excluded from directory searches", async () => {
+  const h = harness();
+  writeFileSync(join(h.root, ".env"), "PROTECTED_MARKER");
+  writeFileSync(join(h.root, "visible.txt"), "VISIBLE_MARKER");
+  mkdirSync(join(h.root, ".aws"));
+  writeFileSync(join(h.root, ".aws", "settings.txt"), "PROTECTED_MARKER");
+  for (const name of ["read", "write", "edit", "grep", "find", "ls"]) {
+    assert.equal(
+      await codeOf(
+        run(h, name, {
+          path: ".env",
+          pattern: "PROTECTED_MARKER",
+          content: "changed",
+          edits: [{ oldText: "PROTECTED_MARKER", newText: "changed" }],
+        }),
+      ),
+      "WORKSPACE_ESCAPE",
+      name,
+    );
+  }
+  if (link(h, "alias.txt", join(h.root, ".env"), "file"))
+    assert.equal(
+      await codeOf(run(h, "read", { path: "alias.txt" })),
+      "WORKSPACE_ESCAPE",
+    );
+  assert.doesNotMatch(
+    String(await run(h, "grep", { path: ".", pattern: "MARKER" })),
+    /PROTECTED_MARKER|\.env|\.aws/u,
+  );
+  assert.match(
+    String(await run(h, "grep", { path: ".", pattern: "MARKER" })),
+    /VISIBLE_MARKER/u,
+  );
+  assert.doesNotMatch(
+    String(await run(h, "find", { pattern: "**/*" })),
+    /\.env|\.aws/u,
+  );
+  assert.doesNotMatch(String(await run(h, "ls", {})), /\.env|\.aws/u);
+  assert.equal(readFileSync(join(h.root, ".env"), "utf8"), "PROTECTED_MARKER");
+  assert.equal(h.log.length, 0);
 });

@@ -18,6 +18,7 @@ export interface ProfileSelectionResult {
 
 export interface SessionStartResult {
   readonly sessionId: string;
+  readonly permissionMode?: "manual" | "auto" | "bypass";
   readonly sessionRevision: string;
   readonly policyRevision: string;
   readonly readiness: {
@@ -156,16 +157,22 @@ export function validateProfileSelectionResult(
 
 export function validateSessionStartResult(raw: unknown): SessionStartResult {
   const value = setupRecord(raw);
-  setupFields(value, [
-    "sessionId",
-    "sessionRevision",
-    "policyRevision",
-    "readiness",
-  ]);
+  setupFields(
+    value,
+    ["sessionId", "sessionRevision", "policyRevision", "readiness"],
+    ["permissionMode"],
+  );
   if (
     typeof value.policyRevision !== "string" ||
     !/^(0|[1-9][0-9]*)$/.test(value.policyRevision) ||
     value.policyRevision.length > 128
+  )
+    throw new Error("Invalid setup response");
+  if (
+    value.permissionMode !== undefined &&
+    value.permissionMode !== "manual" &&
+    value.permissionMode !== "auto" &&
+    value.permissionMode !== "bypass"
   )
     throw new Error("Invalid setup response");
   const readiness = setupRecord(value.readiness);
@@ -174,6 +181,9 @@ export function validateSessionStartResult(raw: unknown): SessionStartResult {
     throw new Error("Invalid setup response");
   return {
     sessionId: setupOpaque(value.sessionId),
+    ...(value.permissionMode !== undefined
+      ? { permissionMode: value.permissionMode }
+      : {}),
     sessionRevision: setupOpaque(value.sessionRevision),
     policyRevision: value.policyRevision,
     readiness: {

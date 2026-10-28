@@ -12,7 +12,6 @@ export function isSecretPath(rel: string): boolean {
       .toLowerCase(),
   );
   return (
-    parts.slice(0, -1).some((d) => SECRET_DIRS.has(d)) ||
-    SECRET_NAME.test(parts.at(-1)!)
+    parts.some((d) => SECRET_DIRS.has(d)) || SECRET_NAME.test(parts.at(-1)!)
   );
 }

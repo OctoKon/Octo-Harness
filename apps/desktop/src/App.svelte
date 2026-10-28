@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import { validatePermissionResult } from "@splyce/pi/contracts";
   import type {
     Handshake,
     PortAvailability,
@@ -27,6 +28,11 @@
   } from "./stores/approvals";
   import {
     initialPermissionMode,
+    confirmedPermissionModeRequest,
+    acknowledgeMode,
+    rejectMode,
+    PERMISSION_MODE_LABELS,
+    type PermissionMode,
     type PermissionModeContext,
   } from "./stores/permission-mode";
   import {
@@ -106,16 +112,6 @@
     nowMs: 0,
   };
 
-  // TD-30 Supervisor: a mode change is engine-admitted, and without the session
-  // revisions it cannot be admitted at all. The selector is visibly disabled
-  // with that reason instead of pretending a selection could take effect.
-  const permissionContext: PermissionModeContext = {
-    engine: "unavailable",
-    engineReason: "Session revisions are not delivered to the renderer yet",
-    configRevision: null,
-    policyRevision: null,
-  };
-
   // Snapshot seam: the only thing allowed to complete a session load. Readiness proves nothing about sessions.
   let {
     loadSessions,
@@ -146,26 +142,51 @@
   let chooserError = $state<string | null>(null);
   let profiles = $state<ConfiguredProfile[]>([]);
   let profileSelection = $state<ProfileSelectionResult | null>(null);
-  let startReplay: {
+  let startReplay = $state<{
     requestId: string;
     payload: ReturnType<typeof sessionStartPayload>;
-  } | null = null;
+  } | null>(null);
   let activeRunId = $state<string | null>(null);
+  let promptPending = $state(false);
   let cancelPending = $state(false);
   let profilePending = $state(false);
   let configuring = $state(false);
   let profileStatus = $state<string | null>(null);
   let setupEpoch = 0;
+  let composerKey = $state(0);
+  let permissionModeState = $state(initialPermissionMode(null));
+  let permissionKnown = $state(false);
+  const permissionOptions: readonly PermissionMode[] = [
+    "manual",
+    "auto",
+    "bypass",
+  ];
+  const permissionContext: PermissionModeContext = $derived({
+    engine:
+      permissionKnown &&
+      startedSession &&
+      $selectedSession?.sessionId === startedSession.sessionId &&
+      readiness?.state === "ready" &&
+      permissionModeState.status !== "pending"
+        ? "ready"
+        : "unavailable",
+    engineReason: "Start a ready session to change permissions.",
+    configRevision: profileSelection?.configRevision ?? null,
+    policyRevision: startedSession?.policyRevision ?? null,
+  });
 
   function invalidateSetup() {
     setupEpoch++;
     sessionPortWitness = false;
     startReplay = null;
     activeRunId = null;
+    promptPending = false;
     cancelPending = false;
     profiles = [];
     profileSelection = null;
     startedSession = null;
+    permissionModeState = initialPermissionMode(null);
+    permissionKnown = false;
     profilePending = false;
     configuring = false;
     profileStatus = null;
@@ -307,11 +328,17 @@
         project.workspaceId,
         startRequestId,
       );
+      startReplay = { requestId: startRequestId, payload: startPayload };
       const started = validateSessionStartResult(
         await sendSetup("session.start", startRequestId, startPayload),
       );
       if (epoch !== setupEpoch) return;
       startedSession = started;
+      permissionModeState = {
+        ...initialPermissionMode(started.sessionId),
+        effective: started.permissionMode ?? "manual",
+      };
+      permissionKnown = true;
       startReplay = { requestId: startRequestId, payload: startPayload };
       if (started.readiness.state === "ready") {
         profileStatus = "Checking engine readiness…";
@@ -345,6 +372,118 @@
       if (epoch === setupEpoch) profilePending = false;
     }
   }
+  async function changeMode(mode: PermissionMode) {
+    const project = workspace;
+    const session = startedSession;
+    if (
+      !project ||
+      !session ||
+      permissionModeState.sessionId !== session.sessionId ||
+      (mode !== "manual" && mode !== "auto" && mode !== "bypass")
+    )
+      return;
+    const request = confirmedPermissionModeRequest(
+      permissionModeState,
+      mode,
+      permissionContext,
+    );
+    if (request.kind !== "requested") return;
+    const epoch = setupEpoch;
+    permissionModeState = request.state;
+    const requestId = crypto.randomUUID();
+    try {
+      const payload = {
+        requestId,
+        workspaceId: project.workspaceId,
+        sessionId: session.sessionId,
+        mode,
+      };
+      validatePermissionResult(
+        await sendSetup("permission.set", requestId, payload),
+        payload,
+      );
+      if (
+        epoch !== setupEpoch ||
+        permissionModeState.sessionId !== session.sessionId
+      )
+        return;
+      permissionModeState = acknowledgeMode(permissionModeState, mode);
+      permissionKnown = true;
+    } catch {
+      if (
+        epoch === setupEpoch &&
+        permissionModeState.sessionId === session.sessionId
+      )
+        permissionModeState = rejectMode(
+          permissionModeState,
+          "Permission change could not be confirmed.",
+        );
+    }
+  }
+
+  async function newChat(retryStart = false) {
+    const project = workspace;
+    const selected = profileSelection;
+    if (
+      !project ||
+      !selected ||
+      readiness?.state !== "ready" ||
+      profilePending ||
+      configuring ||
+      activeRunId !== null ||
+      promptPending
+    )
+      return;
+    const epoch = ++setupEpoch;
+    profilePending = true;
+    sessionPortWitness = false;
+    activeRunId = null;
+    startedSession = null;
+    const replay = retryStart ? startReplay : null;
+    startReplay = null;
+    permissionModeState = initialPermissionMode(null);
+    permissionKnown = false;
+    clearSession();
+    turns = createTurnsState();
+    if (!retryStart) composerKey++;
+    view = "work";
+    profileStatus = "Starting session…";
+    const requestId = replay?.requestId ?? crypto.randomUUID();
+    const payload =
+      replay?.payload ??
+      sessionStartPayload(selected, project.workspaceId, requestId);
+    startReplay = { requestId, payload };
+    try {
+      const started = validateSessionStartResult(
+        await sendSetup("session.start", requestId, payload),
+      );
+      if (epoch !== setupEpoch) return;
+      startedSession = started;
+      permissionModeState = {
+        ...initialPermissionMode(started.sessionId),
+        effective: started.permissionMode ?? "manual",
+      };
+      permissionKnown = true;
+      startReplay = { requestId, payload };
+      if (started.readiness.state !== "ready")
+        throw new Error("Session unavailable");
+      const verified = await handshake();
+      if (epoch !== setupEpoch) return;
+      readiness = verified.readiness;
+      sessionPortWitness = true;
+      selectSession({
+        sessionId: started.sessionId,
+        scopeId: project.workspaceId,
+      });
+      profileStatus = "Profile selected. Session ready.";
+      void runLoad();
+    } catch (error) {
+      if (epoch === setupEpoch)
+        profileStatus = `Session could not be started. ${setupErrorCopy(error)}`;
+    } finally {
+      if (epoch === setupEpoch) profilePending = false;
+    }
+  }
   function isOpaqueId(value: string) {
     return (
       !/[\uD800-\uDFFF]/u.test(value) &&
@@ -355,24 +494,34 @@
   }
 
   async function refreshStaleSession(epoch: number) {
-    const replay = startReplay;
     const previous = startedSession;
+    const project = workspace;
     sessionPortWitness = false;
-    if (!replay || !previous) return;
+    if (!project || !previous) return;
+    const requestId = crypto.randomUUID();
     try {
       const refreshed = validateSessionStartResult(
-        await sendSetup("session.start", replay.requestId, replay.payload),
+        await sendSetup("session.resume", requestId, {
+          requestId,
+          workspaceId: project.workspaceId,
+          sessionId: previous.sessionId,
+        }),
       );
+      if (epoch !== setupEpoch) return;
       if (
-        epoch !== setupEpoch ||
         refreshed.sessionId !== previous.sessionId ||
         refreshed.sessionRevision !== previous.sessionRevision ||
         refreshed.readiness.state !== "ready"
       )
-        return;
+        throw new Error("Invalid readiness refresh");
       const verified = await handshake();
       if (epoch !== setupEpoch) return;
       startedSession = refreshed;
+      permissionModeState = {
+        ...initialPermissionMode(refreshed.sessionId),
+        effective: refreshed.permissionMode ?? "manual",
+      };
+      permissionKnown = true;
       readiness = verified.readiness;
       sessionPortWitness = true;
       retry();
@@ -391,12 +540,6 @@
   let currentRun = $derived(
     turns.currentRunId ? turns.runs[turns.currentRunId] : undefined,
   );
-  // A different session starts on the safe mode: no mode or pending request
-  // carries over from the previous one.
-  const permissionModeState = $derived(
-    initialPermissionMode($selectedSession?.sessionId ?? null),
-  );
-
   // TD-33: the actions target the branch the tree actually selected. The engine
   // still does not deliver the revisions a lifecycle request needs, and a
   // rewind/code restore is not admitted yet, so every action is visibly disabled
@@ -449,13 +592,25 @@
         for (const event of events) applyTree(event);
         dispatchNav({ type: "loaded" });
       } else if (project) {
-        const snapshot = await listSessions(project.workspaceId, crypto.randomUUID());
-        if (epoch !== loadEpoch || workspace?.workspaceId !== project.workspaceId) return;
-        for (const session of snapshot.sessions) scopes.set(session.sessionId, project.workspaceId);
+        const snapshot = await listSessions(
+          project.workspaceId,
+          crypto.randomUUID(),
+        );
+        if (
+          epoch !== loadEpoch ||
+          workspace?.workspaceId !== project.workspaceId
+        )
+          return;
+        for (const session of snapshot.sessions)
+          scopes.set(session.sessionId, project.workspaceId);
         dispatchNav({ type: "snapshot", sessions: snapshot.sessions });
       }
     } catch (e) {
-      if (epoch !== loadEpoch || workspace?.workspaceId !== project?.workspaceId) return;
+      if (
+        epoch !== loadEpoch ||
+        workspace?.workspaceId !== project?.workspaceId
+      )
+        return;
       dispatchNav({
         type: "failed",
         message: e instanceof Error ? e.message : String(e),
@@ -465,8 +620,11 @@
 
   // Readiness never completes a load: without a snapshot the previous navigation state is kept, selection included.
   $effect(() => {
-    if (!loadSessions && readiness?.state === "ready" &&
-      (status === "ready" || status === "busy" || status === "unavailable")) {
+    if (
+      !loadSessions &&
+      readiness?.state === "ready" &&
+      (status === "ready" || status === "busy" || status === "unavailable")
+    ) {
       if (workspace) void runLoad();
       else if (untrack(() => Object.keys(nav.branches).length > 0))
         dispatchNav({ type: "loaded" });
@@ -475,22 +633,90 @@
       if (loadSessions) void runLoad();
       else if (untrack(() => Object.keys(nav.branches).length > 0))
         dispatchNav({ type: "loaded" });
-    } else if (status === "error" || (status === "unavailable" && readiness?.state !== "ready"))
+    } else if (
+      status === "error" ||
+      (status === "unavailable" && readiness?.state !== "ready")
+    )
       dispatchNav({ type: "failed", message: "Engine unavailable." });
   });
 
   function onSelect(key: string) {
+    if (activeRunId !== null || promptPending) return;
     dispatchNav({ type: "select", key });
     const node = visibleNodes(nav).find((n) => n.key === key);
     const scopeId = node && scopes.get(node.sessionId);
-    if (node && startedSession && node.sessionId !== startedSession.sessionId) {
-      startedSession = null;
-      profileStatus =
-        "Readiness has not been reported for the selected session.";
-    }
     if (node && scopeId) {
+      permissionModeState = initialPermissionMode(node.sessionId);
+      permissionKnown = false;
       selectSession({ sessionId: node.sessionId, scopeId });
       view = "work";
+      if (startedSession?.sessionId !== node.sessionId) {
+        startedSession = null;
+        sessionPortWitness = false;
+        void resumeSession(scopeId, node.sessionId);
+      } else {
+        void readPermission(scopeId, node.sessionId);
+      }
+    }
+  }
+
+  async function resumeSession(workspaceId: string, sessionId: string) {
+    if (
+      !profileSelection ||
+      workspace?.workspaceId !== workspaceId ||
+      readiness?.state !== "ready"
+    ) {
+      profileStatus = "Select a profile to resume this session.";
+      void readPermission(workspaceId, sessionId);
+      return;
+    }
+    const epoch = ++setupEpoch;
+    profilePending = true;
+    profileStatus = "Resuming session…";
+    const requestId = crypto.randomUUID();
+    try {
+      const resumed = validateSessionStartResult(
+        await sendSetup("session.resume", requestId, {
+          requestId,
+          workspaceId,
+          sessionId,
+        }),
+      );
+      if (
+        epoch !== setupEpoch ||
+        $selectedSession?.sessionId !== sessionId ||
+        workspace?.workspaceId !== workspaceId
+      )
+        return;
+      if (
+        resumed.sessionId !== sessionId ||
+        resumed.readiness.state !== "ready"
+      )
+        throw new Error("Session unavailable");
+      const verified = await handshake();
+      if (
+        epoch !== setupEpoch ||
+        $selectedSession?.sessionId !== sessionId ||
+        workspace?.workspaceId !== workspaceId
+      )
+        return;
+      startedSession = resumed;
+      permissionModeState = {
+        ...initialPermissionMode(sessionId),
+        effective: resumed.permissionMode ?? "manual",
+      };
+      permissionKnown = true;
+      readiness = verified.readiness;
+      sessionPortWitness = true;
+      profileStatus = "Session ready.";
+    } catch {
+      if (epoch === setupEpoch && $selectedSession?.sessionId === sessionId) {
+        profileStatus =
+          "Could not resume this session. Select it again to retry.";
+        void readPermission(workspaceId, sessionId);
+      }
+    } finally {
+      if (epoch === setupEpoch) profilePending = false;
     }
   }
 
@@ -498,6 +724,30 @@
   $effect(() => {
     if (nav.lostSelection) clearSession();
   });
+
+  async function readPermission(workspaceId: string, sessionId: string) {
+    const requestId = crypto.randomUUID();
+    try {
+      const payload = { requestId, workspaceId, sessionId };
+      const { mode } = validatePermissionResult(
+        await sendSetup("permission.read", requestId, payload),
+        payload,
+      );
+      if (
+        permissionModeState.sessionId !== sessionId ||
+        workspace?.workspaceId !== workspaceId
+      )
+        return;
+      permissionModeState = {
+        ...initialPermissionMode(sessionId),
+        effective: mode,
+      };
+      permissionKnown = true;
+    } catch {
+      if (permissionModeState.sessionId === sessionId)
+        profileStatus = "Session permission mode could not be read.";
+    }
+  }
 
   function canRespond(actionId: string) {
     return (
@@ -645,6 +895,17 @@
 >
   <Workbench
     {view}
+    onNewChat={() => void newChat()}
+    newChatUnavailable={!workspace ||
+      !profileSelection ||
+      readiness?.state !== "ready" ||
+      profilePending ||
+      configuring ||
+      activeRunId !== null ||
+      promptPending}
+    effectiveMode={permissionKnown
+      ? PERMISSION_MODE_LABELS[permissionModeState.effective]
+      : "Unknown"}
     onNavigate={(next) => (view = next)}
     workspaceName={workspace?.displayName}
     {choosing}
@@ -661,14 +922,14 @@
     <div class="work-panel" hidden={view !== "work"}>
       <div class="page work-page" class:has-session={$selectedSession !== null}>
         <div class="work-stage">
-          {#if $selectedSession === null && !currentRun}
-            <h1 class="work-motto">
-              Barebones by default.<br />Modular by choice.<br /><em
-                >Evidence by design.</em
-              >
-            </h1>
-          {:else}
-            <header class="page-head">
+          <header class="page-head">
+            {#if $selectedSession === null && !currentRun}
+              <h1 class="work-motto">
+                Barebones by default.<br />Modular by choice.<br /><em
+                  >Evidence by design.</em
+                >
+              </h1>
+            {:else}
               <div>
                 <div class="eyebrow">
                   Work · {workspace?.displayName ?? "Project unavailable"}
@@ -676,7 +937,28 @@
                 <h1>Session</h1>
                 <p class="sub">{$selectedSession?.sessionId}</p>
               </div>
-            </header>
+            {/if}
+            <button
+              type="button"
+              disabled={!workspace ||
+                !profileSelection ||
+                readiness?.state !== "ready" ||
+                profilePending ||
+                configuring ||
+                activeRunId !== null ||
+                promptPending}
+              onclick={() => void newChat()}>+ New chat</button
+            >
+          </header>
+          {#if activeRunId}<p role="status">
+              Stop the active turn before starting a new chat.
+            </p>{/if}
+          {#if profileStatus && !startedSession}
+            <p role="status">{profileStatus}</p>
+            {#if startReplay && !profilePending}<button
+                type="button"
+                onclick={() => void newChat(true)}>Retry session start</button
+              >{/if}
           {/if}
           <ApprovalSurface
             requests={approvalRequests}
@@ -835,9 +1117,12 @@
             data-testid="supervisor"
           >
             <h2>Supervisor</h2>
+            <p>Saved for this workspace and used by new chats.</p>
             <PermissionModeSelect
               modeState={permissionModeState}
               context={permissionContext}
+              options={permissionOptions}
+              onChange={(mode) => void changeMode(mode)}
             />
           </section>
           <div class="surface-card">
@@ -862,7 +1147,8 @@
     onFocus={(key) => dispatchNav({ type: "focus", key })}
     onMove={(to) => dispatchNav({ type: "move", to })}
     onRetry={() => {
-      if (readiness?.state === "ready" && (loadSessions || workspace)) void runLoad();
+      if (readiness?.state === "ready" && (loadSessions || workspace))
+        void runLoad();
     }}
   />
 {/snippet}
@@ -901,101 +1187,119 @@
   {#if ports && !ports.workspace}
     <p role="status">Workspace tools unavailable</p>
   {/if}
-  <Composer
-    workspaceName={workspace?.displayName}
-    runtimeName={selectedProfile?.modelId}
-    onChooseProject={() => void chooseProject()}
-    projectUnavailable={chooserReason !== null || choosing}
-    onOpenModels={() => (view = "models")}
-    connection={status}
-    sessionId={startedSession?.sessionId ?? $selectedSession?.sessionId ?? null}
-    {generationReady}
-    workspaceSelected={workspace !== null}
-    profileSelected={profileSelection !== null}
-    sessionReadiness={startedSession?.readiness.state}
-    stale={turns.stale || turns.needsResync}
-    unavailable={subscription.state !== "live" ||
-    $selectedSession?.sessionId !== startedSession?.sessionId ||
-    $selectedSession?.scopeId !== workspace?.workspaceId
-      ? "Session subscription is unavailable. Sending stays blocked."
-      : activeRunId
-        ? "A turn is running."
-        : undefined}
-    cancellable={activeRunId !== null && !cancelPending}
-    cancel={async () => {
-      if (!startedSession || !activeRunId || cancelPending) return;
-      const epoch = setupEpoch;
-      const sessionId = startedSession.sessionId;
-      const runId = activeRunId;
-      cancelPending = true;
-      try {
-        await cancelSession(sessionId);
-        if (epoch === setupEpoch && activeRunId === runId) activeRunId = null;
-      } catch {
-        if (epoch === setupEpoch)
-          profileStatus = "Cancellation could not be confirmed.";
-      } finally {
-        if (epoch === setupEpoch) cancelPending = false;
-      }
-    }}
-    send={async (payload) => {
-      const project = workspace;
-      const selected = profileSelection;
-      const session = startedSession;
-      const epoch = setupEpoch;
-      if (
-        !project ||
-        !selected ||
-        !session ||
-        status !== "ready" ||
-        generationReady !== true ||
-        subscription.state !== "live" ||
-        !sessionPortWitness ||
-        turns.stale ||
-        turns.needsResync ||
-        $selectedSession?.sessionId !== session.sessionId ||
-        $selectedSession?.scopeId !== project.workspaceId
-      )
-        throw new Error("Session unavailable");
-      try {
-        const result = await invoke("session.prompt", payload, {
-          sessionId: session.sessionId,
-          scopeId: project.workspaceId,
-          expectedConfigRevision: selected.configRevision,
-          expectedProfileRevision: selected.profileRevision,
-          expectedPolicyRevision: session.policyRevision,
-        });
+  {#key composerKey}
+    <Composer
+      workspaceName={workspace?.displayName}
+      runtimeName={selectedProfile?.modelId}
+      onChooseProject={() => void chooseProject()}
+      projectUnavailable={chooserReason !== null || choosing}
+      onOpenModels={() => (view = "models")}
+      connection={status}
+      sessionId={startedSession?.sessionId ??
+        $selectedSession?.sessionId ??
+        null}
+      {generationReady}
+      workspaceSelected={workspace !== null}
+      profileSelected={profileSelection !== null}
+      sessionReadiness={startedSession?.readiness.state}
+      stale={turns.stale || turns.needsResync}
+      unavailable={subscription.state !== "live" ||
+      $selectedSession?.sessionId !== startedSession?.sessionId ||
+      $selectedSession?.scopeId !== workspace?.workspaceId
+        ? "Session subscription is unavailable. Sending stays blocked."
+        : activeRunId
+          ? "A turn is running."
+          : undefined}
+      cancellable={activeRunId !== null && !cancelPending}
+      cancel={async () => {
+        if (!startedSession || !activeRunId || cancelPending) return;
+        const epoch = setupEpoch;
+        const sessionId = startedSession.sessionId;
+        const runId = activeRunId;
+        cancelPending = true;
+        try {
+          await cancelSession(sessionId);
+          if (epoch === setupEpoch && activeRunId === runId) activeRunId = null;
+        } catch {
+          if (epoch === setupEpoch)
+            profileStatus = "Cancellation could not be confirmed.";
+        } finally {
+          if (epoch === setupEpoch) cancelPending = false;
+        }
+      }}
+      send={async (payload) => {
+        const project = workspace;
+        const selected = profileSelection;
+        const session = startedSession;
+        const epoch = setupEpoch;
         if (
-          result === null ||
-          typeof result !== "object" ||
-          Array.isArray(result) ||
-          Object.keys(result).length !== 3 ||
-          (result as { accepted?: unknown }).accepted !== true ||
-          typeof (result as { runId?: unknown }).runId !== "string" ||
-          !isOpaqueId((result as { runId: string }).runId) ||
-          typeof (result as { turnId?: unknown }).turnId !== "string" ||
-          !isOpaqueId((result as { turnId: string }).turnId)
+          !project ||
+          !selected ||
+          !session ||
+          status !== "ready" ||
+          generationReady !== true ||
+          subscription.state !== "live" ||
+          !sessionPortWitness ||
+          turns.stale ||
+          turns.needsResync ||
+          $selectedSession?.sessionId !== session.sessionId ||
+          $selectedSession?.scopeId !== project.workspaceId
         )
-          throw new Error("Invalid acknowledgement");
-        if (epoch !== setupEpoch) throw new Error("Session changed");
-        const runId = (result as { runId: string }).runId;
-        if (
-          !["completed", "failed", "canceled", "stopped"].includes(
-            turns.runs[runId]?.status ?? "",
+          throw new Error("Session unavailable");
+        promptPending = true;
+        try {
+          const result = await invoke("session.prompt", payload, {
+            sessionId: session.sessionId,
+            scopeId: project.workspaceId,
+            expectedConfigRevision: selected.configRevision,
+            expectedProfileRevision: selected.profileRevision,
+            expectedPolicyRevision: session.policyRevision,
+          });
+          if (
+            result === null ||
+            typeof result !== "object" ||
+            Array.isArray(result) ||
+            Object.keys(result).length !== 3 ||
+            (result as { accepted?: unknown }).accepted !== true ||
+            typeof (result as { runId?: unknown }).runId !== "string" ||
+            !isOpaqueId((result as { runId: string }).runId) ||
+            typeof (result as { turnId?: unknown }).turnId !== "string" ||
+            !isOpaqueId((result as { turnId: string }).turnId)
           )
-        )
-          activeRunId = runId;
-      } catch (error) {
-        if (
-          epoch === setupEpoch &&
-          error !== null &&
-          typeof error === "object" &&
-          Object.hasOwn(error, "code") &&
-          (error as { code?: unknown }).code === "STALE_REVISION"
-        )
-          void refreshStaleSession(epoch);
-        throw error;
-      }
-    }}
-  />
+            throw new Error("Invalid acknowledgement");
+          if (epoch !== setupEpoch) throw new Error("Session changed");
+          const runId = (result as { runId: string }).runId;
+          if (
+            !["completed", "failed", "canceled", "stopped"].includes(
+              turns.runs[runId]?.status ?? "",
+            )
+          )
+            activeRunId = runId;
+        } catch (error) {
+          if (
+            epoch === setupEpoch &&
+            error !== null &&
+            typeof error === "object" &&
+            Object.hasOwn(error, "code") &&
+            (error as { code?: unknown }).code === "STALE_REVISION"
+          )
+            void refreshStaleSession(epoch);
+          throw error;
+        } finally {
+          if (epoch === setupEpoch) promptPending = false;
+        }
+      }}
+    >
+      {#snippet modeControl()}
+        <PermissionModeSelect
+          compact
+          id="composer-permission-mode"
+          modeState={permissionModeState}
+          context={permissionContext}
+          options={permissionOptions}
+          onChange={(mode) => void changeMode(mode)}
+        />
+      {/snippet}
+    </Composer>
+  {/key}
 {/snippet}

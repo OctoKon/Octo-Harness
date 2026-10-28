@@ -15,6 +15,9 @@
     onChooseProject,
     engineReady,
     engineStatus,
+    onNewChat,
+    newChatUnavailable,
+    effectiveMode,
     children,
   }: {
     view: View;
@@ -26,6 +29,9 @@
     onChooseProject: () => void;
     engineReady: boolean;
     engineStatus: string;
+    onNewChat: () => void;
+    newChatUnavailable: boolean;
+    effectiveMode: string;
     children: Snippet;
   } = $props();
   const pages: { id: View; label: string; icon: IconName }[] = [
@@ -85,6 +91,10 @@
     if (inSidebar && hidden) (narrow ? mobileButton : toggleButton)?.focus();
   }
   function keydown(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n") {
+      event.preventDefault();
+      if (!newChatUnavailable) onNewChat();
+    }
     if (event.key === "Tab" && narrow && mobileOpen) {
       const controls = [
         ...document.querySelectorAll<HTMLButtonElement>(
@@ -171,6 +181,13 @@
     <p class="project-status" id="project-status" role="status">
       {projectStatus}
     </p>
+    <button
+      type="button"
+      class="nav-item"
+      disabled={newChatUnavailable}
+      onclick={onNewChat}
+      aria-keyshortcuts="Control+N">+ New chat</button
+    >
     <nav class="nav" aria-label="Workspace">
       {#each pages as page (page.id)}
         <button
@@ -232,6 +249,36 @@
         ><Icon name="menu" size={18} /></button
       >
     </div>
+    <div
+      class="permission-badge"
+      class:warning={effectiveMode === "Bypass (unsafe)"}
+      role="status"
+      data-testid="effective-mode-badge"
+    >
+      Permission: {effectiveMode}
+    </div>
     {@render children()}
   </main>
 </div>
+
+<style>
+  .permission-badge {
+    align-self: flex-start;
+    margin: 0.75rem 1.5rem 0;
+    padding: 0.25rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 0.75rem;
+  }
+  .permission-badge.warning {
+    color: var(--status-warning);
+    background: var(--warning-soft);
+    border-color: var(--warning-border);
+    font-weight: 600;
+  }
+  @media (forced-colors: active) {
+    .permission-badge.warning {
+      border-color: currentColor;
+    }
+  }
+</style>

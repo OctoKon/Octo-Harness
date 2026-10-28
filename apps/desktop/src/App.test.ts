@@ -590,7 +590,7 @@ describe("App wiring", () => {
     expect(select.value).toBe("manual");
     expect(
       supervisor.querySelector("[data-testid=permission-blocked]")?.textContent,
-    ).toContain("Session revisions are not delivered to the renderer yet");
+    ).toContain("Start a ready session to change permissions.");
     expect(
       supervisor.querySelector("[data-testid=permission-effective]")
         ?.textContent,

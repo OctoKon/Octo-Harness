@@ -18,6 +18,7 @@ import {
   TRANSPORT_LIMITS,
   validateHandshake,
   validateCommand,
+  validatePermissionResult,
 } from "@splyce/pi/contracts";
 
 export const MAX_FRAME_BYTES = TRANSPORT_LIMITS.maxEncodedFrameBytes;
@@ -409,9 +410,14 @@ export async function runHost(
         ["frame", "command", "requestId", "payload"].every((key) =>
           Object.hasOwn(params, key),
         ) &&
-        ["profile.select", "session.start", "setup.read"].includes(
-          params.command,
-        ) &&
+        [
+          "profile.select",
+          "session.start",
+          "session.resume",
+          "setup.read",
+          "permission.set",
+          "permission.read",
+        ].includes(params.command) &&
         validId
       ) {
         try {
@@ -423,13 +429,21 @@ export async function runHost(
           const method = {
             "profile.select": "selectProfile",
             "session.start": "startSession",
+            "session.resume": "resumeSession",
             "setup.read": "readSetup",
+            "permission.set": "setPermission",
+            "permission.read": "readPermission",
           }[params.command];
-          const value = await host[method](
+          let value = await host[method](
             input,
             params.requestId,
             lifetime.signal,
           );
+          if (
+            params.command === "permission.set" ||
+            params.command === "permission.read"
+          )
+            value = validatePermissionResult(value, input);
           reply = { id: request.id, ok: true, value };
         } catch (error) {
           const codes = [

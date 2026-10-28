@@ -944,7 +944,7 @@ test(
       scopeId: input.workspaceId,
       expectedConfigRevision: "cfg-1",
       expectedProfileRevision: "p1",
-      expectedPolicyRevision: "0",
+      expectedPolicyRevision: currentNativePolicyRevision(input.workspaceId),
       op: "session.prompt",
       payload: { text: "hello user" },
     };
@@ -1471,7 +1471,7 @@ test("removing argument redaction rejection makes the real metadata regression f
   assert.match(result.stdout + result.stderr, /Missing expected rejection/u);
 });
 
-function composedHostSession(captureFails) {
+function composedHostSession(captureFails, permissionMode) {
   return async (t) => {
     let body;
     let requestCount = 0;
@@ -1481,7 +1481,9 @@ function composedHostSession(captureFails) {
       body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const event = (delta, finish_reason = null) =>
         `data: ${JSON.stringify({ id: "host-composition", object: "chat.completion.chunk", created: 0, model: "fixture-model", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
-      const name = ["code_search", "memory_search"][requestCount++];
+      const name = (
+        permissionMode ? ["write", "edit"] : ["code_search", "memory_search"]
+      )[requestCount++];
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.end(
         (name
@@ -1494,9 +1496,16 @@ function composedHostSession(captureFails) {
                     type: "function",
                     function: {
                       name,
-                      arguments: JSON.stringify({
-                        query: "nativeDemoMarker",
-                      }),
+                      arguments: JSON.stringify(
+                        name === "write"
+                          ? { path: "automatic.txt", content: "one" }
+                          : name === "edit"
+                            ? {
+                                path: "automatic.txt",
+                                edits: [{ oldText: "one", newText: "two" }],
+                              }
+                            : { query: "nativeDemoMarker" },
+                      ),
                     },
                   },
                 ],
@@ -1593,7 +1602,20 @@ function composedHostSession(captureFails) {
       "default-host-start",
     );
     assert.deepEqual(started.readiness, { state: "ready" });
-    assert.equal(started.policyRevision, "0");
+    if (permissionMode)
+      await host.setPermission(
+        {
+          requestId: "loaded-mode",
+          workspaceId: f.input.workspaceId,
+          sessionId: started.sessionId,
+          mode: permissionMode,
+        },
+        "loaded-mode",
+      );
+    assert.equal(
+      started.policyRevision,
+      currentNativePolicyRevision(f.input.workspaceId),
+    );
     const queued = {
       configRevision: selected.configRevision,
       profileRevision: selected.profileRevision,
@@ -1681,8 +1703,33 @@ function composedHostSession(captureFails) {
     assert.ok(names.includes("memory_search"));
     const results = body.messages.filter((message) => message.role === "tool");
     assert.equal(results.length, 2);
-    assert.match(JSON.stringify(results[0].content), /nativeDemoMarker/u);
-    assert.match(JSON.stringify(results[1].content), /results/u);
+    if (permissionMode) {
+      assert.equal(
+        readFileSync(join(f.dir, "workspace", "automatic.txt"), "utf8"),
+        "two",
+      );
+      assert.equal(
+        events.filter((event) => event.kind === "approval.requested").length,
+        0,
+      );
+      const completed = f.store
+        .list(f.input.workspaceId)
+        .records.filter(
+          ({ kind, record }) =>
+            kind === "action" &&
+            record.state === "completed" &&
+            ["workspace.write", "workspace.edit"].includes(record.capabilityId),
+        );
+      assert.equal(completed.length, 2);
+      assert.ok(
+        completed.every(
+          ({ record }) => record.approvedBy === `mode:${permissionMode}`,
+        ),
+      );
+    } else {
+      assert.match(JSON.stringify(results[0].content), /nativeDemoMarker/u);
+      assert.match(JSON.stringify(results[1].content), /results/u);
+    }
     const captured = memoryDb
       .prepare("SELECT COUNT(*) AS n FROM observations")
       .get().n;
@@ -1726,6 +1773,13 @@ test(
   { timeout: 30000 },
   composedHostSession(true),
 );
+
+for (const mode of ["auto", "bypass"])
+  test(
+    `real loaded Pi ${mode} dispatches writes and edits without approval`,
+    { timeout: 30000 },
+    composedHostSession(false, mode),
+  );
 
 test(
   "native session dispatches workspace tools with channel metadata and waits for write approval",

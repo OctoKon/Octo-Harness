@@ -19,6 +19,9 @@ import {
   validateHandshake,
   validateCursor,
   validateControlFrame,
+  validatePermissionRead,
+  validatePermissionSet,
+  validatePermissionResult,
 } from "@splyce/pi/contracts";
 
 const fixture = (name) =>
@@ -29,6 +32,66 @@ const fixture = (name) =>
     ),
   );
 const records = fixture("records");
+for (const { op, request, result } of fixture("permission-modes")) {
+  test(`permission contract: ${op} ${result.mode}`, () => {
+    const validate =
+      op === "permission.set" ? validatePermissionSet : validatePermissionRead;
+    assert.deepEqual(validate(request, request.requestId), request);
+    assert.deepEqual(validatePermissionResult(result, request), result);
+    assert.throws(() => validate(request, "different-request"));
+    for (const field of Object.keys(request)) {
+      const missing = { ...request };
+      delete missing[field];
+      assert.throws(() => validate(missing, request.requestId));
+      for (const value of [
+        null,
+        "",
+        "bad/id",
+        "bad\\id",
+        "bad id",
+        "bad\u0000id",
+        "bad\u200bid",
+        "λ".repeat(65),
+        "\ud800",
+        "x".repeat(129),
+      ])
+        assert.throws(() =>
+          validate({ ...request, [field]: value }, request.requestId),
+        );
+    }
+    for (const field of ["grantIds", "approvedBy", "path", "secret", "extra"]) {
+      assert.throws(() =>
+        validate({ ...request, [field]: "untrusted" }, request.requestId),
+      );
+      assert.throws(() =>
+        validatePermissionResult({ ...result, [field]: "untrusted" }, request),
+      );
+    }
+    for (const field of ["workspaceId", "sessionId"])
+      assert.throws(() =>
+        validatePermissionResult({ ...result, [field]: "other" }, request),
+      );
+    for (const mode of ["accept-edits", "plan", "unknown", null]) {
+      assert.throws(() =>
+        validatePermissionSet({ ...request, mode }, request.requestId),
+      );
+      assert.throws(() =>
+        validatePermissionResult({ ...result, mode }, request),
+      );
+    }
+    let read = false;
+    const accessor = { ...request };
+    Object.defineProperty(accessor, "mode", {
+      enumerable: true,
+      get() {
+        read = true;
+        return "bypass";
+      },
+    });
+    assert.throws(() => validate(accessor, request.requestId));
+    assert.equal(read, false);
+  });
+}
 for (const { op, request, result } of fixture("page-reads")) {
   test(`page read contract: ${op}`, () => {
     assert.deepEqual(validatePageReadRequest(op, request), request);
