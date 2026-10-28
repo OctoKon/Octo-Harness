@@ -66,7 +66,7 @@
             : ""}</span
         >
         {#if profile.credential}
-          <span>{profile.apiFamily} · {profile.modelId} · {profile.endpointOrigin} · Credential {profile.credential}</span>
+          <span>{profile.apiFamily} Â· {profile.modelId} Â· {profile.endpointOrigin} Â· Credential {profile.credential}</span>
         {/if}
         <button
           type="button"
