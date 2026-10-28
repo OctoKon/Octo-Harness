@@ -32,6 +32,7 @@ import {
 	type BeforeToolCallResult,
 	disposeSplyceOwner,
 	inheritSplyceOwner,
+	isSplyceOwned,
 	type PrepareNextTurnContext,
 	runToolCall,
 	sealSplyceAgentCallbacks,
@@ -3731,6 +3732,10 @@ export class AgentSession {
 				},
 				getContextUsage: () => this.getContextUsage(),
 				compact: (options) => {
+					if (isSplyceOwned(this))
+						throw Object.assign(new Error("PERSIST_REDACTION_UNAVAILABLE"), {
+							code: "PERSIST_REDACTION_UNAVAILABLE",
+						});
 					void (async () => {
 						try {
 							const result = await this.compact(options?.customInstructions);

@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
-import {
+import fs, {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   rmSync,
-  rmdirSync,
+  statSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -211,42 +210,97 @@ test("a malformed sanitized result and multiple staged write targets fail before
 });
 
 test("an append error latches the manager until an explicit owned reopen", async (t) => {
-  const directory = temporary(t);
-  const owner = createSplyceOwner(() => {});
-  const bind = (subject) =>
-    owner.bindPersistence(subject, async (text) => text);
-  const manager = await SessionManager.createOwned(
-    directory,
-    bind,
-    join(directory, "sessions"),
-  );
-  await manager.withPersistence((draft) =>
-    draft.appendMessage(user("acknowledged")),
-  );
-  const path = manager.getSessionFile();
-  const backup = path + ".test-backup";
-  renameSync(path, backup);
-  mkdirSync(path);
-  await assert.rejects(
-    manager.withPersistence((draft) =>
-      draft.appendMessage(user("unacknowledged")),
-    ),
-    unavailable,
-  );
-  rmdirSync(path);
-  renameSync(backup, path);
-  await assert.rejects(
-    manager.withPersistence((draft) =>
-      draft.appendMessage(user("blind retry")),
-    ),
-    unavailable,
-  );
-  assert.equal(readFileSync(path, "utf8").includes("blind retry"), false);
-  const reopened = await SessionManager.openOwned(path, bind);
-  await reopened.withPersistence((draft) =>
-    draft.appendMessage(user("explicit recovery")),
-  );
-  assert.equal(readFileSync(path, "utf8").includes("explicit recovery"), true);
+  for (const fault of ["partial", "no-bytes"]) {
+    const directory = temporary(t);
+    const owner = createSplyceOwner(() => {});
+    const bind = (subject) =>
+      owner.bindPersistence(subject, async (text) => text);
+    const manager = await SessionManager.createOwned(
+      directory,
+      bind,
+      join(directory, "sessions"),
+    );
+    const acknowledged = await manager.withPersistence((draft) =>
+      draft.appendMessage(user("acknowledged")),
+    );
+    const path = manager.getSessionFile();
+    const beforeEntries = manager.getEntries();
+    const beforeBytes = readFileSync(path, "utf8");
+    const version = () => {
+      const { dev, ino, size, mtimeNs, ctimeNs } = statSync(path, {
+        bigint: true,
+      });
+      return { dev, ino, size, mtimeNs, ctimeNs };
+    };
+    const beforeVersion = version();
+    const originalAppend = fs.appendFileSync;
+    let calls = 0;
+    let partial = "";
+    // Fault the real filesystem call after the SUT's physical-version preflight.
+    fs.appendFileSync = (target, data, options) => {
+      if (target !== path || calls !== 0)
+        return originalAppend(target, data, options);
+      calls++;
+      const bytes = String(data);
+      assert.equal(bytes.includes("unacknowledged"), true);
+      partial = fault === "partial" ? bytes.slice(0, -2) : "";
+      originalAppend(target, partial, options);
+      throw Object.assign(new Error("injected append I/O failure"), {
+        code: "EIO",
+      });
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        manager.withPersistence((draft) =>
+          draft.appendMessage(user("unacknowledged")),
+        ),
+        unavailable,
+      );
+    } finally {
+      fs.appendFileSync = originalAppend;
+      syncBuiltinESMExports();
+    }
+    assert.equal(calls, 1, "the actual append boundary must be reached");
+    assert.deepEqual(manager.getEntries(), beforeEntries);
+    const failedBytes = readFileSync(path, "utf8");
+    assert.equal(failedBytes, beforeBytes + partial);
+    if (fault === "partial") {
+      assert.notEqual(partial, "");
+      assert.equal(failedBytes.includes("unacknowledged"), true);
+      assert.throws(() => JSON.parse(partial));
+    } else {
+      // With no physical version change, only the uncertainty latch can reject retry.
+      assert.deepEqual(version(), beforeVersion);
+    }
+    const retry = await manager
+      .withPersistence((draft) => draft.appendMessage(user("blind retry")))
+      .then(
+        () => ({ rejected: false }),
+        (error) => ({ rejected: true, error }),
+      );
+    assert.equal(
+      readFileSync(path, "utf8"),
+      failedBytes,
+      "blind retry must not publish physical bytes",
+    );
+    assert.deepEqual(manager.getEntries(), beforeEntries);
+    assert.equal(retry.rejected, true);
+    assert.equal(retry.error.code, unavailable.code);
+    assert.equal(retry.error.message, unavailable.message);
+    const reopened = await SessionManager.openOwned(path, bind);
+    assert.equal(
+      reopened.getEntry(acknowledged).message.content[0].text,
+      "acknowledged",
+    );
+    await reopened.withPersistence((draft) =>
+      draft.appendMessage(user("explicit recovery")),
+    );
+    const recovered = readFileSync(path, "utf8");
+    assert.equal(recovered.includes("explicit recovery"), true);
+    assert.equal(recovered.includes("unacknowledged"), false);
+    assert.equal(recovered.includes("blind retry"), false);
+  }
 });
 
 test("a pointer-only stage commits newly sanitized historical bytes with its state", async (t) => {
