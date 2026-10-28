@@ -37,7 +37,7 @@ export interface CurrentPolicy {
 }
 
 // Version the complete immutable native ruleset; bump whenever those rules change.
-export const NATIVE_POLICY_REVISION = "0";
+export const NATIVE_POLICY_REVISION = "1";
 export const currentNativePolicyRevision = (_workspaceId: string): string =>
   NATIVE_POLICY_REVISION;
 
@@ -60,6 +60,7 @@ export interface ActionPermit {
   capability: GrantRecord["capability"];
   /** net.provider only: the qualified `scheme://host:port` origin. */
   origin?: string;
+  approvedBy?: "mode:auto" | "mode:bypass";
 }
 
 /**
@@ -517,6 +518,7 @@ export class NativePolicy {
       argumentsDigest: permit.argumentsDigest,
       policyRevision: this.caller.policyRevision,
       ownershipEpoch: permit.ownership.epoch,
+      ...(permit.approvedBy ? { approvedBy: permit.approvedBy } : {}),
     };
   }
 
@@ -538,6 +540,7 @@ export class NativePolicy {
       resultArtifactId: null,
       cleanupState: uncertain ? "uncertain" : "not-required",
       errorClass: uncertain ? "execution" : "none",
+      ...(action.approvedBy ? { approvedBy: action.approvedBy } : {}),
     };
     const completion: ActionRecord = {
       ...action,

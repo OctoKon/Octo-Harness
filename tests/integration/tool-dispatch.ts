@@ -76,6 +76,7 @@ const wrapLikePi = (definition: {
 const SECRET = "sk-live1234567890abcdef";
 
 type Options = {
+  permissionMode?: () => "manual" | "auto" | "bypass";
   extraTools?:
     | never[]
     | {
@@ -191,6 +192,9 @@ async function setup(
   const admissions = new Map<object, ToolAdmission>();
   let registered = 0;
   const dispatch = createToolDispatch({
+    ...(options.permissionMode
+      ? { permissionMode: options.permissionMode }
+      : {}),
     store,
     policy,
     caller,
@@ -1366,3 +1370,169 @@ test("order: createCompleteRedactor unit", async () => {
   const out = await redact(`a ${OVERLAP} b`);
   assert.equal(out, "a [M] b");
 });
+
+for (const mode of ["manual", "auto", "bypass"] as const) {
+  test(`permission ${mode}: writes keep once grants, durable receipts and redaction`, async (t) => {
+    const f = await setup(t, { permissionMode: () => mode });
+    await f.drive("mode-write", "write", { path: "mode.txt", content: "one" });
+    await f.drive("mode-edit", "edit", {
+      path: "mode.txt",
+      edits: [{ oldText: "one", newText: "two" }],
+    });
+    assert.equal(readFileSync(join(f.workDir, "mode.txt"), "utf8"), "two");
+    assert.equal(f.approvals.length, mode === "manual" ? 2 : 0);
+    for (const actionId of ["mode-write", "mode-edit"]) {
+      const actions = f.actions(actionId);
+      assert.deepEqual(actions.map(state), [
+        "proposed",
+        "approved",
+        "running",
+        "completed",
+      ]);
+      assert.equal(
+        actions.at(-1)!.record.approvedBy,
+        mode === "manual" ? undefined : `mode:${mode}`,
+      );
+      const outcome = f.store
+        .list(f.scope)
+        .records.find(
+          ({ kind, record }) =>
+            kind === "outcome" && record.actionId === actionId,
+        );
+      assert.equal(
+        outcome!.record.approvedBy,
+        mode === "manual" ? undefined : `mode:${mode}`,
+      );
+      assert.equal(
+        f
+          .grants()
+          .filter(
+            ({ record }) => record.actionId === actionId && record.consumedAt,
+          ).length,
+        1,
+      );
+    }
+    const read = await f.drive("mode-read", "read", { path: "hello.txt" });
+    assert.ok(!returned(read).text.includes(SECRET));
+    assert.equal(f.approvals.length, mode === "manual" ? 2 : 0);
+  });
+
+  test(`permission ${mode}: outside-workspace and secret paths never have effects`, async (t) => {
+    const f = await setup(t, { permissionMode: () => mode });
+    const grantsBefore = f.grants().length;
+    const outside = join(f.workDir, "..", "outside.txt");
+    for (const [id, name, args] of [
+      [
+        "outside-write",
+        "write",
+        { path: "../outside.txt", content: "changed" },
+      ],
+      ["outside-read", "read", { path: "../outside.txt" }],
+      ["secret-write", "write", { path: ".env", content: "secret" }],
+      ["secret-read", "read", { path: ".env" }],
+      ["npm-secret-read", "read", { path: ".npmrc" }],
+      ["gnupg-secret-read", "read", { path: ".gnupg/private" }],
+      [
+        "credential-secret-write",
+        "write",
+        { path: "service-credentials.json", content: "changed" },
+      ],
+    ] as const) {
+      try {
+        const result = await f.drive(id, name, args);
+        assert.equal(result.isError, true);
+      } catch (error) {
+        assert.equal((error as { code: string }).code, "POLICY_DENIED");
+      }
+    }
+    assert.equal(existsSync(outside), false);
+    assert.equal(existsSync(join(f.workDir, ".env")), false);
+    assert.equal(f.grants().length, grantsBefore);
+    assert.equal(f.approvals.length, 0);
+  });
+}
+
+test("permission auto still prompts shell, bypass admits only literal confined diagnostics", async (t) => {
+  for (const mode of ["manual", "auto", "bypass"] as const) {
+    const f = await setup(t, {
+      permissionMode: () => mode,
+      approve: () => false,
+    });
+    const args = { command: "Get-Location" };
+    if (mode === "bypass") {
+      const out = await f.drive("shell-mode", "powershell", args);
+      assert.equal(out.isError, false);
+      assert.equal(
+        f.actions("shell-mode").at(-1)!.record.approvedBy,
+        "mode:bypass",
+      );
+      await assert.rejects(
+        f.drive("shell-unconfined", "powershell", {
+          command: "Get-Content ../outside.txt",
+        }),
+        rejects("POLICY_DENIED"),
+      );
+      assert.equal(f.approvals.length, 0);
+    } else {
+      await assert.rejects(
+        f.drive("shell-mode", "powershell", args),
+        rejects("POLICY_DENIED"),
+      );
+      assert.equal(f.approvals.length, 1);
+    }
+  }
+});
+
+test("automatic authorization revoked before effect leaves target unchanged", async (t) => {
+  let mode: "auto" | "manual" = "auto";
+  const f = await setup(t, { permissionMode: () => mode });
+  await assert.rejects(
+    f.drive(
+      "revoked-mode",
+      "write",
+      { path: "revoked.txt", content: "changed" },
+      undefined,
+      () => {
+        mode = "manual";
+      },
+    ),
+    rejects("POLICY_DENIED"),
+  );
+  assert.equal(existsSync(join(f.workDir, "revoked.txt")), false);
+});
+
+test("automatic cancellation before effect leaves target unchanged", async (t) => {
+  const f = await setup(t, { permissionMode: () => "bypass" });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    f.dispatch.admission.prepare(
+      "canceled-mode",
+      "write",
+      { path: "canceled.txt", content: "changed" },
+      undefined,
+      controller.signal,
+    ),
+  );
+  assert.equal(existsSync(join(f.workDir, "canceled.txt")), false);
+  assert.equal(f.approvals.length, 0);
+});
+
+for (const mode of ["auto", "bypass"] as const)
+  test(`permission ${mode}: unavailable secret redaction denies automatic effects`, async (t) => {
+    const f = await setup(t, {
+      permissionMode: () => mode,
+      nativeRedact: async () => {
+        throw new Error("unavailable");
+      },
+    });
+    await assert.rejects(
+      f.drive("redaction-mode", "write", {
+        path: "unredacted.txt",
+        content: "changed",
+      }),
+      rejects("POLICY_DENIED"),
+    );
+    assert.equal(existsSync(join(f.workDir, "unredacted.txt")), false);
+    assert.equal(f.approvals.length, 0);
+  });

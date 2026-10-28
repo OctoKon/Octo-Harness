@@ -133,6 +133,178 @@ async function configured() {
 }
 
 describe("native profile and session setup", () => {
+  it("starts a fresh session with a new request and clears the composer", async () => {
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    button("Work").click();
+    flushSync();
+    reply = async (op) =>
+      op === "session.start"
+        ? { ...session, sessionId: "session_2" }
+        : op === "sessions.list"
+          ? { sessions: [], truncated: false }
+          : session;
+    const draft = document.getElementById(
+      "composer-input",
+    ) as HTMLTextAreaElement;
+    draft.value = "unsent draft";
+    draft.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    button("+ New chat").click();
+    await tick();
+    const starts = sends("session.start");
+    expect(starts).toHaveLength(2);
+    expect(get(selectedSession)?.sessionId).toBe("session_2");
+    expect(starts[0]![1].payload.requestId).not.toBe(
+      starts[1]![1].payload.requestId,
+    );
+    expect(
+      (document.getElementById("composer-input") as HTMLTextAreaElement).value,
+    ).toBe("");
+  });
+
+  it("starts a new chat with Ctrl+N", async () => {
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true }),
+    );
+    await tick();
+    expect(sends("session.start")).toHaveLength(2);
+    expect(sends("session.start")[0]![1].payload.requestId).not.toBe(
+      sends("session.start")[1]![1].payload.requestId,
+    );
+  });
+
+  it("reopens a saved session and restores its sending readiness", async () => {
+    await configured();
+    reply = async (op) =>
+      op === "sessions.list"
+        ? {
+            sessions: [
+              {
+                sessionId: "old_session",
+                branchAnchorId: "old_anchor",
+                state: "idle",
+                createdAt: "2026-10-28T00:00:00.000Z",
+                updatedAt: "2026-10-28T00:00:00.000Z",
+              },
+            ],
+            truncated: false,
+          }
+        : op === "session.resume"
+          ? { ...session, sessionId: "old_session", permissionMode: "auto" }
+          : op === "profile.select"
+            ? selection
+            : session;
+    button("Use this profile").click();
+    await tick();
+    button("+ New chat").click();
+    await tick();
+    button("Runs").click();
+    flushSync();
+    (document.querySelector('[role="treeitem"]') as HTMLElement).click();
+    await tick();
+    expect(sends("session.resume")).toHaveLength(1);
+    expect(get(selectedSession)?.sessionId).toBe("old_session");
+    expect(
+      document.querySelector('[data-testid="effective-mode-badge"]')
+        ?.textContent,
+    ).toContain("Auto");
+    const input = document.getElementById(
+      "composer-input",
+    ) as HTMLTextAreaElement;
+    input.value = "Continue";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    expect(button("Send").disabled).toBe(false);
+    const previousReply = reply;
+    reply = async (op) => {
+      if (op === "session.prompt") throw { code: "STALE_REVISION" };
+      return previousReply(op);
+    };
+    button("Send").click();
+    await tick();
+    await tick();
+    expect(sends("session.resume")).toHaveLength(2);
+    expect(sends("session.resume").at(-1)![1].payload.payload.sessionId).toBe(
+      "old_session",
+    );
+    expect(sends("session.start")).toHaveLength(2);
+    expect(button("Send").disabled).toBe(false);
+  });
+
+  it("shows the native bypass warning on other screens", async () => {
+    await configured();
+    reply = async (op) =>
+      op === "session.start"
+        ? { ...session, permissionMode: "bypass" }
+        : op === "sessions.list"
+          ? { sessions: [], truncated: false }
+          : op === "profile.select"
+            ? selection
+            : session;
+    button("Use this profile").click();
+    await tick();
+    button("Settings").click();
+    flushSync();
+    expect(
+      document.querySelector('[data-testid="effective-mode-badge"]')
+        ?.textContent,
+    ).toContain("Bypass (unsafe)");
+    expect(
+      document
+        .querySelector('[data-testid="effective-mode-badge"]')
+        ?.classList.contains("warning"),
+    ).toBe(true);
+  });
+
+  it("acknowledges native permission changes and retains the effective mode on rejection", async () => {
+    const original = ipc.invoke.getMockImplementation()!;
+    let reject = false;
+    ipc.invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "send" && args.op === "permission.set") {
+        if (reject) throw new Error("denied");
+        const { workspaceId, sessionId, mode } = args.payload.payload;
+        return { workspaceId, sessionId, mode };
+      }
+      return original(cmd, args);
+    });
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    button("Work").click();
+    flushSync();
+    const select = document.getElementById(
+      "composer-permission-mode",
+    ) as HTMLSelectElement;
+    select.value = "auto";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    expect(sends("permission.set")[0]![1].payload.payload).toMatchObject({
+      workspaceId: "ws_1",
+      sessionId: "session_1",
+      mode: "auto",
+    });
+    expect(
+      document.querySelector('[data-testid="effective-mode-badge"]')
+        ?.textContent,
+    ).toContain("Auto");
+    reject = true;
+    select.value = "manual";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    expect(
+      document.querySelector('[data-testid="effective-mode-badge"]')
+        ?.textContent,
+    ).toContain("Auto");
+    expect(
+      document.querySelector('[data-testid="permission-rejected"]'),
+    ).not.toBeNull();
+  });
+
   it("loads real session summaries before generation is ready and preserves read failures", async () => {
     const initial = ipc.invoke.getMockImplementation()!;
     ipc.invoke.mockImplementation(async (cmd, args) => {
@@ -465,8 +637,19 @@ describe("native profile and session setup", () => {
     ).toBe(true);
     expect(document.body.textContent).toContain("Workspace tools unavailable");
     expect(button("Send").disabled).toBe(false);
-    reply = async () => ({ accepted: true, runId: "run_1", turnId: "turn_1" });
+    let acceptPrompt!: (result: unknown) => void;
+    reply = async () =>
+      new Promise((resolve) => {
+        acceptPrompt = resolve;
+      });
     button("Send").click();
+    await tick();
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true }),
+    );
+    await tick();
+    expect(sends("session.start")).toHaveLength(1);
+    acceptPrompt({ accepted: true, runId: "run_1", turnId: "turn_1" });
     await tick();
     const prompt = sends("session.prompt")[0]![1].payload;
     expect(prompt).toMatchObject({
@@ -479,6 +662,14 @@ describe("native profile and session setup", () => {
       payload: { text: "draft" },
     });
     expect(button("Send").disabled).toBe(true);
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "n", ctrlKey: true, bubbles: true }),
+    );
+    await tick();
+    expect(sends("session.start")).toHaveLength(1);
+    expect(document.body.textContent).toContain(
+      "Stop the active turn before starting a new chat.",
+    );
     let resolveCancel!: (value: unknown) => void;
     ipc.invoke.mockImplementation(async (cmd, args) =>
       cmd === "cancel"
@@ -532,14 +723,13 @@ describe("native profile and session setup", () => {
     expect(button("Cancel turn")).toBeUndefined();
   });
 
-  it("replays the same start request after stale revision without resending the prompt", async () => {
+  it("resumes the current session after stale revision without resending the prompt", async () => {
     await configured();
     button("Use this profile").click();
     await tick();
-    const firstStart = sends("session.start")[0]![1];
     reply = async (op) => {
       if (op === "session.prompt") throw { code: "STALE_REVISION" };
-      if (op === "session.start") return { ...session, policyRevision: "8" };
+      if (op === "session.resume") return { ...session, policyRevision: "8" };
       return selection;
     };
     const input = document.querySelector("textarea")!;
@@ -550,7 +740,11 @@ describe("native profile and session setup", () => {
     await tick();
     await tick();
     expect(sends("session.prompt")).toHaveLength(1);
-    expect(sends("session.start")[1]![1]).toEqual(firstStart);
+    expect(sends("session.start")).toHaveLength(1);
+    expect(sends("session.resume")[0]![1].payload.payload).toMatchObject({
+      workspaceId: "ws_1",
+      sessionId: session.sessionId,
+    });
     expect(input.value).toBe("keep draft");
     expect(button("Send").disabled).toBe(false);
   });

@@ -1,6 +1,14 @@
 import { Store, INITIAL_CONFIG_REVISION } from "../dist/store.js";
 import { NativeControl } from "./native-control.mjs";
 import { createNativeSetupReader } from "./native-setup-read.mjs";
+import {
+  validatePermissionSet,
+  validatePermissionRead,
+} from "../dist/contracts.js";
+import {
+  persistPermissionMode,
+  readPermissionMode,
+} from "../dist/permission-modes.js";
 
 const commandFields = new Map([
   ["setup.read", ["requestId", "workspaceId"]],
@@ -32,6 +40,10 @@ function unavailable(code = "SETUP_UNAVAILABLE") {
 
 // These commands carry identities and CAS expectations, never grants or locators.
 export function validateNativeSessionSetup(command, payload, requestId) {
+  if (command === "permission.set")
+    return validatePermissionSet(payload, requestId);
+  if (command === "permission.read" || command === "session.resume")
+    return validatePermissionRead(payload, requestId);
   const fields = commandFields.get(command);
   if (
     !fields ||
@@ -179,6 +191,11 @@ export function createNativeSessionSetup({
             sessionRevision: committed.result.sessionRevision,
             policyRevision: committed.result.policyRevision,
             readiness: { state: "ready" },
+            permissionMode: readPermissionMode(
+              store,
+              input.workspaceId,
+              committed.result.sessionId,
+            ),
           };
       }
       prepared = committed
@@ -251,13 +268,26 @@ export function createNativeSessionSetup({
         profileId: committed.profileId,
         profileRevision: committed.profileRevision,
         configRevision: committed.configRevision,
+        sessionRevision: committed.result.sessionRevision,
         prepared,
       });
+      if (!preparation.replay)
+        persistPermissionMode(store, caller, {
+          requestId: `initial-${input.requestId}`,
+          workspaceId: input.workspaceId,
+          sessionId: committed.result.sessionId,
+          mode: readPermissionMode(store, input.workspaceId),
+        });
       return {
         sessionId: committed.result.sessionId,
         sessionRevision: committed.result.sessionRevision,
         policyRevision: committed.result.policyRevision,
         readiness: { state: "ready" },
+        permissionMode: readPermissionMode(
+          store,
+          input.workspaceId,
+          committed.result.sessionId,
+        ),
       };
     } catch {
       try {
@@ -294,6 +324,66 @@ export function createNativeSessionSetup({
             const result = await readSetup(input, signal);
             check(signal);
             return result;
+          }
+          if (command === "session.resume") {
+            if (!store.getWorkspace(input.workspaceId)) unavailable();
+            const snapshot = store.readSetupState(input.workspaceId);
+            const deleted = new Set(snapshot.deletedRecordIds);
+            const receipts = snapshot.records.filter(
+              ({ kind, record }) =>
+                kind === "artifact" &&
+                record.nativeSetup?.command === "session.start" &&
+                record.nativeSetup.sessionId === input.sessionId &&
+                !deleted.has(record.recordId),
+            );
+            if (
+              receipts.length !== 1 ||
+              receipts[0].record.nativeSetup.request.workspaceId !==
+                input.workspaceId
+            )
+              unavailable();
+            return start(receipts[0].record.nativeSetup.request, signal);
+          }
+          if (command === "permission.set" || command === "permission.read") {
+            if (!store.getWorkspace(input.workspaceId)) unavailable();
+            if (command === "permission.set") {
+              if (bound.get(input.sessionId)?.workspaceId !== input.workspaceId)
+                unavailable();
+              store.assertNativeSessionStartCurrent({
+                workspaceId: input.workspaceId,
+                sessionId: input.sessionId,
+                sessionRevision: bound.get(input.sessionId).sessionRevision,
+              });
+              persistPermissionMode(store, caller, input);
+            } else {
+              const snapshot = store.audit();
+              const deleted = new Set(snapshot.deletedRecordIds);
+              const anchors = new Map();
+              for (const { kind, record } of snapshot.records) {
+                if (
+                  kind === "branchAnchor" &&
+                  record.scopeId === input.workspaceId &&
+                  record.piSessionId === input.sessionId
+                )
+                  anchors.set(record.branchAnchorId, record);
+              }
+              if (
+                deleted.has(input.sessionId) ||
+                ![...anchors.values()].some(
+                  (anchor) => !deleted.has(anchor.recordId),
+                )
+              )
+                unavailable();
+            }
+            return {
+              workspaceId: input.workspaceId,
+              sessionId: input.sessionId,
+              mode: readPermissionMode(
+                store,
+                input.workspaceId,
+                input.sessionId,
+              ),
+            };
           }
           return command === "profile.select"
             ? select(input, signal)

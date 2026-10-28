@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "./shell/Icon.svelte";
+  import type { Snippet } from "svelte";
   import {
     buildPrompt,
     keyAction,
@@ -18,6 +19,7 @@
 
   let {
     workspaceName,
+    modeControl,
     runtimeName,
     onChooseProject,
     onOpenModels,
@@ -36,6 +38,7 @@
     cancel,
   }: {
     workspaceName?: string;
+    modeControl?: Snippet;
     runtimeName?: string;
     onChooseProject?: () => void;
     onOpenModels?: () => void;
@@ -176,6 +179,7 @@
           size={11}
         /></button
       >{/if}
+    {#if modeControl}{@render modeControl()}{/if}
     <span id="composer-hint">Enter to start · Shift+Enter for a line</span>
   </div>
   <div class="composer-footer">

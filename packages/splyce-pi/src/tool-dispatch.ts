@@ -10,6 +10,7 @@
 // seam the engine factory only has to wire.
 
 import { randomUUID } from "node:crypto";
+import { readPermissionMode } from "./permission-modes.js";
 import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
@@ -231,6 +232,8 @@ export interface ToolDispatchDeps {
   attachGrant(grantId: string): void;
   /** Renderer approval round trip (the factory emits approval.requested); true = approved. */
   approve(request: ApprovalRequest, signal?: AbortSignal): Promise<boolean>;
+  /** Native durable authority, never renderer/model arguments. */
+  permissionMode?(): "manual" | "auto" | "bypass";
   /** Sync live-secret redactor (CredentialResolver.redact). */
   redact(text: string): string;
   /** NativeControl.redact (Rust credential.redact lane). Rejection fails closed. */
@@ -551,6 +554,11 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
       const digest = actionArgumentsDigest(validatedArgs);
       const actionId = safeId(toolCallId);
       const args = validatedArgs as Record<string, unknown>;
+      try {
+        await workspaceTools[toolName]?.validatePath?.(args);
+      } catch {
+        throw new AdmissionError("POLICY_DENIED");
+      }
       const target =
         typeof args.path === "string"
           ? args.path
@@ -562,35 +570,52 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
         signal,
       );
       const once = ONCE.has(capability);
+      const mode =
+        deps.permissionMode?.() ??
+        readPermissionMode(store, deps.workspaceId, caller.sessionId);
+      if (!["manual", "auto", "bypass"].includes(mode))
+        throw new AdmissionError("POLICY_DENIED");
+      const automatic =
+        once &&
+        (mode === "bypass" || (mode === "auto" && capability === "fs.write"));
+      // cwd is not a sandbox. Only literal diagnostics are safe to run without shell approval.
+      const confinedShell =
+        capability !== "shell.run" ||
+        !automatic ||
+        (toolName === "bash" && args.command === "pwd") ||
+        (toolName === "powershell" && args.command === "Get-Location");
       // What the approver sees is the COMPLETE redacted argument text of exactly the call whose
       // digest the grant binds. If it cannot be shown whole (lane down, or over the cap) the
       // call is denied; it is never truncated.
       const showable =
-        redactedArgs !== undefined && redactedArgs.length <= APPROVAL_ARGS_MAX;
+        redactedArgs !== undefined &&
+        redactedArgs.length <= APPROVAL_ARGS_MAX &&
+        confinedShell;
       const argsSummary = once
         ? (redactedArgs ?? UNAVAILABLE)
         : (redactedArgs ?? UNAVAILABLE).slice(0, ARGS_SUMMARY_MAX);
       let grantId = deps.readGrantId;
       if (once) {
-        // Once capability: nothing is minted without an explicit approval. An
+        // Once capability: native mode or explicit approval is required. An
         // unapproved call authorizes against a grant id that is not live, so the
         // policy denies it with a durable receipt before anything runs.
         grantId = "grant-unapproved";
         const approved =
           showable &&
-          (await deps
-            .approve(
-              {
-                toolCallId,
-                toolName,
-                actionId,
-                capability,
-                target: await redactFinal(target, signal),
-                argsSummary,
-              },
-              signal,
-            )
-            .catch(() => false));
+          (automatic ||
+            (await deps
+              .approve(
+                {
+                  toolCallId,
+                  toolName,
+                  actionId,
+                  capability,
+                  target: await redactFinal(target, signal),
+                  argsSummary,
+                },
+                signal,
+              )
+              .catch(() => false)));
         if (approved && !signal?.aborted) {
           const minted = store.mintGrant(
             {
@@ -628,6 +653,9 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
         idempotencyKey: `${deps.runId}:${toolCallId}`,
         ownership: deps.ownership,
         capability,
+        ...(automatic && showable
+          ? { approvedBy: `mode:${mode}` as "mode:auto" | "mode:bypass" }
+          : {}),
       };
       policy.authorize(permit);
       calls.set(toolCallId, {
@@ -669,6 +697,14 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
       signal: AbortSignal | undefined,
     ): Promise<T> {
       const call = need(toolCallId);
+      if (
+        call.permit.approvedBy &&
+        call.permit.approvedBy !==
+          `mode:${deps.permissionMode?.() ?? readPermissionMode(store, deps.workspaceId, caller.sessionId)}`
+      ) {
+        policy.discard(toolCallId, "denied");
+        throw new AdmissionError("POLICY_DENIED");
+      }
       const events: ExecuteEvents<T> = {
         intent: (running) =>
           draft("turn.tool_intent", running.recordId, {
@@ -738,11 +774,11 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
       } finally {
         try {
           deps.onEventsCommitted?.();
-      } finally {
-        call.admitted = false;
-        byAction.delete(call.actionId);
-        calls.delete(toolCallId);
-      }
+        } finally {
+          call.admitted = false;
+          byAction.delete(call.actionId);
+          calls.delete(toolCallId);
+        }
       }
     },
   };

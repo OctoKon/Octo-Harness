@@ -10,6 +10,7 @@
 import { spawn } from "node:child_process";
 import { Worker } from "node:worker_threads";
 import { createHash, randomUUID } from "node:crypto";
+import { isSecretPath } from "./secret-path.js";
 import {
   lstat,
   mkdtemp,
@@ -122,6 +123,8 @@ export interface WorkspaceTool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** Shared canonical confinement check before dispatch can grant a file operation. */
+  validatePath?(args: Record<string, unknown>): Promise<void>;
   execute(
     args: Record<string, unknown>,
     signal?: AbortSignal,
@@ -352,7 +355,7 @@ export function createWorkspaceTools(
   // variants are judged by where they really point, even when the leaf is new.
   async function confine(input: string): Promise<{ abs: string; rel: string }> {
     const base = root();
-    if (input.includes("\0")) escape();
+    if (input.includes("\0") || isSecretPath(input)) escape();
     if (win) {
       const segs = input.split(/[\\/]/);
       if (
@@ -390,7 +393,13 @@ export function createWorkspaceTools(
     }
     const abs = join(real, ...tail);
     const rel = relative(base, abs);
-    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) escape();
+    if (
+      rel === ".." ||
+      rel.startsWith(`..${sep}`) ||
+      isAbsolute(rel) ||
+      isSecretPath(rel)
+    )
+      escape();
     return { abs, rel: rel.split(sep).join("/") };
   }
 
@@ -513,7 +522,8 @@ export function createWorkspaceTools(
     relDir: string,
   ): AsyncGenerator<{ abs: string; rel: string; file: boolean }> {
     for (const d of await readdir(dir, { withFileTypes: true })) {
-      if (d.isSymbolicLink() || d.name === ".git") continue;
+      if (d.isSymbolicLink() || d.name === ".git" || isSecretPath(d.name))
+        continue;
       const abs = join(dir, d.name);
       const rel = relDir ? `${relDir}/${d.name}` : d.name;
       if (d.isDirectory()) {
@@ -876,6 +886,7 @@ export function createWorkspaceTools(
         const names = (
           await io(rel, () => readdir(abs, { withFileTypes: true }))
         )
+          .filter((d) => !isSecretPath(d.name))
           .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
           .sort();
         return lines(
@@ -1163,7 +1174,18 @@ export function createWorkspaceTools(
       };
       return [
         t.name,
-        { ...t, result, execute: async (...a) => (await result(...a)).text },
+        {
+          ...t,
+          result,
+          execute: async (...a) => (await result(...a)).text,
+          ...(!["bash", "powershell"].includes(t.name)
+            ? {
+                validatePath: async (args: Record<string, unknown>) => {
+                  await confine(optStr(args.path, "path") ?? ".");
+                },
+              }
+            : {}),
+        },
       ];
     }),
   );

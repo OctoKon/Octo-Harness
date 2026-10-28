@@ -435,12 +435,14 @@ test("real setup service orders prepare, atomic commit and bind and projects pub
     "session.start",
   );
   assert.deepEqual(Object.keys(result).sort(), [
+    "permissionMode",
     "policyRevision",
     "readiness",
     "sessionId",
     "sessionRevision",
   ]);
   assert.deepEqual(result.readiness, { state: "ready" });
+  assert.equal(result.permissionMode, "manual");
   assert.deepEqual(f.trace, ["prepare", "bind"]);
   assert.match(result.sessionRevision, /^[1-9][0-9]*$/);
   assert.equal(JSON.stringify(result).includes("private-path-fixture"), false);
@@ -769,6 +771,49 @@ test(
     assert.equal(started.ok, true);
     assert.deepEqual(started.value.readiness, { state: "ready" });
     assert.deepEqual(f.trace, ["prepare", "bind"]);
+    const permission = {
+      requestId: "framed-permission",
+      workspaceId: f.workspaceId,
+      sessionId: started.value.sessionId,
+      mode: "auto",
+    };
+    const permissionSet = await rpc("permission-rpc", "send", {
+      frame: "setup",
+      command: "permission.set",
+      requestId: permission.requestId,
+      payload: permission,
+    });
+    assert.equal(permissionSet.ok, true);
+    assert.deepEqual(permissionSet.value, {
+      workspaceId: f.workspaceId,
+      sessionId: started.value.sessionId,
+      mode: "auto",
+    });
+    const permissionRead = await rpc("permission-read-rpc", "send", {
+      frame: "setup",
+      command: "permission.read",
+      requestId: "framed-permission-read",
+      payload: {
+        requestId: "framed-permission-read",
+        workspaceId: f.workspaceId,
+        sessionId: started.value.sessionId,
+      },
+    });
+    assert.equal(permissionRead.ok, true);
+    assert.deepEqual(permissionRead.value, permissionSet.value);
+    const resumed = await rpc("resume-rpc", "send", {
+      frame: "setup",
+      command: "session.resume",
+      requestId: "framed-resume",
+      payload: {
+        requestId: "framed-resume",
+        workspaceId: f.workspaceId,
+        sessionId: started.value.sessionId,
+      },
+    });
+    assert.equal(resumed.ok, true);
+    assert.equal(resumed.value.sessionId, started.value.sessionId);
+    assert.equal(resumed.value.permissionMode, "auto");
     const before = f.store.list(f.workspaceId).records;
     const rejected = await rpc("authority-rpc", "send", {
       frame: "setup",
@@ -831,4 +876,247 @@ test("bind failure projects the policy witness captured by its compensation tran
   );
   assert.equal(failed.policyRevision, "22");
   assert.equal(failed.readiness.code, "SESSION_BIND_FAILED");
+});
+
+test("permission commands require a currently bound admitted session and preserve durable workspace/session choices", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  const request = f.run("permission-session", selected.configRevision);
+  const started = await f.handle(request, "session.start");
+  const input = {
+    requestId: "permission-auto",
+    workspaceId: f.workspaceId,
+    sessionId: started.sessionId,
+    mode: "auto",
+  };
+  const cursor = f.store.cursor();
+  for (const wrong of [
+    { ...input, workspaceId: "workspace-foreign" },
+    { ...input, sessionId: "session-foreign" },
+  ])
+    await assert.rejects(f.handle(wrong, "permission.set"), {
+      code: "SETUP_UNAVAILABLE",
+    });
+  assert.equal(f.store.cursor(), cursor);
+  const applied = await f.handle(input, "permission.set");
+  assert.deepEqual(applied, {
+    workspaceId: f.workspaceId,
+    sessionId: started.sessionId,
+    mode: "auto",
+  });
+  const saved = f.store.cursor();
+  assert.deepEqual(await f.handle(input, "permission.set"), applied);
+  assert.equal(f.store.cursor(), saved);
+  await assert.rejects(
+    f.handle({ ...input, mode: "bypass" }, "permission.set"),
+    { code: "SETUP_REQUEST_CONFLICT" },
+  );
+  const next = await f.handle(
+    f.run("permission-inherits", selected.configRevision),
+    "session.start",
+  );
+  assert.equal(next.permissionMode, "auto");
+  await f.handle(
+    {
+      ...input,
+      requestId: "permission-other-session",
+      sessionId: next.sessionId,
+      mode: "bypass",
+    },
+    "permission.set",
+  );
+  assert.deepEqual(
+    await f.handle(
+      {
+        requestId: "permission-read",
+        workspaceId: f.workspaceId,
+        sessionId: started.sessionId,
+      },
+      "permission.read",
+    ),
+    applied,
+  );
+  await f.service.close();
+  f.store.close();
+  const reopenedStore = Store.open(join(f.appDataDir, "splyce", "store.db"));
+  const reopened = createNativeSessionSetup({
+    store: reopenedStore,
+    control: f.control,
+    factory: { ...f.factory, bind: async () => {} },
+    currentPolicyRevision: currentNativePolicyRevision,
+  });
+  try {
+    await assert.rejects(
+      reopened.handle("permission.set", input, input.requestId),
+      { code: "SETUP_UNAVAILABLE" },
+    );
+    assert.deepEqual(
+      await reopened.handle(
+        "permission.read",
+        {
+          requestId: "historical-before-bind",
+          workspaceId: f.workspaceId,
+          sessionId: started.sessionId,
+        },
+        "historical-before-bind",
+      ),
+      applied,
+    );
+    const restored = await reopened.handle(
+      "session.resume",
+      {
+        requestId: "resume-first",
+        workspaceId: f.workspaceId,
+        sessionId: started.sessionId,
+      },
+      "resume-first",
+    );
+    assert.equal(restored.sessionId, started.sessionId);
+    assert.equal(restored.permissionMode, "auto");
+    const restoredNext = await reopened.handle(
+      "session.resume",
+      {
+        requestId: "resume-second",
+        workspaceId: f.workspaceId,
+        sessionId: next.sessionId,
+      },
+      "resume-second",
+    );
+    assert.equal(restoredNext.sessionId, next.sessionId);
+    assert.equal(restoredNext.permissionMode, "bypass");
+    assert.deepEqual(
+      await reopened.handle(
+        "permission.read",
+        {
+          requestId: "after-restart",
+          workspaceId: f.workspaceId,
+          sessionId: started.sessionId,
+        },
+        "after-restart",
+      ),
+      applied,
+    );
+    const anchor = reopenedStore
+      .list(f.workspaceId)
+      .records.findLast(
+        ({ kind, record }) =>
+          kind === "branchAnchor" && record.piSessionId === next.sessionId,
+      );
+    reopenedStore.noteDeletion(anchor.record.recordId);
+    await assert.rejects(
+      reopened.handle(
+        "permission.read",
+        {
+          requestId: "deleted-session-mode",
+          workspaceId: f.workspaceId,
+          sessionId: next.sessionId,
+        },
+        "deleted-session-mode",
+      ),
+      { code: "SETUP_UNAVAILABLE" },
+    );
+  } finally {
+    await reopened.close();
+    reopenedStore.close();
+  }
+});
+
+test("permission commands reject invalid, authority-bearing and cancelled input before persistence", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  const started = await f.handle(
+    f.run("permission-validated", selected.configRevision),
+    "session.start",
+  );
+  const input = {
+    requestId: "invalid-mode",
+    workspaceId: f.workspaceId,
+    sessionId: started.sessionId,
+    mode: "auto",
+  };
+  const cursor = f.store.cursor();
+  for (const bad of [
+    { ...input, mode: "unknown" },
+    { ...input, grantId: "forged" },
+    { ...input, mode: {} },
+  ])
+    assert.throws(
+      () => f.service.handle("permission.set", bad, input.requestId),
+      { code: "INVALID_PERMISSION_MODE" },
+    );
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(f.handle(input, "permission.set", controller.signal), {
+    code: "SETUP_UNAVAILABLE",
+  });
+  assert.equal(f.store.cursor(), cursor);
+});
+
+test("legacy native sessions without permission records restore in manual mode", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  const input = f.run("legacy-session", selected.configRevision);
+  const preparation = f.store.prepareNativeSessionSetup("session.start", input);
+  const prepared = await f.factory.prepare(input);
+  f.store.commitNativeSessionStart(
+    preparation,
+    { piSessionId: prepared.piSessionId, branchAnchor: prepared.branchAnchor },
+    f.caller,
+    currentNativePolicyRevision,
+  );
+  assert.equal(
+    f.store
+      .list(f.workspaceId)
+      .records.some(({ record }) => record.permissionMode),
+    false,
+  );
+  const restored = await f.handle(input, "session.start");
+  assert.equal(restored.permissionMode, "manual");
+  assert.deepEqual(
+    await f.handle(
+      {
+        requestId: "legacy-mode-read",
+        workspaceId: f.workspaceId,
+        sessionId: restored.sessionId,
+      },
+      "permission.read",
+    ),
+    {
+      workspaceId: f.workspaceId,
+      sessionId: restored.sessionId,
+      mode: "manual",
+    },
+  );
+});
+
+test("deleting the latest permission record never revives historical bypass authority", async (t) => {
+  const f = serviceFixture(t);
+  const selected = await f.handle(f.select());
+  const started = await f.handle(
+    f.run("mode-deletion-session", selected.configRevision),
+    "session.start",
+  );
+  for (const mode of ["bypass", "manual"])
+    await f.handle(
+      {
+        requestId: `mode-deletion-${mode}`,
+        workspaceId: f.workspaceId,
+        sessionId: started.sessionId,
+        mode,
+      },
+      "permission.set",
+    );
+  const latest = f.store
+    .list(f.workspaceId)
+    .records.findLast(({ record }) => record.permissionMode);
+  f.store.noteDeletion(latest.record.recordId);
+  const read = await f.handle(
+    {
+      requestId: "mode-deletion-read",
+      workspaceId: f.workspaceId,
+      sessionId: started.sessionId,
+    },
+    "permission.read",
+  );
+  assert.equal(read.mode, "manual");
 });
