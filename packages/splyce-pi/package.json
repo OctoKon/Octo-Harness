@@ -7,6 +7,10 @@
   },
   "type": "module",
   "exports": {
+    "./page-data": {
+      "types": "./dist/page-data.d.ts",
+      "import": "./dist/page-data.js"
+    },
     "./recovery-applier": {
       "types": "./dist/recovery-applier.d.ts",
       "import": "./dist/recovery-applier.js"

@@ -1,3 +1,10 @@
+import {
+  PageReadError,
+  type PageReadOp,
+  type PageReadResults,
+  validatePageReadRequest,
+  validatePageReadResult,
+} from "@splyce/pi/page-data";
 /**
  * TD-08: Desktop Engine Store and Native Bridge
  *
@@ -60,6 +67,11 @@ export interface EngineStore {
     payload: CommandPayloads[O],
     context: CommandContext,
   ) => Promise<unknown>;
+  readPage: <O extends PageReadOp>(
+    op: O,
+    requestId: string,
+    payload: { workspaceId: string; query?: string },
+  ) => Promise<PageReadResults[O]>;
   ackCursor: (sessionId: string, seq: number) => Promise<void>;
   getCursor: (sessionId: string) => number;
   resync: (context: CommandContext, fromSeq: number) => Promise<void>;
@@ -345,6 +357,28 @@ export async function sendSetup(
   });
 }
 
+export async function readPage<O extends PageReadOp>(
+  op: O,
+  requestId: string,
+  payload: { workspaceId: string; query?: string },
+): Promise<PageReadResults[O]> {
+  const request = { requestId, ...payload };
+  validatePageReadRequest(op, request);
+  let raw: unknown;
+  try {
+    raw = await sendSetup(op, requestId, request);
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? error.code
+        : undefined;
+    throw new PageReadError(
+      code === "PAGE_READ_INVALID" ? code : "PAGE_READ_UNAVAILABLE",
+    );
+  }
+  return validatePageReadResult(op, raw);
+}
+
 /** What the renderer keeps of an admitted workspace: never the path or selection ref. */
 export interface SelectedWorkspace {
   readonly workspaceId: string;
@@ -406,6 +440,7 @@ export const engine: EngineStore = {
   subscribe,
   onEvent,
   invoke,
+  readPage,
   ackCursor,
   getCursor,
   resync,

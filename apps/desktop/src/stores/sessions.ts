@@ -1,3 +1,4 @@
+import { engine } from "./engine";
 /**
  * TD-12: session navigation state.
  *
@@ -193,4 +194,8 @@ export function visibleNodes(state: SessionNavState): NavNode[] {
       stateLabel: selected ? "Selected" : "Not selected",
     };
   });
+}
+
+export async function listSessions(workspaceId: string, requestId: string) {
+  return engine.readPage("sessions.list", requestId, { workspaceId });
 }

@@ -5,6 +5,12 @@ import { NativeControl } from "./native-control.mjs";
 import { validateNativeSessionSetup } from "./native-session-setup.mjs";
 import { StoreError } from "../dist/store.js";
 import {
+  PAGE_READ_OPS,
+  PageReadError,
+  validatePageReadRequest,
+  validatePageReadResult,
+} from "../dist/page-data.js";
+import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
   PI_REVISION,
@@ -369,6 +375,35 @@ export async function runHost(
             readiness: host.handshakeReadiness,
           },
         };
+      } else if (PAGE_READ_OPS.includes(params.command)) {
+        try {
+          if (
+            !exact(params, ["frame", "command", "requestId", "payload"]) ||
+            !validId ||
+            params.payload?.requestId !== params.requestId
+          )
+            throw new PageReadError("PAGE_READ_INVALID");
+          const input = validatePageReadRequest(params.command, params.payload);
+          const value = validatePageReadResult(
+            params.command,
+            await host.readPage(params.command, input),
+          );
+          reply = { id: request.id, ok: true, value };
+        } catch (error) {
+          reply = {
+            id: request.id,
+            ok: false,
+            error: {
+              code:
+                error instanceof PageReadError
+                  ? error.code
+                  : "PAGE_READ_UNAVAILABLE",
+              message: "Page data unavailable",
+              correlationId: validId ? params.requestId : request.id,
+              retryable: false,
+            },
+          };
+        }
       } else if (
         Object.keys(params).length === 4 &&
         ["frame", "command", "requestId", "payload"].every((key) =>

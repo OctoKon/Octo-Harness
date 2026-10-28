@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  validatePageReadRequest,
+  validatePageReadResult,
+} from "@splyce/pi/page-data";
+import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
   PI_REVISION,
@@ -25,6 +29,62 @@ const fixture = (name) =>
     ),
   );
 const records = fixture("records");
+for (const { op, request, result } of fixture("page-reads")) {
+  test(`page read contract: ${op}`, () => {
+    assert.deepEqual(validatePageReadRequest(op, request), request);
+    assert.deepEqual(validatePageReadResult(op, result), result);
+    for (const field of ["path", "credentialRef", "secret"]) {
+      assert.throws(
+        () => validatePageReadRequest(op, { ...request, [field]: "private" }),
+        { code: "PAGE_READ_INVALID" },
+      );
+      assert.throws(
+        () => validatePageReadResult(op, { ...result, [field]: "private" }),
+        { code: "PAGE_READ_INVALID" },
+      );
+    }
+    if (op === "usage.read") {
+      assert.throws(
+        () => validatePageReadResult(op, { ...result, inputTokens: 0 }),
+        { code: "PAGE_READ_INVALID" },
+      );
+      assert.throws(
+        () => validatePageReadResult(op, { ...result, runCount: -1 }),
+        { code: "PAGE_READ_INVALID" },
+      );
+    } else {
+      const key = op === "sessions.list" ? "sessions" : "entries";
+      const row = result[key][0];
+      assert.throws(
+        () => validatePageReadResult(op, { ...result, [key]: [row, row] }),
+        { code: "PAGE_READ_INVALID" },
+      );
+      assert.throws(
+        () =>
+          validatePageReadResult(op, {
+            ...result,
+            [key]: [{ ...row, credentialRef: "private" }],
+          }),
+        { code: "PAGE_READ_INVALID" },
+      );
+      assert.throws(
+        () =>
+          validatePageReadResult(op, {
+            ...result,
+            [key]: [{ ...row, createdAt: "2026-02-29T00:00:00.000Z" }],
+          }),
+        { code: "PAGE_READ_INVALID" },
+      );
+    }
+    if (op === "memory.search") {
+      for (const query of ["", " ", "x\n", "é".repeat(513)])
+        assert.throws(
+          () => validatePageReadRequest(op, { ...request, query }),
+          { code: "PAGE_READ_INVALID" },
+        );
+    }
+  });
+}
 test("transport defaults are exact, immutable and shared with the native build spec", () => {
   assert.deepEqual(TRANSPORT_LIMITS, {
     maxInlineBytes: 65536,
