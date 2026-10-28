@@ -33,7 +33,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 const q = (sel: string) => document.querySelector<HTMLElement>(sel);
 const button = (name: string) =>
   [...document.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === name,
+    (b) => (b.getAttribute("aria-label") ?? b.textContent?.trim()) === name,
   )!;
 const subscribes = () =>
   ipc.invoke.mock.calls.filter(([c]) => c === "subscribe");
@@ -120,6 +120,61 @@ async function chooseProject(selection: unknown = admitted) {
 }
 
 describe("App wiring", () => {
+  it("opens every approved destination without inventing native records", async () => {
+    await boot();
+    expect(q("h1")?.textContent).toBe(
+      "Barebones by default.Modular by choice.Evidence by design.",
+    );
+    expect(document.body.textContent).toContain(
+      "Recent session history is not available yet.",
+    );
+    expect(q(".recent-row")).toBeNull();
+    for (const destination of [
+      "Runs",
+      "Memory",
+      "Models",
+      "Extensions",
+      "Settings",
+      "Work",
+    ]) {
+      button(destination).click();
+      flushSync();
+      expect(button(destination).getAttribute("aria-current")).toBe("page");
+      expect(q("h1")?.textContent).toBe(
+        destination === "Work"
+          ? "Barebones by default.Modular by choice.Evidence by design."
+          : destination,
+      );
+      expect(document.body.textContent).not.toMatch(
+        /bootstrap workspace|bootstrap session|splyce-demo|Fix webhook signature verification|Add cursor pagination|payments-api/i,
+      );
+    }
+    expect(ipc.invoke.mock.calls.some(([command]) => command === "send")).toBe(
+      false,
+    );
+  });
+
+  it("preserves the real composer draft across Work, Models and Work", async () => {
+    await boot();
+    const input = q("textarea") as HTMLTextAreaElement;
+    input.value = "Keep this task and its acceptance test";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    button("Models").click();
+    flushSync();
+    expect(q("[data-testid=providers-view]")).not.toBeNull();
+    expect(q("textarea")).toBeNull();
+    button("Work").click();
+    flushSync();
+    expect((q("textarea") as HTMLTextAreaElement).value).toBe(
+      "Keep this task and its acceptance test",
+    );
+    expect(button("Send").disabled).toBe(true);
+    expect(ipc.invoke.mock.calls.some(([command]) => command === "send")).toBe(
+      false,
+    );
+  });
+
   it("shows generation unconfigured while the native core is ready and runnable ports are unavailable", async () => {
     ipc.invoke.mockImplementation(async (cmd: string) => {
       if (cmd !== "handshake") return undefined;
@@ -150,6 +205,8 @@ describe("App wiring", () => {
   it("refreshes native readiness after Retry and observes the recovered engine exiting", async () => {
     await boot();
     ipc.ready = true;
+    button("Work").click();
+    flushSync();
     button("Retry").click();
     await settle();
     const shell = q("[data-testid=app-shell]")!;
@@ -182,6 +239,8 @@ describe("App wiring", () => {
       expect(shell.dataset[`readiness${service}`]).toBe("true");
     dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
     await settle();
+    button("Runs").click();
+    flushSync();
     q("[role=treeitem]")!.click();
     await settle();
     dispatchEngineEvent({
@@ -199,6 +258,8 @@ describe("App wiring", () => {
       payload: { runId: "run_1", turnId: "turn_1" },
     } as SplyceEvent);
     await settle();
+    button("Work").click();
+    flushSync();
     expect(q('[aria-label="Transcript"]')).not.toBeNull();
     const nativeHandshake = ipc.invoke.mock.calls.find(
       ([command]) => command === "handshake",
@@ -228,6 +289,8 @@ describe("App wiring", () => {
       /not connected|unavailable|error/i,
     );
     expect(button("Send").disabled).toBe(true);
+    button("Runs").click();
+    flushSync();
     // Sessions never read as empty or loading while the engine is down.
     expect(q("[data-testid=session-tree]")?.textContent).toMatch(
       /could not be loaded/,
@@ -237,7 +300,7 @@ describe("App wiring", () => {
 
   it("mounts each surface from shell navigation", async () => {
     await boot();
-    button("Providers").click();
+    button("Models").click();
     flushSync();
     const providers = q("[data-testid=providers-view]")!;
     expect(providers).not.toBeNull();
@@ -254,12 +317,14 @@ describe("App wiring", () => {
     );
     expect(q("[data-testid=support-status] table")).toBeNull();
 
-    button("Usage").click();
+    button("Settings").click();
     flushSync();
     expect(q("[data-testid=usage-unavailable-note]")).not.toBeNull();
     expect(q("[data-testid=providers-view]")).toBeNull();
 
     // Setup and Modules are mounted from the shell and stay honest with no service.
+    button("Settings").click();
+    flushSync();
     button("Setup").click();
     flushSync();
     expect(q("[data-testid=setup]")).not.toBeNull();
@@ -278,6 +343,8 @@ describe("App wiring", () => {
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
 
     // Skip setup must enter the workbench too, not leave a dead button.
+    button("Settings").click();
+    flushSync();
     button("Setup").click();
     flushSync();
     button("Skip setup").click();
@@ -285,7 +352,7 @@ describe("App wiring", () => {
     expect(q("[data-testid=setup]")).toBeNull();
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
 
-    button("Modules").click();
+    button("Extensions").click();
     flushSync();
     expect(q("[data-testid=modules]")).not.toBeNull();
     expect(
@@ -298,13 +365,15 @@ describe("App wiring", () => {
       (q("[data-testid=refresh-catalog]") as HTMLButtonElement).disabled,
     ).toBe(true);
 
-    button("Conversation").click();
+    button("Work").click();
     flushSync();
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
   });
 
   it("mounts the TD-33 session actions disabled with their own reasons", async () => {
     await boot();
+    button("Runs").click();
+    flushSync();
     const actions = q("[data-testid=session-actions]")!;
     expect(actions).not.toBeNull();
     expect(q("[data-testid=fork-point]")?.textContent).toBe(
@@ -333,6 +402,8 @@ describe("App wiring", () => {
     await boot();
     dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
     await settle();
+    button("Runs").click();
+    flushSync();
     q("[role=treeitem]")!.click();
     await settle();
 
@@ -351,6 +422,8 @@ describe("App wiring", () => {
     await boot();
     dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
     await settle();
+    button("Runs").click();
+    flushSync();
     const item = q("[role=treeitem]")!;
     expect(item).not.toBeNull();
     item.click();
@@ -364,6 +437,8 @@ describe("App wiring", () => {
     });
     expect(subscribes()).toHaveLength(1);
     expect(subscribes()[0][1]).toMatchObject({ sessionId: "ses_1" });
+    button("Work").click();
+    flushSync();
     // Composer now sees a session; sending stays disabled for an honest reason.
     expect(q("#composer-status")?.textContent).not.toMatch(
       /No session is selected/,
@@ -376,8 +451,12 @@ describe("App wiring", () => {
     await boot();
     dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
     await settle();
+    button("Runs").click();
+    flushSync();
     q("[role=treeitem]")!.click();
     await settle();
+    button("Work").click();
+    flushSync();
     await chooseProject();
     const ta = q("textarea") as HTMLTextAreaElement;
     ta.value = "hello";
@@ -407,8 +486,12 @@ describe("App wiring", () => {
     await boot();
     dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
     await settle();
+    button("Runs").click();
+    flushSync();
     q("[role=treeitem]")!.click();
     await settle();
+    button("Work").click();
+    flushSync();
     await chooseProject();
 
     const ta = q("textarea") as HTMLTextAreaElement;
@@ -551,6 +634,8 @@ describe("App wiring", () => {
     await engineHandshake().catch(() => {});
     await settle();
     ipc.ready = true;
+    button("Work").click();
+    flushSync();
     button("Retry").click();
     await settle();
   }
@@ -560,9 +645,15 @@ describe("App wiring", () => {
     await boot();
     dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
     await settle();
+    button("Runs").click();
+    flushSync();
     q("[role=treeitem]")!.click();
     await settle();
+    button("Work").click();
+    flushSync();
     await dropAndRecover();
+    button("Runs").click();
+    flushSync();
     expect(q("[data-testid=lost-selection]")).toBeNull();
     expect(get(selectedSession)?.sessionId).toBe("ses_1");
     expect(q("[role=treeitem]")?.getAttribute("aria-selected")).toBe("true");
@@ -578,6 +669,8 @@ describe("App wiring", () => {
 
   it("mounts the Supervisor permission mode disabled with the revision reason", async () => {
     await boot();
+    button("Settings").click();
+    flushSync();
     const supervisor = q("[data-testid=supervisor]")!;
     expect(supervisor.textContent).toContain("Supervisor");
     const select = supervisor.querySelector<HTMLSelectElement>(
@@ -602,10 +695,16 @@ describe("App wiring", () => {
     ipc.ready = true;
     const snapshots = [[treeEvent("ses_1", "scope_1")], []];
     await boot({ loadSessions: async () => snapshots.shift() ?? [] });
+    button("Runs").click();
+    flushSync();
     q("[role=treeitem]")!.click();
     await settle();
     expect(get(selectedSession)?.sessionId).toBe("ses_1");
+    button("Work").click();
+    flushSync();
     await dropAndRecover();
+    button("Runs").click();
+    flushSync();
     expect(q("[data-testid=lost-selection]")).not.toBeNull();
     expect(get(selectedSession)).toBeNull();
   });
@@ -615,12 +714,18 @@ describe("App wiring", () => {
     await boot();
     dispatchEngineEvent(treeEvent("ses_1", "scope_1"));
     await settle();
+    button("Runs").click();
+    flushSync();
     q("[role=treeitem]")!.click();
     await settle();
+    button("Work").click();
+    flushSync();
     expect(q("#composer-status")?.textContent).toBe(
       "No project is selected. Choose a project first.",
     );
     expect(button("Send").disabled).toBe(true);
+    button("Work").click();
+    flushSync();
     await chooseProject();
     expect(q("#composer-status")?.textContent).toBe(
       "No profile is selected. Use a configured profile first.",
@@ -644,6 +749,8 @@ describe("App wiring", () => {
     expect(q("[data-testid=project-name]")?.textContent).toBe(
       "No project selected.",
     );
+    button("Work").click();
+    flushSync();
     await chooseProject();
     expect(q("[data-testid=project-name]")?.textContent).toBe("splyce-demo");
     // Cancel returns null: the chosen project stays.
@@ -699,7 +806,7 @@ describe("App wiring", () => {
         payload: { state: "ready", activeWorkers: 0, ports: providerPorts },
       } as SplyceEvent);
       await settle();
-      button("Providers").click();
+      button("Models").click();
       flushSync();
     }
 

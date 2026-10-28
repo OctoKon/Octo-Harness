@@ -39,7 +39,7 @@ const tick = async () => {
 };
 const button = (text: string) =>
   [...document.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === text,
+    (b) => (b.getAttribute("aria-label") ?? b.textContent?.trim()) === text,
   )!;
 const sends = (op: string) =>
   ipc.invoke.mock.calls.filter(
@@ -106,7 +106,7 @@ async function configured() {
   await tick();
   button("Choose project").click();
   await tick();
-  button("Providers").click();
+  button("Models").click();
   flushSync();
   for (const [id, value] of Object.entries({
     "setup-endpoint": "https://example.test/v1",
@@ -125,6 +125,82 @@ async function configured() {
 }
 
 describe("native profile and session setup", () => {
+  it("preserves the focused composer node when the first run event arrives", async () => {
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    const input = document.querySelector("textarea")!;
+    input.value = "Continue writing while the run starts";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+    flushSync();
+    expect(document.activeElement).toBe(input);
+    expect(document.querySelector('[aria-label="Transcript"]')).toBeNull();
+    dispatchEngineEvent({
+      schemaVersion: 1,
+      protocolVersion: 2,
+      recordId: "rec_focus",
+      eventId: "evt_focus",
+      createdAt: "2026-10-28T00:00:00.000Z",
+      sourceIds: [],
+      scopeId: "ws_1",
+      sessionId: "session_1",
+      seq: 1,
+      durable: true,
+      kind: "turn.started",
+      payload: { runId: "run_focus", turnId: "turn_focus" },
+    } as never);
+    await tick();
+    expect(document.querySelector('[aria-label="Transcript"]')).not.toBeNull();
+    expect(document.querySelector("textarea")).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("Continue writing while the run starts");
+  });
+
+  it("labels HTTPS loopback models Local and remote HTTPS models Cloud", async () => {
+    reply = async () => ({
+      configRevision: "cfg_2",
+      selectedProfileId: null,
+      profiles: [
+        {
+          profileId: "local_profile",
+          profileRevision: "pr_local",
+          apiFamily: "openai-responses",
+          modelId: "local-model",
+          endpointOrigin: "https://localhost:8443",
+          credential: "configured",
+        },
+        {
+          profileId: "cloud_profile",
+          profileRevision: "pr_cloud",
+          apiFamily: "openai-responses",
+          modelId: "cloud-model",
+          endpointOrigin: "https://example.test",
+          credential: "configured",
+        },
+      ],
+    });
+    app = mount(App, { target: document.body });
+    await tick();
+    button("Choose project").click();
+    await tick();
+    button("Models").click();
+    flushSync();
+    const local = document.querySelector<HTMLInputElement>(
+      '[data-testid="model-switcher"] input[value="local_profile"]',
+    )!;
+    const cloud = document.querySelector<HTMLInputElement>(
+      '[data-testid="model-switcher"] input[value="cloud_profile"]',
+    )!;
+    expect(local.closest("label")?.textContent).toMatch(
+      /local-model\s*\(Local\)/,
+    );
+    expect(cloud.closest("label")?.textContent).toMatch(
+      /cloud-model\s*\(Cloud\)/,
+    );
+    expect(sends("profile.select")).toHaveLength(0);
+  });
+
   it("recovers profiles with provider port unavailable and blocks generation", async () => {
     const initial = ipc.invoke.getMockImplementation()!;
     ipc.invoke.mockImplementation(async (cmd, args) => {
@@ -166,7 +242,7 @@ describe("native profile and session setup", () => {
     await tick();
     button("Choose project").click();
     await tick();
-    button("Providers").click();
+    button("Models").click();
     flushSync();
     const read = sends("setup.read")[0]![1];
     expect(read.payload).toEqual({
@@ -186,9 +262,13 @@ describe("native profile and session setup", () => {
     await tick();
     expect(sends("profile.select")).toHaveLength(1);
     expect(sends("session.start")).toHaveLength(1);
+    button("Models").click();
+    flushSync();
     expect(
       (document.getElementById("setup-key") as HTMLInputElement).disabled,
     ).toBe(false);
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
   });
 
@@ -213,6 +293,7 @@ describe("native profile and session setup", () => {
     input.value = "draft";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     flushSync();
+    expect(button("Work").getAttribute("aria-current")).toBe("page");
     expect(handshakes).toBe(2);
     expect(get(selectedSession)).toEqual({
       sessionId: "session_1",
@@ -272,6 +353,72 @@ describe("native profile and session setup", () => {
     expect(sends("session.prompt")).toHaveLength(0);
   });
 
+  it.each(["accepted", "rejected"] as const)(
+    "retains the pending send and its %s acknowledgement across navigation",
+    async (outcome) => {
+      await configured();
+      button("Use this profile").click();
+      await tick();
+      let resolve!: (value: unknown) => void;
+      let reject!: (reason: unknown) => void;
+      reply = async () =>
+        new Promise((accept, fail) => {
+          resolve = accept;
+          reject = fail;
+        });
+      const input = document.querySelector("textarea")!;
+      input.value = "Send this task once";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      flushSync();
+      button("Send").click();
+      await tick();
+      expect(sends("session.prompt")).toHaveLength(1);
+      expect(button("Send").disabled).toBe(true);
+      button("Models").click();
+      flushSync();
+      button("Work").click();
+      flushSync();
+      const returnedInput = document.querySelector("textarea")!;
+      expect(returnedInput.value).toBe("Send this task once");
+      expect(button("Send").disabled).toBe(true);
+      returnedInput.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+      await tick();
+      expect(sends("session.prompt")).toHaveLength(1);
+      expect(button("Send").disabled).toBe(true);
+      if (outcome === "accepted") {
+        resolve({ accepted: true, runId: "run_1", turnId: "turn_1" });
+        await tick();
+        expect(returnedInput.value).toBe("");
+        expect(button("Cancel turn")).toBeDefined();
+        expect(button("Send").disabled).toBe(true);
+      } else {
+        reject(new Error("private-native-ack-failure"));
+        await tick();
+        const uncertain =
+          "Send failed: The message may not have reached the engine. Check the connection, then resend.";
+        expect(
+          document.getElementById("composer-status")?.textContent?.trim(),
+        ).toBe(uncertain);
+        button("Models").click();
+        flushSync();
+        button("Work").click();
+        flushSync();
+        expect(
+          document.getElementById("composer-status")?.textContent?.trim(),
+        ).toBe(uncertain);
+        expect(document.querySelector("textarea")!.value).toBe(
+          "Send this task once",
+        );
+        expect(document.body.textContent).not.toContain(
+          "private-native-ack-failure",
+        );
+      }
+      expect(sends("session.prompt")).toHaveLength(1);
+    },
+  );
+
   it("preserves the draft when prompt acknowledgement is malformed", async () => {
     await configured();
     button("Use this profile").click();
@@ -326,11 +473,14 @@ describe("native profile and session setup", () => {
     await configured();
     button("Use this profile").click();
     await tick();
+    expect(button("Models").getAttribute("aria-current")).toBe("page");
     expect(document.body.textContent).toContain("profile_1 (selected)");
     expect(document.getElementById("profile-status")?.textContent).toContain(
       "could not be confirmed",
     );
     expect(document.body.textContent).not.toContain("private native error");
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
   });
 
@@ -353,6 +503,8 @@ describe("native profile and session setup", () => {
     await tick();
     resolve(await initial("handshake", {}));
     await tick();
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
   });
 
@@ -371,7 +523,7 @@ describe("native profile and session setup", () => {
       cleanupComplete: true,
     });
     await tick();
-    button("Conversation").click();
+    button("Work").click();
     flushSync();
     button("Retry").click();
     await tick();
@@ -410,7 +562,7 @@ describe("native profile and session setup", () => {
       ],
     });
     await tick();
-    button("Providers").click();
+    button("Models").click();
     flushSync();
     expect(document.body.textContent).not.toContain("old_profile");
   });
@@ -459,20 +611,26 @@ describe("native profile and session setup", () => {
       await tick();
       button("Choose project").click();
       await tick();
-      button("Providers").click();
+      button("Models").click();
       flushSync();
       expect(document.getElementById("profile-status")?.textContent).toContain(
         "could not be loaded",
       );
       expect(document.body.textContent).not.toContain("secret");
+      button("Work").click();
+      flushSync();
       expect(button("Send").disabled).toBe(true);
     },
   );
 
   it("provider save alone keeps Send disabled; selecting sends both exact frozen setup frames", async () => {
     await configured();
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
     expect(sends("session.start")).toHaveLength(0);
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     for (const [op, payload] of [
@@ -530,6 +688,8 @@ describe("native profile and session setup", () => {
       if (op !== command) return selection;
       throw { code, message: "private-native-message", path: "private-path" };
     };
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     expect(document.getElementById("profile-status")?.textContent).toContain(
@@ -541,6 +701,8 @@ describe("native profile and session setup", () => {
     expect(sends("session.start")).toHaveLength(
       command === "profile.select" ? 0 : 1,
     );
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
   });
 
@@ -553,15 +715,23 @@ describe("native profile and session setup", () => {
         : new Promise((r) => {
             resolve = r;
           });
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
     resolve({
       ...session,
       readiness: { state: "unavailable", code: "PROVIDER_UNAVAILABLE" },
     });
     await tick();
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
+    button("Models").click();
+    flushSync();
     expect(document.getElementById("profile-status")?.textContent).toContain(
       "unavailable",
     );
@@ -574,6 +744,8 @@ describe("native profile and session setup", () => {
       new Promise((r) => {
         resolve = r;
       });
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     selectedWorkspace = "ws_2";
@@ -582,6 +754,8 @@ describe("native profile and session setup", () => {
     resolve(selection);
     await tick();
     expect(sends("session.start")).toHaveLength(0);
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
   });
 
@@ -603,12 +777,16 @@ describe("native profile and session setup", () => {
     async (command, invalid) => {
       await configured();
       reply = async (op) => (op === command ? invalid : selection);
+      button("Models").click();
+      flushSync();
       button("Use this profile").click();
       await tick();
       expect(document.getElementById("profile-status")?.textContent).toContain(
         "could not",
       );
       expect(document.body.textContent).not.toContain("private-path");
+      button("Work").click();
+      flushSync();
       expect(button("Send").disabled).toBe(true);
     },
   );
@@ -622,6 +800,8 @@ describe("native profile and session setup", () => {
         : new Promise((r) => {
             resolve = r;
           });
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     const lifecycle = ipc.invoke.mock.calls.find(
@@ -639,6 +819,8 @@ describe("native profile and session setup", () => {
     expect(
       document.getElementById("profile-status")?.textContent,
     ).not.toContain("Session ready");
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
   });
 
@@ -656,15 +838,23 @@ describe("native profile and session setup", () => {
       },
     } as never);
     await tick();
+    button("Runs").click();
+    flushSync();
     document.querySelector<HTMLElement>("[role=treeitem]")!.click();
     await tick();
     expect(get(selectedSession)?.sessionId).toBe("old_session");
     reply = async () => {
       throw new Error("private-native-message");
     };
+    button("Models").click();
+    flushSync();
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     expect(get(selectedSession)?.sessionId).toBe("old_session");
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
     expect(document.body.textContent).not.toContain("private-native-message");
   });
@@ -675,12 +865,16 @@ describe("native profile and session setup", () => {
       if (op === "profile.select") return selection;
       throw new Error("private-native-message");
     };
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     expect(document.body.textContent).toContain("profile_1 (selected)");
     expect(document.getElementById("profile-status")?.textContent).toContain(
       "could not",
     );
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
   });
 
@@ -690,8 +884,12 @@ describe("native profile and session setup", () => {
       if (op === "profile.select") return selection;
       throw new Error("private-native-message");
     };
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     expect(sends("profile.select")[1]![1].payload.payload).toMatchObject({
@@ -708,6 +906,8 @@ describe("native profile and session setup", () => {
       new Promise((r) => {
         resolve = r;
       });
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     await unmount(app!);
@@ -744,6 +944,8 @@ describe("native profile and session setup", () => {
     expect(status).toContain("Could not confirm");
     expect(status).not.toContain("Nothing was stored");
     expect(button("Use this profile")).toBeUndefined();
+    button("Work").click();
+    flushSync();
     expect(button("Send").disabled).toBe(true);
   });
 });

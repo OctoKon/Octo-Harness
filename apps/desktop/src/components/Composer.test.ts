@@ -16,6 +16,12 @@ type Props = {
   contextArtifactIds?: string[];
   send: (p: PromptPayload) => Promise<void>;
   cancel?: () => void;
+  draft?: string;
+  workspaceLabel?: string | null;
+  modelLabel?: string | null;
+  baseLabel?: string;
+  onChooseWorkspace?: () => void;
+  onConfigureModel?: () => void;
 };
 
 const mounted: object[] = [];
@@ -138,6 +144,48 @@ describe("TD-71 composer", () => {
     expect(c.ta.value).toBe("");
   });
 
+  it("preserves a newer controlled draft when a pending send completes after remount", async () => {
+    let release!: () => void;
+    let draft = "first";
+    const props = {
+      connection: "ready" as const,
+      sessionId: "ses_1",
+      generationReady: true,
+      workspaceSelected: true,
+      profileSelected: true,
+      sessionReadiness: "ready" as const,
+      send: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          }),
+      ),
+      get draft() {
+        return draft;
+      },
+      set draft(value: string) {
+        draft = value;
+      },
+    };
+    mounted.push(mount(Composer, { target: document.body, props }));
+    document.querySelector("textarea")!.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(props.send).toHaveBeenCalledExactlyOnceWith({ text: "first" });
+    unmount(mounted.pop()!);
+    draft = "newer";
+    mounted.push(mount(Composer, { target: document.body, props }));
+    release();
+    await tick();
+    await tick();
+    expect(draft).toBe("newer");
+    expect(document.querySelector("textarea")!.value).toBe("newer");
+  });
+
   it("keeps the draft and shows honest fixed copy when send fails", async () => {
     const c = setup({
       send: vi.fn(async () => {
@@ -248,6 +296,51 @@ describe("TD-71 composer", () => {
     expect(live.cancel).not.toHaveBeenCalled();
     live.key({ key: "Escape" });
     expect(live.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("shows reported chip labels and invokes only supplied callbacks", () => {
+    const choose = vi.fn();
+    const configure = vi.fn();
+    setup({
+      workspaceLabel: "Project",
+      modelLabel: "Model",
+      baseLabel: "branch",
+      onChooseWorkspace: choose,
+      onConfigureModel: configure,
+    });
+    const buttons = [...document.querySelectorAll("button")];
+    buttons.find((b) => b.textContent?.includes("Project"))!.click();
+    buttons.find((b) => b.textContent?.includes("Model"))!.click();
+    expect(choose).toHaveBeenCalledOnce();
+    expect(configure).toHaveBeenCalledOnce();
+    expect(document.querySelector(".c-bottom")!.textContent).toContain(
+      "base branch",
+    );
+  });
+
+  it("uses the supplied draft and reports changes through its binding", () => {
+    let draft = "retained";
+    const props = {
+      connection: "ready" as const,
+      sessionId: "ses_1",
+      send: async () => {},
+      get draft() {
+        return draft;
+      },
+      set draft(value: string) {
+        draft = value;
+      },
+    };
+    mounted.push(mount(Composer, { target: document.body, props }));
+    const ta = document.querySelector("textarea")!;
+    expect(ta.value).toBe("retained");
+    ta.value = "updated";
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    expect(draft).toBe("updated");
+    unmount(mounted.pop()!);
+    mounted.push(mount(Composer, { target: document.body, props }));
+    expect(document.querySelector("textarea")!.value).toBe("updated");
   });
 
   it("exposes accessible names", () => {

@@ -44,6 +44,66 @@ function setup(width: number) {
 }
 
 describe("TD-72 adaptive shell", () => {
+  it("keeps the composer within the conversation column", () => {
+    const s = setup(1400);
+    const column = s.q(".main-column")!;
+    expect(column.contains(s.q("main"))).toBe(true);
+    expect(column.contains(s.q("footer"))).toBe(true);
+    expect(column.contains(s.q("nav"))).toBe(false);
+  });
+
+  it("supports a page-owned composer and custom content label", () => {
+    window.innerWidth = 1400;
+    mounted.push(
+      mount(Shell, {
+        target: document.body,
+        props: {
+          rail: snip("<p>rail</p>"),
+          transcript: snip("<p>work</p>"),
+          composer: snip("<textarea></textarea>"),
+          evidence: snip("<p>evidence</p>"),
+          showComposer: false,
+          contentLabel: "Work",
+        },
+      }),
+    );
+    expect(document.querySelector("main")?.getAttribute("aria-label")).toBe(
+      "Work",
+    );
+    expect(document.querySelector("footer")).toBeNull();
+  });
+
+  it("gives rail content the native fold callback and restores its focus", async () => {
+    window.innerWidth = 1400;
+    const rail = createRawSnippet<[() => void]>((onFold) => ({
+      render: () => '<button id="fold-rail">Collapse sidebar</button>',
+      setup: (element) => {
+        const fold = () => onFold()();
+        element.addEventListener("click", fold);
+        return () => element.removeEventListener("click", fold);
+      },
+    }));
+    mounted.push(
+      mount(Shell, {
+        target: document.body,
+        props: {
+          rail,
+          transcript: snip("<p>work</p>"),
+          composer: snip("<textarea></textarea>"),
+          evidence: snip("<p>evidence</p>"),
+        },
+      }),
+    );
+    const button = document.querySelector<HTMLButtonElement>("#fold-rail")!;
+    button.focus();
+    button.click();
+    await settle();
+    expect(document.querySelector("nav")).toBeNull();
+    expect(document.activeElement?.getAttribute("aria-controls")).toBe(
+      "shell-rail",
+    );
+  });
+
   it("wide shows rail and conversation; evidence toggles in alongside", async () => {
     const s = setup(1400);
     expect(s.q("[data-layout]")!.dataset.layout).toBe("wide");

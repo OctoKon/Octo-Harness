@@ -10,6 +10,12 @@
   import SessionActions from "./components/SessionActions.svelte";
   import TurnStream from "./components/TurnStream.svelte";
   import Shell from "./components/shell/Shell.svelte";
+  import Sidebar, {
+    type WorkbenchView,
+  } from "./components/workbench/Sidebar.svelte";
+  import MemoryList from "./components/memory/MemoryList.svelte";
+  import ModelSwitcher from "./components/model/ModelSwitcher.svelte";
+  import Icon from "../prototype/src/lib/Icon.svelte";
   import UsageView from "./components/usage/UsageView.svelte";
   import ApprovalSurface from "./components/ApprovalSurface.svelte";
   import PermissionModeSelect from "./components/PermissionModeSelect.svelte";
@@ -41,6 +47,7 @@
   } from "./stores/engine";
   import {
     configuredProfileResult,
+    isLoopbackUrl,
     profileSelectPayload,
     providerConfigurePayload,
     sessionStartPayload,
@@ -75,15 +82,31 @@
     type TurnsState,
   } from "./stores/turns";
 
-  type View = "conversation" | "setup" | "modules" | "providers" | "usage";
-  const VIEWS: readonly (readonly [View, string])[] = [
-    ["conversation", "Conversation"],
-    ["setup", "Setup"],
-    ["modules", "Modules"],
-    ["providers", "Providers"],
-    ["usage", "Usage"],
-  ];
-
+  type View =
+    | "conversation"
+    | "runs"
+    | "memory"
+    | "providers"
+    | "modules"
+    | "settings"
+    | "setup"
+    | "usage";
+  const navigation: Record<WorkbenchView, View> = {
+    work: "conversation",
+    runs: "runs",
+    memory: "memory",
+    models: "providers",
+    extensions: "modules",
+    settings: "settings",
+  };
+  const viewLabels: Record<WorkbenchView, string> = {
+    work: "Work",
+    runs: "Runs",
+    memory: "Memory",
+    models: "Models",
+    extensions: "Extensions",
+    settings: "Settings",
+  };
   // No setup/module service is connected: the screens stay honest and disabled
   // instead of implying a catalog, plan or installation.
   const moduleSnapshot = unavailableModuleSnapshot(
@@ -126,6 +149,40 @@
   }: { loadSessions?: () => Promise<readonly SplyceEvent[]> } = $props();
 
   let view = $state<View>("conversation");
+  let composerDraft = $state("");
+  let composerPending = $state(false);
+  let composerError = $state<string | null>(null);
+  let profileCatalogStatus = $state<"loading" | "ready" | "error">("loading");
+  function initialTheme(): "light" | "dark" {
+    try {
+      return localStorage.getItem("splyce.theme") === "dark" ? "dark" : "light";
+    } catch {
+      return "light";
+    }
+  }
+  let theme = $state<"light" | "dark">(initialTheme());
+  function toggleTheme() {
+    theme = theme === "light" ? "dark" : "light";
+    try {
+      localStorage.setItem("splyce.theme", theme);
+    } catch {
+      /* Theme remains usable without preference storage. */
+    }
+  }
+  $effect(() => {
+    document.documentElement.dataset.theme = theme;
+  });
+  const navView = $derived<WorkbenchView>(
+    view === "conversation"
+      ? "work"
+      : view === "providers"
+        ? "models"
+        : view === "modules"
+          ? "extensions"
+          : view === "setup" || view === "usage"
+            ? "settings"
+            : view,
+  );
   let nav = $state.raw<SessionNavState>(createSessionNav());
   // sessionId -> scopeId, as carried by the engine's own events; never invented.
   const scopes = new Map<string, string>();
@@ -150,7 +207,20 @@
   let chooserError = $state<string | null>(null);
   let profiles = $state<ConfiguredProfile[]>([]);
   let profileSelection = $state<ProfileSelectionResult | null>(null);
-  let startReplay: { requestId: string; payload: ReturnType<typeof sessionStartPayload> } | null = null;
+  const selectedProfile = $derived(
+    profiles.find(
+      (profile) => profile.profileId === profileSelection?.selectedProfileId,
+    ),
+  );
+  const providerLabel = $derived(
+    selectedProfile?.endpointOrigin
+      ? `${selectedProfile.endpointOrigin} · no automatic fallback`
+      : "No provider selected · no automatic fallback",
+  );
+  let startReplay: {
+    requestId: string;
+    payload: ReturnType<typeof sessionStartPayload>;
+  } | null = null;
   let activeRunId = $state<string | null>(null);
   let cancelPending = $state(false);
   let profilePending = $state(false);
@@ -180,10 +250,10 @@
     profilePending || configuring
       ? "Provider setup is already in progress."
       : readiness?.state !== "ready"
-      ? "The engine is not connected. Nothing can be saved."
-      : workspace === null
-        ? "Choose a project first. Provider setup is saved for a project."
-        : undefined,
+        ? "The engine is not connected. Nothing can be saved."
+        : workspace === null
+          ? "Choose a project first. Provider setup is saved for a project."
+          : undefined,
   );
 
   async function chooseProject() {
@@ -209,23 +279,36 @@
   async function readSetup(project: SelectedWorkspace) {
     const epoch = ++setupEpoch;
     const requestId = crypto.randomUUID();
+    profileCatalogStatus = "loading";
     try {
-      const result = validateSetupReadResult(await sendSetup("setup.read", requestId, {
-        requestId, workspaceId: project.workspaceId,
-      }));
+      const result = validateSetupReadResult(
+        await sendSetup("setup.read", requestId, {
+          requestId,
+          workspaceId: project.workspaceId,
+        }),
+      );
       if (epoch !== setupEpoch) return;
       profiles = result.profiles;
+      profileCatalogStatus = "ready";
       profileSelection = result.selection;
       startedSession = null;
       profileStatus = "Saved profiles loaded. Start a session before sending.";
     } catch {
-      if (epoch === setupEpoch) profileStatus = "Saved profiles could not be loaded.";
+      if (epoch === setupEpoch) {
+        profileStatus = "Saved profiles could not be loaded.";
+        profileCatalogStatus = "error";
+      }
     }
   }
 
   // The secret lives only in this one send; the payload object is not kept.
   async function configureProvider(draft: ProviderSetupDraft) {
-    if (!workspace || readiness?.state !== "ready" || configuring || profilePending)
+    if (
+      !workspace ||
+      readiness?.state !== "ready" ||
+      configuring ||
+      profilePending
+    )
       throw new Error("Setup unavailable");
     const project = workspace;
     const epoch = ++setupEpoch;
@@ -255,7 +338,14 @@
   }
 
   async function useProfile(profile: ConfiguredProfile) {
-    if (!workspace || readiness?.state !== "ready" || profilePending || configuring || profile.credential === "missing") return;
+    if (
+      !workspace ||
+      readiness?.state !== "ready" ||
+      profilePending ||
+      configuring ||
+      profile.credential === "missing"
+    )
+      return;
     const project = workspace;
     const epoch = ++setupEpoch;
     profilePending = true;
@@ -289,7 +379,11 @@
       // A saved profile never proves session readiness. Only this native receipt can.
       profileStatus = "Starting session…";
       const startRequestId = crypto.randomUUID();
-      const startPayload = sessionStartPayload(selected, project.workspaceId, startRequestId);
+      const startPayload = sessionStartPayload(
+        selected,
+        project.workspaceId,
+        startRequestId,
+      );
       const started = validateSessionStartResult(
         await sendSetup("session.start", startRequestId, startPayload),
       );
@@ -303,14 +397,19 @@
           if (epoch !== setupEpoch) return;
           readiness = verified.readiness;
           sessionPortWitness = true;
-          selectSession({ sessionId: started.sessionId, scopeId: project.workspaceId });
+          selectSession({
+            sessionId: started.sessionId,
+            scopeId: project.workspaceId,
+          });
           profileStatus = "Profile selected. Session ready.";
         } catch {
           if (epoch !== setupEpoch) return;
-          profileStatus = "Profile selected. Engine readiness could not be confirmed. Sending stays blocked.";
+          profileStatus =
+            "Profile selected. Engine readiness could not be confirmed. Sending stays blocked.";
         }
       } else {
-        profileStatus = "Profile selected. The session is unavailable. Sending stays blocked.";
+        profileStatus =
+          "Profile selected. The session is unavailable. Sending stays blocked.";
       }
     } catch (error) {
       if (epoch === setupEpoch) {
@@ -323,8 +422,23 @@
       if (epoch === setupEpoch) profilePending = false;
     }
   }
+  async function activateProfile(profile: ConfiguredProfile) {
+    await useProfile(profile);
+    if (
+      status === "ready" &&
+      profileSelection?.selectedProfileId === profile.profileId &&
+      startedSession?.readiness.state === "ready"
+    )
+      view = "conversation";
+  }
+
   function isOpaqueId(value: string) {
-    return !/[\uD800-\uDFFF]/u.test(value) && value.length > 0 && value.length <= 128 && !/[\s\p{Cc}\p{Cf}\/\\]/u.test(value);
+    return (
+      !/[\uD800-\uDFFF]/u.test(value) &&
+      value.length > 0 &&
+      value.length <= 128 &&
+      !/[\s\p{Cc}\p{Cf}\/\\]/u.test(value)
+    );
   }
 
   async function refreshStaleSession(epoch: number) {
@@ -333,8 +447,16 @@
     sessionPortWitness = false;
     if (!replay || !previous) return;
     try {
-      const refreshed = validateSessionStartResult(await sendSetup("session.start", replay.requestId, replay.payload));
-      if (epoch !== setupEpoch || refreshed.sessionId !== previous.sessionId || refreshed.sessionRevision !== previous.sessionRevision || refreshed.readiness.state !== "ready") return;
+      const refreshed = validateSessionStartResult(
+        await sendSetup("session.start", replay.requestId, replay.payload),
+      );
+      if (
+        epoch !== setupEpoch ||
+        refreshed.sessionId !== previous.sessionId ||
+        refreshed.sessionRevision !== previous.sessionRevision ||
+        refreshed.readiness.state !== "ready"
+      )
+        return;
       const verified = await handshake();
       if (epoch !== setupEpoch) return;
       startedSession = refreshed;
@@ -342,7 +464,9 @@
       sessionPortWitness = true;
       retry();
     } catch {
-      if (epoch === setupEpoch) profileStatus = "Session readiness could not be refreshed. Sending stays blocked.";
+      if (epoch === setupEpoch)
+        profileStatus =
+          "Session readiness could not be refreshed. Sending stays blocked.";
     }
   }
 
@@ -442,27 +566,57 @@
 
   function canRespond(actionId: string) {
     return (
-      !!workspace && !!profileSelection && !!startedSession &&
-      (status === "ready" || status === "busy") && subscription.state === "live" &&
-      !turns.stale && !turns.needsResync &&
+      !!workspace &&
+      !!profileSelection &&
+      !!startedSession &&
+      (status === "ready" || status === "busy") &&
+      subscription.state === "live" &&
+      !turns.stale &&
+      !turns.needsResync &&
       $selectedSession?.sessionId === startedSession.sessionId &&
       $selectedSession?.scopeId === workspace.workspaceId &&
-      currentRun?.actions.some((action) => action.actionId === actionId && action.approval?.state === "requested") === true
+      currentRun?.actions.some(
+        (action) =>
+          action.actionId === actionId &&
+          action.approval?.state === "requested",
+      ) === true
     );
   }
 
-  async function onApproval(approvalRequestId: string, runId: string, actionId: string, decision: "approve" | "deny") {
+  async function onApproval(
+    approvalRequestId: string,
+    runId: string,
+    actionId: string,
+    decision: "approve" | "deny",
+  ) {
     const project = workspace;
     const selected = profileSelection;
     const session = startedSession;
-    if (!project || !selected || !session || currentRun?.runId !== runId || !canRespond(actionId) ||
-      !currentRun.actions.some((action) => action.actionId === actionId && action.approval?.approvalRequestId === approvalRequestId && action.approval.runId === runId)) throw new Error("Approval unavailable");
-    await invoke("approval.respond", { approvalRequestId, runId, actionId, decision }, {
-      sessionId: session.sessionId, scopeId: project.workspaceId,
-      expectedConfigRevision: selected.configRevision,
-      expectedProfileRevision: selected.profileRevision,
-      expectedPolicyRevision: session.policyRevision,
-    });
+    if (
+      !project ||
+      !selected ||
+      !session ||
+      currentRun?.runId !== runId ||
+      !canRespond(actionId) ||
+      !currentRun.actions.some(
+        (action) =>
+          action.actionId === actionId &&
+          action.approval?.approvalRequestId === approvalRequestId &&
+          action.approval.runId === runId,
+      )
+    )
+      throw new Error("Approval unavailable");
+    await invoke(
+      "approval.respond",
+      { approvalRequestId, runId, actionId, decision },
+      {
+        sessionId: session.sessionId,
+        scopeId: project.workspaceId,
+        expectedConfigRevision: selected.configRevision,
+        expectedProfileRevision: selected.profileRevision,
+        expectedPolicyRevision: session.policyRevision,
+      },
+    );
   }
 
   async function connect() {
@@ -485,7 +639,13 @@
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
-        if (activeRunId && ["completed", "failed", "canceled", "stopped"].includes(next.runs[activeRunId]?.status ?? "")) activeRunId = null;
+        if (
+          activeRunId &&
+          ["completed", "failed", "canceled", "stopped"].includes(
+            next.runs[activeRunId]?.status ?? "",
+          )
+        )
+          activeRunId = null;
       },
       onResync: (fromSeq, sessionId) => {
         void binding.resubscribe(sessionId, fromSeq);
@@ -536,133 +696,348 @@
   data-readiness-receipts={readiness ? readiness.receipts : "unknown"}
   data-readiness-generation={ports ? ports.generation : "unknown"}
 >
-  <Shell {rail} {transcript} {composer} {evidence} />
+  <Shell
+    {rail}
+    {transcript}
+    composer={emptyComposer}
+    {evidence}
+    showComposer={false}
+    quietToolbar
+    contentLabel={viewLabels[navView]}
+  />
 </div>
 
-{#snippet rail()}
-  <div class="brand">
-    <h1>Splyce</h1>
-    <span class="status-badge" class:ready={status === "ready"} class:unavailable={status !== "ready"}>
-      {stopped ? "engine stopped" : status}
-    </span>
-  </div>
-  <nav class="views-nav" aria-label="Views">
-    {#each VIEWS as [id, label] (id)}
-      <button type="button" aria-current={view === id ? "page" : undefined} onclick={() => (view = id)}>
-        {label}
-      </button>
-    {/each}
-  </nav>
-  <section class="project" aria-labelledby="project-title">
-    <h2 id="project-title">Project</h2>
-    <p data-testid="project-name">{workspace ? workspace.displayName : "No project selected."}</p>
-    <button
-      type="button"
-      disabled={chooserReason !== null || choosing}
-      aria-describedby="project-status"
-      onclick={() => void chooseProject()}
-    >
-      {choosing ? "Choosing…" : "Choose project"}
-    </button>
-    <p id="project-status" role="status">{chooserReason ?? chooserError}</p>
-  </section>
-  <SessionTree
-    {nav}
-    {onSelect}
-    canRetry={status === "ready"}
-    onFocus={(key) => dispatchNav({ type: "focus", key })}
-    onMove={(to) => dispatchNav({ type: "move", to })}
-    onRetry={() => {
-      if (status === "ready" && loadSessions) void runLoad();
-    }}
+{#snippet emptyComposer()}{/snippet}
+
+{#snippet rail(onFold: () => void)}
+  <Sidebar
+    view={navView}
+    onNavigate={(next) => (view = navigation[next])}
+    workspaceLabel={workspace?.displayName ?? null}
+    {choosing}
+    {chooserReason}
+    {chooserError}
+    onChooseWorkspace={() => void chooseProject()}
+    {theme}
+    onToggleTheme={toggleTheme}
+    engineLabel={readiness?.state === "ready" &&
+    status !== "disconnected" &&
+    status !== "error" &&
+    !stopped
+      ? "Pi engine · local"
+      : "Engine unavailable"}
+    {providerLabel}
+    runCount={Object.keys(turns.runs).length}
+    {onFold}
   />
-  <SessionActions context={sessionActionContext} />
-  <section class="supervisor" aria-label="Supervisor" data-testid="supervisor">
-    <h2>Supervisor</h2>
-    <PermissionModeSelect modeState={permissionModeState} context={permissionContext} />
-  </section>
+{/snippet}
+
+{#snippet connectionNotice()}
+  {#if status !== "ready"}
+    <section
+      class="connection-note"
+      data-testid="unavailable-banner"
+      role="status"
+      aria-live="polite"
+    >
+      <h2>
+        {stopped
+          ? "Engine stopped"
+          : status !== "error" &&
+              status !== "disconnected" &&
+              readiness?.state === "ready"
+            ? "Generation unconfigured"
+            : "Engine Unavailable"}
+      </h2>
+      <p>
+        {stopped
+          ? "The native engine exited. Reconnect to resume or restart the app; the last transcript may be incomplete."
+          : status !== "error" &&
+              status !== "disconnected" &&
+              readiness?.state === "ready"
+            ? "Choose a project, configure a provider, and start a session to begin."
+            : status === "connecting"
+              ? "The engine is connecting. Task execution stays unavailable until its native services are ready."
+              : "The engine is unavailable. Reconnect to restore its native services."}
+      </p>
+      {#if stopped || status === "error" || status === "unavailable" || status === "disconnected"}
+        <button type="button" class="text-action" onclick={() => void connect()}
+          >Retry</button
+        >
+      {:else if readiness?.state === "ready"}
+        <button
+          type="button"
+          class="text-action"
+          onclick={() => (view = "providers")}>Open setup</button
+        >
+      {/if}
+    </section>
+  {/if}
 {/snippet}
 
 {#snippet transcript()}
-  <!-- TD-30: engine-facing approval mount. Empty until requests carry revisions. -->
   <ApprovalSurface requests={approvalRequests} context={approvalContext} />
   {#if subscription.state === "failed"}
     <div class="subscribe-error" role="alert" data-testid="subscribe-error">
-      <span>Could not subscribe to the session: {subscription.error}</span>
-      <button type="button" onclick={retry}>Retry</button>
+      <span>Could not subscribe to the session: {subscription.error}</span
+      ><button type="button" onclick={retry}>Retry</button>
     </div>
   {/if}
-  {#if view === "providers"}
-    <!-- No profile service is connected: the list is empty and custom endpoints stay disabled, not faked. -->
-    <div class="providers" data-testid="providers-view">
+  {#if view === "conversation"}
+    <div class={currentRun ? "conversation-page" : "page work-page"}>
+      <div class:work-stage={!currentRun}>
+        {#if currentRun}
+          <header class="page-heading">
+            <div>
+              <p class="eyebrow">Work</p>
+              <h1>{workspace?.displayName ?? "Current session"}</h1>
+            </div>
+            <span class="connection-chip">{status}</span>
+          </header>
+          {@render connectionNotice()}
+          <section class="turn-pane" aria-label="Transcript">
+            <TurnStream
+              run={currentRun}
+              stale={turns.stale ||
+                turns.needsResync ||
+                (status !== "ready" && status !== "busy")}
+              {canRespond}
+              {onApproval}
+            />
+          </section>
+        {:else}
+          <h1 class="work-motto">
+            Barebones by default.<br />Modular by choice.<br /><em
+              >Evidence by design.</em
+            >
+          </h1>
+        {/if}
+        <div class={currentRun ? "conversation-composer" : "work-composer"}>
+          {@render composer()}
+        </div>
+        {#if !currentRun}
+          {@render connectionNotice()}
+          {#if generationReady}<p class="workspace-view">
+              Ready for workspace execution.
+            </p>{/if}
+          <section class="work-recents" aria-labelledby="recents-label">
+            <h2 class="recents-label" id="recents-label">Recents</h2>
+            {#if startedSession}
+              <button
+                class="recent-row"
+                type="button"
+                onclick={() => (view = "runs")}
+                ><span
+                  class="recent-status"
+                  data-status={startedSession.readiness.state}
+                  aria-hidden="true"
+                ></span><span class="recent-copy"
+                  ><span class="recent-title">Current session</span><span
+                    class="recent-meta"
+                    >{workspace?.displayName ?? "Selected project"} · {startedSession
+                      .readiness.state}</span
+                  ></span
+                ><span class="recent-arrow"
+                  ><Icon name="arrow-right" size={13} /></span
+                ></button
+              >
+            {:else}<p class="empty-recents">
+                Recent session history is not available yet.
+              </p>{/if}
+          </section>
+          <div class="work-hint">
+            <span
+              ><Icon name="shield" size={11} /> Policy checked before dispatch</span
+            ><span><Icon name="lock" size={11} /> {providerLabel}</span>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {:else if view === "runs"}
+    <div class="page detail-page">
+      <header class="page-heading">
+        <div>
+          <p class="eyebrow">Workspace history</p>
+          <h1>Runs</h1>
+          <p>Sessions and their recorded ancestry.</p>
+        </div>
+      </header>
+      <SessionTree
+        {nav}
+        {onSelect}
+        canRetry={status === "ready"}
+        onFocus={(key) => dispatchNav({ type: "focus", key })}
+        onMove={(to) => dispatchNav({ type: "move", to })}
+        onRetry={() => {
+          if (status === "ready" && loadSessions) void runLoad();
+        }}
+      />
+      {#if startedSession}<button
+          class="text-action"
+          type="button"
+          onclick={() => (view = "conversation")}>Open current session</button
+        >{/if}
+      <SessionActions context={sessionActionContext} />
+    </div>
+  {:else if view === "memory"}
+    <div class="page detail-page">
+      <header class="page-heading">
+        <div>
+          <p class="eyebrow">Workspace knowledge</p>
+          <h1>Memory</h1>
+          <p>Remembered items retain their source and scope.</p>
+        </div>
+      </header>
+      <MemoryList
+        entries={[]}
+        status="unavailable"
+        onForget={async () => {
+          throw new Error("Memory unavailable");
+        }}
+      />
+    </div>
+  {:else if view === "providers"}
+    <div class="page detail-page providers" data-testid="providers-view">
+      <header class="page-heading">
+        <div>
+          <p class="eyebrow">Connections and profiles</p>
+          <h1>Models</h1>
+          <p>Choose the provider and model for your work.</p>
+        </div>
+      </header>
+      <fieldset
+        class="model-selection"
+        disabled={profilePending || activeRunId !== null}
+      >
+        <ModelSwitcher
+          selection={{
+            currentRef:
+              startedSession?.readiness.state === "ready"
+                ? (profileSelection?.selectedProfileId ?? "No active model")
+                : "No active model",
+            transition: null,
+          }}
+          options={profiles.map((profile) => ({
+            ref: profile.profileId,
+            label: profile.modelId ?? profile.profileId,
+            locality:
+              profile.endpointOrigin && isLoopbackUrl(profile.endpointOrigin)
+                ? "local"
+                : "hosted",
+            unavailableReason:
+              profile.credential === "missing"
+                ? "Credential missing"
+                : undefined,
+          }))}
+          catalogStatus={workspace ? profileCatalogStatus : "error"}
+          onRequest={(ref) => {
+            if (activeRunId || profilePending) return;
+            const profile = profiles.find((item) => item.profileId === ref);
+            if (profile) void activateProfile(profile);
+          }}
+        />
+      </fieldset>
+      {#if activeRunId}<p role="status">
+          Finish or cancel the current turn before switching models.
+        </p>{/if}
       <Providers
         connections={[]}
         families={[]}
         {profiles}
         workspaceSelected={workspace !== null}
         selectedProfileId={profileSelection?.selectedProfileId ?? null}
-        selectProfile={useProfile}
+        selectProfile={activateProfile}
         {profilePending}
         {profileStatus}
         credentialSubmit={providerUnavailable ? undefined : configureProvider}
         credentialUnavailable={providerUnavailable}
       />
+      <SupportStatus cells={null} />
     </div>
-    <SupportStatus cells={null} />
-  {:else if view === "setup"}
-    <Setup
-      snapshot={moduleSnapshot}
-      onEnterWorkbench={() => (view = "conversation")}
-      onOpenModules={() => (view = "modules")}
-      onConfigureProvider={() => (view = "providers")}
-    />
   {:else if view === "modules"}
-    <Modules
-      snapshot={moduleSnapshot}
-      onConfigureProvider={() => (view = "providers")}
-    />
+    <div class="page detail-page">
+      <header class="page-heading">
+        <div>
+          <p class="eyebrow">Optional capabilities</p>
+          <h1>Extensions</h1>
+          <p>Install and enable only the capabilities you choose.</p>
+        </div>
+      </header>
+      <Modules
+        snapshot={moduleSnapshot}
+        onConfigureProvider={() => (view = "providers")}
+      />
+    </div>
+  {:else if view === "setup"}
+    <div class="page detail-page">
+      <header class="page-heading"><div><h1>Setup</h1></div></header>
+      <Setup
+        snapshot={moduleSnapshot}
+        onEnterWorkbench={() => (view = "conversation")}
+        onOpenModules={() => (view = "modules")}
+        onConfigureProvider={() => (view = "providers")}
+      />
+    </div>
   {:else if view === "usage"}
-    <UsageView usage={null} status="unavailable" />
+    <div class="page detail-page">
+      <header class="page-heading"><div><h1>Usage</h1></div></header>
+      <UsageView usage={null} status="unavailable" />
+    </div>
   {:else}
-    <div class="app-content" class:conversation={currentRun !== undefined}>
-      {#if status !== "ready"}
-        <div class="unavailable-view" data-testid="unavailable-banner" role="status" aria-live="polite">
-          <h2>{stopped ? "Engine stopped" : readiness?.state === "ready" ? "Generation unconfigured" : "Engine Unavailable"}</h2>
-          <p>
-            {stopped
-              ? "The native engine exited. Reconnect to resume or restart the app; the last transcript may be incomplete."
-              : readiness?.state === "ready"
-                ? "Generation requires a configured provider and workspace."
-              : "Backend native services (policy, durable store, and receipts) are currently initializing or unavailable. Release qualification requires all three subsystems verified before task execution."}
-          </p>
-          {#if stopped || status === "unavailable" || status === "error"}
-            <button type="button" class="retry-btn" onclick={() => void connect()}>Retry</button>
-          {/if}
+    <div class="page detail-page">
+      <header class="page-heading">
+        <div>
+          <p class="eyebrow">Application preferences</p>
+          <h1>Settings</h1>
+          <p>Appearance, permissions, setup, and reported usage.</p>
         </div>
-      {/if}
-      {#if currentRun}
-        <section class="turn-pane" aria-label="Transcript">
-          <TurnStream
-            run={currentRun}
-            stale={turns.stale || turns.needsResync || (status !== "ready" && status !== "busy")}
-            {canRespond}
-            {onApproval}
-          />
-        </section>
-      {:else if status === "ready"}
-        <div class="workspace-view">
-          <p>Ready for workspace execution.</p>
-        </div>
-      {/if}
+      </header>
+      <section class="settings-card">
+        <h2>Appearance</h2>
+        <button type="button" class="text-action" onclick={toggleTheme}
+          >Use {theme === "light" ? "dark" : "light"} theme</button
+        >
+      </section>
+      <section
+        class="settings-card supervisor"
+        aria-label="Supervisor"
+        data-testid="supervisor"
+      >
+        <h2>Supervisor</h2>
+        <PermissionModeSelect
+          modeState={permissionModeState}
+          context={permissionContext}
+        />
+      </section>
+      <section class="settings-card">
+        <h2>Setup and modules</h2>
+        <button
+          type="button"
+          class="text-action"
+          onclick={() => (view = "setup")}>Setup</button
+        ><button
+          type="button"
+          class="text-action"
+          onclick={() => (view = "modules")}>Manage extensions</button
+        >
+      </section>
+      <UsageView usage={null} status="unavailable" />
     </div>
   {/if}
 {/snippet}
 
 {#snippet composer()}
-  {#if ports && !ports.workspace}
-    <p role="status">Workspace tools unavailable</p>
-  {/if}
   <Composer
+    bind:draft={composerDraft}
+    bind:pending={composerPending}
+    bind:error={composerError}
+    workspaceLabel={workspace?.displayName ?? null}
+    modelLabel={selectedProfile?.modelId ??
+      (profileSelection ? "Selected profile" : null)}
+    onChooseWorkspace={chooserReason === null && !choosing
+      ? () => void chooseProject()
+      : undefined}
+    onConfigureModel={() => (view = "providers")}
     connection={status}
     sessionId={startedSession?.sessionId ?? $selectedSession?.sessionId ?? null}
     {generationReady}
@@ -670,9 +1045,13 @@
     profileSelected={profileSelection !== null}
     sessionReadiness={startedSession?.readiness.state}
     stale={turns.stale || turns.needsResync}
-    unavailable={subscription.state !== "live" || $selectedSession?.sessionId !== startedSession?.sessionId || $selectedSession?.scopeId !== workspace?.workspaceId
+    unavailable={subscription.state !== "live" ||
+    $selectedSession?.sessionId !== startedSession?.sessionId ||
+    $selectedSession?.scopeId !== workspace?.workspaceId
       ? "Session subscription is unavailable. Sending stays blocked."
-      : activeRunId ? "A turn is running." : undefined}
+      : activeRunId
+        ? "A turn is running."
+        : undefined}
     cancellable={activeRunId !== null && !cancelPending}
     cancel={async () => {
       if (!startedSession || !activeRunId || cancelPending) return;
@@ -684,203 +1063,371 @@
         await cancelSession(sessionId);
         if (epoch === setupEpoch && activeRunId === runId) activeRunId = null;
       } catch {
-        if (epoch === setupEpoch) profileStatus = "Cancellation could not be confirmed.";
-      } finally { if (epoch === setupEpoch) cancelPending = false; }
+        if (epoch === setupEpoch)
+          profileStatus = "Cancellation could not be confirmed.";
+      } finally {
+        if (epoch === setupEpoch) cancelPending = false;
+      }
     }}
     send={async (payload) => {
       const project = workspace;
       const selected = profileSelection;
       const session = startedSession;
       const epoch = setupEpoch;
-      if (!project || !selected || !session || status !== "ready" || generationReady !== true || subscription.state !== "live" || !sessionPortWitness || turns.stale || turns.needsResync || $selectedSession?.sessionId !== session.sessionId || $selectedSession?.scopeId !== project.workspaceId) throw new Error("Session unavailable");
+      if (
+        !project ||
+        !selected ||
+        !session ||
+        status !== "ready" ||
+        generationReady !== true ||
+        subscription.state !== "live" ||
+        !sessionPortWitness ||
+        turns.stale ||
+        turns.needsResync ||
+        $selectedSession?.sessionId !== session.sessionId ||
+        $selectedSession?.scopeId !== project.workspaceId
+      )
+        throw new Error("Session unavailable");
       try {
         const result = await invoke("session.prompt", payload, {
-          sessionId: session.sessionId, scopeId: project.workspaceId,
+          sessionId: session.sessionId,
+          scopeId: project.workspaceId,
           expectedConfigRevision: selected.configRevision,
           expectedProfileRevision: selected.profileRevision,
           expectedPolicyRevision: session.policyRevision,
         });
-        if (result === null || typeof result !== "object" || Array.isArray(result) || Object.keys(result).length !== 3 ||
+        if (
+          result === null ||
+          typeof result !== "object" ||
+          Array.isArray(result) ||
+          Object.keys(result).length !== 3 ||
           (result as { accepted?: unknown }).accepted !== true ||
-          typeof (result as { runId?: unknown }).runId !== "string" || !isOpaqueId((result as { runId: string }).runId) ||
-          typeof (result as { turnId?: unknown }).turnId !== "string" || !isOpaqueId((result as { turnId: string }).turnId)) throw new Error("Invalid acknowledgement");
+          typeof (result as { runId?: unknown }).runId !== "string" ||
+          !isOpaqueId((result as { runId: string }).runId) ||
+          typeof (result as { turnId?: unknown }).turnId !== "string" ||
+          !isOpaqueId((result as { turnId: string }).turnId)
+        )
+          throw new Error("Invalid acknowledgement");
         if (epoch !== setupEpoch) throw new Error("Session changed");
         const runId = (result as { runId: string }).runId;
-        if (!["completed", "failed", "canceled", "stopped"].includes(turns.runs[runId]?.status ?? "")) activeRunId = runId;
+        if (
+          !["completed", "failed", "canceled", "stopped"].includes(
+            turns.runs[runId]?.status ?? "",
+          )
+        )
+          activeRunId = runId;
       } catch (error) {
-        if (epoch === setupEpoch && error !== null && typeof error === "object" && Object.hasOwn(error, "code") && (error as { code?: unknown }).code === "STALE_REVISION") void refreshStaleSession(epoch);
+        if (
+          epoch === setupEpoch &&
+          error !== null &&
+          typeof error === "object" &&
+          Object.hasOwn(error, "code") &&
+          (error as { code?: unknown }).code === "STALE_REVISION"
+        )
+          void refreshStaleSession(epoch);
         throw error;
       }
     }}
   />
+  {#if ports && !ports.workspace}<p class="tools-note" role="status">
+      Workspace tools unavailable
+    </p>{/if}
 {/snippet}
 
-{#snippet evidence()}
-  <p>No changes or evidence available.</p>
-{/snippet}
+{#snippet evidence()}<p>No changes or evidence available.</p>{/snippet}
 
 <style>
-  :global(html),
-  :global(body) {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #111827;
-    background: #f9fafb;
-  }
-  .brand {
+  .work-page {
+    min-height: 100%;
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
+    flex-direction: column;
   }
-  .brand h1 {
-    font-size: 1.125rem;
-    margin: 0;
-    font-weight: 700;
-  }
-  .views-nav {
+  .work-stage {
+    flex: 1;
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 0 12px 12px 12px;
-    border-bottom: 1px solid #e5e7eb;
+    flex-direction: column;
+    justify-content: center;
+    padding-bottom: 6vh;
   }
-  .views-nav button {
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 0.8125rem;
+  .work-motto {
+    max-width: 720px;
+    margin: 0 auto 28px;
+    font-family: var(--serif);
+    font-size: clamp(32px, 4.2vw, 56px);
+    font-weight: 400;
+    line-height: 1.06;
+    letter-spacing: -0.018em;
+    text-align: center;
+    transform: translateY(-30px);
+  }
+  .work-motto em {
+    font-style: italic;
+  }
+  .work-recents {
+    width: min(100%, 720px);
+    margin: 0 auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-xl);
+    background: var(--neutral);
+    overflow: hidden;
+  }
+  .recents-label {
+    margin: 0;
+    padding: 12px 15px 9px;
+    font-size: 10px;
     font-weight: 500;
-    color: #4b5563;
-    background: transparent;
-    border: 1px solid transparent;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-  .views-nav button:hover {
-    background: #f3f4f6;
-    color: #111827;
-  }
-  .views-nav button[aria-current="page"] {
-    background: #ffffff;
-    color: #111827;
-    font-weight: 600;
-    border-color: #d1d5db;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  }
-  .status-badge {
-    padding: 2px 8px;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
+    line-height: 14px;
+    letter-spacing: 0.09em;
     text-transform: uppercase;
-    background: #f3f4f6;
-    color: #4b5563;
+    color: var(--text-faint);
   }
-  .status-badge.ready {
-    background: #d1fae5;
-    color: #065f46;
-  }
-  .status-badge.unavailable {
-    background: #fee2e2;
-    color: #991b1b;
-  }
-  [aria-current="page"] {
-    font-weight: 700;
-  }
-  .project {
-    display: grid;
-    gap: 4px;
-    padding: 12px;
-    border-bottom: 1px solid #e5e7eb;
-  }
-  .project h2 {
-    margin: 0;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: #4b5563;
-  }
-  .project p {
-    margin: 0;
-    font-size: 0.8125rem;
-  }
-  .supervisor {
-    display: grid;
-    gap: 8px;
-    padding: 12px;
-    border-top: 1px solid #e5e7eb;
-    margin-top: 8px;
-  }
-  .supervisor h2 {
-    margin: 0;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #4b5563;
-  }
-  .providers {
-    padding: 12px;
-  }
-  .subscribe-error {
+  .recent-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px 20px;
-    background: #fee2e2;
-    color: #991b1b;
-    font-size: 0.875rem;
+    gap: 10px;
+    width: 100%;
+    padding: 9px 15px;
+    border-top: 1px solid var(--border);
+    text-align: left;
+    transition: background 0.15s;
   }
-  .app-content {
+  .recent-row:hover {
+    background: var(--surface);
+  }
+  .recent-row:focus-visible {
+    /* keep the ring inside the card, whose overflow clips outside outlines */
+    outline-offset: -3px;
+    border-radius: var(--r-sm);
+  }
+  .recent-status {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--r-full);
+    background: var(--dot-idle);
+    flex: none;
+  }
+  .recent-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+  .recent-title {
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 18px;
+    color: var(--on-surface);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent-meta {
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 14px;
+    color: var(--text-muted);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recent-arrow {
+    display: grid;
+    place-items: center;
+    color: var(--text-faint);
+    flex: none;
+  }
+  .recent-row:hover .recent-arrow {
+    color: var(--on-surface);
+  }
+  .work-hint {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
-    min-height: 100%;
-    box-sizing: border-box;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding: 10px 2px 0;
+    font-size: 11px;
+    color: var(--text-faint);
   }
-  .app-content.conversation {
-    flex-direction: column;
+  .work-hint span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  @media (min-width: 821px) {
+    .work-stage {
+      padding-top: 6vh;
+      padding-bottom: 0;
+    }
+  }
+
+  .work-stage {
+    min-height: calc(100vh - 70px);
+    padding: 60px 24px 28px;
+  }
+  .work-composer {
+    width: min(100%, 920px);
+    margin: 0 auto 28px;
+  }
+  .work-recents {
+    margin-top: 4px;
+  }
+  .empty-recents {
+    padding: 12px 15px;
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: 0;
+  }
+  .connection-note {
+    width: min(100%, 720px);
+    margin: 0 auto 24px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 12px 15px;
+    background: var(--surface);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .connection-note h2 {
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 18px;
+    margin: 0 0 4px;
+    color: var(--on-surface);
+  }
+  .connection-note p {
+    margin: 0 0 6px;
+  }
+  .text-action {
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 7px 12px;
+    background: var(--neutral);
+    color: var(--on-surface);
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .text-action:hover {
+    background: var(--surface);
+  }
+  .text-action:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 3px;
+  }
+  .detail-page {
+    max-width: 1020px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 36px 44px 60px;
+  }
+  .page-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     gap: 16px;
-    align-items: stretch;
-    justify-content: flex-start;
+    margin-bottom: 28px;
+  }
+  .page-heading h1 {
+    font-family: var(--serif);
+    font-size: 36px;
+    line-height: 1.15;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    margin: 0 0 8px;
+  }
+  .page-heading p {
+    color: var(--text-muted);
+    margin: 0;
+    font-size: 13px;
+  }
+  .page-heading .eyebrow {
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    color: var(--text-faint);
+  }
+  .connection-chip {
+    font-size: 11px;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--r-full);
+    padding: 4px 9px;
+  }
+  .settings-card {
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    padding: 20px;
+    margin-bottom: 20px;
+    background: var(--neutral);
+  }
+  .settings-card h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 14px;
+  }
+  .settings-card .text-action + .text-action {
+    margin-left: 8px;
+  }
+  .model-selection {
+    border: 0;
+    padding: 0;
+    margin: 0 0 24px;
+    min-width: 0;
+  }
+  .tools-note {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin: 8px 0 0;
+    text-align: center;
+  }
+  .workspace-view {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0 auto 16px;
+  }
+  .conversation-page {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 36px;
+    max-width: 1160px;
+    margin: auto;
+  }
+  .conversation-page .connection-note {
+    width: 100%;
   }
   .turn-pane {
-    width: 100%;
-    max-width: 880px;
-    margin: 0 auto;
+    flex: 1;
+    min-height: 120px;
+    overflow-wrap: anywhere;
   }
-  .unavailable-view {
-    max-width: 480px;
-    text-align: center;
-    padding: 32px;
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  .conversation-composer {
+    position: sticky;
+    bottom: 0;
+    background: var(--neutral);
+    padding-top: 16px;
   }
-  .unavailable-view h2 {
-    margin-top: 0;
-    color: #b91c1c;
+  .subscribe-error {
+    padding: 12px 20px;
+    color: var(--error);
+    overflow-wrap: anywhere;
   }
-  .unavailable-view p {
-    color: #4b5563;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    margin-bottom: 20px;
-  }
-  .retry-btn {
-    padding: 8px 20px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #ffffff;
-    background: #111827;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .retry-btn:hover {
-    background: #374151;
+  @media (max-width: 720px) {
+    .detail-page {
+      padding: 32px 20px;
+    }
+    .work-stage {
+      padding: 48px 18px 24px;
+    }
+    .work-motto {
+      transform: none;
+      font-size: 36px;
+      margin-bottom: 28px;
+    }
+    .conversation-page {
+      padding: 20px;
+    }
   }
 </style>
