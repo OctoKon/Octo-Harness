@@ -362,6 +362,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			throw Object.assign(new Error("PROVIDER_OPTIONS_UNSUPPORTED"), { code: "PROVIDER_OPTIONS_UNSUPPORTED" });
 		};
 		if (options === null || typeof options !== "object") unsupported();
+		const prototype = Object.getPrototypeOf(options);
+		if (prototype !== Object.prototype && prototype !== null) unsupported();
 		const runner = extensionRunnerRef.current;
 		const providerHooks = [
 			"before_provider_headers",

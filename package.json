@@ -38,7 +38,7 @@
     "test:native-provider-setup": "node --test tests/native-provider-setup.test.mjs tests/native-model-catalog.test.mjs tests/native-provider-view-consumer.test.mjs",
     "test:revision-fence": "node --test tests/revision-fence.test.mjs",
     "test:native-entrypoints": "node --test tests/native-entrypoints.test.mjs",
-    "test:native-owned-session": "node --test tests/native-owned-session.test.mjs",
+    "test:native-owned-session": "node --test --test-concurrency=1 tests/native-owned-session.test.mjs tests/native-owned-extension-compact.test.mjs tests/native-owned-extension-runner.test.mjs",
     "test:native-model-runtime": "node --test tests/native-model-runtime.test.mjs",
     "test:gui-fixtures": "node --test tests/gui-fixtures.test.mjs",
     "test:engine-store": "node --test tests/engine-store.test.mjs",

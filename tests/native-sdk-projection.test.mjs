@@ -529,6 +529,102 @@ test("native SDK projection omits undefined direct request options", async (t) =
   assert.equal((await stream.result()).stopReason, "stop");
   assert.equal(f.received, 1);
   assert.equal(f.admitted.length, 1);
+  const nullPrototype = Object.assign(Object.create(null), {
+    signal: new AbortController().signal,
+    temperature: undefined,
+  });
+  const nullStream = await f.session.agent.streamFunction(
+    f.model,
+    {
+      messages: [
+        { role: "user", content: "null prototype options", timestamp: 0 },
+      ],
+    },
+    nullPrototype,
+  );
+  assert.equal((await nullStream.result()).stopReason, "stop");
+  assert.equal(f.received, 2);
+  assert.equal(f.admitted.length, 2);
+  const beforeAbort = f.store.list("w-demo").records;
+  const abortedStream = await f.session.agent.streamFunction(
+    f.model,
+    {
+      messages: [
+        { role: "user", content: "owned aborted signal", timestamp: 0 },
+      ],
+    },
+    { signal: AbortSignal.abort() },
+  );
+  assert.equal((await abortedStream.result()).stopReason, "error");
+  assert.equal(
+    f.received,
+    2,
+    "an own aborted signal must prevent another HTTP request",
+  );
+  assert.equal(f.admitted.length, 2);
+  assert.deepEqual(f.store.list("w-demo").records, beforeAbort);
+});
+
+test("native SDK projection rejects inherited semantics and aborted signals before admission", async (t) => {
+  const observations = [];
+  for (const [variant, inherited] of [
+    ["temperature", { temperature: 0 }],
+    ["already-aborted signal", { signal: AbortSignal.abort() }],
+  ]) {
+    const f = await fixture(t);
+    const options = Object.create(inherited);
+    assert.deepEqual(
+      Reflect.ownKeys(options),
+      [],
+      "positive inherited-only precondition",
+    );
+    if (inherited.signal) assert.equal(inherited.signal.aborted, true);
+    const before = f.store.list("w-demo").records;
+    let refusal;
+    try {
+      const stream = await f.session.agent.streamFunction(
+        f.model,
+        {
+          messages: [
+            {
+              role: "user",
+              content: "inherited options must not leave",
+              timestamp: 0,
+            },
+          ],
+        },
+        options,
+      );
+      await stream.result();
+    } catch (error) {
+      refusal = error;
+    }
+    observations.push({
+      variant,
+      fixedRefusal:
+        refusal?.code === unsupported.code &&
+        refusal.message === unsupported.message &&
+        !Object.hasOwn(refusal, "cause"),
+      admissions: f.admitted.length,
+      credentialReads: f.frames.filter((method) => method === "credential.read")
+        .length,
+      http: f.received,
+      unchangedStore:
+        JSON.stringify(f.store.list("w-demo").records) ===
+        JSON.stringify(before),
+    });
+  }
+  assert.deepEqual(
+    observations,
+    ["temperature", "already-aborted signal"].map((variant) => ({
+      variant,
+      fixedRefusal: true,
+      admissions: 0,
+      credentialReads: 0,
+      http: 0,
+      unchangedStore: true,
+    })),
+  );
 });
 
 const definedOptions = [

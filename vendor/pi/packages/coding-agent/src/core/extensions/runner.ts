@@ -2,7 +2,7 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import { type AgentMessage, type AgentTool, assertSplyceReady, isSplyceOwned } from "@earendil-works/pi-agent-core";
 import {
 	getCurrentSystemMessage,
 	type ImageContent,
@@ -277,6 +277,8 @@ function snapshotEventHandlers(extensions: Extension[], event: ExtensionEvent["t
 	return extensions.map((ext) => ({ ext, handlers: ext.handlers.get(event)?.slice() ?? [] }));
 }
 
+const denyOwnedNotification = () => assertSplyceReady();
+
 function rethrowPersistenceError(error: unknown): void {
 	const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
 	if (code === "PERSIST_REDACTION_UNAVAILABLE" || code === "PERSIST_ENTRY_TOO_LARGE")
@@ -433,6 +435,16 @@ export class ExtensionRunner {
 		},
 	): Promise<void> {
 		this.assertActive();
+		if (isSplyceOwned(this) || isSplyceOwned(this.sessionManager)) {
+			// These synchronous notifications cannot propagate awaited persistence failures.
+			if (this.runtime.mcpServers.list().length > 0) assertSplyceReady();
+			for (const method of ["register", "unregister"] as const)
+				Object.defineProperty(this.runtime.mcpServers, method, {
+					value: denyOwnedNotification,
+					writable: false,
+					configurable: false,
+				});
+		}
 		// Copy actions into the shared runtime (all extension APIs reference this)
 		this.runtime.sendMessage = actions.sendMessage;
 		this.runtime.sendUserMessage = actions.sendUserMessage;
@@ -593,6 +605,7 @@ export class ExtensionRunner {
 	}
 
 	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
+		if (isSplyceOwned(this) || isSplyceOwned(this.sessionManager)) assertSplyceReady();
 		const outerPrompt = this.uiPromptDepth++ === 0;
 		if (outerPrompt) {
 			this.activeUIPrompt = { kind, title };
