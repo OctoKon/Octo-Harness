@@ -43,7 +43,10 @@ export interface CodeIndexToolLike {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  execute(args: unknown): Promise<unknown>;
+  execute(
+    args: unknown,
+    prepareOutput?: (value: unknown) => Promise<unknown>,
+  ): Promise<unknown>;
 }
 /** Structural view of @splyce/memory Memory. */
 export interface MemoryLike {
@@ -91,7 +94,7 @@ export interface AgentContextToolsOptions {
   memory?: MemoryLike;
   /** Memory scope bound by the host, never supplied by the model. */
   scopeId?: string;
-  /** Applied to every output; the host passes its live-secret redactor over the built-in scrub. */
+  /** Applied to original output before the built-in scrub. */
   redact: Redactor;
 }
 
@@ -125,20 +128,27 @@ const confined = (value: unknown, what: string): void => {
 const redactDeep = async (
   value: unknown,
   redact: Redactor,
+  onPreviewTruncated: () => void,
 ): Promise<unknown> => {
   if (typeof value === "string") return redact(value);
   if (Array.isArray(value)) {
     const out = [];
-    for (const v of value) out.push(await redactDeep(v, redact));
+    for (const v of value)
+      out.push(await redactDeep(v, redact, onPreviewTruncated));
     return out;
   }
   if (value !== null && typeof value === "object")
     return Object.fromEntries(
       await Promise.all(
-        Object.entries(value).map(async ([k, v]) => [
-          await redact(k),
-          await redactDeep(v, redact),
-        ]),
+        Object.entries(value).map(async ([k, v]) => {
+          let safe = await redactDeep(v, redact, onPreviewTruncated);
+          if (k === "preview" && typeof safe === "string") {
+            const preview = safe.trim();
+            if (preview.length > 200) onPreviewTruncated();
+            safe = preview.slice(0, 200);
+          }
+          return [await redact(k), safe];
+        }),
       ),
     );
   return value;
@@ -184,7 +194,7 @@ export function createAgentContextTools(
   const { workspaceRoot, index, codeTools, memory, scopeId, redact } = options;
   const clean = async (text: string): Promise<string> => {
     try {
-      const safe = await redact(scrubSecrets(text));
+      const safe = await redact(text);
       if (typeof safe === "string") return scrubSecrets(safe);
     } catch {
       // Never publish the input or an untrusted redactor error.
@@ -215,9 +225,10 @@ export function createAgentContextTools(
       // a secret straddling the cut is never half-kept. A throwing redactor is generic too.
       const out = await run(args, signal)
         .then(async ({ value, truncated = false }) => {
-          const out = cap(
-            await clean(JSON.stringify(await redactDeep(value, clean))),
-          );
+          const safe = await redactDeep(value, clean, () => {
+            truncated = true;
+          });
+          const out = cap(await clean(JSON.stringify(safe)));
           return { ...out, truncated: truncated || out.truncated };
         })
         .catch((error: unknown) => {
@@ -247,7 +258,18 @@ export function createAgentContextTools(
     tool(t.name, t.description, t.parameters, async (args) => {
       for (const k of PATH_ARGS)
         if (args[k] !== undefined) confined(args[k], k);
-      return { value: await t.execute(args) };
+      let truncated = false;
+      const value = await t.execute(args, (output) =>
+        redactDeep(output, clean, () => {
+          truncated = true;
+        }),
+      );
+      truncated ||=
+        value !== null &&
+        typeof value === "object" &&
+        "truncated" in value &&
+        value.truncated === true;
+      return { value, truncated };
     }),
   );
   if (memory === undefined) return Object.freeze(code);
