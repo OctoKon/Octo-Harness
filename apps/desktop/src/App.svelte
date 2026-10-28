@@ -50,7 +50,7 @@
     setupErrorCopy,
     validateProfileSelectionResult,
     validateSessionStartResult,
-    validateSetupReadResult,
+    readProfiles,
     type ConfiguredProfile,
     type ProfileSelectionResult,
     type ProviderSetupDraft,
@@ -67,6 +67,7 @@
     createSessionNav,
     reduceSessionNav,
     visibleNodes,
+    listSessions,
     type SessionNavAction,
     type SessionNavState,
     type TreeEventLike,
@@ -192,6 +193,9 @@
       const chosen = await selectWorkspace();
       // Cancel (null) keeps the current project.
       if (chosen && chosen.workspaceId !== workspace?.workspaceId) {
+        loadEpoch++;
+        nav = createSessionNav();
+        scopes.clear();
         invalidateSetup();
         clearSession();
         workspace = chosen;
@@ -208,12 +212,7 @@
     const epoch = ++setupEpoch;
     const requestId = crypto.randomUUID();
     try {
-      const result = validateSetupReadResult(
-        await sendSetup("setup.read", requestId, {
-          requestId,
-          workspaceId: project.workspaceId,
-        }),
-      );
+      const result = await readProfiles(project.workspaceId, requestId);
       if (epoch !== setupEpoch) return;
       profiles = result.profiles;
       profileSelection = result.selection;
@@ -438,12 +437,25 @@
     dispatchNav({ type: "event", event: event as TreeEventLike });
   }
 
+  let loadEpoch = 0;
   async function runLoad() {
+    const project = workspace;
+    const epoch = ++loadEpoch;
     dispatchNav({ type: "refresh" });
     try {
-      for (const event of await loadSessions!()) applyTree(event);
-      dispatchNav({ type: "loaded" });
+      if (loadSessions) {
+        const events = await loadSessions();
+        if (epoch !== loadEpoch) return;
+        for (const event of events) applyTree(event);
+        dispatchNav({ type: "loaded" });
+      } else if (project) {
+        const snapshot = await listSessions(project.workspaceId, crypto.randomUUID());
+        if (epoch !== loadEpoch || workspace?.workspaceId !== project.workspaceId) return;
+        for (const session of snapshot.sessions) scopes.set(session.sessionId, project.workspaceId);
+        dispatchNav({ type: "snapshot", sessions: snapshot.sessions });
+      }
     } catch (e) {
+      if (epoch !== loadEpoch || workspace?.workspaceId !== project?.workspaceId) return;
       dispatchNav({
         type: "failed",
         message: e instanceof Error ? e.message : String(e),
@@ -453,11 +465,13 @@
 
   // Readiness never completes a load: without a snapshot the previous navigation state is kept, selection included.
   $effect(() => {
-    if (status === "ready") {
+    if (!loadSessions && readiness?.state === "ready" && workspace) {
+      void runLoad();
+    } else if (status === "ready") {
       if (loadSessions) void runLoad();
       else if (untrack(() => Object.keys(nav.branches).length > 0))
         dispatchNav({ type: "loaded" });
-    } else if (status === "unavailable" || status === "error")
+    } else if (status === "error" || (status === "unavailable" && readiness?.state !== "ready"))
       dispatchNav({ type: "failed", message: "Engine unavailable." });
   });
 
@@ -840,11 +854,11 @@
     status === "ready"
       ? "Session history is unavailable until the engine delivers session records."
       : undefined}
-    canRetry={status === "ready" && !!loadSessions}
+    canRetry={readiness?.state === "ready" && (!!loadSessions || !!workspace)}
     onFocus={(key) => dispatchNav({ type: "focus", key })}
     onMove={(to) => dispatchNav({ type: "move", to })}
     onRetry={() => {
-      if (status === "ready" && loadSessions) void runLoad();
+      if (readiness?.state === "ready" && (loadSessions || workspace)) void runLoad();
     }}
   />
 {/snippet}

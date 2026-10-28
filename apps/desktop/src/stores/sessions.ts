@@ -1,4 +1,5 @@
 import { engine } from "./engine";
+import type { SessionSummary } from "@splyce/pi/page-data";
 /**
  * TD-12: session navigation state.
  *
@@ -42,6 +43,7 @@ export interface SessionNavState {
 
 export type SessionNavAction =
   | { type: "event"; event: TreeEventLike }
+  | { type: "snapshot"; sessions: readonly SessionSummary[] }
   | { type: "loaded" }
   | { type: "failed"; message: string }
   | { type: "refresh" }
@@ -121,6 +123,23 @@ export function reduceSessionNav(
   action: SessionNavAction,
 ): SessionNavState {
   switch (action.type) {
+    case "snapshot": {
+      const branches: Record<string, Branch> = {};
+      for (const session of action.sessions) {
+        if (session.branchAnchorId === null) continue;
+        const key = keyOf(session.sessionId, session.branchAnchorId);
+        branches[key] = state.branches[key] ?? {
+          sessionId: session.sessionId,
+          branchAnchorId: session.branchAnchorId,
+          leaves: [],
+          seenSeq: 0,
+        };
+      }
+      return reduceSessionNav(
+        { ...state, fresh: branches },
+        { type: "loaded" },
+      );
+    }
     case "event": {
       if (state.fresh !== null) {
         const merged = mergeEvent(state.fresh, action.event, state.branches);

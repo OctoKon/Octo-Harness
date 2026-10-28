@@ -1527,6 +1527,101 @@ pub async fn dialog_select_workspace(
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn packaged_engine_accepts_renderer_session_setup_and_page_reads() {
+        use sha2::{Digest, Sha256};
+        let _inventory = crate::credentials::fixture_guard();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let engine = std::env::var_os("SPLYCE_TEST_ENGINE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| root.join("resources/engine"));
+        let manifest = std::fs::read(engine.join("manifest.json")).unwrap();
+        let digest: String = Sha256::digest(manifest)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("splyce-ipc-{}-{nonce}", std::process::id()));
+        std::fs::create_dir_all(directory.join("project")).unwrap();
+        let state = BridgeState::start(&engine, &digest, &directory.join("data"))
+            .ok()
+            .unwrap();
+        let result = (|| -> Result<(), BridgeError> {
+            let spec: Value = serde_json::from_str(PROTOCOL).unwrap();
+            let handshake = state.call("handshake", json!({"protocolVersion":2}))?;
+            assert!(valid_handshake(&handshake, &spec));
+            assert_eq!(handshake["readiness"]["ports"]["generation"], false);
+            let admitted = crate::workspace::qualify_directory(&directory.join("project")).unwrap();
+            let workspace = admit_selected(admitted, |params| {
+                state.call("native.workspace.admit", params)
+            })?;
+            let workspace_id = workspace["workspace"]["workspaceId"].clone();
+            let mut input = provider_setup_fixture();
+            input["workspaceId"] = workspace_id.clone();
+            let profile = configure_provider(input, |method, params| state.call(method, params))?;
+            // Match engine.sendSetup and profiles.ts payloads, including fresh request IDs.
+            let setup = |command: &str, payload: Value| {
+                let frame = json!({"frame":"setup", "command":command,
+                    "requestId":payload["requestId"], "payload":payload});
+                assert!(valid_setup(command, &frame));
+                state.call_with_response("send", frame, |reply| {
+                    if reply["ok"] == false {
+                        eprintln!("{command}: {}", reply["error"]["code"]);
+                    }
+                    reply["ok"] != true
+                        || if is_page_read(command) {
+                            valid_page_read_view(command, &reply["value"])
+                        } else if command == "setup.read" {
+                            valid_setup_read_view(&reply["value"])
+                        } else {
+                            true
+                        }
+                })
+            };
+            let saved = setup(
+                "setup.read",
+                json!({"requestId":"read-setup", "workspaceId":workspace_id}),
+            )?;
+            assert_eq!(saved["profiles"].as_array().unwrap().len(), 1);
+            let selected = setup(
+                "profile.select",
+                json!({"requestId":"select-profile", "workspaceId":workspace_id,
+                "profileId":profile["profileId"], "expectedProfileRevision":profile["profileRevision"],
+                "expectedConfigRevision":saved["configRevision"]}),
+            )?;
+            let started = setup(
+                "session.start",
+                json!({"requestId":"start-session", "workspaceId":workspace_id,
+                "profileId":selected["selectedProfileId"], "expectedConfigRevision":selected["configRevision"]}),
+            )?;
+            assert_eq!(started["readiness"], json!({"state":"ready"}));
+            let listed = setup(
+                "sessions.list",
+                json!({"requestId":"list-after", "workspaceId":workspace_id}),
+            )?;
+            assert_eq!(listed["sessions"].as_array().unwrap().len(), 1);
+            assert_eq!(listed["sessions"][0]["sessionId"], started["sessionId"]);
+            let handshake = state.call("handshake", json!({"protocolVersion":2}))?;
+            assert!(valid_handshake(&handshake, &spec));
+            assert_eq!(handshake["readiness"]["ports"]["generation"], true);
+            Ok(())
+        })();
+        let stopped = state.stop();
+        let cleanup = std::fs::remove_dir_all(&directory);
+        assert!(
+            result.is_ok(),
+            "{}",
+            result.err().map(|e| e.code).unwrap_or("")
+        );
+        assert!(stopped.is_ok());
+        cleanup.unwrap();
+    }
+
     fn provider_setup_fixture() -> Value {
         json!({"requestId":"request1","workspaceId":"workspace1","providerConnectionId":"connection1","profileId":"profile1",
             "apiFamily":"openai-completions","endpoint":"https://example.test/api/v1","locality":"hosted","chat":{"modelId":"vendor/model:version","model":{"contextWindow":8192,"maxOutputTokens":1024}},

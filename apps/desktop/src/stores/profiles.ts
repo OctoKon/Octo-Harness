@@ -1,4 +1,3 @@
-import { sendSetup } from "./engine";
 import type { ProviderConnectionRecord } from "@splyce/pi/contracts";
 
 export interface ConfiguredProfile {
@@ -606,6 +605,7 @@ export function validateCustomEndpoint(
 }
 
 export async function readProfiles(workspaceId: string, requestId: string) {
+  const { sendSetup } = await import("./engine");
   return validateSetupReadResult(
     await sendSetup("setup.read", requestId, { workspaceId, requestId }),
   );

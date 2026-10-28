@@ -58,13 +58,15 @@ beforeEach(() => {
   window.innerWidth = 1400;
   selectedWorkspace = "ws_1";
   reply = async (op) =>
-    op === "setup.read"
-      ? { configRevision: "cfg_0", selectedProfileId: null, profiles: [] }
-      : op === "provider.configure"
-        ? profile
-        : op === "profile.select"
-          ? selection
-          : session;
+    op === "sessions.list"
+      ? { sessions: [], truncated: false }
+      : op === "setup.read"
+        ? { configRevision: "cfg_0", selectedProfileId: null, profiles: [] }
+        : op === "provider.configure"
+          ? profile
+          : op === "profile.select"
+            ? selection
+            : session;
   ipc.invoke.mockReset();
   ipc.invoke.mockImplementation(async (cmd, args) => {
     if (cmd === "handshake")
@@ -126,6 +128,54 @@ async function configured() {
 }
 
 describe("native profile and session setup", () => {
+  it("loads real session summaries before generation is ready and preserves read failures", async () => {
+    const initial = ipc.invoke.getMockImplementation()!;
+    ipc.invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "handshake") {
+        const result = (await initial(cmd, args)) as any;
+        result.readiness.ports.generation = false;
+        return result;
+      }
+      if (cmd === "send" && args.op === "sessions.list")
+        return {
+          sessions: [
+            {
+              sessionId: "saved-session",
+              branchAnchorId: "saved-anchor",
+              state: "idle",
+              createdAt: "2026-10-28T00:00:00.000Z",
+              updatedAt: "2026-10-28T00:00:00.000Z",
+            },
+          ],
+          truncated: false,
+        };
+      return initial(cmd, args);
+    });
+    app = mount(App, { target: document.body });
+    await tick();
+    button("Choose project").click();
+    await tick();
+    expect(sends("sessions.list")).toHaveLength(1);
+    expect(document.querySelector('[role="treeitem"]')?.textContent).toContain(
+      "saved-session",
+    );
+    expect(document.body.textContent).not.toContain(
+      "Sessions could not be loaded",
+    );
+    expect(button("Send").disabled).toBe(true);
+    const connected = ipc.invoke.getMockImplementation()!;
+    ipc.invoke.mockRejectedValue({ code: "ENGINE_CRASH" });
+    button("Retry").click();
+    await tick();
+    expect(document.body.textContent).toContain("Sessions could not be loaded");
+    ipc.invoke.mockImplementation(connected);
+    button("Retry").click();
+    await tick();
+    expect(document.querySelector('[role="treeitem"]')?.textContent).toContain(
+      "saved-session",
+    );
+  });
+
   it("does not claim Local only in Work after selecting a hosted provider", async () => {
     reply = async (op) =>
       op === "setup.read"

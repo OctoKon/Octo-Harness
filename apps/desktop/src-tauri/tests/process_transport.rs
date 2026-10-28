@@ -8,6 +8,9 @@ mod credentials;
 #[allow(dead_code)]
 mod workspace;
 
+#[cfg(windows)]
+#[path = "../src/inventory.rs"]
+mod inventory;
 #[path = "../src/ipc.rs"]
 #[allow(dead_code)]
 mod ipc;
