@@ -39,10 +39,12 @@
     }
   });
 
-  /* ---------- word-masked headings ---------- */
+  /* ---------- headings: each page animates its title differently (see styles.css) ---------- */
 
-  // Wrap every word of the display headings so each can rise out of its own mask.
-  function splitWords(node) {
+  const LETTER_PAGES = new Set(['hero', 'turn', 'provider']);
+
+  // Wrap every word (or letter) of the display headings so each can animate on its own.
+  function splitWords(node, letters) {
     for (const child of [...node.childNodes]) {
       if (child.nodeType === Node.TEXT_NODE) {
         const frag = document.createDocumentFragment();
@@ -52,16 +54,22 @@
             frag.append(' ');
             continue;
           }
-          const w = document.createElement('span');
-          w.className = 'w';
-          const inner = document.createElement('span');
-          inner.textContent = part;
-          w.append(inner);
-          frag.append(w);
+          const pieces = letters ? [...part] : [part];
+          const word = document.createElement('span');
+          word.className = 'wd';
+          for (const piece of pieces) {
+            const w = document.createElement('span');
+            w.className = 'w';
+            const inner = document.createElement('span');
+            inner.textContent = piece;
+            w.append(inner);
+            word.append(w);
+          }
+          frag.append(word);
         }
         child.replaceWith(frag);
       } else if (child.nodeType === Node.ELEMENT_NODE) {
-        splitWords(child);
+        splitWords(child, letters);
       }
     }
   }
@@ -69,7 +77,7 @@
     h.classList.remove('reveal');
     h.querySelectorAll('.reveal').forEach((n) => n.classList.remove('reveal'));
     h.setAttribute('aria-label', h.textContent.replace(/\s+/g, ' ').trim());
-    splitWords(h);
+    splitWords(h, LETTER_PAGES.has(h.closest('.page').id));
     h.querySelectorAll('.w').forEach((w) => w.setAttribute('aria-hidden', 'true'));
   }
 
@@ -172,6 +180,86 @@
     };
   }
 
+  /* ---------- per-page signature effects layered over the diagrams ---------- */
+
+  const svgIcon = (d) =>
+    `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const SHIELD = svgIcon('<path d="M12 3l7 3v5.5c0 4.2-3 7.6-7 9.5-4-1.9-7-5.3-7-9.5V6z" /><path d="m9 12 2 2 4-4" />');
+  const SEARCH = svgIcon('<circle cx="11" cy="11" r="7" /><path d="m16.5 16.5 4 4" />');
+  const BRANCH = svgIcon('<circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10M18 9c0 4-4 4-6 5.5" />');
+
+  function fx(page, html) {
+    const el = document.createElement('div');
+    el.className = 'fx';
+    el.setAttribute('aria-hidden', 'true');
+    el.innerHTML = html;
+    page.querySelector('[data-stage]').append(el);
+    return el;
+  }
+  const seg = (q, a, b) => clamp((q - a) / (b - a));
+
+  const effects = {
+    architecture(page) {
+      // Number the diagram's cards so they can slide in from alternating sides.
+      page.querySelectorAll('.flow-node-inner').forEach((n, i) => n.style.setProperty('--i', String(i)));
+      return () => {};
+    },
+    turn(page) {
+      const rail = fx(page, '<div class="fx-rail"><span></span></div>');
+      return (q) => rail.style.setProperty('--k', q.toFixed(4));
+    },
+    safety(page) {
+      const SECRET = 'demo-not-a-real-key';
+      const el = fx(
+        page,
+        `<div class="fx-card fx-redact"><div class="fx-h">${SHIELD}Tool output, before display</div>
+         <code>api_key=<b class="sec"></b></code><code class="path">read ../outside/notes.txt</code>
+         <div class="fx-deny">Path rejected · outside the workspace</div></div>`,
+      );
+      const sec = el.querySelector('.sec');
+      return (q) => {
+        const masked = Math.round(seg(q, 0.15, 0.45) * SECRET.length);
+        const text = '■'.repeat(masked) + SECRET.slice(masked);
+        if (sec.textContent !== text) sec.textContent = text;
+        page.classList.toggle('fx-path', q > 0.5);
+        page.classList.toggle('fx-denied', q > 0.68);
+      };
+    },
+    memory(page) {
+      const QUERY = 'where is approval handled?';
+      const el = fx(page, `<div class="fx-card fx-search"><div class="fx-h">${SEARCH}Search</div><code class="q"></code></div>`);
+      const q$ = el.querySelector('.q');
+      const hits = [...page.querySelectorAll('.flow-node-inner')].filter((n) =>
+        /memory|index|search|evidence|store/i.test(n.textContent),
+      );
+      return (q) => {
+        const text = QUERY.slice(0, Math.round(seg(q, 0.2, 0.5) * QUERY.length));
+        if (q$.textContent !== text) q$.textContent = text;
+        const on = q > 0.55;
+        hits.forEach((n) => n.classList.toggle('fx-hit', on));
+      };
+    },
+    subagents(page) {
+      const el = fx(
+        page,
+        `<div class="fx-card fx-fork"><div class="fx-h">${BRANCH}Worktrees</div>
+         <div class="fork"><span class="b main">main</span><span class="b w1">helper-1</span><span class="b w2">helper-2</span></div>
+         <code class="d1">+ add parser test</code><code class="d2">+ update docs</code><code class="d3">- drop stale flag</code>
+         <div class="fx-merge">Reviewed patch → your workspace</div></div>`,
+      );
+      return (q) => {
+        el.style.setProperty('--k', (seg(q, 0.1, 0.3) - seg(q, 0.8, 0.95)).toFixed(4));
+        el.style.setProperty('--d1', seg(q, 0.35, 0.45).toFixed(3));
+        el.style.setProperty('--d2', seg(q, 0.48, 0.58).toFixed(3));
+        el.style.setProperty('--d3', seg(q, 0.61, 0.71).toFixed(3));
+        el.style.setProperty('--m', seg(q, 0.85, 0.97).toFixed(3));
+      };
+    },
+    provider(page) {
+      return (q) => page.classList.toggle('fx-locked', q > 0.72);
+    },
+  };
+
   /* ---------- pages: T = animation ms, R = share of the timeline used by text reveals ---------- */
 
   const config = {
@@ -183,7 +271,7 @@
     memory: { T: 6500, R: 0.2 },
     subagents: { T: 6500, R: 0.2 },
     provider: { T: 7000, R: 0.2 },
-    team: { T: 2600, R: 0.9 },
+    team: { T: 3200, R: 0.6 },
   };
   const deck = pages.map((page) => {
     const { T, R } = config[page.id] ?? { T: 3000, R: 0.5 };
@@ -197,7 +285,8 @@
     const rest = all.filter((n) => !visual.includes(n));
     const lastWord = rest.findLastIndex((n) => n.classList.contains('w'));
     rest.splice(lastWord + 1, 0, ...visual);
-    return { page, T, R, render, reveals: rest, last: -1 };
+    const extra = effects[page.id]?.(page) ?? (() => {});
+    return { page, T, R, render, extra, reveals: rest, last: -1 };
   });
 
   function renderPage(d, p) {
@@ -214,6 +303,7 @@
     const q = clamp((p - d.R) / (0.97 - d.R));
     d.page.style.setProperty('--q', q.toFixed(4));
     d.render(q);
+    d.extra(q);
     // Small screens: content taller than the page pans along with its animation.
     const overflow = d.page.scrollHeight - d.page.clientHeight;
     d.page.scrollTop = overflow > 2 ? overflow * q : 0;

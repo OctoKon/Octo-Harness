@@ -1679,3 +1679,481 @@ pre {
     animation: none !important;
   }
 }
+
+/* ==========================================================================
+   Per-page motion language. --r = element reveal (0..1), --q = page story (0..1).
+   CSS animations keyed on .page.active restart every time a page is entered.
+   ========================================================================== */
+
+.wd {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+/* 1 Hero: letters assemble blur-to-sharp, the mark draws, a soft light sweeps across. */
+#hero .w {
+  overflow: visible;
+}
+#hero .w > span {
+  opacity: var(--r, 0);
+  filter: blur(calc((1 - var(--r, 0)) * 10px));
+  transform: translate3d(0, calc((1 - var(--r, 0)) * 0.35em), 0);
+}
+#hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(40% 60% at 50% 50%, var(--glow), transparent 70%);
+  opacity: 0;
+  transform: translate3d(-60%, 0, 0);
+}
+#hero.active::after {
+  animation: sweep 2.6s var(--ease) 0.2s;
+}
+@keyframes sweep {
+  30% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(60%, 0, 0);
+  }
+}
+
+/* 2 App: the window settles out of a 3D tilt; sidebar items cascade. Title: mask-up (default). */
+#app .win.reveal {
+  transform-origin: 50% 0;
+  transform: perspective(1600px) rotateX(calc((1 - var(--r, 0)) * 28deg))
+    scale(calc(0.88 + var(--r, 0) * 0.12)) translate3d(0, calc((1 - var(--r, 0)) * 60px), 0);
+}
+#app.active .nav-item,
+#app.active .ws,
+#app.active .side-foot {
+  animation: cascade 0.5s var(--ease) backwards;
+}
+#app.active .ws {
+  animation-delay: 0.45s;
+}
+#app.active .nav-item:nth-child(1) {
+  animation-delay: 0.55s;
+}
+#app.active .nav-item:nth-child(2) {
+  animation-delay: 0.62s;
+}
+#app.active .nav-item:nth-child(3) {
+  animation-delay: 0.69s;
+}
+#app.active .nav-item:nth-child(4) {
+  animation-delay: 0.76s;
+}
+#app.active .nav-item:nth-child(5) {
+  animation-delay: 0.83s;
+}
+#app.active .nav-item:nth-child(6) {
+  animation-delay: 0.9s;
+}
+#app.active .side-foot {
+  animation-delay: 1s;
+}
+@keyframes cascade {
+  from {
+    opacity: 0;
+    transform: translate3d(-14px, 0, 0);
+  }
+}
+
+/* 3 Architecture: words slide in sideways; the stage slides from the left and each layer card
+   arrives from alternating sides like stacked cards (CSS `translate` composes with the SVG transform). */
+#architecture .w > span {
+  opacity: var(--r, 0);
+  transform: translate3d(calc((1 - var(--r, 0)) * -0.8em), 0, 0);
+}
+#architecture .stage.reveal {
+  transform: translate3d(calc((1 - var(--r, 0)) * -120px), 0, 0);
+}
+#architecture.active .flow-node-inner {
+  animation: stack-in 0.8s var(--ease) backwards;
+  animation-delay: calc(0.9s + var(--i, 0) * 1.25s);
+}
+#architecture.active .flow-node-inner:nth-of-type(even) {
+  animation-name: stack-in-right;
+}
+@keyframes stack-in {
+  from {
+    translate: -80px 0;
+  }
+}
+@keyframes stack-in-right {
+  from {
+    translate: 80px 0;
+  }
+}
+
+/* 4 Chat turn: typewriter title; the diagram pans laterally and pops in with a spring; a rail fills. */
+#turn .w {
+  overflow: visible;
+}
+#turn .w > span {
+  transform: none;
+  opacity: clamp(0, calc(var(--r, 0) * 40), 1);
+}
+#turn .stage.reveal {
+  transform: translate3d(calc((1 - var(--r, 0)) * 160px), 0, 0);
+}
+#turn.active .stage {
+  animation: spring 0.9s cubic-bezier(0.34, 1.56, 0.64, 1) 0.6s backwards;
+}
+#turn .splyce-flow svg {
+  transform: translate3d(calc((1 - var(--q, 0)) * 3%), 0, 0);
+}
+@keyframes spring {
+  from {
+    scale: 0.94;
+  }
+}
+.fx-rail {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 12px;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--tertiary);
+  overflow: hidden;
+}
+.fx-rail span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transform: scaleX(var(--k, 0));
+  transform-origin: left;
+}
+
+/* Shared overlay card for the signature effects. */
+/* Effect cards sit in the free margin beside the diagram, never over it. */
+.stage:has(.fx-card) {
+  overflow: visible;
+}
+.fx-card {
+  position: absolute;
+  left: calc(100% + 20px);
+  bottom: 0;
+  display: grid;
+  gap: 6px;
+  width: 250px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--neutral) 92%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 16px 36px -22px var(--shadow-soft);
+  font-size: 12px;
+}
+.fx-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-soft);
+}
+.fx-card code {
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.page.active .fx-card {
+  animation: fx-in 0.6s var(--ease) 1s backwards;
+}
+@keyframes fx-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0) scale(0.96);
+  }
+}
+
+/* 5 Safety: scale-in title; secret text redacts into blocks, an outside path bounces off, denial flashes. */
+#safety .w {
+  overflow: visible;
+}
+#safety .w > span {
+  opacity: var(--r, 0);
+  transform: scale(calc(1.5 - var(--r, 0) * 0.5));
+}
+#safety .stage.reveal {
+  transform: scale(calc(0.92 + var(--r, 0) * 0.08));
+}
+.fx-redact .path,
+.fx-deny {
+  opacity: 0;
+}
+.fx-path .fx-redact .path {
+  opacity: 1;
+  animation: bounce-off 0.7s var(--ease);
+}
+@keyframes bounce-off {
+  0% {
+    transform: translate3d(-24px, 0, 0);
+  }
+  45% {
+    transform: translate3d(10px, 0, 0);
+  }
+  70% {
+    transform: translate3d(-4px, 0, 0);
+  }
+}
+.fx-denied .fx-deny {
+  opacity: 1;
+  color: var(--error);
+  font-weight: 600;
+}
+.fx-denied .stage {
+  animation: deny-flash 0.6s ease-out;
+}
+@keyframes deny-flash {
+  30% {
+    box-shadow:
+      0 0 0 3px var(--error-border, rgba(217, 45, 32, 0.25)),
+      0 30px 60px -36px var(--shadow-soft);
+  }
+}
+
+/* 6 Memory: blur-in title; the diagram blooms from the centre like a constellation; a query types and
+   matching nodes light up. */
+#memory .w {
+  overflow: visible;
+}
+#memory .w > span {
+  opacity: var(--r, 0);
+  filter: blur(calc((1 - var(--r, 0)) * 12px));
+  transform: none;
+}
+#memory .stage.reveal {
+  transform: scale(calc(0.8 + var(--r, 0) * 0.2));
+}
+#memory.active .flow-node-inner {
+  animation: twinkle 1.2s var(--ease) backwards;
+}
+@keyframes twinkle {
+  from {
+    scale: 0.85;
+  }
+}
+.fx-hit .flow-card {
+  stroke: var(--flow-ink) !important;
+  stroke-width: 2.2 !important;
+}
+.fx-search .q::after {
+  content: '';
+  display: inline-block;
+  width: 1px;
+  height: 12px;
+  margin-left: 1px;
+  vertical-align: -2px;
+  background: currentColor;
+  animation: blink 1s steps(1) infinite;
+}
+
+/* 7 Helper agents: flip-up title; main forks into worktree branches, diffs stream, then merge back. */
+#subagents .w > span {
+  opacity: var(--r, 0);
+  transform-origin: 50% 100%;
+  transform: perspective(500px) rotateX(calc((1 - var(--r, 0)) * -90deg));
+}
+#subagents .stage.reveal {
+  transform: translate3d(0, calc((1 - var(--r, 0)) * 50px), 0) rotate(calc((1 - var(--r, 0)) * -1.5deg));
+}
+.fork {
+  position: relative;
+  height: 26px;
+}
+.fork .b {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--neutral);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  transform: translate3d(-50%, 0, 0);
+}
+.fork .main {
+  z-index: 1;
+  background: var(--primary);
+  color: var(--primary-contrast);
+  border-color: var(--primary);
+}
+.fork .w1 {
+  transform: translate3d(calc(-50% - var(--k, 0) * 72px), 0, 0);
+  opacity: var(--k, 0);
+}
+.fork .w2 {
+  transform: translate3d(calc(-50% + var(--k, 0) * 72px), 0, 0);
+  opacity: var(--k, 0);
+}
+.fx-fork .d1 {
+  opacity: var(--d1, 0);
+  transform: translate3d(calc((1 - var(--d1, 0)) * 12px), 0, 0);
+  color: var(--add-text, #067647);
+}
+.fx-fork .d2 {
+  opacity: var(--d2, 0);
+  transform: translate3d(calc((1 - var(--d2, 0)) * 12px), 0, 0);
+  color: var(--add-text, #067647);
+}
+.fx-fork .d3 {
+  opacity: var(--d3, 0);
+  transform: translate3d(calc((1 - var(--d3, 0)) * 12px), 0, 0);
+  color: var(--error);
+}
+.fx-merge {
+  opacity: var(--m, 0);
+  transform: translate3d(0, calc((1 - var(--m, 0)) * 8px), 0);
+  font-weight: 600;
+}
+
+/* 8 Provider: letters tumble in; the card flips in; the lock clicks shut; Save ripples. */
+#provider .w > span {
+  transform: translate3d(0, calc((1 - var(--r, 0)) * 110%), 0) rotate(calc((1 - var(--r, 0)) * 14deg));
+}
+#provider .setup.reveal {
+  transform-origin: 0 50%;
+  transform: perspective(1800px) rotateY(calc((1 - var(--r, 0)) * -70deg));
+}
+.vault {
+  transition:
+    background 0.25s,
+    color 0.25s;
+}
+.fx-locked .vault {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  animation: lock-click 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@keyframes lock-click {
+  50% {
+    transform: scale(1.12);
+  }
+}
+.setup .btn {
+  position: relative;
+  overflow: hidden;
+}
+.setup .btn.pressing::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: ripple 0.6s ease-out forwards;
+}
+@keyframes ripple {
+  to {
+    transform: scale(14);
+    opacity: 0;
+  }
+}
+
+/* 9 Team: mask-up title; credits rise in a staggered grid; the light breathes; the last line underlines itself. */
+#team::before {
+  content: '';
+  position: absolute;
+  inset: 10%;
+  pointer-events: none;
+  background: radial-gradient(closest-side, var(--glow), transparent);
+}
+#team.active::before {
+  animation: breathe 6s ease-in-out infinite;
+}
+@keyframes breathe {
+  50% {
+    transform: scale(1.18);
+    opacity: 0.6;
+  }
+}
+#team .display em::after {
+  content: '';
+  display: block;
+  width: 70%;
+  height: 2px;
+  margin: 4px auto 0;
+  background: currentColor;
+  transform: scaleX(var(--q, 0));
+  transform-origin: left;
+}
+#team.active .chip {
+  animation: rise 0.6s var(--ease) backwards;
+}
+#team.active .chip:nth-child(1) {
+  animation-delay: 1.2s;
+}
+#team.active .chip:nth-child(2) {
+  animation-delay: 1.3s;
+}
+#team.active .chip:nth-child(3) {
+  animation-delay: 1.4s;
+}
+#team.active .chip:nth-child(4) {
+  animation-delay: 1.5s;
+}
+#team.active .chip:nth-child(5) {
+  animation-delay: 1.6s;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0);
+  }
+}
+
+/* Only wide screens have that margin. */
+@media (max-width: 1699px) {
+  .fx-card {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .fx-rail {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #hero .w > span,
+  #memory .w > span {
+    filter: none;
+  }
+  #app .win.reveal,
+  #architecture .stage.reveal,
+  #turn .stage.reveal,
+  #turn .splyce-flow svg,
+  #safety .stage.reveal,
+  #memory .stage.reveal,
+  #subagents .stage.reveal,
+  #provider .setup.reveal,
+  #architecture .w > span,
+  #safety .w > span,
+  #subagents .w > span,
+  #provider .w > span,
+  #hero .w > span {
+    transform: none !important;
+  }
+  #hero::after,
+  #team::before,
+  .page.active *,
+  .page.active {
+    animation: none !important;
+  }
+}
