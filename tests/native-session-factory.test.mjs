@@ -1594,6 +1594,28 @@ function composedHostSession(captureFails) {
     );
     assert.deepEqual(started.readiness, { state: "ready" });
     assert.equal(started.policyRevision, "0");
+    const queued = {
+      configRevision: selected.configRevision,
+      profileRevision: selected.profileRevision,
+      policyRevision: started.policyRevision,
+    };
+    assert.doesNotThrow(() => host.assertCurrent(f.input.workspaceId, queued));
+    assert.throws(
+      () =>
+        host.assertCurrent(f.input.workspaceId, {
+          ...queued,
+          policyRevision: "stale",
+        }),
+      { code: "STALE_REVISION" },
+    );
+    assert.throws(
+      () =>
+        host.assertCurrent(
+          "unbound-workspace",
+          host.current("unbound-workspace"),
+        ),
+      { code: "STALE_REVISION" },
+    );
     const memoryPath = join(
       f.dir,
       "memory",
@@ -1706,7 +1728,7 @@ test(
 );
 
 test(
-  "native session dispatches workspace tools and waits for write approval",
+  "native session dispatches workspace tools with channel metadata and waits for write approval",
   { timeout: 30000 },
   async (t) => {
     const bodies = [];
@@ -1720,7 +1742,7 @@ test(
           ? { name: "read", arguments: JSON.stringify({ path: "README.md" }) }
           : turn === 2 || turn === 3
             ? {
-                name: "write",
+                name: "write<|channel|>commentary",
                 arguments: JSON.stringify({
                   path: turn === 2 ? "approved.txt" : "denied.txt",
                   content: turn === 2 ? "approved" : "blocked",

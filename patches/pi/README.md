@@ -1,5 +1,8 @@
 # Pi native bootstrap patches
 
+The [declared tool channel metadata record](0015-declared-tool-channel-metadata.md)
+describes patch 0015 and its adapter regressions.
+
 The [owned native model runtime record](0012-native-model-runtime.md) describes
 patch 0012, its local composition evidence and pending SDK/session qualification.
 

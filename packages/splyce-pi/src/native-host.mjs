@@ -61,6 +61,9 @@ function lazyFactory(options) {
     get hasWorkspaceReadySession() {
       return instance?.hasWorkspaceReadySession === true;
     },
+    isScopeReady(scopeId) {
+      return instance?.isScopeReady(scopeId) === true;
+    },
     onEvents(fn) {
       const listener = { fn, release: instance?.onEvents?.(fn) };
       listeners.add(listener);
@@ -407,7 +410,7 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
     const effective = profiles.effective(scopeId, observation);
     const profileRevision =
       effective?.profileRevision ?? INITIAL_CONFIG_REVISION;
-    // This host has no runnable grant dispatch; history never creates authority.
+    // Only a currently bound native session opens this scope's command gate.
     return new RevisionFence(
       { effectiveRevision: () => revision },
       {
@@ -415,7 +418,7 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
         profileRevision,
         policyRevision: currentNativePolicyRevision(scopeId),
         grantIds: [],
-        planMode: true,
+        planMode: factory?.isScopeReady?.(scopeId) !== true,
       },
     );
   }
