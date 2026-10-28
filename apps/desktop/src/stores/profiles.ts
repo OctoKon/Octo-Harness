@@ -8,6 +8,17 @@ export interface ConfiguredProfile {
   readonly modelId?: string;
   readonly endpointOrigin?: string;
   readonly credential?: "configured" | "missing";
+  readonly providerConnectionId?: string;
+  readonly connectionRevision?: string;
+  readonly endpointRevision?: string;
+  readonly endpoint?: string;
+  readonly locality?: "loopback" | "hosted";
+  readonly model?: {
+    readonly contextWindow: number;
+    readonly maxOutputTokens: number;
+    readonly reasoning?: boolean;
+    readonly input?: readonly ("text" | "image")[];
+  };
 }
 
 export interface ProfileSelectionResult {
@@ -90,14 +101,67 @@ export function validateSetupReadResult(raw: unknown): {
   const profiles = value.profiles.map(
     (rawProfile: unknown): ConfiguredProfile => {
       const p = setupRecord(rawProfile);
-      setupFields(p, [
-        "profileId",
-        "profileRevision",
-        "apiFamily",
-        "modelId",
-        "endpointOrigin",
-        "credential",
-      ]);
+      setupFields(
+        p,
+        [
+          "profileId",
+          "profileRevision",
+          "apiFamily",
+          "modelId",
+          "endpointOrigin",
+          "credential",
+        ],
+        [
+          "providerConnectionId",
+          "connectionRevision",
+          "endpointRevision",
+          "endpoint",
+          "locality",
+          "model",
+        ],
+      );
+      const fields = [
+        "providerConnectionId",
+        "connectionRevision",
+        "endpointRevision",
+        "endpoint",
+        "locality",
+      ];
+      const hasConnection = fields.some((key) => Object.hasOwn(p, key));
+      if (
+        hasConnection &&
+        (!fields.every((key) => Object.hasOwn(p, key)) ||
+          typeof p.endpoint !== "string" ||
+          normalized(p.endpoint) !== p.endpoint ||
+          endpointOrigin(p.endpoint) !== p.endpointOrigin ||
+          (p.locality !== "loopback" && p.locality !== "hosted") ||
+          (p.locality === "loopback") !== isLoopbackUrl(p.endpoint))
+      )
+        throw new Error("Invalid setup response");
+      let model: ConfiguredProfile["model"];
+      if (Object.hasOwn(p, "model")) {
+        if (!hasConnection) throw new Error("Invalid setup response");
+        const m = setupRecord(p.model);
+        setupFields(
+          m,
+          ["contextWindow", "maxOutputTokens"],
+          ["reasoning", "input"],
+        );
+        if (
+          !Number.isSafeInteger(m.contextWindow) ||
+          (m.contextWindow as number) < 1 ||
+          (m.contextWindow as number) > 2097152 ||
+          !Number.isSafeInteger(m.maxOutputTokens) ||
+          (m.maxOutputTokens as number) < 1 ||
+          (m.maxOutputTokens as number) > (m.contextWindow as number) ||
+          (m.reasoning !== undefined && typeof m.reasoning !== "boolean") ||
+          (m.input !== undefined &&
+            (!Array.isArray(m.input) ||
+              m.input.some((v: unknown) => v !== "text" && v !== "image")))
+        )
+          throw new Error("Invalid setup response");
+        model = m as unknown as ConfiguredProfile["model"];
+      }
       if (
         (p.apiFamily !== "openai-completions" &&
           p.apiFamily !== "openai-responses") ||
@@ -118,6 +182,16 @@ export function validateSetupReadResult(raw: unknown): {
         modelId: p.modelId,
         endpointOrigin: p.endpointOrigin,
         credential: p.credential,
+        ...(hasConnection
+          ? {
+              providerConnectionId: setupOpaque(p.providerConnectionId),
+              connectionRevision: setupOpaque(p.connectionRevision),
+              endpointRevision: setupOpaque(p.endpointRevision),
+              endpoint: p.endpoint as string,
+              locality: p.locality as "loopback" | "hosted",
+              ...(model ? { model } : {}),
+            }
+          : {}),
       };
     },
   );
@@ -474,7 +548,7 @@ export interface ProviderConfigurePayload {
   readonly profileId: string;
   readonly apiFamily: ApiFamily;
   readonly endpoint: string;
-  readonly locality: "local" | "hosted";
+  readonly locality: "loopback" | "hosted";
   readonly chat: {
     readonly modelId: string;
     readonly model?: {
@@ -510,7 +584,7 @@ export function providerConfigurePayload(
     profileId: newId(),
     apiFamily: draft.apiFamily,
     endpoint,
-    locality: isLoopbackUrl(endpoint) ? "local" : "hosted",
+    locality: isLoopbackUrl(endpoint) ? "loopback" : "hosted",
     chat: {
       modelId: draft.modelId.trim(),
       ...(custom && {

@@ -735,6 +735,17 @@ test(
         apiFamily: "openai-completions",
         modelId: "fixture-model",
         endpointOrigin: `https://${name}.example.test`,
+        providerConnectionId: `connection-${name}`,
+        connectionRevision: "c1",
+        endpointRevision: "e1",
+        endpoint: `https://${name}.example.test/v1`,
+        locality: "hosted",
+        model: {
+          contextWindow: 4096,
+          maxOutputTokens: 256,
+          reasoning: false,
+          input: ["text"],
+        },
         credential: "configured",
       })),
     );

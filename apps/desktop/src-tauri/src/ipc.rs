@@ -63,6 +63,19 @@ impl BridgeError {
         }
     }
 
+    fn model_catalog(code: Option<&str>) -> Self {
+        Self {
+            code: match code {
+                Some("MODEL_CATALOG_INVALID") => "MODEL_CATALOG_INVALID",
+                Some("MODEL_CATALOG_DENIED") => "MODEL_CATALOG_DENIED",
+                Some("MODEL_CATALOG_TIMEOUT") => "MODEL_CATALOG_TIMEOUT",
+                _ => "MODEL_CATALOG_UNAVAILABLE",
+            },
+            message: "Model catalog unavailable",
+            ..Self::denied()
+        }
+    }
+
     fn denied() -> Self {
         Self {
             code: "POLICY_DENIED",
@@ -319,6 +332,9 @@ impl BridgeState {
         let page_read = method == "send"
             && is_page_read(params["command"].as_str().unwrap_or(""))
             && valid_setup(params["command"].as_str().unwrap(), &params);
+        let catalog = method == "send"
+            && params["command"] == "models.list"
+            && valid_setup("models.list", &params);
         let selection = method == "send"
             && matches!(
                 params["command"].as_str(),
@@ -346,6 +362,9 @@ impl BridgeState {
             Some(false) if object.contains_key("error") => {
                 if page_read {
                     return Err(BridgeError::page_read(reply["error"]["code"].as_str()));
+                }
+                if catalog {
+                    return Err(BridgeError::model_catalog(reply["error"]["code"].as_str()));
                 }
                 if selection {
                     return Err(BridgeError::selection(reply["error"]["code"].as_str()));
@@ -573,6 +592,15 @@ fn valid_setup(op: &str, value: &Value) -> bool {
                 && value["payload"]["requestId"] == value["requestId"]
                 && setup_id(&value["payload"]["requestId"])
                 && setup_id(&value["payload"]["workspaceId"]))
+            || (op == "models.list"
+                && exact_fields(
+                    &value["payload"],
+                    &["requestId", "workspaceId", "profileId"],
+                )
+                && value["payload"]["requestId"] == value["requestId"]
+                && ["requestId", "workspaceId", "profileId"]
+                    .iter()
+                    .all(|key| setup_id(&value["payload"][*key])))
             || (is_page_read(op) && valid_page_read_request(op, value))
             || (matches!(op, "profile.select" | "session.start") && {
                 let fields: &[&str] = if op == "profile.select" {
@@ -745,6 +773,53 @@ fn valid_page_read_view(op: &str, value: &Value) -> bool {
         })
 }
 
+fn valid_model_catalog_view(value: &Value) -> bool {
+    if !exact_fields(value, &["models", "truncated"]) || !value["truncated"].is_boolean() {
+        return false;
+    }
+    let Some(models) = value["models"].as_array() else {
+        return false;
+    };
+    let mut seen = std::collections::HashSet::new();
+    models.len() <= 500
+        && models.iter().all(|row| {
+            let Some(fields) = row.as_object() else {
+                return false;
+            };
+            let Some(id) = row["modelId"].as_str() else {
+                return false;
+            };
+            !id.is_empty()
+                && id.len() <= 256
+                && seen.insert(id)
+                && !id
+                    .chars()
+                    .any(|c| c.is_whitespace() || c.is_control() || is_format(c))
+                && fields.keys().all(|key| {
+                    matches!(
+                        key.as_str(),
+                        "modelId" | "title" | "contextWindow" | "tools" | "paidOnly"
+                    )
+                })
+                && fields.get("title").is_none_or(|v| {
+                    v.as_str().is_some_and(|t| {
+                        !t.is_empty()
+                            && t.encode_utf16().count() <= 256
+                            && !t.chars().any(char::is_control)
+                    })
+                })
+                && fields
+                    .get("contextWindow")
+                    .is_none_or(|v| v.as_u64().is_some_and(|n| (1..=2_097_152).contains(&n)))
+                && fields.get("tools").is_none_or(Value::is_boolean)
+                && fields.get("paidOnly").is_none_or(Value::is_boolean)
+        })
+}
+
+fn is_format(c: char) -> bool {
+    matches!(c as u32, 0x00ad | 0x0600..=0x0605 | 0x061c | 0x06dd | 0x070f | 0x0890..=0x0891 | 0x08e2 | 0x180e | 0x200b..=0x200f | 0x202a..=0x202e | 0x2060..=0x2064 | 0x2066..=0x206f | 0xfeff | 0xfff9..=0xfffb | 0x110bd | 0x110cd | 0x13430..=0x1343f | 0x1bca0..=0x1bca3 | 0x1d173..=0x1d17a | 0xe0001 | 0xe0020..=0xe007f)
+}
+
 fn valid_setup_read_view(value: &Value) -> bool {
     if !exact_fields(value, &["configRevision", "selectedProfileId", "profiles"])
         || !setup_id(&value["configRevision"])
@@ -757,17 +832,43 @@ fn valid_setup_read_view(value: &Value) -> bool {
     };
     let mut seen = std::collections::HashSet::new();
     profiles.iter().all(|profile| {
-        exact_fields(
-            profile,
-            &[
+        profile.as_object().is_some_and(|fields| {
+            let base = [
                 "profileId",
                 "profileRevision",
                 "apiFamily",
                 "modelId",
                 "endpointOrigin",
                 "credential",
-            ],
-        ) && setup_id(&profile["profileId"])
+            ];
+            let extra = [
+                "providerConnectionId",
+                "connectionRevision",
+                "endpointRevision",
+                "endpoint",
+                "locality",
+            ];
+            base.iter().all(|key| fields.contains_key(*key))
+                && fields.keys().all(|key| {
+                    base.contains(&key.as_str()) || extra.contains(&key.as_str()) || key == "model"
+                })
+                && (extra.iter().all(|key| !fields.contains_key(*key))
+                    && !fields.contains_key("model")
+                    || extra.iter().all(|key| fields.contains_key(*key))
+                        && [
+                            "providerConnectionId",
+                            "connectionRevision",
+                            "endpointRevision",
+                        ]
+                        .iter()
+                        .all(|key| setup_id(&profile[*key]))
+                        && canonical_setup_endpoint(&profile["endpoint"], &profile["locality"])
+                            .is_some()
+                        && tauri::Url::parse(profile["endpoint"].as_str().unwrap()).is_ok_and(
+                            |url| url.origin().ascii_serialization() == profile["endpointOrigin"],
+                        )
+                        && fields.get("model").is_none_or(valid_catalog_profile_model))
+        }) && setup_id(&profile["profileId"])
             && setup_id(&profile["profileRevision"])
             && seen.insert(profile["profileId"].as_str().unwrap())
             && matches!(
@@ -795,6 +896,34 @@ fn valid_setup_read_view(value: &Value) -> bool {
         || profiles
             .iter()
             .any(|profile| profile["profileId"] == value["selectedProfileId"]))
+}
+
+fn valid_catalog_profile_model(value: &Value) -> bool {
+    if !exact_fields(
+        value,
+        &["contextWindow", "maxOutputTokens", "reasoning", "input"],
+    ) || !value["reasoning"].is_boolean()
+    {
+        return false;
+    }
+    let Some(context) = value["contextWindow"]
+        .as_u64()
+        .filter(|n| (1..=2_097_152).contains(n))
+    else {
+        return false;
+    };
+    let Some(input) = value["input"].as_array() else {
+        return false;
+    };
+    value["maxOutputTokens"]
+        .as_u64()
+        .is_some_and(|n| (1..=context.min(1_048_576)).contains(&n))
+        && !input.is_empty()
+        && input.len() <= 2
+        && input
+            .iter()
+            .all(|v| matches!(v.as_str(), Some("text" | "image")))
+        && (input.len() < 2 || input[0] != input[1])
 }
 
 fn setup_id(value: &Value) -> bool {
@@ -1319,7 +1448,9 @@ pub async fn send(
     } else {
         valid_command(&op, &payload)
     }) {
-        let mut error = if is_page_read(&op) {
+        let mut error = if op == "models.list" {
+            BridgeError::model_catalog(Some("MODEL_CATALOG_INVALID"))
+        } else if is_page_read(&op) {
             BridgeError::page_read(Some("PAGE_READ_INVALID"))
         } else {
             BridgeError::denied()
@@ -1344,6 +1475,10 @@ pub async fn send(
         state.call_with_response("send", payload, |reply| {
             reply["ok"] != true || valid_page_read_view(&op, &reply["value"])
         })
+    } else if setup && op == "models.list" {
+        state.call_with_response("send", payload, |reply| {
+            reply["ok"] != true || valid_model_catalog_view(&reply["value"])
+        })
     } else if setup && op == "setup.read" {
         state.call_with_response("send", payload, |reply| {
             reply["ok"] != true || valid_setup_read_view(&reply["value"])
@@ -1354,6 +1489,8 @@ pub async fn send(
     result.map_err(|mut error| {
         if setup && is_page_read(&op) {
             error = BridgeError::page_read(Some(error.code));
+        } else if setup && op == "models.list" {
+            error = BridgeError::model_catalog(Some(error.code));
         }
         error.correlation_id = correlation;
         error
@@ -2792,6 +2929,52 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
             invalid[key] = value;
             assert!(!valid_setup("metadata", &invalid));
         }
+    }
+
+    #[test]
+    fn model_catalog_fixture_and_guards() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/fixtures/contracts/models-list.json"
+        )))
+        .unwrap();
+        let frame = json!({"frame":"setup", "command":"models.list", "requestId":fixture["request"]["requestId"], "payload":fixture["request"]});
+        assert!(valid_setup("models.list", &frame));
+        let mut bad = frame.clone();
+        bad["payload"].as_object_mut().unwrap().remove("profileId");
+        assert!(!valid_setup("models.list", &bad));
+        assert!(valid_model_catalog_view(&fixture["result"]));
+        let mut bad = fixture["result"].clone();
+        bad["models"][0]["modelId"] = json!("bad\u{200b}");
+        assert!(!valid_model_catalog_view(&bad));
+        bad = fixture["result"].clone();
+        let duplicate = bad["models"][0].clone();
+        bad["models"].as_array_mut().unwrap().push(duplicate);
+        assert!(!valid_model_catalog_view(&bad));
+    }
+
+    #[test]
+    fn setup_read_validates_extended_profile_metadata() {
+        let view = json!({"configRevision":"c1","selectedProfileId":"p1","profiles":[{
+            "profileId":"p1","profileRevision":"p1","apiFamily":"openai-completions",
+            "modelId":"model","endpointOrigin":"https://example.test","credential":"configured",
+            "providerConnectionId":"connection1","connectionRevision":"c1","endpointRevision":"r1",
+            "endpoint":"https://example.test/v1","locality":"hosted",
+            "model":{"contextWindow":8192,"maxOutputTokens":1024,"reasoning":false,"input":["text","image"]}
+        }]});
+        assert!(valid_setup_read_view(&view));
+        let mut bad = view.clone();
+        bad["profiles"][0]["endpoint"] = json!("https://other.test/v1");
+        assert!(!valid_setup_read_view(&bad));
+        bad = view.clone();
+        bad["profiles"][0]["model"]["input"] = json!(["text", "text"]);
+        assert!(!valid_setup_read_view(&bad));
+        bad = view.clone();
+        bad["profiles"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("endpointRevision");
+        assert!(!valid_setup_read_view(&bad));
     }
 
     fn page_read_fixture() -> Vec<Value> {

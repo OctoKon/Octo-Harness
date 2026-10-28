@@ -29,7 +29,7 @@
     "build:desktop:e2e": "npm run build:engine && npm --prefix apps/desktop run build && node scripts/build-tauri.mjs --features e2e --config src-tauri/tauri.e2e.conf.json --no-bundle",
     "test:contracts": "node scripts/run-contracts.mjs",
     "test:engine-frames": "node --test tests/engine-frames.test.mjs",
-    "test:native-host": "node --test tests/native-host.test.mjs tests/native-page-reads.test.mjs",
+    "test:native-host": "node --test tests/native-host.test.mjs tests/native-page-reads.test.mjs tests/native-live-catalog.test.mjs",
     "test:native-host-factory": "node --test tests/native-host-factory.test.mjs tests/native-host-context.test.mjs tests/native-context-providers.test.mjs",
     "test:native-control": "node --test tests/native-control.test.mjs tests/native-host-pump.test.mjs",
     "test:native-provider": "node --test tests/native-provider.test.mjs",

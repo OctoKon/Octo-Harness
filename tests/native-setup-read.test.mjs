@@ -240,6 +240,12 @@ test("actual producer and selection survive reopen with exact redacted read proj
         apiFamily: "openai-completions",
         modelId: "namespace/model:revision",
         endpointOrigin: "https://example.test",
+        providerConnectionId: p.connection.providerConnectionId,
+        connectionRevision: p.connection.revision,
+        endpointRevision: p.endpoint.revision,
+        endpoint: p.endpoint.canonicalUrl,
+        locality: "hosted",
+        model: p.metadata.chat.model,
         credential: "configured",
       },
     ],
@@ -248,10 +254,8 @@ test("actual producer and selection survive reopen with exact redacted read proj
   const encoded = JSON.stringify(expected);
   for (const hidden of [
     p.credentialRef,
-    p.connection.providerConnectionId,
     p.endpoint.endpointId,
     f.directory,
-    "private-api",
     "generationReady",
     "readiness",
     "credentialRef",
@@ -350,6 +354,11 @@ test("preexisting descriptor tombstone does not turn a metadata view into readin
     "apiFamily",
     "modelId",
     "endpointOrigin",
+    "providerConnectionId",
+    "connectionRevision",
+    "endpointRevision",
+    "endpoint",
+    "locality",
     "credential",
   ]);
   assert.equal(JSON.stringify(result).includes("ready"), false);

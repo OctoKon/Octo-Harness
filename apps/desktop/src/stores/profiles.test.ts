@@ -131,6 +131,16 @@ describe("provider setup token limits", () => {
     expect(payload.chat).toStrictEqual({ modelId: "gpt-test" });
   });
 
+  it("uses the native loopback locality in setup", () => {
+    expect(
+      providerConfigurePayload(
+        { ...draft("", ""), endpoint: "http://127.0.0.1:11434/v1" },
+        "ws",
+        "req",
+      ).locality,
+    ).toBe("loopback");
+  });
+
   it("requires both limits once either is entered", () => {
     expect(Object.keys(validateProviderSetup(draft("4096", "")))).toEqual([
       "maxOutputTokens",

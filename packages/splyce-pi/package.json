@@ -62,6 +62,10 @@
     "./tool-dispatch": {
       "types": "./dist/tool-dispatch.d.ts",
       "import": "./dist/tool-dispatch.js"
+    },
+    "./model-data": {
+      "types": "./dist/model-data.d.ts",
+      "import": "./dist/model-data.js"
     }
   },
   "files": [

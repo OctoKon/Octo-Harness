@@ -597,6 +597,28 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
     codeIndexFor,
     codeToolsFor,
     memoryFor,
+    async listModels(input, signal) {
+      if (contextClosed) fail("MODEL_CATALOG_UNAVAILABLE");
+      const operation = import("./native-live-catalog.mjs").then(
+        ({ createLiveModelCatalog }) => {
+          if (contextClosed) fail("MODEL_CATALOG_UNAVAILABLE");
+          return createLiveModelCatalog({
+            store,
+            profiles,
+            control: nativeControl,
+            directory,
+            providerCapability,
+            currentPolicyRevision: currentNativePolicyRevision,
+          })(input, signal);
+        },
+      );
+      pendingContext.add(operation);
+      try {
+        return await operation;
+      } finally {
+        pendingContext.delete(operation);
+      }
+    },
     readPage,
     captureMemoryAfterTurn,
     prepareProviderSetup: providerSetup.prepare,

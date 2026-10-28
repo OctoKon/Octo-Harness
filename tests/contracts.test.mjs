@@ -1,3 +1,7 @@
+import {
+  validateModelsListRequest,
+  validateModelsListResult,
+} from "@splyce/pi/model-data";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -77,7 +81,7 @@ for (const { op, request, result } of fixture("page-reads")) {
       );
     }
     if (op === "memory.search") {
-      for (const query of ["", " ", "x\n", "é".repeat(513)])
+      for (const query of ["", " ", "x\n", "Ã©".repeat(513)])
         assert.throws(
           () => validatePageReadRequest(op, { ...request, query }),
           { code: "PAGE_READ_INVALID" },
@@ -85,6 +89,31 @@ for (const { op, request, result } of fixture("page-reads")) {
     }
   });
 }
+test("model catalog contract rejects malformed and private data", () => {
+  const { request, result } = fixture("models-list");
+  assert.deepEqual(validateModelsListRequest(request), request);
+  assert.deepEqual(validateModelsListResult(result), result);
+  for (const value of [
+    { ...request, profileId: "" },
+    { ...request, extra: true },
+  ])
+    assert.throws(() => validateModelsListRequest(value), {
+      code: "MODEL_CATALOG_INVALID",
+    });
+  const row = result.models[0];
+  for (const models of [
+    [row, row],
+    [{ ...row, secret: "x" }],
+    [{ ...row, modelId: "x\u200b" }],
+    [{ ...row, modelId: "\ud800" }],
+    [{ ...row, contextWindow: 0 }],
+    [{ ...row, title: "x\n" }],
+    Array(501).fill(row),
+  ])
+    assert.throws(() => validateModelsListResult({ ...result, models }), {
+      code: "MODEL_CATALOG_INVALID",
+    });
+});
 test("transport defaults are exact, immutable and shared with the native build spec", () => {
   assert.deepEqual(TRANSPORT_LIMITS, {
     maxInlineBytes: 65536,
@@ -259,7 +288,7 @@ test("TD-26: profileSnapshot preserves namespace, slash, colon and Bedrock model
     "openrouter/anthropic",
     "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
     "arn:aws:bedrock:us-east-1:123456789012:foundation-model/anthropic.claude-v2:1",
-    "模型/модель:é",
+    "æ¨¡åž‹/Ð¼Ð¾Ð´ÐµÐ»ÑŒ:Ã©",
     "x".repeat(256),
   ]) {
     const input = boundProfileSnapshot(modelId);
@@ -638,7 +667,7 @@ test("TD-01: bounded inline events use UTF-8 bytes and accept exact boundary", (
   const input = event({
     kind: "turn.stream_delta",
     durable: false,
-    payload: { runId: "r1", delta: "😀".repeat(40) },
+    payload: { runId: "r1", delta: "ðŸ˜€".repeat(40) },
   });
   const byteLength = Buffer.byteLength(JSON.stringify(input.payload), "utf8");
   assert.ok(byteLength > JSON.stringify(input.payload).length);
@@ -652,7 +681,7 @@ test("TD-01: bounded inline events use UTF-8 bytes and accept exact boundary", (
 });
 
 test("shared inline default accepts 65536 UTF-8 payload bytes and rejects one extra", () => {
-  const payload = { runId: "r1", delta: "😀" };
+  const payload = { runId: "r1", delta: "ðŸ˜€" };
   const padding =
     TRANSPORT_LIMITS.maxInlineBytes -
     Buffer.byteLength(JSON.stringify(payload), "utf8");

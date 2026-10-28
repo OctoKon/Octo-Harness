@@ -12,7 +12,8 @@
   import Workbench from "./components/shell/Workbench.svelte";
   import Icon from "./components/shell/Icon.svelte";
   import MemoryList from "./components/memory/MemoryList.svelte";
-  import ModelSwitcher from "./components/model/ModelSwitcher.svelte";
+  import ModelCatalog from "./components/model/ModelCatalog.svelte";
+  import type { ModelSummary, ModelsListResult } from "@splyce/pi/model-data";
   import UsageView from "./components/usage/UsageView.svelte";
   import ApprovalSurface from "./components/ApprovalSurface.svelte";
   import PermissionModeSelect from "./components/PermissionModeSelect.svelte";
@@ -38,6 +39,7 @@
     portAvailability,
     selectWorkspace,
     sendSetup,
+    readModels,
     subscribe,
     type EngineConnectionState,
     type SelectedWorkspace,
@@ -156,9 +158,89 @@
   let configuring = $state(false);
   let profileStatus = $state<string | null>(null);
   let setupEpoch = 0;
+  let catalogEpoch = 0;
+  let catalog = $state<ModelsListResult | null>(null);
+  let catalogStatus = $state("Choose a configured profile to load its models.");
+  let catalogProfileId = $state("");
+  let catalogPending = $state(false);
+  let switchPending = $state(false);
+
+  async function loadCatalog(profileId: string) {
+    const project = workspace;
+    const epoch = ++catalogEpoch;
+    catalogProfileId = profileId;
+    catalog = null;
+    if (!project || !profileId) { catalogStatus = "Choose a configured profile to load its models."; return; }
+    catalogPending = true;
+    catalogStatus = "Loading models…";
+    try {
+      const result = await readModels(project.workspaceId, profileId, crypto.randomUUID());
+      if (epoch !== catalogEpoch) return;
+      catalog = result;
+      catalogStatus = result.truncated ? "The catalog is truncated; some models may be missing." : "Models loaded.";
+    } catch (error) {
+      if (epoch === catalogEpoch) catalogStatus = (error as { code?: string })?.code === "MODEL_CATALOG_DENIED"
+        ? "Access to this catalog was denied. Select the configured profile and start a session, then try again."
+        : "The model catalog could not be loaded. Try again.";
+    } finally { if (epoch === catalogEpoch) catalogPending = false; }
+  }
+
+  async function useModel(model: ModelSummary) {
+    const project = workspace;
+    const profile = profiles.find((p) => p.profileId === catalogProfileId);
+    if (!project || !profile?.providerConnectionId || !profile.connectionRevision || !profile.endpointRevision || !profile.endpoint || !profile.locality || !profile.apiFamily || profile.credential !== "configured" || switchPending || profilePending || configuring) return;
+    const known = model.modelId === profile.modelId ? profile.model : undefined;
+    const context = model.contextWindow ?? known?.contextWindow;
+    if (!context) { catalogStatus = "This model has no context limit. It cannot be configured safely."; return; }
+    const epoch = ++setupEpoch;
+    ++catalogEpoch;
+    switchPending = true;
+    sessionPortWitness = false;
+    startedSession = null;
+    profileStatus = "Saving model…";
+    catalogStatus = "Saving model…";
+    const requestId = crypto.randomUUID();
+    try {
+      const result = configuredProfileResult(await sendSetup("provider.configure", requestId, {
+        requestId, workspaceId: project.workspaceId, providerConnectionId: profile.providerConnectionId,
+        profileId: profile.profileId, apiFamily: profile.apiFamily, endpoint: profile.endpoint,
+        locality: profile.locality, chat: { modelId: model.modelId, model: { contextWindow: context, maxOutputTokens: Math.min(8192, context), reasoning: known?.reasoning ?? false, input: known?.input ?? ["text"] } },
+        accountScopeRef: "provider-default", credential: { kind: "keep" },
+        expectedConnectionRevision: profile.connectionRevision, expectedProfileRevision: profile.profileRevision, expectedEndpointRevision: profile.endpointRevision,
+      }));
+      if (epoch !== setupEpoch) return;
+      if (result.profileId !== profile.profileId) throw new Error("Invalid profile");
+      profiles = profiles.map((p) => p.profileId === result.profileId ? { ...p, ...result, modelId: model.modelId } : { ...p, configRevision: result.configRevision });
+      catalogStatus = "Model saved. Selecting profile…";
+      await useProfile({ ...profile, ...result, modelId: model.modelId }, true);
+      if (setupEpoch !== epoch + 1) return;
+      try {
+        const refreshed = await readProfiles(project.workspaceId, crypto.randomUUID());
+        if (setupEpoch !== epoch + 1) return;
+        if (!refreshed.profiles.some((p) => p.profileId === profile.profileId)) throw new Error("Profile missing");
+        profiles = refreshed.profiles;
+        catalogStatus = "Model selection finished. Check session status.";
+      } catch {
+        if (setupEpoch !== epoch + 1) return;
+        profiles = profiles.map(({ providerConnectionId: _id, connectionRevision: _connection, endpointRevision: _endpointRevision, endpoint: _endpoint, locality: _locality, model: _model, ...p }) => p);
+        catalogStatus = "Model selection finished, but profile details could not be refreshed. Reload before switching again.";
+      }
+    } catch (error) {
+      if (epoch === setupEpoch) {
+        catalogStatus = setupErrorCopy(error);
+        profileStatus = "Model change could not be confirmed. Sending stays blocked.";
+      }
+    } finally { if (setupEpoch === epoch || setupEpoch === epoch + 1) switchPending = false; }
+  }
 
   function invalidateSetup() {
     setupEpoch++;
+    catalogEpoch++;
+    catalog = null;
+    catalogProfileId = "";
+    catalogPending = false;
+    switchPending = false;
+    catalogStatus = "Choose a configured profile to load its models.";
     sessionPortWitness = false;
     startReplay = null;
     activeRunId = null;
@@ -176,7 +258,7 @@
       : "The engine is not connected. A project cannot be chosen yet.",
   );
   const providerUnavailable = $derived(
-    profilePending || configuring
+    profilePending || configuring || switchPending
       ? "Provider setup is already in progress."
       : readiness?.state !== "ready"
         ? "The engine is not connected. Nothing can be saved."
@@ -255,17 +337,26 @@
           .map((p) => ({ ...p, configRevision: result.configRevision })),
         result,
       ];
+      try {
+        const refreshed = await readProfiles(project.workspaceId, crypto.randomUUID());
+        if (epoch !== setupEpoch) throw { code: "WORKSPACE_SUPERSEDED" };
+        if (refreshed.profiles.some((p) => p.profileId === result.profileId)) profiles = refreshed.profiles;
+      } catch (error) {
+        if (epoch !== setupEpoch) throw error;
+        profileStatus = "Provider saved, but profile details could not be refreshed.";
+      }
     } finally {
       if (epoch === setupEpoch) configuring = false;
     }
   }
 
-  async function useProfile(profile: ConfiguredProfile) {
+  async function useProfile(profile: ConfiguredProfile, fromSwitch = false) {
     if (
       !workspace ||
       readiness?.state !== "ready" ||
       profilePending ||
       configuring ||
+      (switchPending && !fromSwitch) ||
       profile.credential === "missing"
     )
       return;
@@ -612,6 +703,7 @@
     return () => {
       mounted = false;
       setupEpoch++;
+      catalogEpoch++;
       unsubState();
       unsubPorts();
       unsubEvents();
@@ -624,12 +716,13 @@
   const selectedProfile = $derived(
     profiles.find((p) => p.profileId === profileSelection?.selectedProfileId),
   );
+  $effect(() => {
+    if (view === "models" && startedSession?.readiness.state === "ready" && profileSelection && untrack(() => catalogProfileId) !== profileSelection.selectedProfileId)
+      void loadCatalog(profileSelection.selectedProfileId);
+  });
   const providerLabel = $derived(
     `${profileSelection ? (selectedProfile?.endpointOrigin ?? "Selected provider") : "No provider selected"} · no automatic fallback`,
   );
-  function unavailableModelSwitch() {
-    throw new Error("The model catalog is unavailable.");
-  }
   async function unavailableForget() {
     throw new Error("The memory feed is unavailable.");
   }
@@ -795,22 +888,7 @@
             />
           </div>
           <div class="surface-card">
-            <ModelSwitcher
-              selection={{
-                currentRef:
-                  startedSession?.readiness.state === "ready"
-                    ? (selectedProfile?.modelId ?? "Unavailable")
-                    : "Unavailable",
-                transition: null,
-              }}
-              options={[]}
-              catalogStatus="error"
-              onRequest={unavailableModelSwitch}
-            />
-            <p>
-              Use a saved profile above to start a session. Live model switching
-              has no connected catalog.
-            </p>
+            <ModelCatalog {profiles} {catalogProfileId} {catalog} {catalogStatus} {catalogPending} {switchPending} onLoad={loadCatalog} onUse={useModel} />
           </div>
           <SupportStatus cells={null} />
         {:else if view === "extensions"}

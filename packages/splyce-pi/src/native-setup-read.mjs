@@ -96,12 +96,35 @@ export function createNativeSetupReader({ store, control }) {
           refs.add(connection.credentialRef);
           if (binding.role === "chat") {
             if (chat) unavailable();
+            const artifact = snapshot.records.findLast(
+              ({ kind, record }) =>
+                kind === "artifact" &&
+                !deleted.has(record.recordId) &&
+                profile.sourceIds.includes(record.recordId) &&
+                record.role === "chat" &&
+                record.modelId === binding.modelId &&
+                record.mediaType ===
+                  "application/vnd.splyce.model-descriptor+json",
+            );
+            const descriptor = artifact?.record.descriptor;
+            const model = descriptor && {
+              contextWindow: descriptor.contextWindow,
+              maxOutputTokens: descriptor.maxOutputTokens,
+              reasoning: descriptor.reasoning,
+              input: descriptor.input,
+            };
             chat = {
               profileId: profile.profileId,
               profileRevision: profile.profileRevision,
               apiFamily: connection.apiFamily,
               modelId: binding.modelId,
               endpointOrigin: new URL(endpoint.canonicalUrl).origin,
+              providerConnectionId: connection.providerConnectionId,
+              connectionRevision: connection.revision,
+              endpointRevision: endpoint.revision,
+              endpoint: endpoint.canonicalUrl,
+              locality: endpoint.locality,
+              ...(model ? { model } : {}),
             };
           }
         }

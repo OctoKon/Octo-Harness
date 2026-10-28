@@ -14,7 +14,12 @@ import { FOUNDATION, PI_REVISION } from "@splyce/pi/contracts";
 import App from "./App.svelte";
 import Composer from "./components/Composer.svelte";
 import Providers from "./routes/Providers.svelte";
-import { dispatchEngineEvent, invoke, sendSetup } from "./stores/engine";
+import {
+  dispatchEngineEvent,
+  engine,
+  invoke,
+  sendSetup,
+} from "./stores/engine";
 import { selectedSession } from "./stores/session-selection";
 
 const profile = {
@@ -177,6 +182,149 @@ describe("native profile and session setup", () => {
     expect(document.querySelector('[role="treeitem"]')?.textContent).toContain(
       "saved-session",
     );
+  });
+
+  it("exposes the validated catalog route through the engine store", async () => {
+    reply = async () => ({ models: [], truncated: false });
+    expect(await engine.listModels("ws_1", "profile_1", "request_1")).toEqual({
+      models: [],
+      truncated: false,
+    });
+    expect(sends("models.list")[0]![1].payload.payload).toEqual({
+      requestId: "request_1",
+      workspaceId: "ws_1",
+      profileId: "profile_1",
+    });
+  });
+
+  it("loads a live catalog and switches the saved connection without reentering a key", async () => {
+    let configured = false;
+    reply = async (op) =>
+      op === "setup.read"
+        ? {
+            configRevision: configured ? "cfg_3" : "cfg_1",
+            selectedProfileId: null,
+            profiles: [
+              {
+                profileId: "profile_1",
+                profileRevision: configured ? "pr_3" : "pr_1",
+                apiFamily: "openai-responses",
+                modelId: "old",
+                endpointOrigin: "http://127.0.0.1:11434",
+                credential: "configured",
+                providerConnectionId: "conn_1",
+                connectionRevision: configured ? "cr_2" : "cr_1",
+                endpointRevision: configured ? "er_2" : "er_1",
+                endpoint: "http://127.0.0.1:11434/v1",
+                locality: "loopback",
+              },
+            ],
+          }
+        : op === "models.list"
+          ? {
+              models: [
+                {
+                  modelId: "new",
+                  contextWindow: 4000,
+                  tools: true,
+                  paidOnly: true,
+                },
+              ],
+              truncated: false,
+            }
+          : op === "provider.configure"
+            ? ((configured = true),
+              {
+                profileId: "profile_1",
+                profileRevision: "pr_3",
+                configRevision: "cfg_3",
+              })
+            : op === "profile.select"
+              ? selection
+              : session;
+    app = mount(App, { target: document.body });
+    await tick();
+    button("Choose project").click();
+    await tick();
+    button("Models").click();
+    flushSync();
+    button("Use this profile").click();
+    await tick();
+    await tick();
+    expect(sends("models.list")).toHaveLength(1);
+    button("Use this model").click();
+    await tick();
+    await tick();
+    expect(sends("provider.configure")[0]![1].payload.payload).toMatchObject({
+      providerConnectionId: "conn_1",
+      profileId: "profile_1",
+      endpoint: "http://127.0.0.1:11434/v1",
+      locality: "loopback",
+      credential: { kind: "keep" },
+      expectedConnectionRevision: "cr_1",
+      expectedEndpointRevision: "er_1",
+      chat: {
+        modelId: "new",
+        model: { contextWindow: 4000, maxOutputTokens: 4000 },
+      },
+    });
+    expect(sends("profile.select")).toHaveLength(2);
+    expect(sends("session.start")).toHaveLength(2);
+    button("Use this model").click();
+    await tick();
+    await tick();
+    expect(sends("provider.configure")[1]![1].payload.payload).toMatchObject({
+      expectedConnectionRevision: "cr_2",
+      expectedEndpointRevision: "er_2",
+    });
+    expect(sends("session.start")).toHaveLength(3);
+  });
+
+  it("ignores a catalog response from a previously selected project", async () => {
+    let resolveCatalog!: (value: unknown) => void;
+    reply = async (op) =>
+      op === "setup.read"
+        ? {
+            configRevision: "cfg_1",
+            selectedProfileId: null,
+            profiles: [
+              {
+                profileId: "profile_1",
+                profileRevision: "pr_1",
+                apiFamily: "openai-responses",
+                modelId: "old",
+                endpointOrigin: "https://example.test",
+                credential: "configured",
+              },
+            ],
+          }
+        : op === "models.list"
+          ? new Promise((resolve) => {
+              resolveCatalog = resolve;
+            })
+          : op === "profile.select"
+            ? selection
+            : session;
+    app = mount(App, { target: document.body });
+    await tick();
+    button("Choose project").click();
+    await tick();
+    button("Models").click();
+    flushSync();
+    button("Use this profile").click();
+    await tick();
+    await tick();
+    expect(sends("models.list")).toHaveLength(1);
+    selectedWorkspace = "ws_2";
+    button("Choose project").click();
+    await tick();
+    resolveCatalog({
+      models: [{ modelId: "old-project-model", contextWindow: 4000 }],
+      truncated: false,
+    });
+    await tick();
+    expect(document.body.textContent).not.toContain("old-project-model");
+    expect(sends("provider.configure")).toHaveLength(0);
   });
 
   it("does not claim Local only in Work after selecting a hosted provider", async () => {
@@ -465,9 +613,10 @@ describe("native profile and session setup", () => {
     await tick();
     button("Work").click();
     flushSync();
+    const readsBeforeRetry = sends("setup.read").length;
     button("Retry").click();
     await tick();
-    expect(sends("setup.read")).toHaveLength(2);
+    expect(sends("setup.read")).toHaveLength(readsBeforeRetry + 1);
     expect(button("Send").disabled).toBe(true);
   });
 

@@ -767,7 +767,7 @@ describe("App wiring", () => {
         profileId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         apiFamily: "openai-completions",
         endpoint: "http://localhost:11434/v1",
-        locality: "local",
+        locality: "loopback",
         chat: {
           modelId: "qwen3:8b",
           model: {
@@ -849,7 +849,9 @@ describe("approved prototype shell", () => {
     );
     button("Models").click();
     flushSync();
-    expect(q("[data-testid=model-catalog-error]")).not.toBeNull();
+    expect(document.body.textContent).toContain(
+      "Choose a configured profile to load its models.",
+    );
     expect(document.querySelectorAll("main")).toHaveLength(1);
     button("Runs").click();
     flushSync();

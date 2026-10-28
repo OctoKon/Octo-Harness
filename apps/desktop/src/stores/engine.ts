@@ -1,4 +1,10 @@
 import {
+  ModelsListError,
+  validateModelsListRequest,
+  validateModelsListResult,
+  type ModelsListResult,
+} from "@splyce/pi/model-data";
+import {
   PageReadError,
   type PageReadOp,
   type PageReadResults,
@@ -72,6 +78,11 @@ export interface EngineStore {
     requestId: string,
     payload: { workspaceId: string; query?: string },
   ) => Promise<PageReadResults[O]>;
+  listModels: (
+    workspaceId: string,
+    profileId: string,
+    requestId: string,
+  ) => Promise<ModelsListResult>;
   ackCursor: (sessionId: string, seq: number) => Promise<void>;
   getCursor: (sessionId: string) => number;
   resync: (context: CommandContext, fromSeq: number) => Promise<void>;
@@ -357,6 +368,32 @@ export async function sendSetup(
   });
 }
 
+export async function readModels(
+  workspaceId: string,
+  profileId: string,
+  requestId: string,
+): Promise<ModelsListResult> {
+  const request = { requestId, workspaceId, profileId };
+  validateModelsListRequest(request);
+  let result: unknown;
+  try {
+    result = await sendSetup("models.list", requestId, request);
+  } catch (error) {
+    const code =
+      error !== null && typeof error === "object" && "code" in error
+        ? error.code
+        : undefined;
+    throw new ModelsListError(
+      code === "MODEL_CATALOG_INVALID" ||
+        code === "MODEL_CATALOG_DENIED" ||
+        code === "MODEL_CATALOG_TIMEOUT"
+        ? code
+        : "MODEL_CATALOG_UNAVAILABLE",
+    );
+  }
+  return validateModelsListResult(result);
+}
+
 export async function readPage<O extends PageReadOp>(
   op: O,
   requestId: string,
@@ -441,6 +478,7 @@ export const engine: EngineStore = {
   onEvent,
   invoke,
   readPage,
+  listModels: readModels,
   ackCursor,
   getCursor,
   resync,
