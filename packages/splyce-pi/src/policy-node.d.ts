@@ -17,4 +17,7 @@ declare module "node:path" {
 }
 declare module "node:fs" {
   export function realpathSync(path: string): string;
+  export namespace realpathSync {
+    export function native(path: string): string;
+  }
 }

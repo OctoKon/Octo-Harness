@@ -31,6 +31,7 @@ import { WorktreeManager } from "../../packages/splyce-index/dist/worktrees.js";
 import { RevisionFence } from "../../packages/splyce-pi/dist/admission.js";
 import { AdmissionError } from "../../packages/splyce-pi/dist/policy.js";
 import { Store, StoreError } from "../../packages/splyce-pi/dist/store.js";
+import { isSecretPath } from "../../packages/splyce-pi/dist/secret-path.js";
 import {
   type SpawnResult,
   SubagentError,
@@ -579,6 +580,150 @@ for (const mode of ["read", "write"] as const)
       assert.ok(!returned.join("").includes("private child fixture value"));
       assert.equal(h.actions().length, 0);
     });
+
+test("secret path matching normalizes every Windows path segment", () => {
+  for (const path of [
+    ".env.",
+    ".env ",
+    ".ENV",
+    "id_rsa::$DATA",
+    ".env:x",
+    "src\\.SSH. \\config",
+    "src/.aws:stream/config",
+    "src/.gnupg /config",
+  ])
+    assert.equal(isSecretPath(path), true, path);
+  assert.equal(isSecretPath("src/.ENV.EXAMPLE. "), false);
+  assert.equal(isSecretPath("src/ordinary.txt"), false);
+});
+
+for (const mode of ["read", "write"] as const)
+  for (const path of [
+    ".env.",
+    ".env ",
+    ".ENV",
+    "id_rsa::$DATA",
+    ".env:x",
+    ".SSH. /config",
+    ".aws:stream/config",
+    ".gnupg /config",
+  ])
+    test(`${mode} child denies Windows secret alias ${path}`, async (t) => {
+      const returned: string[] = [];
+      const factories = childToolFactories();
+      const roots: string[] = [];
+      const h = await harness(
+        t,
+        ({ turn, messages }) => {
+          returned.push(JSON.stringify(messages));
+          return turn === 0
+            ? call(mode, {
+                path,
+                ...(mode === "write" ? { content: "changed" } : {}),
+              })
+            : say("done");
+        },
+        {
+          tools: {
+            "fs.read": (root: string) => {
+              roots.push(root);
+              writeFileSync(join(root, ".env"), "private alias fixture value");
+              writeFileSync(
+                join(root, "id_rsa"),
+                "private alias fixture value",
+              );
+              for (const dir of [".ssh", ".aws", ".gnupg"]) {
+                mkdirSync(join(root, dir));
+                writeFileSync(
+                  join(root, dir, "config"),
+                  "private alias fixture value",
+                );
+              }
+              return factories["fs.read"](root);
+            },
+          },
+        },
+      );
+      const { results } = await h.spawn({ tasks: [{ prompt: "alias", mode }] });
+      assert.equal(results[0]!.status, "failed");
+      if (results[0]!.status === "failed")
+        assert.equal(results[0]!.reason, "POLICY_DENIED");
+      assert.ok(!returned.join("").includes("private alias fixture value"));
+      assert.ok(
+        !JSON.stringify(h.events()).includes("private alias fixture value"),
+      );
+      assert.equal(h.actions().length, 0, "denial precedes native receipts");
+      for (const root of roots)
+        for (const file of [".env", "id_rsa"])
+          if (existsSync(join(root, file)))
+            assert.equal(
+              readFileSync(join(root, file), "utf8"),
+              "private alias fixture value",
+            );
+      assert.equal(h.live(), 0);
+    });
+
+test("read and write children deny a real Windows 8.3 secret alias", async (t) => {
+  if (process.platform !== "win32")
+    return t.skip("Windows 8.3 names require Windows");
+  const shortName = (file: string) =>
+    execFileSync(
+      "cmd.exe",
+      ["/d", "/c", `for %I in ("${file}") do @echo %~sI`],
+      {
+        encoding: "utf8",
+      },
+    )
+      .trim()
+      .split(/[\\/]/)
+      .at(-1)!;
+  for (const mode of ["read", "write"] as const) {
+    let path = "";
+    const returned: string[] = [];
+    const factories = childToolFactories();
+    const h = await harness(
+      t,
+      ({ turn, messages }) => {
+        returned.push(JSON.stringify(messages));
+        return turn === 0
+          ? call(mode, {
+              path,
+              ...(mode === "write" ? { content: "changed" } : {}),
+            })
+          : say("done");
+      },
+      {
+        tools: {
+          "fs.read": (root: string) => {
+            const file = join(root, ".env.production");
+            writeFileSync(file, "private short-name fixture value");
+            path = shortName(file);
+            assert.match(path, /~\d/);
+            assert.equal(
+              realpathSync.native(join(root, path)),
+              realpathSync.native(file),
+            );
+            return factories["fs.read"](root);
+          },
+        },
+      },
+    );
+    const probe = join(h.workspace, ".env.production");
+    await h.ready;
+    writeFileSync(probe, "private short-name fixture value");
+    if (!/~\d/.test(shortName(probe)))
+      return t.skip("8.3 short names are disabled on this filesystem");
+    const { results } = await h.spawn({
+      tasks: [{ prompt: "short alias", mode }],
+    });
+    assert.equal(results[0]!.status, "failed");
+    if (results[0]!.status === "failed")
+      assert.equal(results[0]!.reason, "POLICY_DENIED");
+    assert.ok(!returned.join("").includes("private short-name fixture value"));
+    assert.equal(h.actions().length, 0);
+    assert.equal(h.live(), 0);
+  }
+});
 
 test("read child refuses unchecked Pi missing-file aliases", async (t) => {
   const returned: string[] = [];

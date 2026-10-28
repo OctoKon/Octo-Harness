@@ -1256,6 +1256,8 @@ class ChildAdmission implements ToolAdmission {
           `${toolName} path is outside the child root`,
         );
       const target = resolve(this.root, rel);
+      if (isSecretPath(rel))
+        this.deny("POLICY_DENIED", `${toolName} secret path is denied`);
       // Pi read aliases missing files; only admit the exact target we checked.
       if (toolName === "read" && !existsSync(target))
         this.deny(
@@ -1266,11 +1268,11 @@ class ChildAdmission implements ToolAdmission {
       while (!existsSync(probe) && dirname(probe) !== probe)
         probe = dirname(probe);
       if (
-        isSecretPath(rel) ||
         isSecretPath(
           relative(
-            realpathSync(this.root),
-            resolve(realpathSync(probe), relative(probe, target)),
+            realpathSync.native(this.root),
+            // Native resolution expands Windows short names before matching.
+            resolve(realpathSync.native(probe), relative(probe, target)),
           )
             .split(sep)
             .join("/"),
@@ -1360,8 +1362,8 @@ export function confine(root: string, path: string): string | undefined {
     return undefined;
   let probe = target;
   while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe);
-  const realRoot = realpathSync(root);
-  const realRel = relative(realRoot, realpathSync(probe));
+  const realRoot = realpathSync.native(root);
+  const realRel = relative(realRoot, realpathSync.native(probe));
   if (realRel === ".." || realRel.startsWith(`..${sep}`) || isAbsolute(realRel))
     return undefined;
   return rel.split(sep).join("/") || ".";

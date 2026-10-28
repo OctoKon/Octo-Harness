@@ -3,8 +3,14 @@ const SECRET_NAME =
 const SECRET_DIRS = new Set([".ssh", ".aws", ".gnupg"]);
 
 /** Secret-shaped path: decided from the name alone, so it is never read. */
+// shortcut: name-based checks cannot identify hardlinks; use file identity if that becomes required.
 export function isSecretPath(rel: string): boolean {
-  const parts = rel.toLowerCase().split("/");
+  const parts = rel.split(/[\\/]/).map((part) =>
+    part
+      .split(":", 1)[0]!
+      .replace(/[. ]+$/, "")
+      .toLowerCase(),
+  );
   return (
     parts.slice(0, -1).some((d) => SECRET_DIRS.has(d)) ||
     SECRET_NAME.test(parts.at(-1)!)
