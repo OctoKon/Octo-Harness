@@ -1,3 +1,5 @@
+// Classic script (works from file:// and HTTP): registers globalThis.SplyceFlows.createDiagram.
+(() => {
 // Local SVG renderer shared by the five dependency-free diagram entrypoints.
 const NS = "http://www.w3.org/2000/svg";
 let serial = 0;
@@ -51,7 +53,7 @@ const styles = `
     .splyce-flow .flow-dot { display:none; }
   }
   @media (forced-colors:active) {
-    .splyce-flow { --flow-ink:CanvasText;--flow-bg:Canvas;--flow-surface:Canvas;
+    .splyce-flow, [data-theme] .splyce-flow { --flow-ink:CanvasText;--flow-bg:Canvas;--flow-surface:Canvas;
       --flow-muted:CanvasText;--flow-line:GrayText;--flow-rule:CanvasText;
       --flow-error:CanvasText;--flow-error-bg:Canvas;--flow-error-line:CanvasText; }
   }
@@ -60,7 +62,8 @@ const styles = `
 const icons = {
   window: "M3 4h18v16H3z M3 9h18 M7 6.5h.1 M10 6.5h.1",
   shield: "M12 2 21 6v6c0 5-9 10-9 10S3 17 3 12V6z M8 12l3 3 5-6",
-  engine: "M7 7h10v10H7z M9 2v5 M15 2v5 M9 17v5 M15 17v5 M2 9h5 M2 15h5 M17 9h5 M17 15h5",
+  engine:
+    "M7 7h10v10H7z M9 2v5 M15 2v5 M9 17v5 M15 17v5 M2 9h5 M2 15h5 M17 9h5 M17 15h5",
   cloud: "M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-1 5.5 5.5 0 0 1 0 11z",
   prompt: "M3 4h18v13H9l-5 4v-4H3z M7 8h10 M7 12h6",
   check: "M4 12l5 5L20 6",
@@ -72,20 +75,23 @@ const icons = {
   store: "M3 6c0-5 18-5 18 0s-18 5-18 0v12c0 5 18 5 18 0V6 M3 12c0 5 18 5 18 0",
   file: "M5 2h9l5 5v15H5z M14 2v6h5 M8 12h8 M8 16h6",
   search: "M16 10a6 6 0 1 1-12 0 6 6 0 0 1 12 0z m-2 4 7 7",
-  branch: "M6 4v16 M6 12h7a5 5 0 0 0 5-5V4 M3 3h6v4H3z M15 2h6v4h-6z M3 18h6v4H3z",
+  branch:
+    "M6 4v16 M6 12h7a5 5 0 0 0 5-5V4 M3 3h6v4H3z M15 2h6v4h-6z M3 18h6v4H3z",
   stop: "M7 2h10l5 5v10l-5 5H7l-5-5V7z M8 8l8 8 M16 8l-8 8",
 };
 
 function svgElement(name, attrs = {}, text) {
   const node = document.createElementNS(NS, name);
-  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  for (const [key, value] of Object.entries(attrs))
+    node.setAttribute(key, value);
   if (text !== undefined) node.textContent = text;
   return node;
 }
 
 /** Mount one responsive SVG; progress is deterministic and safe to scrub backwards. */
-export function createDiagram(el, spec) {
-  if (!el || el.nodeType !== 1) throw new TypeError("mount(el) needs an Element");
+function createDiagram(el, spec) {
+  if (!el || el.nodeType !== 1)
+    throw new TypeError("mount(el) needs an Element");
   instances.get(el)?.destroy();
   const id = `splyce-flow-${++serial}`;
   const root = document.createElement("div");
@@ -104,9 +110,31 @@ export function createDiagram(el, spec) {
     svgElement("desc", { id: `${id}-desc` }, spec.description),
   );
   const defs = svgElement("defs");
-  for (const [kind, color] of [["base", "var(--flow-rule)"], ["live", "var(--flow-ink)"], ["danger", "var(--flow-error)"]]) {
-    const marker = svgElement("marker", { id: `${id}-${kind}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" });
-    marker.append(svgElement("path", { d: "M1 1L9 5L1 9", fill: "none", stroke: color, "stroke-width": 1.4, "stroke-linecap": "round", "stroke-linejoin": "round" }));
+  for (const [kind, color] of [
+    ["base", "var(--flow-rule)"],
+    ["live", "var(--flow-ink)"],
+    ["danger", "var(--flow-error)"],
+  ]) {
+    const marker = svgElement("marker", {
+      id: `${id}-${kind}`,
+      viewBox: "0 0 10 10",
+      refX: 9,
+      refY: 5,
+      markerWidth: 7,
+      markerHeight: 7,
+      orient: "auto-start-reverse",
+      markerUnits: "userSpaceOnUse",
+    });
+    marker.append(
+      svgElement("path", {
+        d: "M1 1L9 5L1 9",
+        fill: "none",
+        stroke: color,
+        "stroke-width": 1.4,
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+      }),
+    );
     defs.append(marker);
   }
   svg.append(defs);
@@ -127,21 +155,27 @@ export function createDiagram(el, spec) {
 
   function setProgress(value) {
     if (destroyed) return;
-    requested = typeof value === "number" && Number.isFinite(value) ? clamp(value) : 0;
+    requested =
+      typeof value === "number" && Number.isFinite(value) ? clamp(value) : 0;
     const progress = motion.matches ? 1 : requested;
     root.dataset.progress = String(progress);
     for (const { inner, spec: node } of nodes) {
-      const reveal = ease(clamp((progress - node.at) / .12));
-      inner.style.opacity = String(.23 + .77 * reveal);
+      const reveal = ease(clamp((progress - node.at) / 0.12));
+      inner.style.opacity = String(0.23 + 0.77 * reveal);
       inner.setAttribute("transform", `translate(0 ${6 * (1 - reveal)})`);
       inner.dataset.revealed = String(reveal === 1);
     }
     for (const { path, dot, label, spec: edge, length } of edges) {
-      const local = clamp((progress - edge.at) / (edge.duration ?? .14));
+      const local = clamp((progress - edge.at) / (edge.duration ?? 0.14));
       const travelled = ease(local);
       path.style.strokeDashoffset = String(length * (1 - travelled));
-      path.setAttribute("marker-end", local === 1 ? `url(#${id}-${edge.tone === "danger" ? "danger" : "live"})` : "none");
-      label.style.opacity = String(.4 + .6 * travelled);
+      path.setAttribute(
+        "marker-end",
+        local === 1
+          ? `url(#${id}-${edge.tone === "danger" ? "danger" : "live"})`
+          : "none",
+      );
+      label.style.opacity = String(0.4 + 0.6 * travelled);
       const point = path.getPointAtLength(length * travelled);
       dot.setAttribute("cx", point.x);
       dot.setAttribute("cy", point.y);
@@ -161,10 +195,24 @@ export function createDiagram(el, spec) {
     edges = spec.edges.map((edge) => {
       const d = mobile ? edge.m : edge.d;
       const [x, y] = mobile ? edge.ml : edge.labelAt;
-      const base = svgElement("path", { d, class: "flow-wire", "marker-end": `url(#${id}-base)` });
-      const path = svgElement("path", { d, class: `flow-wire-live ${edge.tone ?? ""}` });
-      const dot = svgElement("circle", { r: 4.5, class: `flow-dot ${edge.tone ?? ""}` });
-      const label = svgElement("text", { x, y, class: "flow-label" }, edge.label ?? "");
+      const base = svgElement("path", {
+        d,
+        class: "flow-wire",
+        "marker-end": `url(#${id}-base)`,
+      });
+      const path = svgElement("path", {
+        d,
+        class: `flow-wire-live ${edge.tone ?? ""}`,
+      });
+      const dot = svgElement("circle", {
+        r: 4.5,
+        class: `flow-dot ${edge.tone ?? ""}`,
+      });
+      const label = svgElement(
+        "text",
+        { x, y, class: "flow-label" },
+        edge.label ?? "",
+      );
       layer.append(base, path, dot, label);
       const length = path.getTotalLength();
       path.style.strokeDasharray = String(length);
@@ -172,20 +220,98 @@ export function createDiagram(el, spec) {
     });
     nodes = spec.nodes.map((node, index) => {
       const [x, y, w, h] = mobile ? node.m : node.d;
-      const group = svgElement("g", { transform: `translate(${x} ${y})`, "data-node": node.id });
+      const group = svgElement("g", {
+        transform: `translate(${x} ${y})`,
+        "data-node": node.id,
+      });
       const inner = svgElement("g", { class: "flow-node-inner" });
-      inner.append(svgElement("rect", { width: w, height: h, rx: 12, class: `flow-card ${node.tone ?? ""}` }));
-      inner.append(svgElement("text", { x: 18, y: 25, class: "flow-eyebrow" }, node.kicker));
-      inner.append(svgElement("text", { x: w - 18, y: 25, class: "flow-number", "text-anchor": "end" }, String(index + 1).padStart(2, "0")));
-      inner.append(svgElement("path", { d: icons[node.icon ?? "file"], transform: "translate(18 43) scale(.72)", class: `flow-icon ${node.tone === "danger" ? "flow-danger-icon" : ""}` }));
-      inner.append(svgElement("text", { x: 46, y: 57, class: "flow-title" }, node.title));
-      node.lines.forEach((line, i) => inner.append(svgElement("text", { x: 18, y: 82 + i * 19, class: "flow-body" }, line)));
+      inner.append(
+        svgElement("rect", {
+          width: w,
+          height: h,
+          rx: 12,
+          class: `flow-card ${node.tone ?? ""}`,
+        }),
+      );
+      inner.append(
+        svgElement(
+          "text",
+          { x: 18, y: 25, class: "flow-eyebrow" },
+          node.kicker,
+        ),
+      );
+      inner.append(
+        svgElement(
+          "text",
+          { x: w - 18, y: 25, class: "flow-number", "text-anchor": "end" },
+          String(index + 1).padStart(2, "0"),
+        ),
+      );
+      inner.append(
+        svgElement("path", {
+          d: icons[node.icon ?? "file"],
+          transform: "translate(18 43) scale(.72)",
+          class: `flow-icon ${node.tone === "danger" ? "flow-danger-icon" : ""}`,
+        }),
+      );
+      inner.append(
+        svgElement("text", { x: 46, y: 57, class: "flow-title" }, node.title),
+      );
+      node.lines.forEach((line, i) =>
+        inner.append(
+          svgElement(
+            "text",
+            { x: 18, y: 82 + i * 19, class: "flow-body" },
+            line,
+          ),
+        ),
+      );
       if (node.approval) {
         const y = h - 38;
-        inner.append(svgElement("rect", { x: 18, y, width: 92, height: 26, rx: 4, class: "flow-pill" }));
-        inner.append(svgElement("text", { x: 64, y: y + 17, "text-anchor": "middle", class: "flow-pill-text" }, "Allow once"));
-        inner.append(svgElement("rect", { x: 118, y, width: 56, height: 26, rx: 4, class: "flow-pill-outline" }));
-        inner.append(svgElement("text", { x: 146, y: y + 17, "text-anchor": "middle", class: "flow-pill-outline-text" }, "Deny"));
+        inner.append(
+          svgElement("rect", {
+            x: 18,
+            y,
+            width: 92,
+            height: 26,
+            rx: 4,
+            class: "flow-pill",
+          }),
+        );
+        inner.append(
+          svgElement(
+            "text",
+            {
+              x: 64,
+              y: y + 17,
+              "text-anchor": "middle",
+              class: "flow-pill-text",
+            },
+            "Allow once",
+          ),
+        );
+        inner.append(
+          svgElement("rect", {
+            x: 118,
+            y,
+            width: 56,
+            height: 26,
+            rx: 4,
+            class: "flow-pill-outline",
+          }),
+        );
+        inner.append(
+          svgElement(
+            "text",
+            {
+              x: 146,
+              y: y + 17,
+              "text-anchor": "middle",
+              class: "flow-pill-outline-text",
+            },
+            "Deny",
+          ),
+        );
       }
       group.append(inner);
       layer.append(group);
@@ -213,3 +339,6 @@ export function createDiagram(el, spec) {
   draw();
   return api;
 }
+
+(globalThis.SplyceFlows ??= {}).createDiagram = createDiagram;
+})();

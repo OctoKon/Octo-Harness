@@ -8,106 +8,401 @@
     <style>
       :root {
         color-scheme: light dark;
-        --bg: #ffffff; --surface: #f7f7f7; --ink: #0d0d0d; --muted: #6b7280; --line: #e5e7eb;
-        --font: 'Geist Variable', Geist, 'Segoe UI', system-ui, sans-serif;
-        --serif: 'Crimson Text', Georgia, 'Times New Roman', serif;
-        font-family: var(--font); color: var(--ink); background: var(--bg);
+        --bg: #ffffff;
+        --surface: #f7f7f7;
+        --ink: #0d0d0d;
+        --muted: #6b7280;
+        --line: #e5e7eb;
+        --font: "Geist Variable", Geist, "Segoe UI", system-ui, sans-serif;
+        --serif: "Crimson Text", Georgia, "Times New Roman", serif;
+        font-family: var(--font);
+        color: var(--ink);
+        background: var(--bg);
       }
       @media (prefers-color-scheme: dark) {
-        :root { --bg:#0b0b0c; --surface:#141416; --ink:#f3f3ef; --muted:#9ba1a9; --line:#26282c; }
+        :root {
+          --bg: #0b0b0c;
+          --surface: #141416;
+          --ink: #f3f3ef;
+          --muted: #9ba1a9;
+          --line: #26282c;
+        }
       }
-      [data-theme='light'] { color-scheme:light; --bg:#fff; --surface:#f7f7f7; --ink:#0d0d0d; --muted:#6b7280; --line:#e5e7eb; }
-      [data-theme='dark'] { color-scheme:dark; --bg:#0b0b0c; --surface:#141416; --ink:#f3f3ef; --muted:#9ba1a9; --line:#26282c; }
-      * { box-sizing:border-box; }
-      body { margin:0; background:var(--bg); }
-      a { color:inherit; text-underline-offset:4px; }
-      main, .toolbar-inner { max-width:1160px; margin:auto; padding:0 24px; }
-      header { padding:64px 0 38px; }
-      .brand, .eyebrow { font-size:11px; letter-spacing:1.8px; text-transform:uppercase; }
-      .brand { display:flex; align-items:center; gap:9px; margin-bottom:56px; }
-      .mark { width:21px; height:21px; display:inline-block; border:1.5px solid currentColor; border-radius:6px; transform:rotate(-12deg); }
-      h1, h2 { font-family:var(--serif); font-weight:400; letter-spacing:-1px; }
-      h1 { font-size:clamp(42px,5.8vw,76px); line-height:1.04; margin:14px 0 24px; max-width:850px; }
-      h2 { font-size:clamp(29px,3.3vw,42px); line-height:1.15; margin:12px 0 16px; }
-      p { line-height:1.65; }
-      .intro { max-width:590px; color:var(--muted); font-size:15px; }
-      .eyebrow { color:var(--muted); }
-      .toolbar { position:sticky; top:0; z-index:2; background:var(--bg); border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
-      .toolbar-inner { display:flex; align-items:center; gap:18px; flex-wrap:wrap; padding-top:16px; padding-bottom:16px; font-size:12px; }
-      .progress-control { display:flex; align-items:center; gap:12px; flex:1; min-width:230px; }
-      input[type='range'] { min-width:80px; width:100%; accent-color:var(--ink); cursor:ew-resize; }
-      output { min-width:4ch; font-variant-numeric:tabular-nums; }
-      label { white-space:nowrap; }
-      select, button { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line); padding:7px 9px; border-radius:4px; }
-      button { cursor:pointer; }
-      :focus-visible { outline:2px solid var(--ink); outline-offset:4px; }
-      .field { display:flex; align-items:center; gap:7px; }
-      .jump { display:flex; flex-wrap:wrap; gap:10px 22px; padding:24px 0; font-size:12px; color:var(--muted); }
-      section { padding:58px 0 52px; border-bottom:1px solid var(--line); scroll-margin-top:160px; }
-      .diagram { border:1px solid var(--line); border-radius:16px; padding:24px 16px; margin-top:28px; }
-      .mount { width:100%; margin:auto; }
-      [data-preview='mobile'] .mount { max-width:390px; }
-      .section-description { max-width:620px; color:var(--muted); font-size:14px; }
-      .implementation { display:inline-block; margin:0 0 14px; padding:5px 8px; font-size:11px; border:1px solid var(--line); border-radius:4px; color:var(--muted); }
-      footer { display:flex; justify-content:space-between; gap:18px; flex-wrap:wrap; padding:30px 0 52px; color:var(--muted); font-size:12px; }
-      .load-error { border:1px solid #d92d20; border-radius:8px; padding:16px; }
-      @media (max-width:620px) {
-        main, .toolbar-inner { padding-left:16px; padding-right:16px; }
-        header { padding-top:38px; } .brand { margin-bottom:40px; }
-        .toolbar-inner { gap:10px 14px; } .progress-control { flex-basis:100%; }
-        section { padding-top:38px; } .diagram { padding:16px 0; }
+      [data-theme="light"] {
+        color-scheme: light;
+        --bg: #fff;
+        --surface: #f7f7f7;
+        --ink: #0d0d0d;
+        --muted: #6b7280;
+        --line: #e5e7eb;
       }
-      @media (prefers-reduced-motion:reduce) { * { scroll-behavior:auto !important; } }
+      [data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #0b0b0c;
+        --surface: #141416;
+        --ink: #f3f3ef;
+        --muted: #9ba1a9;
+        --line: #26282c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+      }
+      a {
+        color: inherit;
+        text-underline-offset: 4px;
+      }
+      main,
+      .toolbar-inner {
+        max-width: 1160px;
+        margin: auto;
+        padding: 0 24px;
+      }
+      header {
+        padding: 64px 0 38px;
+      }
+      .brand,
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 1.8px;
+        text-transform: uppercase;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 56px;
+      }
+      .mark {
+        width: 21px;
+        height: 21px;
+        display: inline-block;
+        border: 1.5px solid currentColor;
+        border-radius: 6px;
+        transform: rotate(-12deg);
+      }
+      h1,
+      h2 {
+        font-family: var(--serif);
+        font-weight: 400;
+        letter-spacing: -1px;
+      }
+      h1 {
+        font-size: clamp(42px, 5.8vw, 76px);
+        line-height: 1.04;
+        margin: 14px 0 24px;
+        max-width: 850px;
+      }
+      h2 {
+        font-size: clamp(29px, 3.3vw, 42px);
+        line-height: 1.15;
+        margin: 12px 0 16px;
+      }
+      p {
+        line-height: 1.65;
+      }
+      .intro {
+        max-width: 590px;
+        color: var(--muted);
+        font-size: 15px;
+      }
+      .eyebrow {
+        color: var(--muted);
+      }
+      .toolbar {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--bg);
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+      .toolbar-inner {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        flex-wrap: wrap;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        font-size: 12px;
+      }
+      .progress-control {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex: 1;
+        min-width: 230px;
+      }
+      input[type="range"] {
+        min-width: 80px;
+        width: 100%;
+        accent-color: var(--ink);
+        cursor: ew-resize;
+      }
+      output {
+        min-width: 4ch;
+        font-variant-numeric: tabular-nums;
+      }
+      label {
+        white-space: nowrap;
+      }
+      select,
+      button {
+        font: inherit;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        padding: 7px 9px;
+        border-radius: 4px;
+      }
+      button {
+        cursor: pointer;
+      }
+      :focus-visible {
+        outline: 2px solid var(--ink);
+        outline-offset: 4px;
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .jump {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 22px;
+        padding: 24px 0;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      section {
+        padding: 58px 0 52px;
+        border-bottom: 1px solid var(--line);
+        scroll-margin-top: 160px;
+      }
+      .diagram {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 24px 16px;
+        margin-top: 28px;
+      }
+      .mount {
+        width: 100%;
+        margin: auto;
+      }
+      [data-preview="mobile"] .mount {
+        max-width: 390px;
+      }
+      .section-description {
+        max-width: 620px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .implementation {
+        display: inline-block;
+        margin: 0 0 14px;
+        padding: 5px 8px;
+        font-size: 11px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        color: var(--muted);
+      }
+      footer {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        flex-wrap: wrap;
+        padding: 30px 0 52px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .load-error {
+        border: 1px solid #d92d20;
+        border-radius: 8px;
+        padding: 16px;
+      }
+      @media (max-width: 620px) {
+        main,
+        .toolbar-inner {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+        header {
+          padding-top: 38px;
+        }
+        .brand {
+          margin-bottom: 40px;
+        }
+        .toolbar-inner {
+          gap: 10px 14px;
+        }
+        .progress-control {
+          flex-basis: 100%;
+        }
+        section {
+          padding-top: 38px;
+        }
+        .diagram {
+          padding: 16px 0;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          scroll-behavior: auto !important;
+        }
+      }
     </style>
   </head>
   <body>
     <main>
       <header>
-        <div class="brand"><span class="mark" aria-hidden="true"></span> Splyce / Inside the agent</div>
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span> Splyce / Inside the
+          agent
+        </div>
         <div class="eyebrow">Architecture in motion</div>
         <h1>A clear view of<br />what happens next.</h1>
-        <p class="intro">Five maps of the real implementation. Follow a message, inspect the boundaries, and see where evidence and permission enter the loop.</p>
+        <p class="intro">
+          Five maps of the real implementation. Follow a message, inspect the
+          boundaries, and see where evidence and permission enter the loop.
+        </p>
       </header>
     </main>
     <div class="toolbar" aria-label="Diagram preview controls">
       <div class="toolbar-inner">
-        <div class="progress-control"><label for="progress">Progress</label><input id="progress" type="range" min="0" max="100" step="1" value="100" /><output id="percent" for="progress">100%</output></div>
-        <div class="field"><label for="theme">Theme</label><select id="theme"><option value="auto">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
-        <div class="field"><label for="preview">Width</label><select id="preview"><option value="responsive">Responsive</option><option value="mobile">390 px</option></select></div>
+        <div class="progress-control">
+          <label for="progress">Progress</label
+          ><input
+            id="progress"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="100"
+          /><output id="percent" for="progress">100%</output>
+        </div>
+        <div class="field">
+          <label for="theme">Theme</label
+          ><select id="theme">
+            <option value="auto">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="preview">Width</label
+          ><select id="preview">
+            <option value="responsive">Responsive</option>
+            <option value="mobile">390 px</option>
+          </select>
+        </div>
         <button id="replay" type="button">Replay once</button>
       </div>
     </div>
     <main>
-      <nav class="jump" aria-label="Jump to diagram"><a href="#architecture">Architecture</a><a href="#turn-flow">One turn</a><a href="#safety">Safety</a><a href="#memory">Memory</a><a href="#subagents">Subagents</a></nav>
-      <p id="motion-note" class="section-description" hidden>Reduced motion is enabled. Every diagram shows its complete state.</p>
-      <section id="architecture"><div class="eyebrow">01 / The system</div><h2>One interface.<br />Three deliberate boundaries.</h2><p class="section-description">The renderer presents. Rust validates. The engine orchestrates.</p><div class="diagram"><div class="mount" data-flow="architecture"></div></div></section>
-      <section id="turn-flow"><div class="eyebrow">02 / A single turn</div><h2>Permission at the point of action.</h2><p class="section-description">Follow a write or command from accepted message to reviewed action and recorded result.</p><div class="diagram"><div class="mount" data-flow="turn-flow"></div></div></section>
-      <section id="safety"><div class="eyebrow">03 / The boundaries</div><h2>Redact first. Bound the output next.</h2><p class="section-description">Tool output, file paths, and current authority each have their own checks and failure states.</p><div class="diagram"><div class="mount" data-flow="safety"></div></div></section>
-      <section id="memory"><div class="eyebrow">04 / Evidence & recall</div><h2>Remember the evidence.<br />Find the source.</h2><p class="section-description">Project-scoped observations and a separate code index give tools traceable context.</p><div class="diagram"><div class="mount" data-flow="memory"></div></div></section>
-      <section id="subagents"><div class="eyebrow">05 / Delegation</div><h2>Delegate work.<br />Keep the final say.</h2><span class="implementation">Engine module · native session integration pending</span><p class="section-description">Read helpers return findings. Write helpers prepare an isolated patch for review and one-time approval.</p><div class="diagram"><div class="mount" data-flow="subagents"></div></div></section>
-      <footer><span>Illustrated behavior, not a running agent session.</span><a href="./test.html">Run browser checks</a></footer>
+      <nav class="jump" aria-label="Jump to diagram">
+        <a href="#architecture">Architecture</a><a href="#turn-flow">One turn</a
+        ><a href="#safety">Safety</a><a href="#memory">Memory</a
+        ><a href="#subagents">Subagents</a>
+      </nav>
+      <p id="motion-note" class="section-description" hidden>
+        Reduced motion is enabled. Every diagram shows its complete state.
+      </p>
+      <section id="architecture">
+        <div class="eyebrow">01 / The system</div>
+        <h2>One interface.<br />Three deliberate boundaries.</h2>
+        <p class="section-description">
+          The renderer presents. Rust validates. The engine orchestrates.
+        </p>
+        <div class="diagram">
+          <div class="mount" data-flow="architecture"></div>
+        </div>
+      </section>
+      <section id="turn-flow">
+        <div class="eyebrow">02 / A single turn</div>
+        <h2>Permission at the point of action.</h2>
+        <p class="section-description">
+          Follow a write or command from accepted message to reviewed action and
+          recorded result.
+        </p>
+        <div class="diagram">
+          <div class="mount" data-flow="turn-flow"></div>
+        </div>
+      </section>
+      <section id="safety">
+        <div class="eyebrow">03 / The boundaries</div>
+        <h2>Redact first. Bound the output next.</h2>
+        <p class="section-description">
+          Tool output, file paths, and current authority each have their own
+          checks and failure states.
+        </p>
+        <div class="diagram"><div class="mount" data-flow="safety"></div></div>
+      </section>
+      <section id="memory">
+        <div class="eyebrow">04 / Evidence & recall</div>
+        <h2>Remember the evidence.<br />Find the source.</h2>
+        <p class="section-description">
+          Project-scoped observations and a separate code index give tools
+          traceable context.
+        </p>
+        <div class="diagram"><div class="mount" data-flow="memory"></div></div>
+      </section>
+      <section id="subagents">
+        <div class="eyebrow">05 / Delegation</div>
+        <h2>Delegate work.<br />Keep the final say.</h2>
+        <span class="implementation"
+          >Engine module · native session integration pending</span
+        >
+        <p class="section-description">
+          Read helpers return findings. Write helpers prepare an isolated patch
+          for review and one-time approval.
+        </p>
+        <div class="diagram">
+          <div class="mount" data-flow="subagents"></div>
+        </div>
+      </section>
+      <footer>
+        <span>Illustrated behavior, not a running agent session.</span
+        ><a href="./test.html">Run browser checks</a>
+      </footer>
       <p id="load-error" class="load-error" role="alert" hidden></p>
     </main>
-    <script type="module">
-      const slider = document.querySelector('#progress');
-      const percent = document.querySelector('#percent');
-      const motion = matchMedia('(prefers-reduced-motion: reduce)');
-      const note = document.querySelector('#motion-note');
-      const replay = document.querySelector('#replay');
+    <script src="diagram.js"></script>
+    <script src="architecture.js"></script>
+    <script src="turn-flow.js"></script>
+    <script src="safety.js"></script>
+    <script src="memory.js"></script>
+    <script src="subagents.js"></script>
+    <script>
+      const slider = document.querySelector("#progress");
+      const percent = document.querySelector("#percent");
+      const motion = matchMedia("(prefers-reduced-motion: reduce)");
+      const note = document.querySelector("#motion-note");
+      const replay = document.querySelector("#replay");
       const diagrams = [];
       let frame = 0;
       const update = () => {
         percent.value = `${slider.value}%`;
-        for (const diagram of diagrams) diagram.setProgress(Number(slider.value) / 100);
+        for (const diagram of diagrams)
+          diagram.setProgress(Number(slider.value) / 100);
       };
-      const stop = () => { cancelAnimationFrame(frame); frame = 0; };
-      slider.addEventListener('input', () => { stop(); update(); });
-      document.querySelector('#theme').addEventListener('change', (event) => {
+      const stop = () => {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      };
+      slider.addEventListener("input", () => {
+        stop();
+        update();
+      });
+      document.querySelector("#theme").addEventListener("change", (event) => {
         const value = event.target.value;
-        if (value === 'auto') delete document.documentElement.dataset.theme;
+        if (value === "auto") delete document.documentElement.dataset.theme;
         else document.documentElement.dataset.theme = value;
       });
-      document.querySelector('#preview').addEventListener('change', (event) => {
+      document.querySelector("#preview").addEventListener("change", (event) => {
         document.body.dataset.preview = event.target.value;
       });
       const syncMotion = () => {
@@ -116,8 +411,8 @@
         if (motion.matches) stop();
         update();
       };
-      motion.addEventListener('change', syncMotion);
-      replay.addEventListener('click', () => {
+      motion.addEventListener("change", syncMotion);
+      replay.addEventListener("click", () => {
         stop();
         if (motion.matches) return;
         const start = performance.now();
@@ -131,18 +426,22 @@
         frame = requestAnimationFrame(tick);
       });
       try {
-        for (const el of document.querySelectorAll('[data-flow]')) {
-          const { mount } = await import(`./${el.dataset.flow}.js`);
+        for (const el of document.querySelectorAll("[data-flow]")) {
+          const { mount } = globalThis.SplyceFlows?.[el.dataset.flow] ?? {};
+          if (typeof mount !== "function") throw new Error(`${el.dataset.flow}.js did not register`);
           diagrams.push(mount(el));
         }
         syncMotion();
       } catch (error) {
-        const notice = document.querySelector('#load-error');
+        const notice = document.querySelector("#load-error");
         notice.hidden = false;
-        notice.textContent = `Diagram modules could not load: ${error.message}. Serve this folder over local HTTP; file:// blocks ES module imports.`;
+        notice.textContent = `Diagram modules could not load: ${error.message}. Keep diagram.js and the five diagram scripts next to this page.`;
         throw error;
       }
-      addEventListener('pagehide', () => { stop(); diagrams.forEach((diagram) => diagram.destroy()); });
+      addEventListener("pagehide", () => {
+        stop();
+        diagrams.forEach((diagram) => diagram.destroy());
+      });
     </script>
   </body>
 </html>

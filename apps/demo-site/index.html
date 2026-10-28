@@ -9,8 +9,6 @@
       name="description"
       content="Splyce is a local-first coding agent for Windows. Your project, your provider, your approval."
     />
-    <link rel="preload" href="assets/fonts/crimson-text-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="styles.css" />
     <script>
       // Apply the saved or system theme before first paint.
@@ -24,6 +22,7 @@
   </head>
   <body>
     <a class="skip" href="#app">Skip to the app walkthrough</a>
+    <div class="bg" aria-hidden="true"><div class="bg-grid"></div><div class="blob b1"></div><div class="blob b2"></div></div>
 
     <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
 
@@ -44,9 +43,9 @@
 
     <nav class="dots" aria-label="Sections" id="dots"></nav>
 
-    <main>
+    <main class="deck" id="deck">
       <!-- 1. Hero -->
-      <section class="panel hero" id="hero" data-title="Splyce">
+      <section class="page hero" id="hero" data-title="Splyce">
         <div class="hero-glow" aria-hidden="true"></div>
         <div class="hero-inner">
           <svg class="hero-mark reveal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true">
@@ -64,15 +63,15 @@
             A local-first coding agent for Windows. Your project, your provider, your approval.
           </p>
           <a class="cue reveal" style="--d: 6" href="#app">
-            Scroll to see it work
+            See it work
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
           </a>
         </div>
       </section>
 
       <!-- 2. The app -->
-      <section class="panel tall" id="app" data-title="The app" data-scrub="session" style="--len: 5">
-        <div class="sticky app-stage">
+      <section class="page" id="app" data-title="The app">
+        <div class="page-inner app-stage">
           <div class="app-head reveal">
             <p class="eyebrow">01 · The app</p>
             <h2 class="h2">One conversation. <em>Every step visible.</em></h2>
@@ -127,7 +126,7 @@
                       <span class="tool-state"><span class="s-run">Running</span><span class="s-done">Done</span></span>
                     </div>
                   </div>
-                  <div class="msg bot" data-at="0.31"><p>The secret word in <code>README.md</code> is <strong>lantern</strong>.</p></div>
+                  <div class="msg bot" data-at="0.31"><p>The secret word in <code>README.md</code> is <strong>banana</strong>.</p></div>
                   <div class="msg user" data-at="0.55">Run the shell command: echo splyce</div>
                   <div class="approval" data-at="0.59" data-done="0.71">
                     <span class="badge"><span class="b-wait">Waiting for approval</span><span class="b-ok">Approved · executing action</span></span>
@@ -174,13 +173,13 @@
               </div>
             </div>
           </div>
-          <p class="caption">Simulated session based on the shipped app. Keep scrolling to play it.</p>
+          <p class="caption">Simulated session based on the shipped app.</p>
         </div>
       </section>
 
       <!-- 3–7. Diagram sections -->
-      <section class="panel tall flow-sec" id="architecture" data-title="Architecture" data-flow="architecture" style="--len: 3">
-        <div class="sticky split">
+      <section class="page flow-sec" id="architecture" data-title="Architecture" data-flow="architecture">
+        <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">02 · Architecture</p>
             <h2 class="h2 reveal" style="--d: 1">Three layers. <em>One agent loop.</em></h2>
@@ -200,8 +199,8 @@
         </div>
       </section>
 
-      <section class="panel tall flow-sec" id="turn" data-title="A chat turn" data-flow="turn-flow" style="--len: 3">
-        <div class="sticky split">
+      <section class="page flow-sec" id="turn" data-title="A chat turn" data-flow="turn-flow">
+        <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">03 · A chat turn, end to end</p>
             <h2 class="h2 reveal" style="--d: 1">From prompt <em>to proof.</em></h2>
@@ -221,8 +220,8 @@
         </div>
       </section>
 
-      <section class="panel tall flow-sec" id="safety" data-title="Safety" data-flow="safety" style="--len: 3">
-        <div class="sticky split">
+      <section class="page flow-sec" id="safety" data-title="Safety" data-flow="safety">
+        <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">04 · Safety by default</p>
             <h2 class="h2 reveal" style="--d: 1">Nothing happens <em>behind your back.</em></h2>
@@ -240,38 +239,38 @@
         </div>
       </section>
 
-      <section class="panel tall flow-sec" id="memory" data-title="Memory" data-flow="memory" style="--len: 3">
-        <div class="sticky split">
+      <section class="page flow-sec" id="memory" data-title="Memory" data-flow="memory">
+        <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">05 · Memory and code search</p>
             <h2 class="h2 reveal" style="--d: 1">Context it can find, <em>and you can see.</em></h2>
             <p class="body reveal" style="--d: 2">
-              Splyce looks things up instead of guessing. Searches are read-only, so they never need an approval.
+              Memory is optional and built from committed evidence, not every chat token. Code indexing is a separate path.
             </p>
             <ol class="steps reveal" style="--d: 3">
-              <li>Memory stays with your project, on your machine</li>
-              <li>Code search finds where things live</li>
-              <li>Results arrive as read-only tool cards</li>
-              <li>You can review memory in the Memory screen</li>
+              <li>Evidence is committed by the engine</li>
+              <li>Memory is derived into a per-project store</li>
+              <li>Code indexing runs as a separate path</li>
+              <li>Answers point back to their sources</li>
             </ol>
           </div>
           <div class="stage reveal" style="--d: 2" data-stage></div>
         </div>
       </section>
 
-      <section class="panel tall flow-sec" id="subagents" data-title="Helper agents" data-flow="subagents" style="--len: 3">
-        <div class="sticky split">
+      <section class="page flow-sec" id="subagents" data-title="Helper agents" data-flow="subagents">
+        <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">06 · Helper agents</p>
             <h2 class="h2 reveal" style="--d: 1">Split the work. <em>Keep it apart.</em></h2>
             <p class="body reveal" style="--d: 2">
-              Helper agents take on side tasks in their own git worktrees, so parallel work never collides in your files.
+              Write helpers work in their own Git worktrees; only a reviewed patch reaches your workspace. The engine module exists; desktop session wiring is still in progress.
             </p>
             <ol class="steps reveal" style="--d: 3">
               <li>The main agent hands off a bounded task</li>
-              <li>Each helper gets an isolated worktree</li>
-              <li>Helpers report results back</li>
-              <li>Changes come back for review, not silently</li>
+              <li>Read helpers share the project</li>
+              <li>Write helpers get their own Git worktree</li>
+              <li>Only a reviewed patch comes back</li>
             </ol>
           </div>
           <div class="stage reveal" style="--d: 2" data-stage></div>
@@ -279,7 +278,7 @@
       </section>
 
       <!-- 8. Provider -->
-      <section class="panel" id="provider" data-title="Your provider">
+      <section class="page" id="provider" data-title="Your provider">
         <div class="split provider">
           <div class="copy">
             <p class="eyebrow reveal">07 · Bring your own provider</p>
@@ -298,19 +297,19 @@
             <div class="s-title">Connect a provider</div>
             <label class="f">
               <span>Endpoint URL</span>
-              <input type="text" value="https://gen.pollinations.ai/v1" readonly />
+              <input type="text" value="https://gen.pollinations.ai/v1" data-full="https://gen.pollinations.ai/v1" readonly />
             </label>
             <label class="f">
               <span>API family</span>
-              <span class="select"><input type="text" value="openai-completions" readonly /><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></span>
+              <span class="select"><input type="text" value="openai-completions" data-full="openai-completions" readonly /><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg></span>
             </label>
             <label class="f">
               <span>Model ID</span>
-              <input type="text" value="openai/gpt-oss-20b" readonly />
+              <input type="text" value="openai/gpt-oss-20b" data-full="openai/gpt-oss-20b" readonly />
             </label>
             <label class="f">
               <span>API key</span>
-              <span class="key"><input type="password" value="placeholder-not-a-key" readonly aria-describedby="key-hint" /><span class="vault"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>Credential Manager</span></span>
+              <span class="key"><input type="password" value="placeholder-not-a-key" data-full="placeholder-not-a-key" readonly aria-describedby="key-hint" /><span class="vault"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>Credential Manager</span></span>
               <small id="key-hint">Saved to Windows Credential Manager, never to project files.</small>
             </label>
             <div class="s-actions">
@@ -322,7 +321,7 @@
       </section>
 
       <!-- 9. Closing -->
-      <section class="panel closing" id="team" data-title="Team">
+      <section class="page closing" id="team" data-title="Team">
         <div class="closing-inner">
           <svg class="hero-mark small reveal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" aria-hidden="true">
             <path pathLength="1" d="M2 6h3.2c4.2 0 5 6 8.3 6H22" />
@@ -347,6 +346,32 @@
       </section>
     </main>
 
-    <script type="module" src="main.js"></script>
+    <div class="player" id="player" role="group" aria-label="Presentation controls">
+      <button type="button" class="p-btn" id="p-prev" aria-label="Previous page">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6" /></svg>
+      </button>
+      <button type="button" class="p-btn p-play" id="p-play" aria-label="Pause autoplay" aria-pressed="true">
+        <svg class="i-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6.5" y="5" width="3.5" height="14" rx="1" /><rect x="14" y="5" width="3.5" height="14" rx="1" /></svg>
+        <svg class="i-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.9l10-6.5a1 1 0 0 0 0-1.8l-10-6.5A1 1 0 0 0 8 5.5z" /></svg>
+      </button>
+      <button type="button" class="p-btn" id="p-next" aria-label="Next page">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
+      </button>
+      <div class="p-info">
+        <div class="p-meta"><span class="p-count"><b id="p-index">1</b> / <span id="p-total">9</span></span><span class="p-title" id="p-title">Splyce</span><span class="p-mode" id="p-mode">Auto</span></div>
+        <div class="p-track"><span id="p-fill"></span></div>
+      </div>
+      <button type="button" class="p-btn" id="p-full" aria-label="Toggle fullscreen (F)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
+      </button>
+    </div>
+
+    <script defer src="flows/diagram.js"></script>
+    <script defer src="flows/architecture.js"></script>
+    <script defer src="flows/turn-flow.js"></script>
+    <script defer src="flows/safety.js"></script>
+    <script defer src="flows/memory.js"></script>
+    <script defer src="flows/subagents.js"></script>
+    <script defer src="main.js"></script>
   </body>
 </html>
