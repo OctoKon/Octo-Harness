@@ -54,8 +54,7 @@ declare module "node:path" {
 }
 
 declare module "node:child_process" {
-  export interface Chunk {
-    length: number;
+  export interface Chunk extends Uint8Array {
     toString(encoding?: "utf8"): string;
   }
   export interface ChildStream {

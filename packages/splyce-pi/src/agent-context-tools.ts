@@ -5,7 +5,9 @@
 // capped, and every output is scrubbed. The index and memory are passed in
 // structurally: this package cannot import them (memory depends on it).
 
-export type Redactor = (text: string) => string;
+import { scrubSecrets } from "./workspace-tools.js";
+
+export type Redactor = (text: string) => string | Promise<string>;
 
 /** Matches turn.tool_outcome.summary; bytes is the raw size before the output cap. */
 export interface ToolSummary {
@@ -63,7 +65,11 @@ export interface MemoryLike {
 }
 
 export type ContextToolErrorCode =
-  "WORKSPACE_ESCAPE" | "ROOT_MISMATCH" | "BAD_ARGS" | "ABORTED";
+  | "WORKSPACE_ESCAPE"
+  | "ROOT_MISMATCH"
+  | "BAD_ARGS"
+  | "ABORTED"
+  | "REDACTION_UNAVAILABLE";
 export class ContextToolError extends Error {
   /** A ContextToolErrorCode, or the original failure's code (e.g. ENOENT) with a generic message. */
   readonly code: string;
@@ -116,12 +122,24 @@ const confined = (value: unknown, what: string): void => {
     fail("WORKSPACE_ESCAPE", `${what} escapes the workspace`);
 };
 /** Redacts every string value of a JSON-like tree, so escaping by JSON.stringify cannot hide a secret. */
-const redactDeep = (value: unknown, redact: Redactor): unknown => {
+const redactDeep = async (
+  value: unknown,
+  redact: Redactor,
+): Promise<unknown> => {
   if (typeof value === "string") return redact(value);
-  if (Array.isArray(value)) return value.map((v) => redactDeep(v, redact));
+  if (Array.isArray(value)) {
+    const out = [];
+    for (const v of value) out.push(await redactDeep(v, redact));
+    return out;
+  }
   if (value !== null && typeof value === "object")
     return Object.fromEntries(
-      Object.entries(value).map(([k, v]) => [k, redactDeep(v, redact)]),
+      await Promise.all(
+        Object.entries(value).map(async ([k, v]) => [
+          await redact(k),
+          await redactDeep(v, redact),
+        ]),
+      ),
     );
   return value;
 };
@@ -164,6 +182,15 @@ export function createAgentContextTools(
   options: AgentContextToolsOptions,
 ): readonly ContextTool[] {
   const { workspaceRoot, index, codeTools, memory, scopeId, redact } = options;
+  const clean = async (text: string): Promise<string> => {
+    try {
+      const safe = await redact(scrubSecrets(text));
+      if (typeof safe === "string") return scrubSecrets(safe);
+    } catch {
+      // Never publish the input or an untrusted redactor error.
+    }
+    return fail("REDACTION_UNAVAILABLE", "[unavailable]");
+  };
   if (normRoot(index.root) !== normRoot(workspaceRoot))
     fail("ROOT_MISMATCH", "code index is not bound to the admitted workspace");
 
@@ -174,7 +201,7 @@ export function createAgentContextTools(
     run: (
       args: Record<string, unknown>,
       signal?: AbortSignal,
-    ) => Promise<unknown>,
+    ) => Promise<{ value: unknown; truncated?: boolean }>,
   ): ContextTool => {
     const result = async (
       args: Record<string, unknown>,
@@ -187,7 +214,12 @@ export function createAgentContextTools(
       // Redact string fields before JSON escaping, then the whole text, and only then cap:
       // a secret straddling the cut is never half-kept. A throwing redactor is generic too.
       const out = await run(args, signal)
-        .then((value) => cap(redact(JSON.stringify(redactDeep(value, redact)))))
+        .then(async ({ value, truncated = false }) => {
+          const out = cap(
+            await clean(JSON.stringify(await redactDeep(value, clean))),
+          );
+          return { ...out, truncated: truncated || out.truncated };
+        })
         .catch((error: unknown) => {
           throw generic(name, error);
         });
@@ -215,7 +247,7 @@ export function createAgentContextTools(
     tool(t.name, t.description, t.parameters, async (args) => {
       for (const k of PATH_ARGS)
         if (args[k] !== undefined) confined(args[k], k);
-      return await t.execute(args);
+      return { value: await t.execute(args) };
     }),
   );
   if (memory === undefined) return Object.freeze(code);
@@ -250,16 +282,20 @@ export function createAgentContextTools(
             `limit must be an integer 1-${MEMORY_MAX_RESULTS}`,
           );
         const hits = await memory.query(scopeId, query, limit, signal);
-        return {
-          results: hits.slice(0, MEMORY_MAX_RESULTS).map((h) => ({
+        const results = [];
+        let truncated = hits.length > MEMORY_MAX_RESULTS;
+        for (const h of hits.slice(0, MEMORY_MAX_RESULTS)) {
+          const text = await clean(h.text);
+          truncated ||= text.length > MEMORY_MAX_TEXT_CHARS;
+          results.push({
             observationId: h.observationId,
-            // Redact first: slicing first could leave a secret's prefix.
-            text: redact(h.text).slice(0, MEMORY_MAX_TEXT_CHARS),
+            text: text.slice(0, MEMORY_MAX_TEXT_CHARS),
             sourceIds: h.sourceIds,
             score: h.score,
             createdAt: h.createdAt,
-          })),
-        };
+          });
+        }
+        return { value: { results }, truncated };
       },
     ),
   ]);

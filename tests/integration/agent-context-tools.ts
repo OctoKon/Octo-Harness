@@ -19,6 +19,7 @@ import {
   captureMemoryAfterTurn,
   createAgentContextTools,
   MAX_OUTPUT_BYTES,
+  type Redactor,
 } from "../../packages/splyce-pi/dist/agent-context-tools.js";
 import { redactSecrets } from "../../packages/splyce-retrieval/dist/retrieval.js";
 import { commit, setup, turn } from "./memory-fixture.ts";
@@ -51,7 +52,7 @@ const FILES = {
 };
 const build = async (
   files: Record<string, string> = FILES,
-  redact = redactSecrets,
+  redact: Redactor = redactSecrets,
 ) => {
   const { root, index } = await repo(files);
   const tools = createAgentContextTools({
@@ -159,13 +160,23 @@ test("C2: a secret inside an indexed file never appears in any tool output", asy
   assert.ok(outputs.some((t) => t.includes("conf")));
 });
 
-test("C2: scrub guard is live (an identity redactor leaks the same fixture)", async () => {
-  const { by } = await build(FILES, (t) => t);
-  const outputs = await Promise.all([
-    by("code_search").execute({ query: "apiKey confLoader" }),
-    by("code_symbol").execute({ name: "alphaWidget" }),
-  ]);
-  assert.ok(outputs.some((t) => t.includes(SECRET)));
+test("C2: native scrub guard is live for credentials outside the built-in patterns", async () => {
+  const credential = "native fixture credential";
+  const files = { "src/native.ts": `alphaWidget('${credential}');` };
+  const protectedTools = await build(files, (text) =>
+    text.replaceAll(credential, "[X]"),
+  );
+  const control = await build(files, (text) => text);
+  assert.ok(
+    !(
+      await protectedTools.by("code_symbol").execute({ name: "alphaWidget" })
+    ).includes(credential),
+  );
+  assert.ok(
+    (await control.by("code_symbol").execute({ name: "alphaWidget" })).includes(
+      credential,
+    ),
+  );
 });
 
 test("C2: output is capped at the index 64 KB, also for oversized tool text", async () => {
@@ -405,7 +416,96 @@ test("C2: a throwing redactor surfaces a generic error without its message", asy
     async () => await by("code_search").execute({ query: "alphaWidget" }),
     (e: Error & { code?: string }) =>
       e.name === "ContextToolError" &&
-      e.code === "TOOL_FAILED" &&
-      !/boom|Users|victim/.test(e.message),
+      e.code === "REDACTION_UNAVAILABLE" &&
+      e.message === "[unavailable]",
   );
 });
+
+for (const spaced of [false, true])
+  test(`C2: async redaction precedes memory and output cuts (space=${spaced})`, async () => {
+    const credential = ["vaultAAA", "vaultZZZ"].join(spaced ? " " : "");
+    const { root, index } = await repo(FILES);
+    const inputs: string[] = [];
+    const tools = createAgentContextTools({
+      workspaceRoot: root,
+      index,
+      codeTools: [
+        fakeTool(async () => ({
+          nested: [
+            `${" ".repeat(51_192)}${credential}${" ".repeat(MAX_OUTPUT_BYTES)}`,
+          ],
+        })),
+      ],
+      memory: {
+        capture: () => [],
+        query: async () => [
+          memoryHit(`${" ".repeat(1992)}${credential}${" ".repeat(100)}`),
+        ],
+      },
+      scopeId: "w-demo",
+      redact: async (text) => {
+        await Promise.resolve();
+        inputs.push(text);
+        return text.replaceAll(credential, "[X]");
+      },
+    });
+    for (const [tool, args] of [
+      [tools[0]!, {}],
+      [tools[1]!, { query: "fixture" }],
+    ] as const) {
+      const r = await tool.result(args);
+      const published = JSON.stringify(r);
+      assert.ok(
+        !published.includes("vaultAAA") && !published.includes("vaultZZZ"),
+      );
+      assert.equal(r.summary.truncated, true);
+    }
+    assert.ok(inputs.some((text) => text.includes(credential)));
+  });
+
+test("C2: async redaction covers JSON keys before escaping", async () => {
+  const { root, index } = await repo(FILES);
+  const [tool] = createAgentContextTools({
+    workspaceRoot: root,
+    index,
+    codeTools: [fakeTool(async () => ({ [ODD]: { [ODD]: ODD } }))],
+    redact: async (text) => exact(text),
+  });
+  const r = await tool!.result({});
+  assert.deepEqual(JSON.parse(r.text), { "[X]": { "[X]": "[X]" } });
+  assert.ok(!JSON.stringify(r).includes("pw"));
+});
+
+for (const [kind, redact] of [
+  [
+    "reject",
+    async () => {
+      throw new Error("private redactor failure");
+    },
+  ],
+  ["non-string", () => null],
+  ["async non-string", async () => 123],
+] as const)
+  test(`C2: redactor ${kind} suppresses all code and memory output`, async () => {
+    const { root, index } = await repo(FILES);
+    const tools = createAgentContextTools({
+      workspaceRoot: root,
+      index,
+      codeTools: [fakeTool(async () => ({ nested: ["private output"] }))],
+      memory: {
+        capture: () => [],
+        query: async () => [memoryHit("private output")],
+      },
+      scopeId: "w-demo",
+      redact: redact as unknown as Redactor,
+    });
+    for (const [tool, args] of [
+      [tools[0]!, {}],
+      [tools[1]!, { query: "private" }],
+    ] as const)
+      await assert.rejects(
+        () => tool.result(args),
+        (e: Error & { code?: string }) =>
+          e.code === "REDACTION_UNAVAILABLE" && e.message === "[unavailable]",
+      );
+  });
