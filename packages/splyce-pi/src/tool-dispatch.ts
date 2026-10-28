@@ -67,8 +67,8 @@ export const APPROVAL_ARGS_MAX = 16 * 1024;
 const UNAVAILABLE = "[unavailable]";
 
 /**
- * Complete (fail-closed) redaction: sync scrub + live-secret redactor, then the native lane, on the
- * WHOLE string. A lane failure yields `[unavailable]`, never raw text. Typed so it can be passed as the
+ * Complete (fail-closed) redaction on the WHOLE string: the native lane first (original text), then
+ * the live-secret redactor and the built-in scrub. A lane failure yields `[unavailable]`, never raw text. Typed so it can be passed as the
  * `redact` option of tools that accept async redactors (redact BEFORE any cap).
  */
 export type CompleteRedactor = (
@@ -90,12 +90,13 @@ async function strictRedact(
   signal?: AbortSignal,
 ): Promise<string | undefined> {
   try {
-    const out = await deps.nativeRedact(
-      scrubSecrets(deps.redact(text)),
-      signal,
-    );
+    // Native FIRST on the ORIGINAL text: a generic scrub that ran first could rewrite part of an
+    // overlapping active credential so the native matcher no longer sees it whole (tail survives).
+    const out = await deps.nativeRedact(text, signal);
     const redacted = typeof out === "string" ? out : out.text;
-    return typeof redacted === "string" ? redacted : undefined;
+    return typeof redacted === "string"
+      ? scrubSecrets(deps.redact(redacted))
+      : undefined;
   } catch {
     return undefined;
   }
@@ -349,7 +350,6 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     },
   };
 
-  const redactSync = (text: string): string => scrubSecrets(deps.redact(text));
   /** Sync scrub, then the Rust lane; a lane failure yields a placeholder, never raw text. */
   const redactStrict = (
     text: string,

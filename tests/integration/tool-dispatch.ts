@@ -1307,3 +1307,62 @@ test("P3-b: a definition swapped inside beforeToolCall fails finish typed and le
   assert.deepEqual(f.actions("c").map(state), ["proposed", "denied"]);
   assert.equal(existsSync(wrote), false);
 });
+
+const OVERLAP = "token=LEFTSECRET TAILSECRET";
+
+test("order: native redaction runs first on the original text, so a credential the scrub would partially rewrite is masked whole", async (t) => {
+  // A custom tool returns the raw text, so only the dispatch's own redaction applies (the real tools'
+  // internal pre-scrub is not part of this test).
+  const raw = {
+    name: "raw_text",
+    description: "returns raw text",
+    readOnly: true as const,
+    parameters: { type: "object", properties: {} },
+    execute: async () => "",
+    result: async () => ({
+      text: `config ${OVERLAP} end`,
+      summary: {
+        durationMs: 1,
+        bytes: 40,
+        truncated: false,
+        preview: `config ${OVERLAP} end`,
+      },
+    }),
+  };
+  const f = await setup(t, {
+    nativeRedact: cutNative(OVERLAP),
+    extraTools: [raw],
+  });
+  const out = await f.drive("c1", "raw_text", {});
+  const r = returned(out);
+  assert.ok(r.text.includes("[M]"));
+  assert.ok(
+    !/LEFTSECRET|TAILSECRET/u.test(JSON.stringify([r, out, f.events()])),
+  );
+});
+
+test("order: the approval summary (args) uses the same native-first order", async (t) => {
+  let shown = "";
+  const f = await setup(t, {
+    nativeRedact: cutNative(OVERLAP),
+    approve: (r) => {
+      shown = r.argsSummary;
+      return false;
+    },
+  });
+  await assert.rejects(
+    f.drive("c1", "write", { path: "a.txt", content: `x ${OVERLAP} y` }),
+    rejects("POLICY_DENIED"),
+  );
+  assert.ok(shown.includes("[M]"));
+  assert.ok(!/LEFTSECRET|TAILSECRET/u.test(shown));
+});
+
+test("order: createCompleteRedactor unit", async () => {
+  const redact = createCompleteRedactor({
+    redact: (text) => text,
+    nativeRedact: cutNative(OVERLAP),
+  });
+  const out = await redact(`a ${OVERLAP} b`);
+  assert.equal(out, "a [M] b");
+});
