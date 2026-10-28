@@ -93,13 +93,14 @@
       })
     )
       return;
-    const request = buildPrompt(draft, contextArtifactIds);
+    const submittedDraft = draft;
+    const request = buildPrompt(submittedDraft, contextArtifactIds);
     if (!request) return;
     pending = true;
     error = null;
     try {
       await send(request);
-      draft = "";
+      if (draft === submittedDraft) draft = "";
     } catch {
       // Never echo the rejection: it can carry paths, secrets or stack text.
       // A rejected promise does not prove the engine ignored the message.
