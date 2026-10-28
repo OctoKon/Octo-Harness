@@ -52,6 +52,17 @@ impl BridgeError {
             retryable: false,
         }
     }
+    fn page_read(code: Option<&str>) -> Self {
+        Self {
+            code: match code {
+                Some("PAGE_READ_INVALID") => "PAGE_READ_INVALID",
+                _ => "PAGE_READ_UNAVAILABLE",
+            },
+            message: "Page data unavailable",
+            ..Self::denied()
+        }
+    }
+
     fn denied() -> Self {
         Self {
             code: "POLICY_DENIED",
@@ -305,6 +316,9 @@ impl BridgeState {
         params: Value,
         accept_response: impl FnOnce(&Value) -> bool,
     ) -> Result<Value, BridgeError> {
+        let page_read = method == "send"
+            && is_page_read(params["command"].as_str().unwrap_or(""))
+            && valid_setup(params["command"].as_str().unwrap(), &params);
         let selection = method == "send"
             && matches!(
                 params["command"].as_str(),
@@ -330,6 +344,9 @@ impl BridgeState {
         match reply["ok"].as_bool() {
             Some(true) if object.contains_key("value") => Ok(reply["value"].clone()),
             Some(false) if object.contains_key("error") => {
+                if page_read {
+                    return Err(BridgeError::page_read(reply["error"]["code"].as_str()));
+                }
                 if selection {
                     return Err(BridgeError::selection(reply["error"]["code"].as_str()));
                 }
@@ -556,6 +573,7 @@ fn valid_setup(op: &str, value: &Value) -> bool {
                 && value["payload"]["requestId"] == value["requestId"]
                 && setup_id(&value["payload"]["requestId"])
                 && setup_id(&value["payload"]["workspaceId"]))
+            || (is_page_read(op) && valid_page_read_request(op, value))
             || (matches!(op, "profile.select" | "session.start") && {
                 let fields: &[&str] = if op == "profile.select" {
                     &[
@@ -584,6 +602,147 @@ fn exact_fields(value: &Value, fields: &[&str]) -> bool {
     value.as_object().is_some_and(|object| {
         object.len() == fields.len() && fields.iter().all(|key| object.contains_key(*key))
     })
+}
+
+fn is_page_read(op: &str) -> bool {
+    matches!(
+        op,
+        "sessions.list" | "memory.list" | "memory.search" | "usage.read"
+    )
+}
+
+fn valid_page_read_request(op: &str, frame: &Value) -> bool {
+    let payload = &frame["payload"];
+    let fields: &[&str] = if op == "memory.search" {
+        &["requestId", "workspaceId", "query"]
+    } else {
+        &["requestId", "workspaceId"]
+    };
+    exact_fields(payload, fields)
+        && payload["requestId"] == frame["requestId"]
+        && setup_id(&payload["requestId"])
+        && setup_id(&payload["workspaceId"])
+        && (op != "memory.search"
+            || payload["query"].as_str().is_some_and(|query| {
+                !query.trim().is_empty()
+                    && query.len() <= 1024
+                    && !query.chars().any(char::is_control)
+            }))
+}
+
+fn page_timestamp(value: &Value) -> bool {
+    let Some(text) = value.as_str() else {
+        return false;
+    };
+    let b = text.as_bytes();
+    if b.len() != 24
+        || !b.iter().enumerate().all(|(i, byte)| match i {
+            4 | 7 => *byte == b'-',
+            10 => *byte == b'T',
+            13 | 16 => *byte == b':',
+            19 => *byte == b'.',
+            23 => *byte == b'Z',
+            _ => byte.is_ascii_digit(),
+        })
+    {
+        return false;
+    }
+    let number = |start: usize, end: usize| text[start..end].parse::<u32>().unwrap();
+    let year = number(0, 4);
+    let month = number(5, 7);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
+            29
+        }
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&number(8, 10))
+        && number(11, 13) < 24
+        && number(14, 16) < 60
+        && number(17, 19) < 60
+}
+
+fn page_uint(value: &Value) -> bool {
+    value
+        .as_u64()
+        .is_some_and(|number| number <= 9_007_199_254_740_991)
+}
+
+fn valid_page_read_view(op: &str, value: &Value) -> bool {
+    if op == "usage.read" {
+        return exact_fields(
+            value,
+            &[
+                "semantics",
+                "inputTokens",
+                "outputTokens",
+                "costUsd",
+                "sessionCount",
+                "runCount",
+            ],
+        ) && value["semantics"] == "unavailable"
+            && ["inputTokens", "outputTokens", "costUsd"]
+                .iter()
+                .all(|key| value[*key].is_null())
+            && page_uint(&value["sessionCount"])
+            && page_uint(&value["runCount"]);
+    }
+    let (key, limit) = match op {
+        "sessions.list" => ("sessions", 100),
+        "memory.list" => ("entries", 100),
+        "memory.search" => ("entries", 50),
+        _ => return false,
+    };
+    if !exact_fields(value, &[key, "truncated"]) || !value["truncated"].is_boolean() {
+        return false;
+    }
+    let Some(entries) = value[key].as_array() else {
+        return false;
+    };
+    let mut seen = std::collections::HashSet::new();
+    entries.len() <= limit
+        && entries.iter().all(|entry| {
+            if op == "sessions.list" {
+                exact_fields(
+                    entry,
+                    &[
+                        "sessionId",
+                        "branchAnchorId",
+                        "createdAt",
+                        "updatedAt",
+                        "state",
+                    ],
+                ) && setup_id(&entry["sessionId"])
+                    && seen.insert(entry["sessionId"].as_str().unwrap())
+                    && (entry["branchAnchorId"].is_null() || setup_id(&entry["branchAnchorId"]))
+                    && page_timestamp(&entry["createdAt"])
+                    && page_timestamp(&entry["updatedAt"])
+                    && matches!(
+                        entry["state"].as_str(),
+                        Some(
+                            "idle"
+                                | "pending"
+                                | "running"
+                                | "completed"
+                                | "failed"
+                                | "canceled"
+                                | "uncertain"
+                        )
+                    )
+            } else {
+                exact_fields(
+                    entry,
+                    &["observationId", "sessionId", "createdAt", "sourceCount"],
+                ) && setup_id(&entry["observationId"])
+                    && setup_id(&entry["sessionId"])
+                    && seen.insert(entry["observationId"].as_str().unwrap())
+                    && page_timestamp(&entry["createdAt"])
+                    && page_uint(&entry["sourceCount"])
+            }
+        })
 }
 
 fn valid_setup_read_view(value: &Value) -> bool {
@@ -1160,7 +1319,11 @@ pub async fn send(
     } else {
         valid_command(&op, &payload)
     }) {
-        let mut error = BridgeError::denied();
+        let mut error = if is_page_read(&op) {
+            BridgeError::page_read(Some("PAGE_READ_INVALID"))
+        } else {
+            BridgeError::denied()
+        };
         if setup && let Some(correlation) = setup_correlation(&payload) {
             error.correlation_id = correlation;
         }
@@ -1177,6 +1340,10 @@ pub async fn send(
     let result = if setup && op == "provider.configure" {
         let setup_payload = payload.get_mut("payload").unwrap().take();
         configure_provider(setup_payload, |method, params| state.call(method, params))
+    } else if setup && is_page_read(&op) {
+        state.call_with_response("send", payload, |reply| {
+            reply["ok"] != true || valid_page_read_view(&op, &reply["value"])
+        })
     } else if setup && op == "setup.read" {
         state.call_with_response("send", payload, |reply| {
             reply["ok"] != true || valid_setup_read_view(&reply["value"])
@@ -1185,6 +1352,9 @@ pub async fn send(
         state.call("send", payload)
     };
     result.map_err(|mut error| {
+        if setup && is_page_read(&op) {
+            error = BridgeError::page_read(Some(error.code));
+        }
         error.correlation_id = correlation;
         error
     })
@@ -2505,6 +2675,207 @@ assert.ok(p.bindings.every(b=>!Object.hasOwn(b,'modelDescriptor')));s.close();"#
             let mut invalid = valid.clone();
             invalid[key] = value;
             assert!(!valid_setup("metadata", &invalid));
+        }
+    }
+
+    fn page_read_fixture() -> Vec<Value> {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../tests/fixtures/contracts/page-reads.json"
+        )))
+        .unwrap()
+    }
+
+    #[test]
+    fn page_reads_require_strict_sessionless_requests() {
+        for case in page_read_fixture() {
+            let op = case["op"].as_str().unwrap();
+            let frame = json!({"frame":"setup", "command":op, "requestId":case["request"]["requestId"], "payload":case["request"]});
+            assert!(valid_setup(op, &frame), "{op}");
+            assert!(!valid_setup("unknown", &frame));
+            for field in ["path", "credentialRef", "sessionId", "extra"] {
+                let mut invalid = frame.clone();
+                invalid["payload"][field] = json!("private");
+                assert!(!valid_setup(op, &invalid), "{op}: {field}");
+                let mut invalid = frame.clone();
+                invalid[field] = json!("private");
+                assert!(!valid_setup(op, &invalid));
+            }
+            for field in ["requestId", "workspaceId"] {
+                for id in ["", "bad/id", "bad\\id", "bad id", "bad\n", &"x".repeat(129)] {
+                    let mut invalid = frame.clone();
+                    invalid["payload"][field] = json!(id);
+                    assert!(!valid_setup(op, &invalid), "{op}: {field}");
+                }
+                let mut missing = frame.clone();
+                missing["payload"].as_object_mut().unwrap().remove(field);
+                assert!(!valid_setup(op, &missing));
+            }
+            let mut mismatch = frame.clone();
+            mismatch["payload"]["requestId"] = json!("other");
+            assert!(!valid_setup(op, &mismatch));
+            if op == "memory.search" {
+                for query in [
+                    json!(""),
+                    json!("   "),
+                    json!("x\n"),
+                    json!("x\u{0085}"),
+                    json!("x".repeat(1025)),
+                    json!("é".repeat(513)),
+                    json!(null),
+                    json!(1),
+                ] {
+                    let mut invalid = frame.clone();
+                    invalid["payload"]["query"] = query;
+                    assert!(!valid_setup(op, &invalid));
+                }
+                let mut boundary = frame.clone();
+                boundary["payload"]["query"] = json!("é".repeat(512));
+                assert!(valid_setup(op, &boundary));
+                boundary["payload"]["query"] = json!(" project ");
+                assert!(valid_setup(op, &boundary));
+            }
+        }
+    }
+
+    #[test]
+    fn page_reads_validate_shared_results_and_reject_private_or_invalid_rows() {
+        for case in page_read_fixture() {
+            let op = case["op"].as_str().unwrap();
+            let view = &case["result"];
+            assert!(valid_page_read_view(op, view), "{op}");
+            for field in ["path", "credentialRef", "extra"] {
+                let mut invalid = view.clone();
+                invalid[field] = json!("private");
+                assert!(!valid_page_read_view(op, &invalid));
+            }
+            if op == "usage.read" {
+                for key in ["inputTokens", "outputTokens", "costUsd"] {
+                    let mut invalid = view.clone();
+                    invalid[key] = json!(0);
+                    assert!(!valid_page_read_view(op, &invalid));
+                }
+                for key in ["sessionCount", "runCount"] {
+                    for count in [
+                        json!(-1),
+                        json!(0.5),
+                        json!(9_007_199_254_740_992_u64),
+                        json!(null),
+                    ] {
+                        let mut invalid = view.clone();
+                        invalid[key] = count;
+                        assert!(!valid_page_read_view(op, &invalid));
+                    }
+                }
+                let mut invalid = view.clone();
+                invalid["semantics"] = json!("measured");
+                assert!(!valid_page_read_view(op, &invalid));
+                continue;
+            }
+            let key = if op == "sessions.list" {
+                "sessions"
+            } else {
+                "entries"
+            };
+            let row = &view[key][0];
+            for field in ["path", "credentialRef", "extra"] {
+                let mut invalid = view.clone();
+                invalid[key][0][field] = json!("private");
+                assert!(!valid_page_read_view(op, &invalid));
+            }
+            for field in row.as_object().unwrap().keys() {
+                let mut invalid = view.clone();
+                invalid[key][0].as_object_mut().unwrap().remove(field);
+                assert!(!valid_page_read_view(op, &invalid), "{op}: missing {field}");
+            }
+            for date in [
+                "2026-02-29T00:00:00.000Z",
+                "2026-04-31T00:00:00.000Z",
+                "2026-10-28T24:00:00.000Z",
+                "2026-10-28T00:60:00.000Z",
+                "2026-10-28T00:00:60.000Z",
+                "2026-10-28T00:00:00Z",
+                "2026-10-28T00:00:00.000+00:00",
+                "private",
+            ] {
+                let mut invalid = view.clone();
+                invalid[key][0]["createdAt"] = json!(date);
+                assert!(!valid_page_read_view(op, &invalid));
+            }
+            let mut duplicate = view.clone();
+            duplicate[key].as_array_mut().unwrap().push(row.clone());
+            assert!(!valid_page_read_view(op, &duplicate));
+            let limit = if op == "memory.search" { 50 } else { 100 };
+            let id_key = if op == "sessions.list" {
+                "sessionId"
+            } else {
+                "observationId"
+            };
+            let mut bounded = view.clone();
+            bounded[key] = Value::Array(
+                (0..limit)
+                    .map(|index| {
+                        let mut row = row.clone();
+                        row[id_key] = json!(format!("row-{index}"));
+                        row
+                    })
+                    .collect(),
+            );
+            assert!(valid_page_read_view(op, &bounded));
+            let mut extra_row = row.clone();
+            extra_row[id_key] = json!("overflow");
+            bounded[key].as_array_mut().unwrap().push(extra_row);
+            assert!(!valid_page_read_view(op, &bounded));
+            let mut empty = view.clone();
+            empty[key] = json!([]);
+            assert!(valid_page_read_view(op, &empty));
+            assert!(!valid_page_read_view(op, &json!(null)));
+            assert!(!valid_page_read_view(op, &json!({"error":"unavailable"})));
+            if op == "sessions.list" {
+                for state in [
+                    "idle",
+                    "pending",
+                    "running",
+                    "completed",
+                    "failed",
+                    "canceled",
+                    "uncertain",
+                ] {
+                    let mut valid = view.clone();
+                    valid[key][0]["state"] = json!(state);
+                    valid[key][0]["branchAnchorId"] = Value::Null;
+                    assert!(valid_page_read_view(op, &valid));
+                }
+                let mut invalid = view.clone();
+                invalid[key][0]["state"] = json!("unknown");
+                assert!(!valid_page_read_view(op, &invalid));
+            } else {
+                for count in [json!(-1), json!(0.5), json!(9_007_199_254_740_992_u64)] {
+                    let mut invalid = view.clone();
+                    invalid[key][0]["sourceCount"] = count;
+                    assert!(!valid_page_read_view(op, &invalid));
+                }
+            }
+        }
+        assert!(page_timestamp(&json!("2024-02-29T00:00:00.000Z")));
+        assert!(!valid_page_read_view("unknown", &json!({})));
+    }
+
+    #[test]
+    fn page_read_errors_allowlist_codes_and_sanitize_engine_messages() {
+        for (input, expected) in [
+            (Some("PAGE_READ_INVALID"), "PAGE_READ_INVALID"),
+            (Some("PAGE_READ_UNAVAILABLE"), "PAGE_READ_UNAVAILABLE"),
+            (Some("private-error"), "PAGE_READ_UNAVAILABLE"),
+            (None, "PAGE_READ_UNAVAILABLE"),
+        ] {
+            let mut error = BridgeError::page_read(input);
+            error.correlation_id = "page-read-1".into();
+            let wire = serde_json::to_value(error).unwrap();
+            assert_eq!(
+                wire,
+                json!({"code":expected,"message":"Page data unavailable","correlationId":"page-read-1","retryable":false})
+            );
         }
     }
 

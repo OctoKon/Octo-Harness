@@ -205,6 +205,12 @@ export class Memory {
   }
 
   private sourceIsDead(id: string): boolean {
+    if (
+      this.store.db
+        .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+        .get(id) !== undefined
+    )
+      return true;
     try {
       this.store.get(id);
       return false;
@@ -235,7 +241,14 @@ export class Memory {
     let purged = 0;
     for (const row of rows) {
       const observation = toObservation(row);
-      if (!observation.sourceIds.some((id) => this.sourceIsDead(id))) continue;
+      if (
+        ![
+          observation.observationId,
+          observation.claimArtifactId,
+          ...observation.sourceIds,
+        ].some((id) => this.sourceIsDead(id))
+      )
+        continue;
       // Authoritative tombstones first: a crash before the local delete just repeats this purge.
       this.store.noteDeletion(observation.observationId);
       this.store.noteDeletion(observation.claimArtifactId);
@@ -454,6 +467,20 @@ export class Memory {
       throw error;
     }
     return prepared.map(({ observation }) => observation);
+  }
+
+  /** Bounded metadata feed from the same deletion-aware projection as recall. */
+  list(scopeId: string, limit = 101): Observation[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 101)
+      throw new MemoryError("MEMORY_INPUT", "Invalid memory list limit");
+    this.syncDeletions();
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM observations WHERE scope_id = ? ORDER BY created_at DESC, observation_id ASC LIMIT ?",
+        )
+        .all(scopeId, limit) as Row[]
+    ).map(toObservation);
   }
 
   /** Hybrid recall within one scope; every hit carries its cited source event ids and per-signal scores. */

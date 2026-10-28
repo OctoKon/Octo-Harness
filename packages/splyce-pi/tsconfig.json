@@ -17,6 +17,7 @@
   },
   "include": [
     "src/contracts.ts",
+    "src/page-data.ts",
     "src/store.ts",
     "src/setup-metadata.ts",
     "src/policy.ts",

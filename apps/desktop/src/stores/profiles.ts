@@ -1,3 +1,4 @@
+import { sendSetup } from "./engine";
 import type { ProviderConnectionRecord } from "@splyce/pi/contracts";
 
 export interface ConfiguredProfile {
@@ -602,4 +603,10 @@ export function validateCustomEndpoint(
     seen.add(lower);
   }
   return errors;
+}
+
+export async function readProfiles(workspaceId: string, requestId: string) {
+  return validateSetupReadResult(
+    await sendSetup("setup.read", requestId, { workspaceId, requestId }),
+  );
 }
