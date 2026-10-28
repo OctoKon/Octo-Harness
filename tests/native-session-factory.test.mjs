@@ -1471,22 +1471,42 @@ test("removing argument redaction rejection makes the real metadata regression f
   assert.match(result.stdout + result.stderr, /Missing expected rejection/u);
 });
 
-test(
-  "default native host composes automatic capabilities, current policy and real provider prompt",
-  { timeout: 30000 },
-  async (t) => {
+function composedHostSession(captureFails) {
+  return async (t) => {
     let body;
+    let requestCount = 0;
     const server = createServer(async (req, res) => {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const event = (delta, finish_reason = null) =>
         `data: ${JSON.stringify({ id: "host-composition", object: "chat.completion.chunk", created: 0, model: "fixture-model", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
+      const name = ["code_search", "memory_search"][requestCount++];
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.end(
-        event({ role: "assistant", content: "default host response" }) +
-          event({}, "stop") +
-          "data: [DONE]\n\n",
+        (name
+          ? event(
+              {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: `context-${requestCount}`,
+                    type: "function",
+                    function: {
+                      name,
+                      arguments: JSON.stringify({
+                        query: "nativeDemoMarker",
+                      }),
+                    },
+                  },
+                ],
+              },
+              "tool_calls",
+            )
+          : event(
+              { role: "assistant", content: "default host response" },
+              "stop",
+            )) + "data: [DONE]\n\n",
       );
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -1505,6 +1525,10 @@ test(
       "loopback",
       false,
       true,
+    );
+    writeFileSync(
+      join(f.dir, "workspace", "demo.ts"),
+      "export function nativeDemoMarker() { return 1; }\n",
     );
     // Explicit synthetic private protocol responses; this does not qualify Rust or Credential Manager.
     let control;
@@ -1570,6 +1594,19 @@ test(
     );
     assert.deepEqual(started.readiness, { state: "ready" });
     assert.equal(started.policyRevision, "0");
+    const memoryPath = join(
+      f.dir,
+      "memory",
+      createHash("sha256").update(f.input.workspaceId).digest("hex"),
+      "memory.db",
+    );
+    await host.memoryFor(f.input.workspaceId);
+    const memoryDb = new DatabaseSync(memoryPath);
+    f.cleanup.push(() => memoryDb.close());
+    if (captureFails)
+      memoryDb.exec(
+        "CREATE TRIGGER fail_capture BEFORE INSERT ON observations BEGIN SELECT RAISE(FAIL, 'capture unavailable'); END",
+      );
     assert.deepEqual(host.handshakeReadiness.ports, {
       generation: true,
       provider: true,
@@ -1617,6 +1654,26 @@ test(
     assert.equal(ack.accepted, true);
     collect();
     assert.equal((await terminal).kind, "turn.completed");
+    const names = body.tools.map((tool) => tool.function.name);
+    assert.ok(names.includes("code_search"));
+    assert.ok(names.includes("memory_search"));
+    const results = body.messages.filter((message) => message.role === "tool");
+    assert.equal(results.length, 2);
+    assert.match(JSON.stringify(results[0].content), /nativeDemoMarker/u);
+    assert.match(JSON.stringify(results[1].content), /results/u);
+    const captured = memoryDb
+      .prepare("SELECT COUNT(*) AS n FROM observations")
+      .get().n;
+    if (captureFails) {
+      assert.equal(captured, 0);
+      memoryDb.exec("DROP TRIGGER fail_capture");
+      assert.ok(
+        (await host.captureMemoryAfterTurn(
+          f.input.workspaceId,
+          started.sessionId,
+        )) > 0,
+      );
+    } else assert.ok(captured > 0);
     assert.ok(
       body.messages.some(
         (message) =>
@@ -1633,7 +1690,19 @@ test(
             kind === "action" && record.state === "completed",
         ),
     );
-  },
+  };
+}
+
+test(
+  "default native host composes automatic capabilities, current policy and real provider prompt",
+  { timeout: 30000 },
+  composedHostSession(false),
+);
+
+test(
+  "real native session binds code_search and memory_search and survives memory capture failure",
+  { timeout: 30000 },
+  composedHostSession(true),
 );
 
 test(

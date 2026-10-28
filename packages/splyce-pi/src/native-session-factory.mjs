@@ -683,6 +683,10 @@ export function createNativeSessionFactory({
   control,
   directory,
   providerCapability,
+  codeIndexFor,
+  codeToolsFor,
+  memoryFor,
+  captureMemoryAfterTurn,
   currentPolicyRevision,
 }) {
   if (
@@ -1278,6 +1282,14 @@ export function createNativeSessionFactory({
       caller: policyCaller,
       scopeId: state.key.scopeId,
       workspaceId: state.key.scopeId,
+      context: codeIndexFor
+        ? {
+            index: await codeIndexFor(state.key.scopeId),
+            codeTools: await codeToolsFor(state.key.scopeId),
+            memory: await memoryFor(state.key.scopeId),
+            scopeId: state.key.scopeId,
+          }
+        : undefined,
       get runId() {
         return active(true).runId;
       },
@@ -1877,7 +1889,16 @@ export function createNativeSessionFactory({
     }
     state.finishing = true;
     try {
-      state.runtime.dispatch.onTurnEnd({ state: terminal.state });
+      if (terminal.state === "completed") {
+        try {
+          await captureMemoryAfterTurn?.(
+            state.key.scopeId,
+            state.key.sessionId,
+          );
+        } catch {
+          // Derived memory failure must not change the completed turn.
+        }
+      }
       store.releaseWorkspace(
         state.key.scopeId,
         state.key.sessionId,
