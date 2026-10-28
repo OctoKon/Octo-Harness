@@ -98,7 +98,7 @@ describe("provider setup form", () => {
     ["POLICY_DENIED", "engine refused this provider setup"],
     [
       "SETUP_CREDENTIAL_UNAVAILABLE",
-      "Check Splyce credentials in Windows Credential Manager",
+      "Check Windows Credential Manager access before retrying",
     ],
     [
       "SETUP_CREDENTIAL_INVENTORY_UNAVAILABLE",
