@@ -28,7 +28,9 @@
   } from "./stores/permission-mode";
   import {
     connectionState,
+    cancelSession,
     handshake,
+    invoke,
     onEvent,
     portAvailability,
     selectWorkspace,
@@ -139,7 +141,7 @@
   let generationReady = $derived(
     ports === null || (startedSession !== null && !sessionPortWitness)
       ? undefined
-      : ports.generation && ports.provider && ports.workspace,
+      : ports.generation && ports.provider,
   );
   let engineConnected = $state(false);
   // Only the id and display name of the admitted project; never its path or selection ref.
@@ -148,6 +150,9 @@
   let chooserError = $state<string | null>(null);
   let profiles = $state<ConfiguredProfile[]>([]);
   let profileSelection = $state<ProfileSelectionResult | null>(null);
+  let startReplay: { requestId: string; payload: ReturnType<typeof sessionStartPayload> } | null = null;
+  let activeRunId = $state<string | null>(null);
+  let cancelPending = $state(false);
   let profilePending = $state(false);
   let configuring = $state(false);
   let profileStatus = $state<string | null>(null);
@@ -156,6 +161,9 @@
   function invalidateSetup() {
     setupEpoch++;
     sessionPortWitness = false;
+    startReplay = null;
+    activeRunId = null;
+    cancelPending = false;
     profiles = [];
     profileSelection = null;
     startedSession = null;
@@ -252,6 +260,8 @@
     const epoch = ++setupEpoch;
     profilePending = true;
     sessionPortWitness = false;
+    startReplay = null;
+    activeRunId = null;
     profileSelection = null;
     startedSession = null;
     profileStatus = "Selecting profile…";
@@ -279,15 +289,13 @@
       // A saved profile never proves session readiness. Only this native receipt can.
       profileStatus = "Starting session…";
       const startRequestId = crypto.randomUUID();
+      const startPayload = sessionStartPayload(selected, project.workspaceId, startRequestId);
       const started = validateSessionStartResult(
-        await sendSetup(
-          "session.start",
-          startRequestId,
-          sessionStartPayload(selected, project.workspaceId, startRequestId),
-        ),
+        await sendSetup("session.start", startRequestId, startPayload),
       );
       if (epoch !== setupEpoch) return;
       startedSession = started;
+      startReplay = { requestId: startRequestId, payload: startPayload };
       if (started.readiness.state === "ready") {
         profileStatus = "Checking engine readiness…";
         try {
@@ -315,6 +323,29 @@
       if (epoch === setupEpoch) profilePending = false;
     }
   }
+  function isOpaqueId(value: string) {
+    return !/[\uD800-\uDFFF]/u.test(value) && value.length > 0 && value.length <= 128 && !/[\s\p{Cc}\p{Cf}\/\\]/u.test(value);
+  }
+
+  async function refreshStaleSession(epoch: number) {
+    const replay = startReplay;
+    const previous = startedSession;
+    sessionPortWitness = false;
+    if (!replay || !previous) return;
+    try {
+      const refreshed = validateSessionStartResult(await sendSetup("session.start", replay.requestId, replay.payload));
+      if (epoch !== setupEpoch || refreshed.sessionId !== previous.sessionId || refreshed.sessionRevision !== previous.sessionRevision || refreshed.readiness.state !== "ready") return;
+      const verified = await handshake();
+      if (epoch !== setupEpoch) return;
+      startedSession = refreshed;
+      readiness = verified.readiness;
+      sessionPortWitness = true;
+      retry();
+    } catch {
+      if (epoch === setupEpoch) profileStatus = "Session readiness could not be refreshed. Sending stays blocked.";
+    }
+  }
+
   let stopped = $derived(engineConnected && status === "disconnected");
   let mounted = false;
   let turns = $state.raw<TurnsState>(createTurnsState());
@@ -433,6 +464,7 @@
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
+        if (activeRunId && ["completed", "failed", "canceled", "stopped"].includes(next.runs[activeRunId]?.status ?? "")) activeRunId = null;
       },
       onResync: (fromSeq, sessionId) => {
         void binding.resubscribe(sessionId, fromSeq);
@@ -607,9 +639,9 @@
 {/snippet}
 
 {#snippet composer()}
-  <!-- stale: config/profile/policy revisions are not delivered to the renderer yet, so
-       sending is disabled. generationReady is derived from portAvailability; fail closed
-       when false or unreported. -->
+  {#if ports && !ports.workspace}
+    <p role="status">Workspace tools unavailable</p>
+  {/if}
   <Composer
     connection={status}
     sessionId={startedSession?.sessionId ?? $selectedSession?.sessionId ?? null}
@@ -617,9 +649,48 @@
     workspaceSelected={workspace !== null}
     profileSelected={profileSelection !== null}
     sessionReadiness={startedSession?.readiness.state}
-    unavailable="Sending is not available yet"
-    send={async () => {
-      throw new Error("Sending is unavailable: session revisions are not wired.");
+    stale={turns.stale || turns.needsResync}
+    unavailable={subscription.state !== "live" || $selectedSession?.sessionId !== startedSession?.sessionId || $selectedSession?.scopeId !== workspace?.workspaceId
+      ? "Session subscription is unavailable. Sending stays blocked."
+      : activeRunId ? "A turn is running." : undefined}
+    cancellable={activeRunId !== null && !cancelPending}
+    cancel={async () => {
+      if (!startedSession || !activeRunId || cancelPending) return;
+      const epoch = setupEpoch;
+      const sessionId = startedSession.sessionId;
+      const runId = activeRunId;
+      cancelPending = true;
+      try {
+        await cancelSession(sessionId);
+        if (epoch === setupEpoch && activeRunId === runId) activeRunId = null;
+      } catch {
+        if (epoch === setupEpoch) profileStatus = "Cancellation could not be confirmed.";
+      } finally { if (epoch === setupEpoch) cancelPending = false; }
+    }}
+    send={async (payload) => {
+      const project = workspace;
+      const selected = profileSelection;
+      const session = startedSession;
+      const epoch = setupEpoch;
+      if (!project || !selected || !session || status !== "ready" || generationReady !== true || subscription.state !== "live" || !sessionPortWitness || turns.stale || turns.needsResync || $selectedSession?.sessionId !== session.sessionId || $selectedSession?.scopeId !== project.workspaceId) throw new Error("Session unavailable");
+      try {
+        const result = await invoke("session.prompt", payload, {
+          sessionId: session.sessionId, scopeId: project.workspaceId,
+          expectedConfigRevision: selected.configRevision,
+          expectedProfileRevision: selected.profileRevision,
+          expectedPolicyRevision: session.policyRevision,
+        });
+        if (result === null || typeof result !== "object" || Array.isArray(result) || Object.keys(result).length !== 3 ||
+          (result as { accepted?: unknown }).accepted !== true ||
+          typeof (result as { runId?: unknown }).runId !== "string" || !isOpaqueId((result as { runId: string }).runId) ||
+          typeof (result as { turnId?: unknown }).turnId !== "string" || !isOpaqueId((result as { turnId: string }).turnId)) throw new Error("Invalid acknowledgement");
+        if (epoch !== setupEpoch) throw new Error("Session changed");
+        const runId = (result as { runId: string }).runId;
+        if (!["completed", "failed", "canceled", "stopped"].includes(turns.runs[runId]?.status ?? "")) activeRunId = runId;
+      } catch (error) {
+        if (epoch === setupEpoch && error !== null && typeof error === "object" && Object.hasOwn(error, "code") && (error as { code?: unknown }).code === "STALE_REVISION") void refreshStaleSession(epoch);
+        throw error;
+      }
     }}
   />
 {/snippet}

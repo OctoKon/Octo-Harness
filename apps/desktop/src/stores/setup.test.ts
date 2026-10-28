@@ -21,6 +21,7 @@ const selection = {
 const session = {
   sessionId: "session-1",
   sessionRevision: "s1",
+  policyRevision: "7",
   readiness: { state: "ready" },
 };
 
@@ -74,6 +75,10 @@ describe("setup contracts", () => {
       for (const invalid of [null, [], "text", 1])
         expect(() => validate(invalid)).toThrow();
     }
+    for (const policyRevision of ["", "01", "-1", "1.0", " 1", "1".repeat(129)])
+      expect(() =>
+        validateSessionStartResult({ ...session, policyRevision }),
+      ).toThrow();
     for (const readiness of [
       {},
       { state: "unknown" },

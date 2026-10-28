@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { isAbsolute, join } from "node:path";
 import { RevisionFence } from "../dist/admission.js";
 import { ConfigAuthority } from "../dist/config.js";
@@ -7,6 +8,11 @@ import { Receipts } from "../dist/receipts.js";
 import { createNativeProviderSetup } from "./native-provider-setup.mjs";
 import { createNativeSessionSetup } from "./native-session-setup.mjs";
 import { NativeControl } from "./native-control.mjs";
+import { PI_REVISION } from "../dist/contracts.js";
+import {
+  NATIVE_POLICY_REVISION,
+  currentNativePolicyRevision,
+} from "../dist/policy.js";
 import {
   INITIAL_CONFIG_REVISION,
   Store,
@@ -109,15 +115,101 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
   const receipts = new Receipts(store);
   const profiles = createProviderProfiles({ store, config });
   const providerSetup = createNativeProviderSetup(store, directory);
+  const providerCapability = (selected) => {
+    const workspaceId = selected.state.workspace.workspaceId;
+    const { apiFamily, adapterRevision } = selected.connection;
+    if (
+      !["openai-completions", "openai-responses"].includes(apiFamily) ||
+      adapterRevision !== PI_REVISION
+    )
+      fail("NATIVE_CAPABILITY_UNAVAILABLE");
+    const capabilityId = `native-provider:${apiFamily}:${adapterRevision}`;
+    const descriptor = {
+      kind: "native-provider-capability",
+      capabilityId,
+      capabilityVersion: adapterRevision,
+      apiFamily,
+      implementation: "NativeProviderRequests",
+    };
+    const bytes = Buffer.from(JSON.stringify(descriptor));
+    const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    const recordId = `native-capability:${createHash("sha256").update(`${workspaceId}\0${capabilityId}`).digest("hex")}`;
+    const observe = () => {
+      const state = store.readSetupState(workspaceId);
+      const rows = state.records.filter(
+        ({ record }) =>
+          record.recordId === recordId || record.artifactId === capabilityId,
+      );
+      return { state, rows };
+    };
+    const observation = observe();
+    if (observation.rows.length === 0)
+      store.appendBatch(
+        [
+          {
+            kind: "artifact",
+            record: {
+              schemaVersion: 1,
+              recordId,
+              artifactId: capabilityId,
+              scopeId: workspaceId,
+              createdAt: new Date().toISOString(),
+              sourceIds: [],
+              mediaType: "application/vnd.splyce.provider-capability+json",
+              retentionClass: "workspace",
+              digest,
+              byteLength: bytes.length,
+              descriptor,
+            },
+          },
+        ],
+        {
+          sessionId: "native-capability-registration",
+          configRevision: selected.effective.configRevision,
+          profileRevision: selected.effective.profileRevision,
+          policyRevision: currentNativePolicyRevision(workspaceId),
+        },
+        undefined,
+        undefined,
+        { scopeId: workspaceId, revision: selected.effective.configRevision },
+        undefined,
+        { expectedDeletionEpoch: observation.state.deletionEpoch },
+      );
+    const { state, rows } = observe();
+    const record = rows[0]?.record;
+    if (
+      rows.length !== 1 ||
+      rows[0].kind !== "artifact" ||
+      state.deletedRecordIds.includes(recordId) ||
+      record.recordId !== recordId ||
+      record.artifactId !== capabilityId ||
+      record.scopeId !== workspaceId ||
+      record.digest !== digest ||
+      record.byteLength !== bytes.length ||
+      record.retentionClass !== "workspace" ||
+      record.mediaType !== "application/vnd.splyce.provider-capability+json" ||
+      JSON.stringify(record.descriptor) !== JSON.stringify(descriptor)
+    )
+      fail("NATIVE_CAPABILITY_UNAVAILABLE");
+    return Object.freeze({ capabilityId, capabilityVersion: adapterRevision });
+  };
   const factory =
     sessionFactory ??
     (nativeControl instanceof NativeControl
-      ? lazyFactory({ store, profiles, control: nativeControl, directory })
+      ? lazyFactory({
+          store,
+          profiles,
+          control: nativeControl,
+          directory,
+          providerCapability,
+          currentPolicyRevision: currentNativePolicyRevision,
+        })
       : undefined);
   const sessions = createNativeSessionSetup({
     store,
     control: nativeControl,
     factory,
+    currentPolicyRevision: currentNativePolicyRevision,
   });
   try {
     store.audit();
@@ -169,7 +261,7 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
       {
         scopeId,
         profileRevision,
-        policyRevision: INITIAL_CONFIG_REVISION,
+        policyRevision: currentNativePolicyRevision(scopeId),
         grantIds: [],
         planMode: true,
       },
@@ -207,7 +299,7 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
           sessionId: "native-workspace-admission",
           configRevision: INITIAL_CONFIG_REVISION,
           profileRevision: INITIAL_CONFIG_REVISION,
-          policyRevision: INITIAL_CONFIG_REVISION,
+          policyRevision: NATIVE_POLICY_REVISION,
         }),
       );
     },

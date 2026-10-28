@@ -450,8 +450,14 @@ describe("App wiring", () => {
       await settle();
       expect(button("Send").disabled).toBe(true);
       expect(q("#composer-status")?.textContent).toContain(
-        "Generation unconfigured",
+        missing === "provider"
+          ? "Generation unconfigured"
+          : "No profile is selected",
       );
+      if (missing === "workspace")
+        expect(document.body.textContent).toContain(
+          "Workspace tools unavailable",
+        );
     }
 
     // 2. Dynamic engine.status event with generation: false without reconnect

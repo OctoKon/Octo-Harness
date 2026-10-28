@@ -118,6 +118,7 @@ fn walk(
         budget.check()?;
         let item = item.map_err(|_| ())?;
         let name = item.file_name().into_string().map_err(|_| ())?;
+        crate::workspace::validate_basename(&name).map_err(|_| ())?;
         if name == ".git" {
             continue;
         }
@@ -338,5 +339,27 @@ mod tests {
         assert!(capture_with_budget(&root, identity, &mut expired).is_err());
         assert!(capture(&root, identity).is_ok());
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn rejects_verbatim_trailing_dot_secret_alias() {
+        let root = std::env::temp_dir().join(format!(
+            "splyce-alias-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join(".env"), b"fixture").unwrap();
+        let alias = std::path::PathBuf::from(format!(r"\\?\{}\.env.", root.display()));
+        fs::write(&alias, b"alias").unwrap();
+        let qualified = qualify_directory(&root).unwrap();
+        let identity = qualified.identity();
+        drop(qualified);
+        let result = capture(&root, identity);
+        fs::remove_file(&alias).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(result.is_err());
     }
 }

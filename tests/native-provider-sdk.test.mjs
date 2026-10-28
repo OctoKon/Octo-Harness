@@ -841,12 +841,17 @@ test("sealed ModelRuntime composes the native provider with real policy, credent
   };
   owner.bind(options, "model-runtime-options");
   const runtime = await ModelRuntime.create(options);
+  let admissions = 0,
+    getters = 0;
   const provider = createNativeModelProvider({
     model,
     credentialRef: target,
     control: f.control,
     requests: f.owner,
-    admit: async () => f.scope,
+    admit: async () => {
+      admissions++;
+      return f.scope;
+    },
     assertCurrent() {},
   });
   const previous = process.env.OPENAI_API_KEY;
@@ -881,9 +886,38 @@ test("sealed ModelRuntime composes the native provider with real policy, credent
     );
     assert.equal(f.received, 0);
   }
-  const stream = runtime.streamSimple(model, context, {
+  const aborted = new AbortController();
+  aborted.abort();
+  const accessor = Object.defineProperty({}, "signal", {
+    enumerable: true,
+    get() {
+      getters++;
+      return f.controller.signal;
+    },
+  });
+  const framesBefore = f.frames.length;
+  for (const requestOptions of [
+    Object.create({ signal: aborted.signal }),
+    Object.create({ temperature: 0.5 }),
+    Object.defineProperty({}, "temperature", { value: 0.5 }),
+    accessor,
+    { [Symbol("semantic")]: true },
+    [],
+  ]) {
+    assert.equal(
+      (await runtime.streamSimple(model, context, requestOptions).result())
+        .stopReason,
+      "error",
+    );
+    assert.equal(admissions, 0);
+    assert.equal(getters, 0);
+    assert.equal(f.received, 0);
+    assert.equal(f.frames.length, framesBefore);
+  }
+  const requestOptions = Object.assign(Object.create(null), {
     signal: f.controller.signal,
   });
+  const stream = runtime.streamSimple(model, context, requestOptions);
   const events = [];
   for await (const event of stream) events.push(event);
   assert.equal(events.at(-1).type, "done");
@@ -893,6 +927,7 @@ test("sealed ModelRuntime composes the native provider with real policy, credent
     { role: "user", content: "hello" },
   ]);
   assert.equal(f.received, 1);
+  assert.equal(admissions, 1);
   assert.equal(
     f.frames.filter((frame) => frame === "credential.scope.close").length,
     1,

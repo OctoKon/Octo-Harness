@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -16,18 +16,262 @@ import {
   TRANSPORT_LIMITS,
 } from "../dist/contracts.js";
 import { lookupPinnedModel } from "./model-catalog.mjs";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  SessionManager,
+  SettingsManager,
+  DefaultResourceLoader,
+  ModelRuntime,
+  createAgentSession,
+} from "@earendil-works/pi-coding-agent";
+import { AuthStorage } from "../../../vendor/pi/packages/coding-agent/dist/core/auth-storage.js";
+import { InMemoryCodingAgentModelsStore } from "../../../vendor/pi/packages/coding-agent/dist/core/models-store.js";
 import { createSplyceOwner } from "../../../vendor/pi/packages/agent/dist/splyce-readiness.js";
 import { NativeControl } from "./native-control.mjs";
 import { acquireNativeSessionWriter } from "./native-session-writer.mjs";
 import { serializeActionArguments } from "../dist/policy.js";
 import { SessionMap } from "../dist/session-map.js";
-import { INITIAL_CONFIG_REVISION } from "../dist/store.js";
+import { NativePolicy } from "../dist/policy.js";
+import { NativeCredentialResolver } from "../dist/credential-resolver.js";
+import { NativeProviderRequests } from "../dist/native-provider.js";
+import { createNativeModelProvider } from "./native-model-provider.mjs";
+import { Snapshot } from "../../../src/snapshots.ts";
+import { captureNativeSnapshot } from "./native-snapshots.mjs";
 
 const unavailable = () =>
   Object.assign(new Error("Native session unavailable"), {
     code: "NATIVE_SESSION_UNAVAILABLE",
   });
+const stagedTasks = new WeakSet();
+
+export async function stageNativeTaskArtifact({
+  control,
+  directory,
+  workspaceId,
+  text,
+  assertCurrent,
+  signal,
+}) {
+  if (
+    !(control instanceof NativeControl) ||
+    typeof text !== "string" ||
+    !text.isWellFormed() ||
+    typeof assertCurrent !== "function"
+  )
+    throw unavailable();
+  assertCurrent();
+  if (signal?.aborted) throw unavailable();
+  const sanitized = (await control.redact(text, signal)).text;
+  assertCurrent();
+  if (signal?.aborted) throw unavailable();
+  const bytes = Buffer.from(JSON.stringify({ text: sanitized }));
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const artifactId = `native-task:${randomUUID()}`;
+  const file = join(directory, "tasks", `${hash}.json`);
+  mkdirSync(join(directory, "tasks"), { recursive: true });
+  try {
+    writeFileSync(file, bytes, { flag: "wx" });
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+  const verify = () => {
+    const stat = lstatSync(file);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      stat.nlink !== 1 ||
+      !readFileSync(file).equals(bytes)
+    )
+      throw unavailable();
+  };
+  verify();
+  assertCurrent();
+  const record = Object.freeze({
+    schemaVersion: 1,
+    recordId: artifactId,
+    scopeId: workspaceId,
+    createdAt: new Date().toISOString(),
+    sourceIds: [],
+    artifactId,
+    digest: `sha256:${hash}`,
+    mediaType: "application/json",
+    byteLength: bytes.length,
+    retentionClass: "workspace",
+    locationRef: `native-task-content:${hash}`,
+  });
+  const staged = Object.freeze({ record, text: sanitized, verify });
+  stagedTasks.add(staged);
+  return staged;
+}
+
+export function commitNativePromptAdmission({
+  store,
+  selected,
+  committed,
+  manager,
+  sessionMap,
+  task,
+  snapshot,
+  ownership,
+  assertCurrent,
+  policyRevision,
+}) {
+  if (
+    typeof assertCurrent !== "function" ||
+    typeof policyRevision !== "string" ||
+    !committed?.grantIds?.length ||
+    !stagedTasks.has(task)
+  )
+    throw unavailable();
+  assertCurrent();
+  const scopeId = selected.state.workspace.workspaceId;
+  const sessionId = manager.getSessionId();
+  if (
+    committed.result.sessionId !== sessionId ||
+    ownership.workspaceId !== scopeId ||
+    ownership.ownerSessionId !== sessionId
+  )
+    throw unavailable();
+  store.assertNativeSessionStartCurrent({
+    workspaceId: scopeId,
+    sessionId,
+    sessionRevision: committed.result.sessionRevision,
+  });
+  const workspace = selected.state.workspace;
+  const stat = statSync(workspace.canonicalPath, { bigint: true });
+  if (
+    !stat.isDirectory() ||
+    String(stat.dev) !== workspace.volumeSerial ||
+    String(stat.ino) !== workspace.fileId
+  )
+    throw unavailable();
+  const origin = originView(selected.endpoint);
+  for (const grantId of committed.grantIds) {
+    const grant = store.get(grantId).record;
+    if (grant.capability === "net.provider" && grant.origin === origin)
+      store.requireGrant({
+        grantId,
+        workspaceId: scopeId,
+        sessionId,
+        capability: "net.provider",
+        origin,
+        observedIdentity: {
+          volumeSerial: String(stat.dev),
+          fileId: String(stat.ino),
+        },
+      });
+  }
+  if (!committed.grantIds.some((id) => store.get(id).record.origin === origin))
+    throw unavailable();
+  const snapshotRecord = store.get(snapshot.recordId);
+  if (
+    snapshotRecord.kind !== "artifact" ||
+    snapshotRecord.record.scopeId !== scopeId ||
+    snapshotRecord.record.digest !== snapshot.digest ||
+    snapshot.baseRevision !== snapshot.digest
+  )
+    throw unavailable();
+  Snapshot.load(store, snapshot.recordId);
+  task.verify();
+  if (
+    task.record.scopeId !== scopeId ||
+    task.record.recordId !== task.record.artifactId
+  )
+    throw unavailable();
+  const active = sessionMap.bind({ scopeId, sessionId }, manager);
+  const epoch = selected.state.deletionEpoch;
+  if (store.deletionEpoch() !== epoch) throw unavailable();
+  const audit = store.audit();
+  if (store.deletionEpoch() !== epoch) throw unavailable();
+  const deleted = new Set(audit.deletedRecordIds);
+  const runId = randomUUID(),
+    turnId = randomUUID(),
+    runRecordId = randomUUID();
+  const refs = (ref, scope) => {
+    if (scope !== scopeId) return false;
+    if (
+      ref === scopeId ||
+      ref === sessionId ||
+      ref === selected.profile.profileId ||
+      ref === runId ||
+      ref === runRecordId ||
+      ref === turnId
+    )
+      return true;
+    if (ref === task.record.artifactId) {
+      task.verify();
+      return true;
+    }
+    if (manager.getEntries().some((entry) => entry.id === ref)) return true;
+    const matches = audit.records.filter(
+      ({ record }) =>
+        record.scopeId === scopeId &&
+        (record.recordId === ref || record.artifactId === ref),
+    );
+    if (matches.length)
+      return matches.length === 1 && !deleted.has(matches[0].record.recordId);
+    const anchors = audit.records.filter(
+      ({ kind, record }) =>
+        kind === "branchAnchor" &&
+        record.scopeId === scopeId &&
+        record.piSessionId === sessionId &&
+        record.branchAnchorId === ref,
+    );
+    return anchors.length > 0 && !deleted.has(anchors.at(-1).record.recordId);
+  };
+  const caller = {
+    sessionId,
+    configRevision: selected.effective.configRevision,
+    profileRevision: selected.effective.profileRevision,
+    policyRevision,
+    resolveReference: refs,
+  };
+  const run = {
+    schemaVersion: 1,
+    recordId: runRecordId,
+    createdAt: new Date().toISOString(),
+    scopeId,
+    sourceIds: [],
+    runId,
+    piSessionId: sessionId,
+    branchAnchorId: active.anchor.branchAnchorId,
+    workspaceId: scopeId,
+    baseRevision: snapshot.baseRevision,
+    baseSnapshotId: snapshot.recordId,
+    taskArtifactId: task.record.artifactId,
+    grantIds: [...committed.grantIds],
+    profileId: selected.profile.profileId,
+    profileRevision: selected.profile.profileRevision,
+    roleBindingRefs: [...selected.profile.roleBindingRefs],
+    state: "running",
+  };
+  Object.freeze(run.sourceIds);
+  Object.freeze(run.grantIds);
+  Object.freeze(run.roleBindingRefs);
+  Object.freeze(run);
+  assertCurrent();
+  task.verify();
+  store.appendBatch(
+    [
+      { kind: "artifact", record: task.record },
+      { kind: "run", record: run },
+    ],
+    caller,
+    undefined,
+    { workspaceId: scopeId, epoch: ownership.epoch },
+    { scopeId, revision: selected.effective.configRevision },
+    undefined,
+    { expectedDeletionEpoch: epoch },
+  );
+  return Object.freeze({
+    runId,
+    turnId,
+    runRecordId,
+    ownership,
+    caller,
+    run,
+    task,
+  });
+}
 
 export async function createNativeArgumentsArtifact({
   store,
@@ -389,28 +633,77 @@ export function resolveNativeSessionSelection({
   };
 }
 
+function verifyNativeProviderCapability(
+  store,
+  workspaceId,
+  connection,
+  capability,
+) {
+  if (
+    !capability ||
+    typeof capability.capabilityId !== "string" ||
+    !capability.capabilityId ||
+    capability.capabilityVersion !== connection.adapterRevision
+  )
+    throw unavailable();
+  const observation = store.readSetupState(workspaceId);
+  const definitions = observation.records.filter(
+    ({ kind, record }) =>
+      kind === "artifact" &&
+      record.artifactId === capability.capabilityId &&
+      !observation.deletedRecordIds.includes(record.recordId),
+  );
+  const expectedDefinition = {
+    kind: "native-provider-capability",
+    capabilityId: capability.capabilityId,
+    capabilityVersion: capability.capabilityVersion,
+    apiFamily: connection.apiFamily,
+    implementation: "NativeProviderRequests",
+  };
+  const bytes = JSON.stringify(expectedDefinition);
+  if (
+    definitions.length !== 1 ||
+    definitions[0].record.mediaType !==
+      "application/vnd.splyce.provider-capability+json" ||
+    definitions[0].record.retentionClass !== "workspace" ||
+    !isDeepStrictEqual(definitions[0].record.descriptor, expectedDefinition) ||
+    definitions[0].record.byteLength !== Buffer.byteLength(bytes) ||
+    definitions[0].record.digest !==
+      `sha256:${createHash("sha256").update(bytes).digest("hex")}`
+  )
+    throw unavailable();
+}
+
 // Private host port; no session or provider object leaves preparation.
 export function createNativeSessionFactory({
   store,
   profiles,
   control,
   directory,
+  providerCapability,
+  currentPolicyRevision,
 }) {
-  if (!(control instanceof NativeControl)) throw unavailable();
+  if (
+    !(control instanceof NativeControl) ||
+    typeof currentPolicyRevision !== "function"
+  )
+    throw unavailable();
   const prepared = new WeakMap();
-  const caller = {
-    sessionId: "native-session-setup",
-    configRevision: "cfg-0",
-    profileRevision: "cfg-0",
-    policyRevision: "cfg-0",
-  };
+  const sessions = new Map();
+  const eventListeners = new Set();
   function replay(request) {
     const capture = store.prepareNativeSessionSetup("session.start", request);
     if (!capture.replay) throw unavailable();
     const committed = store.commitNativeSessionStart(
       capture,
       undefined,
-      caller,
+      {
+        sessionId: "native-session-setup",
+        configRevision: "cfg-0",
+        profileRevision: "cfg-0",
+        policyRevision: currentPolicyRevision(request.workspaceId),
+      },
+      currentPolicyRevision,
     );
     if (committed.result.readiness.code || !committed.branchAnchor)
       throw unavailable();
@@ -430,7 +723,63 @@ export function createNativeSessionFactory({
       profileId: input.profileId,
       profileRevision: input.profileRevision,
     };
+    const firstSelection = resolveNativeSessionSelection(selectionInput);
+    const policyRevision = currentPolicyRevision(input.workspaceId);
+    if (
+      typeof policyRevision !== "string" ||
+      !/^(0|[1-9][0-9]*)$/u.test(policyRevision)
+    )
+      throw unavailable();
+    if (restored && restored.committed.result.policyRevision !== policyRevision)
+      throw unavailable();
+    const rawCapability =
+      typeof providerCapability === "function"
+        ? providerCapability(structuredClone(firstSelection))
+        : providerCapability;
+    if (typeof providerCapability === "function" && rawCapability === undefined)
+      throw unavailable();
+    if (
+      rawCapability !== undefined &&
+      (!rawCapability ||
+        typeof rawCapability !== "object" ||
+        typeof rawCapability.capabilityId !== "string" ||
+        typeof rawCapability.capabilityVersion !== "string")
+    )
+      throw unavailable();
+    const capability =
+      rawCapability === undefined
+        ? undefined
+        : Object.freeze({
+            capabilityId: rawCapability.capabilityId,
+            capabilityVersion: rawCapability.capabilityVersion,
+          });
     const selected = resolveNativeSessionSelection(selectionInput);
+    for (const key of [
+      "effective",
+      "profile",
+      "connection",
+      "endpoint",
+      "descriptor",
+      "model",
+      "limits",
+    ])
+      if (!isDeepStrictEqual(firstSelection[key], selected[key]))
+        throw unavailable();
+    if (
+      !isDeepStrictEqual(
+        firstSelection.state.workspace,
+        selected.state.workspace,
+      ) ||
+      currentPolicyRevision(input.workspaceId) !== policyRevision
+    )
+      throw unavailable();
+    if (capability)
+      verifyNativeProviderCapability(
+        store,
+        input.workspaceId,
+        selected.connection,
+        capability,
+      );
     const deletionEpoch = store.deletionEpoch();
     const audit = store.audit();
     if (
@@ -467,6 +816,8 @@ export function createNativeSessionFactory({
       if (!isDeepStrictEqual(current.state.workspace, selected.state.workspace))
         throw unavailable();
       if (store.deletionEpoch() !== deletionEpoch) throw unavailable();
+      if (currentPolicyRevision(input.workspaceId) !== policyRevision)
+        throw unavailable();
     };
     let lease, manager;
     let committed = restored?.committed;
@@ -538,38 +889,41 @@ export function createNativeSessionFactory({
       const piSessionId = manager.getSessionId();
       if (restored && piSessionId !== restored.piSessionId) throw unavailable();
       const key = { scopeId: input.workspaceId, sessionId: piSessionId };
+      const dynamicReferences = new Map();
+      const resolveReference = (ref, scopeId) => {
+        if (scopeId !== undefined && scopeId !== input.workspaceId)
+          return false;
+        const verify = dynamicReferences.get(ref);
+        if (verify) {
+          verify();
+          return true;
+        }
+        if (ref === input.workspaceId || ref === manager.getSessionId())
+          return true;
+        if (manager.getEntries().some((entry) => entry.id === ref)) return true;
+        const scoped = audit.records.filter(
+          ({ record }) => record.scopeId === input.workspaceId,
+        );
+        const direct = scoped.filter(
+          ({ record }) => record.recordId === ref || record.artifactId === ref,
+        );
+        if (direct.length)
+          return direct.length === 1 && !deleted.has(direct[0].record.recordId);
+        const anchors = scoped.filter(
+          ({ kind, record }) =>
+            kind === "branchAnchor" &&
+            record.piSessionId === piSessionId &&
+            record.branchAnchorId === ref,
+        );
+        return (
+          anchors.length > 0 && !deleted.has(anchors.at(-1).record.recordId)
+        );
+      };
       const sessionMap = new SessionMap(store, {
         configRevision: selected.effective.configRevision,
         profileRevision: selected.effective.profileRevision,
-        policyRevision: INITIAL_CONFIG_REVISION,
-        resolveReference(ref, scopeId) {
-          if (scopeId !== undefined && scopeId !== input.workspaceId)
-            return false;
-          if (ref === input.workspaceId || ref === manager.getSessionId())
-            return true;
-          if (manager.getEntries().some((entry) => entry.id === ref))
-            return true;
-          const scoped = audit.records.filter(
-            ({ record }) => record.scopeId === input.workspaceId,
-          );
-          const direct = scoped.filter(
-            ({ record }) =>
-              record.recordId === ref || record.artifactId === ref,
-          );
-          if (direct.length)
-            return (
-              direct.length === 1 && !deleted.has(direct[0].record.recordId)
-            );
-          const anchors = scoped.filter(
-            ({ kind, record }) =>
-              kind === "branchAnchor" &&
-              record.piSessionId === piSessionId &&
-              record.branchAnchorId === ref,
-          );
-          return (
-            anchors.length > 0 && !deleted.has(anchors.at(-1).record.recordId)
-          );
-        },
+        policyRevision,
+        resolveReference,
       });
       const preview = sessionMap.preview(key, manager);
       if (
@@ -594,9 +948,14 @@ export function createNativeSessionFactory({
         lease,
         selectionInput,
         selected,
+        policyRevision,
+        capability,
+        deleted,
         stable,
         key,
         sessionMap,
+        resolveReference,
+        dynamicReferences,
         input,
         restored: !!restored,
         preview: structuredClone(preview.anchor),
@@ -636,6 +995,8 @@ export function createNativeSessionFactory({
     const committed = replay(request);
     if (
       committed.result.sessionId !== input.piSessionId ||
+      committed.result.policyRevision !==
+        currentPolicyRevision(input.workspaceId) ||
       !isDeepStrictEqual(committed.branchAnchor, input.branchAnchor)
     )
       throw unavailable();
@@ -648,6 +1009,265 @@ export function createNativeSessionFactory({
       },
       { ...input, committed },
     );
+  }
+  async function initialize(state) {
+    const providerCapability = state.capability;
+    const verifyCapability = () =>
+      verifyNativeProviderCapability(
+        store,
+        state.key.scopeId,
+        state.selected.connection,
+        providerCapability,
+      );
+    verifyCapability();
+    const assertCurrent = () => {
+      if (state.closed) throw unavailable();
+      state.stable();
+      verifyCapability();
+      state.lease.assertCurrent();
+      store.assertNativeSessionStartCurrent({
+        workspaceId: state.key.scopeId,
+        sessionId: state.key.sessionId,
+        sessionRevision: state.committed.result.sessionRevision,
+      });
+      if (state.activeRun) {
+        const owner = store.workspaceOwner(state.key.scopeId);
+        if (
+          !owner ||
+          owner.ownerSessionId !== state.key.sessionId ||
+          owner.epoch !== state.activeRun.ownership.epoch
+        )
+          throw unavailable();
+      }
+    };
+    const identity = {
+      observe(workspaceId) {
+        if (workspaceId !== state.key.scopeId) throw unavailable();
+        const stat = statSync(state.selected.state.workspace.canonicalPath, {
+          bigint: true,
+        });
+        if (!stat.isDirectory()) throw unavailable();
+        return { volumeSerial: String(stat.dev), fileId: String(stat.ino) };
+      },
+    };
+    const policyCaller = {
+      sessionId: state.key.sessionId,
+      configRevision: state.selected.effective.configRevision,
+      profileRevision: state.selected.effective.profileRevision,
+      policyRevision: state.policyRevision,
+      resolveReference(ref, scopeId) {
+        if (scopeId !== state.key.scopeId || !state.activeRun) return false;
+        const verify = state.activeRun.argumentReferences.get(ref);
+        if (verify) {
+          verify();
+          return true;
+        }
+        if (state.activeRun.caller.resolveReference(ref, scopeId)) return true;
+        if (store.deletionEpoch() !== state.selected.state.deletionEpoch)
+          return false;
+        return store
+          .list(scopeId, 0, state.key.sessionId)
+          .records.some(
+            ({ record }) =>
+              !state.deleted.has(record.recordId) &&
+              (record.recordId === ref || record.actionId === ref),
+          );
+      },
+    };
+    const policy = new NativePolicy(
+      store,
+      policyCaller,
+      () => ({
+        configRevision: state.selected.effective.configRevision,
+        profileRevision: state.selected.effective.profileRevision,
+        policyRevision: state.policyRevision,
+        grantIds: state.activeRun?.run.grantIds ?? [],
+        planMode: !state.activeRun,
+      }),
+      identity,
+    );
+    let requests;
+    const resolver = new NativeCredentialResolver({
+      env: {},
+      readCredentialStore: (target, request) =>
+        requests.readCredentialStore(target, request),
+    });
+    resolver.register({
+      providerConnectionId: state.selected.connection.providerConnectionId,
+      connectionRevision: state.selected.connection.revision,
+      endpointRef: state.selected.connection.endpointRef,
+      egressPolicyRef: state.selected.profile.egressPolicyRefs[0],
+      source: {
+        kind: "credentialStore",
+        target: state.selected.connection.credentialRef,
+      },
+    });
+    const scopedControl = {
+      async open(binding, signal) {
+        const handle = await control.open(binding, signal);
+        const active = state.activeRun;
+        if (!active) {
+          await handle.close();
+          throw unavailable();
+        }
+        active.scopeCleanup.set(binding.actionId, false);
+        return {
+          read: () => handle.read(),
+          async close() {
+            await handle.close();
+            active.scopeCleanup.set(binding.actionId, true);
+          },
+        };
+      },
+    };
+    requests = new NativeProviderRequests(policy, resolver, scopedControl);
+    const runtimeOptions = {
+      credentials: AuthStorage.inMemory(),
+      modelsStore: new InMemoryCodingAgentModelsStore(),
+      modelsPath: null,
+      allowModelNetwork: false,
+      refreshOnCreate: false,
+    };
+    state.owner.bind(runtimeOptions, "model-runtime-options");
+    const runtime = await ModelRuntime.create(runtimeOptions);
+    assertCurrent();
+    const model = structuredClone(state.selected.model);
+    state.owner.bind(model, "model");
+    const provider = createNativeModelProvider({
+      model,
+      credentialRef: state.selected.connection.credentialRef,
+      control,
+      requests,
+      admit: async ({ model: requestedModel, context, signal }) => {
+        assertCurrent();
+        const active = state.activeRun;
+        if (
+          !active ||
+          signal?.aborted ||
+          !isDeepStrictEqual(requestedModel, model)
+        )
+          throw unavailable();
+        const semantic = {
+          schema: "splyce-provider-request-v1",
+          apiFamily: model.api,
+          endpointRef: state.selected.connection.endpointRef,
+          model: model.id,
+          context: { ...context, tools: context.tools ?? [] },
+          options: { model },
+        };
+        const artifact = await createNativeArgumentsArtifact({
+          store,
+          control,
+          directory,
+          workspaceId: state.key.scopeId,
+          caller: active.caller,
+          semantic,
+          assertCurrent,
+          signal,
+        });
+        assertCurrent();
+        if (state.activeRun !== active || signal?.aborted) throw unavailable();
+        active.argumentReferences.set(artifact.artifactId, artifact.verify);
+        const origin = originView(state.selected.endpoint);
+        const matching = active.run.grantIds.filter((id) => {
+          const grant = store.get(id).record;
+          return grant.capability === "net.provider" && grant.origin === origin;
+        });
+        if (matching.length !== 1) throw unavailable();
+        const actionId = randomUUID(),
+          toolCallId = randomUUID();
+        const permit = {
+          toolCallId,
+          toolName: "provider_request",
+          actionId,
+          runRecordId: active.runRecordId,
+          grantId: matching[0],
+          parentActionId: null,
+          capabilityId: providerCapability.capabilityId,
+          capabilityVersion: providerCapability.capabilityVersion,
+          argumentsArtifactId: artifact.artifactId,
+          argumentsDigest: artifact.digest,
+          targetScopeId: state.key.scopeId,
+          idempotencyKey: randomUUID(),
+          ownership: active.ownership,
+          capability: "net.provider",
+          origin,
+        };
+        policy.authorize(permit);
+        const suffix =
+          model.api === "openai-completions"
+            ? "/chat/completions"
+            : "/responses";
+        const admittedUrl = `${state.selected.endpoint.canonicalUrl.replace(/\/$/u, "")}${suffix}`;
+        const scope = requests.createScope({
+          permit,
+          args: artifact.semantic,
+          request: {
+            providerConnectionId:
+              state.selected.connection.providerConnectionId,
+            connectionRevision: state.selected.connection.revision,
+            endpointRef: state.selected.connection.endpointRef,
+            egressPolicyRef: state.selected.profile.egressPolicyRefs[0],
+            actionId,
+            signal,
+          },
+          connection: state.selected.connection,
+          currentConnection: () =>
+            resolveNativeSessionSelection(state.selectionInput).connection,
+          admittedUrl,
+          modelId: model.id,
+          api: model.api,
+          maxRequestBytes: state.selected.limits.maxRequestBytes,
+          headersTimeoutMs: state.selected.limits.headersTimeoutMs,
+          profileRevision: state.selected.effective.profileRevision,
+          credentialTarget: state.selected.connection.credentialRef,
+          allowLocalLoopback: state.selected.endpoint.locality === "loopback",
+        });
+        active.actions.push(actionId);
+        return scope;
+      },
+      assertCurrent,
+    });
+    await runtime.registerNativeProvider(provider);
+    assertCurrent();
+    const agentDir = join(directory, "agent");
+    mkdirSync(agentDir, { recursive: true });
+    const settingsManager = SettingsManager.inMemory({
+      compaction: { enabled: false },
+      retry: { enabled: false },
+      cacheWarming: "off",
+    });
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: state.selected.state.workspace.canonicalPath,
+      agentDir,
+      settingsManager,
+      noExtensions: true,
+      noSkills: true,
+      noThemes: true,
+      noPromptTemplates: true,
+      noContextFiles: true,
+    });
+    state.owner.bind(settingsManager, "settings-manager");
+    state.owner.bind(resourceLoader, "resource-loader");
+    const options = {
+      cwd: state.selected.state.workspace.canonicalPath,
+      agentDir,
+      model,
+      modelRuntime: runtime,
+      sessionManager: state.manager,
+      settingsManager,
+      resourceLoader,
+      tools: [],
+    };
+    state.owner.bind(options, "sdk-options");
+    const { session } = await createAgentSession(options);
+    try {
+      assertCurrent();
+    } catch (error) {
+      session.dispose();
+      throw error;
+    }
+    return { session, policy, resolver, requests, assertCurrent };
   }
   async function bind(value) {
     const state = value && prepared.get(value.handle);
@@ -663,6 +1283,7 @@ export function createNativeSessionFactory({
     const committed = replay(request);
     if (
       committed.result.sessionId !== value.piSessionId ||
+      committed.result.policyRevision !== state.policyRevision ||
       !isDeepStrictEqual(committed.branchAnchor, value.branchAnchor)
     )
       throw unavailable();
@@ -670,6 +1291,8 @@ export function createNativeSessionFactory({
     const current = state.sessionMap.preview(state.key, state.manager);
     if (!isDeepStrictEqual(current.anchor, state.preview)) throw unavailable();
     const before = store.cursor();
+    let initialized,
+      activated = false;
     try {
       const bound = state.sessionMap.bind(state.key, state.manager);
       if (
@@ -684,19 +1307,527 @@ export function createNativeSessionFactory({
         sessionId: committed.result.sessionId,
         sessionRevision: committed.result.sessionRevision,
       });
+      initialized = await initialize(state);
+      state.runtime = initialized;
+      const currentAnchor = state.sessionMap.bind(
+        state.key,
+        state.manager,
+      ).anchor;
+      const anchorRow = store
+        .list(state.key.scopeId, 0, state.key.sessionId)
+        .records.findLast(
+          ({ kind, record }) =>
+            kind === "branchAnchor" &&
+            record.branchAnchorId === currentAnchor.branchAnchorId &&
+            record.piSessionId === state.key.sessionId,
+        );
+      if (!anchorRow) throw unavailable();
+      const verifyAnchor = () => {
+        const actual = store.get(anchorRow.record.recordId);
+        if (
+          actual.kind !== "branchAnchor" ||
+          actual.record.scopeId !== state.key.scopeId ||
+          actual.record.piSessionId !== state.key.sessionId ||
+          actual.record.branchAnchorId !== currentAnchor.branchAnchorId
+        )
+          throw unavailable();
+        if (store.deletionEpoch() !== state.selected.state.deletionEpoch)
+          throw unavailable();
+      };
+      state.dynamicReferences.set(anchorRow.record.recordId, verifyAnchor);
+      state.dynamicReferences.set(currentAnchor.branchAnchorId, verifyAnchor);
+      const entries = state.manager.getEntries();
+      const parents = new Set(
+        entries.map((entry) => entry.parentId).filter((id) => id !== null),
+      );
+      const leaves = entries
+        .filter((entry) => !parents.has(entry.id))
+        .map((entry) => entry.id);
+      state.sessionMap.publish(state.key.sessionId, {
+        schemaVersion: 1,
+        protocolVersion: 2,
+        recordId: anchorRow.record.recordId,
+        eventId: randomUUID(),
+        createdAt: new Date().toISOString(),
+        sourceIds: [anchorRow.record.recordId],
+        durable: true,
+        kind: "session.tree_updated",
+        payload: {
+          sessionId: state.key.sessionId,
+          branchAnchorId: currentAnchor.branchAnchorId,
+          leaves,
+        },
+      });
+      state.outbox = [];
+      sessions.set(state.key.sessionId, state);
+      activated = true;
     } finally {
-      state.sessionMap.dispose(state.key);
+      if (!activated) {
+        initialized?.session.dispose();
+        state.sessionMap.dispose(state.key);
+      }
     }
-    throw unavailable();
   }
   async function dispose(value) {
     const state = value && prepared.get(value.handle);
     if (!state || state.result !== value) throw unavailable();
     if (state.closed) return;
-    state.closed = true;
-    state.dispose();
-    state.owner.dispose();
-    state.lease.close();
+    if (state.disposing) return state.disposing;
+    state.disposing = (async () => {
+      let failure;
+      try {
+        if (state.preparing) {
+          state.preflightAbort.abort();
+          await state.preflightDone;
+        }
+        if (state.activeRun) {
+          const active = state.activeRun;
+          active.controller.abort();
+          await state.runtime.session.abort();
+          await active.promise;
+          if (state.deliveryError) throw state.deliveryError;
+        }
+      } catch (error) {
+        failure = error;
+      } finally {
+        sessions.delete(state.key.sessionId);
+        state.sessionMap.dispose(state.key);
+        try {
+          state.runtime?.session.dispose();
+        } catch (error) {
+          failure ??= error;
+        }
+        state.closed = true;
+        state.dispose();
+        try {
+          state.owner.dispose();
+        } catch (error) {
+          failure ??= error;
+        }
+        try {
+          state.lease.close();
+        } catch (error) {
+          failure ??= error;
+        }
+      }
+      if (failure) throw failure;
+    })();
+    return state.disposing;
   }
-  return Object.freeze({ prepare, restore, bind, dispose });
+  function onEvents(listener) {
+    if (typeof listener !== "function") throw unavailable();
+    eventListeners.add(listener);
+    return () => eventListeners.delete(listener);
+  }
+  function live(sessionId) {
+    const state = sessions.get(sessionId);
+    if (!state || state.closed || state.deliveryError) throw unavailable();
+    state.runtime.assertCurrent();
+    return state;
+  }
+  function publish(state, active, kind, payload, durable, receipts = []) {
+    const published = state.sessionMap.publish(
+      state.key.sessionId,
+      {
+        schemaVersion: 1,
+        protocolVersion: 2,
+        recordId: active.runRecordId,
+        eventId: randomUUID(),
+        createdAt: new Date().toISOString(),
+        sourceIds: [active.runRecordId],
+        durable,
+        kind,
+        payload,
+      },
+      receipts,
+    );
+    if (published.frame) state.outbox = [published.frame.event];
+    for (const listener of eventListeners) {
+      try {
+        listener(state.key.sessionId);
+      } catch (error) {
+        state.deliveryError = error;
+      }
+    }
+  }
+  async function runPrompt(state, active) {
+    let terminal;
+    try {
+      state.runtime.assertCurrent();
+      if (active.controller.signal.aborted) throw unavailable();
+      await state.runtime.session.prompt(active.task.text, {
+        expandPromptTemplates: false,
+      });
+      if (active.controller.signal.aborted) throw unavailable();
+      state.runtime.assertCurrent();
+      const message = state.runtime.session.messages.at(-1);
+      if (
+        !message ||
+        message.role !== "assistant" ||
+        !["stop", "length"].includes(message.stopReason) ||
+        !active.actions.length
+      )
+        throw unavailable();
+      const history = store.list(
+        state.key.scopeId,
+        0,
+        state.key.sessionId,
+      ).records;
+      for (const actionId of active.actions) {
+        const action = history.findLast(
+          ({ kind, record }) =>
+            kind === "action" && record.actionId === actionId,
+        )?.record;
+        const outcome = history.findLast(
+          ({ kind, record }) =>
+            kind === "outcome" && record.actionId === actionId,
+        )?.record;
+        if (
+          action?.state !== "completed" ||
+          outcome?.effectState !== "observed-success"
+        )
+          throw unavailable();
+      }
+      const text = message.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("");
+      const redacted = await control.redact(text, active.controller.signal);
+      state.runtime.assertCurrent();
+      const candidate = await captureNativeSnapshot({
+        store,
+        workspace: state.selected.state.workspace,
+        caller: { ...active.caller, scopeId: state.key.scopeId },
+        assertCurrent: state.runtime.assertCurrent,
+        control,
+        signal: active.controller.signal,
+      });
+      state.runtime.assertCurrent();
+      state.dynamicReferences.set(candidate.recordId, () => {
+        const row = store.get(candidate.recordId);
+        if (
+          row.record.scopeId !== state.key.scopeId ||
+          row.record.digest !== candidate.digest
+        )
+          throw unavailable();
+        Snapshot.load(store, candidate.recordId);
+      });
+      for (let start = 0; start < redacted.text.length;) {
+        let end = Math.min(start + 8192, redacted.text.length);
+        if (
+          end < redacted.text.length &&
+          /[\uD800-\uDBFF]/u.test(redacted.text[end - 1])
+        )
+          end--;
+        publish(
+          state,
+          active,
+          "turn.stream_delta",
+          {
+            runId: active.runId,
+            turnId: active.turnId,
+            delta: redacted.text.slice(start, end),
+          },
+          false,
+        );
+        start = end;
+      }
+      terminal = {
+        kind: "turn.completed",
+        payload: {
+          runId: active.runId,
+          candidateSnapshotId: candidate.recordId,
+          finalRevision: candidate.baseRevision,
+        },
+        state: "completed",
+      };
+    } catch (error) {
+      const clean = active.actions.every(
+        (actionId) => active.scopeCleanup.get(actionId) === true,
+      );
+      terminal =
+        active.controller.signal.aborted && clean
+          ? {
+              kind: "turn.canceled",
+              payload: { runId: active.runId, cleanedUp: true },
+              state: "canceled",
+            }
+          : {
+              kind: "turn.failed",
+              payload: {
+                runId: active.runId,
+                error: {
+                  code: "UNCERTAIN_EFFECT",
+                  message: "The run could not be completed.",
+                  correlationId: active.correlationId,
+                  retryable: false,
+                },
+              },
+              state: "failed",
+            };
+      active.error = error;
+    }
+    state.finishing = true;
+    try {
+      store.releaseWorkspace(
+        state.key.scopeId,
+        state.key.sessionId,
+        active.ownership.epoch,
+      );
+      state.activeRun = undefined;
+      const record = {
+        ...active.run,
+        recordId: randomUUID(),
+        state: terminal.state,
+      };
+      publish(state, active, terminal.kind, terminal.payload, true, [
+        { kind: "run", record },
+      ]);
+      active.completed = terminal.kind;
+    } finally {
+      state.finishing = false;
+    }
+  }
+  async function preparePrompt(command, signal) {
+    const state = live(command?.sessionId);
+    if (
+      command.op !== "session.prompt" ||
+      command.scopeId !== state.key.scopeId ||
+      command.expectedConfigRevision !==
+        state.selected.effective.configRevision ||
+      command.expectedProfileRevision !==
+        state.selected.effective.profileRevision ||
+      command.expectedPolicyRevision !== state.policyRevision ||
+      typeof command.payload?.text !== "string" ||
+      (command.payload.contextArtifactIds?.length ?? 0) !== 0 ||
+      state.activeRun ||
+      state.preparing ||
+      state.finishing ||
+      signal?.aborted
+    )
+      throw unavailable();
+    state.preparing = true;
+    state.preflightAbort = new AbortController();
+    const preflightSignal = signal
+      ? AbortSignal.any([signal, state.preflightAbort.signal])
+      : state.preflightAbort.signal;
+    let finishPreflight;
+    state.preflightDone = new Promise((resolve) => {
+      finishPreflight = resolve;
+    });
+    let ownership, active;
+    try {
+      ownership = store.acquireWorkspace(
+        state.key.scopeId,
+        state.key.sessionId,
+      );
+      const assertCurrent = () => {
+        state.runtime.assertCurrent();
+        const owner = store.workspaceOwner(state.key.scopeId);
+        if (
+          !owner ||
+          owner.ownerSessionId !== state.key.sessionId ||
+          owner.epoch !== ownership.epoch ||
+          preflightSignal.aborted
+        )
+          throw unavailable();
+      };
+      const snapshot = await captureNativeSnapshot({
+        store,
+        workspace: state.selected.state.workspace,
+        caller: {
+          sessionId: state.key.sessionId,
+          scopeId: state.key.scopeId,
+          configRevision: state.selected.effective.configRevision,
+          profileRevision: state.selected.effective.profileRevision,
+          policyRevision: state.policyRevision,
+          resolveReference: state.resolveReference,
+        },
+        assertCurrent,
+        control,
+        signal: preflightSignal,
+      });
+      const task = await stageNativeTaskArtifact({
+        control,
+        directory,
+        workspaceId: state.key.scopeId,
+        text: command.payload.text,
+        assertCurrent,
+        signal: preflightSignal,
+      });
+      const admission = commitNativePromptAdmission({
+        store,
+        selected: state.selected,
+        committed: state.committed,
+        manager: state.manager,
+        sessionMap: state.sessionMap,
+        task,
+        snapshot,
+        ownership,
+        assertCurrent,
+        policyRevision: state.policyRevision,
+      });
+      active = {
+        ...admission,
+        controller: new AbortController(),
+        argumentReferences: new Map(),
+        scopeCleanup: new Map(),
+        actions: [],
+        correlationId: command.correlationId,
+      };
+      state.activeRun = active;
+      for (const id of [
+        snapshot.recordId,
+        task.record.artifactId,
+        active.run.profileId,
+        ...active.run.grantIds,
+        ...active.run.roleBindingRefs,
+        active.run.branchAnchorId,
+      ]) {
+        state.dynamicReferences.set(id, () => {
+          if (!active.caller.resolveReference(id, state.key.scopeId))
+            throw unavailable();
+          if (id === task.record.artifactId) {
+            const record = store.get(task.record.recordId);
+            if (
+              record.kind !== "artifact" ||
+              record.record.digest !== task.record.digest
+            )
+              throw unavailable();
+          }
+        });
+      }
+      for (const id of [active.runId, active.runRecordId, active.turnId])
+        state.dynamicReferences.set(id, () => {
+          const row = store.get(active.runRecordId);
+          if (
+            row.kind !== "run" ||
+            row.record.runId !== active.runId ||
+            row.record.scopeId !== state.key.scopeId
+          )
+            throw unavailable();
+        });
+      active.promise = Promise.resolve()
+        .then(() => runPrompt(state, active))
+        .catch((error) => {
+          state.deliveryError = error;
+          for (const listener of eventListeners) {
+            try {
+              listener(state.key.sessionId);
+            } catch (notificationError) {
+              state.deliveryError = notificationError;
+            }
+          }
+        });
+      publish(
+        state,
+        active,
+        "turn.started",
+        { runId: active.runId, turnId: active.turnId },
+        true,
+      );
+      return { accepted: true, runId: active.runId, turnId: active.turnId };
+    } catch (error) {
+      if (active) {
+        active.controller.abort();
+        await active.promise;
+      } else if (ownership)
+        store.releaseWorkspace(
+          state.key.scopeId,
+          state.key.sessionId,
+          ownership.epoch,
+        );
+      throw error;
+    } finally {
+      state.preparing = false;
+      finishPreflight();
+    }
+  }
+  async function cancel({ sessionId }) {
+    const state = sessions.get(sessionId);
+    if (!state || state.closed) throw unavailable();
+    const active = state.activeRun;
+    if (!active) {
+      if (!state.preparing) throw unavailable();
+      state.preflightAbort.abort();
+      await state.preflightDone;
+      if (store.workspaceOwner(state.key.scopeId)?.ownerSessionId === sessionId)
+        throw unavailable();
+      return { canceled: true };
+    }
+    active.controller.abort();
+    await state.runtime.session.abort();
+    await active.promise;
+    if (state.deliveryError || active.completed !== "turn.canceled")
+      throw unavailable();
+    return { canceled: true };
+  }
+  function subscribe(sessionId, afterSeq) {
+    const state = live(sessionId);
+    const followed = state.sessionMap.follow(state.key, afterSeq);
+    state.channel = followed.channel;
+    state.outbox = [...followed.replay];
+    return { sessionId, scopeId: state.key.scopeId, afterSeq };
+  }
+  function unsubscribe(sessionId) {
+    const state = live(sessionId);
+    state.sessionMap.unfollow(state.key);
+    state.channel = undefined;
+    state.outbox = [];
+  }
+  function drainEvents(sessionId) {
+    const state = live(sessionId);
+    if (!state.channel) throw unavailable();
+    if (state.deliveryError) throw state.deliveryError;
+    if (state.outbox.length) {
+      const frames = [];
+      let bytes = 0;
+      while (
+        state.outbox.length &&
+        frames.length < TRANSPORT_LIMITS.rendererMaxFrames
+      ) {
+        const next = state.outbox[0];
+        const size = Buffer.byteLength(JSON.stringify(next)) + 4;
+        if (bytes + size > TRANSPORT_LIMITS.rendererMaxBytes) break;
+        frames.push(state.outbox.shift());
+        bytes += size;
+      }
+      if (!frames.length) throw unavailable();
+      return {
+        frames,
+        morePending:
+          state.outbox.length > 0 ||
+          state.channel.bridge.status().pendingFrames > 0,
+      };
+    }
+    const drained = state.channel.bridge.drain();
+    return {
+      frames: drained.frames.map((frame) => frame.event),
+      morePending: drained.morePending,
+    };
+  }
+  return Object.freeze({
+    prepare,
+    restore,
+    bind,
+    dispose,
+    preparePrompt,
+    cancel,
+    onEvents,
+    subscribe,
+    unsubscribe,
+    drainEvents,
+    get hasReadySession() {
+      for (const state of sessions.values()) {
+        if (state.deliveryError) continue;
+        try {
+          state.runtime.assertCurrent();
+          return true;
+        } catch (error) {
+          state.deliveryError ??= error;
+        }
+      }
+      return false;
+    },
+  });
 }

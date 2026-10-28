@@ -30,6 +30,7 @@ const selection = {
 const session = {
   sessionId: "session_1",
   sessionRevision: "sr_1",
+  policyRevision: "7",
   readiness: { state: "ready" },
 };
 const tick = async () => {
@@ -191,7 +192,7 @@ describe("native profile and session setup", () => {
     expect(button("Send").disabled).toBe(true);
   });
 
-  it("refreshes native ports after a ready session while the unwired Send remains blocked", async () => {
+  it("refreshes native ports, sends the actual revision context, and waits for cancellation cleanup", async () => {
     const initial = ipc.invoke.getMockImplementation()!;
     let handshakes = 0;
     ipc.invoke.mockImplementation(async (cmd, args) => {
@@ -200,6 +201,8 @@ describe("native profile and session setup", () => {
         handshakes++;
         (result as any).readiness.ports.provider = handshakes > 1;
         (result as any).readiness.ports.generation = handshakes > 1;
+        (result as any).readiness.ports.workspace = false;
+        (result as any).readiness.ports.modules = false;
       }
       return result;
     });
@@ -220,10 +223,96 @@ describe("native profile and session setup", () => {
         ([cmd, args]) => cmd === "subscribe" && args.sessionId === "session_1",
       ),
     ).toBe(true);
-    expect(document.getElementById("composer-status")?.textContent).toContain(
-      "Sending is not available yet",
-    );
+    expect(document.body.textContent).toContain("Workspace tools unavailable");
+    expect(button("Send").disabled).toBe(false);
+    reply = async () => ({ accepted: true, runId: "run_1", turnId: "turn_1" });
+    button("Send").click();
+    await tick();
+    const prompt = sends("session.prompt")[0]![1].payload;
+    expect(prompt).toMatchObject({
+      sessionId: "session_1",
+      scopeId: "ws_1",
+      expectedConfigRevision: "cfg_2",
+      expectedProfileRevision: "pr_2",
+      expectedPolicyRevision: "7",
+      op: "session.prompt",
+      payload: { text: "draft" },
+    });
     expect(button("Send").disabled).toBe(true);
+    let resolveCancel!: (value: unknown) => void;
+    ipc.invoke.mockImplementation(async (cmd, args) =>
+      cmd === "cancel"
+        ? new Promise((resolve) => {
+            resolveCancel = resolve;
+          })
+        : initial(cmd, args),
+    );
+    button("Cancel turn").click();
+    await tick();
+    expect(button("Send").disabled).toBe(true);
+    resolveCancel({ canceled: true });
+    await tick();
+    expect(button("Cancel turn")).toBeUndefined();
+  });
+
+  it("blocks sending if the selected session subscription fails", async () => {
+    const initial = ipc.invoke.getMockImplementation()!;
+    ipc.invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "subscribe") throw new Error("private subscribe failure");
+      return initial(cmd, args);
+    });
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    const input = document.querySelector("textarea")!;
+    input.value = "draft";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    expect(button("Send").disabled).toBe(true);
+    expect(sends("session.prompt")).toHaveLength(0);
+  });
+
+  it("preserves the draft when prompt acknowledgement is malformed", async () => {
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    reply = async () => ({
+      accepted: true,
+      runId: "run_1",
+      turnId: "turn_1",
+      extra: true,
+    });
+    const input = document.querySelector("textarea")!;
+    input.value = "keep draft";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    button("Send").click();
+    await tick();
+    expect(input.value).toBe("keep draft");
+    expect(button("Cancel turn")).toBeUndefined();
+  });
+
+  it("replays the same start request after stale revision without resending the prompt", async () => {
+    await configured();
+    button("Use this profile").click();
+    await tick();
+    const firstStart = sends("session.start")[0]![1];
+    reply = async (op) => {
+      if (op === "session.prompt") throw { code: "STALE_REVISION" };
+      if (op === "session.start") return { ...session, policyRevision: "8" };
+      return selection;
+    };
+    const input = document.querySelector("textarea")!;
+    input.value = "keep draft";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    button("Send").click();
+    await tick();
+    await tick();
+    expect(sends("session.prompt")).toHaveLength(1);
+    expect(sends("session.start")[1]![1]).toEqual(firstStart);
+    expect(input.value).toBe("keep draft");
+    expect(button("Send").disabled).toBe(false);
   });
 
   it("preserves the selected profile when the readiness refresh fails", async () => {
