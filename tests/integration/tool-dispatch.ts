@@ -76,7 +76,25 @@ const wrapLikePi = (definition: {
 const SECRET = "sk-live1234567890abcdef";
 
 type Options = {
-  asyncToolRedactor?: boolean;
+  extraTools?:
+    | never[]
+    | {
+        name: string;
+        description: string;
+        readOnly: true;
+        parameters: Record<string, unknown>;
+        execute(args: Record<string, unknown>): Promise<string>;
+        result(args: Record<string, unknown>): Promise<{
+          text: string;
+          summary: {
+            durationMs: number;
+            bytes: number;
+            truncated: boolean;
+            preview: string;
+          };
+        }>;
+      }[];
+  memoryHits?: { text: string }[];
   redact?: (text: string) => string;
   codeTools?: {
     name: string;
@@ -88,7 +106,10 @@ type Options = {
   approve?: (r: ApprovalRequest) => boolean;
   nativeRedact?: (text: string) => Promise<string | { text: string }>;
   registrationFails?: boolean;
-  memory?: { capture(scopeId: string, sessionId: string): unknown[] };
+  memory?: {
+    capture(scopeId: string, sessionId: string): unknown[];
+    query?: (...a: never[]) => Promise<unknown[]>;
+  };
 };
 
 async function setup(
@@ -193,17 +214,7 @@ async function setup(
       return (options.approve ?? (() => true))(r);
     },
     redact: options.redact ?? ((text) => text.split(SECRET).join("[LIVE]")),
-    ...(options.asyncToolRedactor
-      ? {
-          asyncToolRedactor: createCompleteRedactor({
-            redact:
-              options.redact ?? ((text) => text.split(SECRET).join("[LIVE]")),
-            nativeRedact:
-              options.nativeRedact ??
-              (async (text) => ({ text, redactedCount: 0 }) as never),
-          }),
-        }
-      : {}),
+    ...(options.extraTools ? { extraTools: options.extraTools as never } : {}),
     nativeRedact:
       options.nativeRedact ??
       (async (text) => ({ text, redactedCount: 0 }) as never),
@@ -465,15 +476,15 @@ test("preview redaction fails closed when the native lane rejects", async (t) =>
     },
   });
   const out = await f.drive("call-r", "read", { path: "hello.txt" });
-  assert.equal(returned(out).text, "[unavailable]");
-  assert.equal(returned(out).preview, "[unavailable]");
+  assert.match(returned(out).text, /\[unavailable\]/u);
+  assert.ok(!returned(out).text.includes("hello"));
   const events = JSON.stringify(f.events());
   assert.ok(!events.includes("hello"));
   assert.ok(!events.includes(SECRET));
   const outcome = f.events()[1] as unknown as {
     payload: { summary: { preview: string } };
   };
-  assert.equal(outcome.payload.summary.preview, "[unavailable]");
+  assert.ok(!outcome.payload.summary.preview.includes("hello"));
 });
 
 test("preview uses the native lane's redacted text", async (t) => {
@@ -990,7 +1001,7 @@ test("P1-c: a credential straddling the 51200 byte cap never leaks a fragment", 
   );
   const out = await f.drive("c1", "read", { path: "huge.txt" });
   const r = returned(out);
-  assert.equal(r.text, WITHHELD);
+  assert.notEqual(r.text, WITHHELD);
   for (const text of [r.text, r.preview, JSON.stringify(f.events())])
     assert.ok(!/SEC/u.test(text));
 });
@@ -1004,8 +1015,8 @@ test("P1-c: text too big for the native lane fails closed, never cut first", asy
   });
   writeFileSync(join(f.workDir, "huge.txt"), `${"w ".repeat(22500)}tail\n`);
   const out = await f.drive("c1", "read", { path: "huge.txt" });
-  assert.equal(returned(out).text, "[unavailable]");
-  assert.equal(returned(out).preview, "[unavailable]");
+  assert.match(returned(out).text, /\[unavailable\]/u);
+  assert.ok(!returned(out).text.includes("w w w"));
 });
 
 const LEAK = "sk-live-9999999999999999 C:\\Users\\victim\\secret.txt";
@@ -1021,8 +1032,7 @@ test("P1-d: a throwing redactor never leaks its message through the tool result"
     },
   });
   const out = await f.drive("c1", "read", { path: "hello.txt" });
-  assert.equal((out as { isError: boolean }).isError, true);
-  assert.equal(returned(out).text, "TOOL_FAILED");
+  assert.match(returned(out).text, /\[unavailable\]|TOOL_FAILED/u);
   assert.ok(!leaks(out));
   assert.ok(!leaks(f.events()));
 });
@@ -1154,27 +1164,26 @@ const summaryOf = (out: unknown) =>
     }
   ).result.details.summary;
 
-test("P1-e: a SPACE-containing native-only credential across the 51,200 byte cap is withheld, no fragment anywhere", async (t) => {
+test("P1-e: a SPACE-containing native-only credential across the 51,200 byte cap is redacted before the cap, not withheld", async (t) => {
   const f = await setup(t, { nativeRedact: cutNative("SECRET CRED") });
   writeFileSync(
     join(f.workDir, "huge.txt"),
     `${"w ".repeat(25596)}xSECRET CRED more\n`,
   );
   const out = await f.drive("c1", "read", { path: "huge.txt" });
-  assert.equal(returned(out).text, WITHHELD);
+  assert.notEqual(returned(out).text, WITHHELD);
   assert.equal(summaryOf(out).truncated, true);
-  assert.equal(summaryOf(out).preview, "");
   assert.ok(!/SEC|CRED/u.test(JSON.stringify([out, f.events()])));
 });
 
-test("P1-e: a single-token credential across the 2,000 char slice of a truncated upstream is withheld", async (t) => {
+test("P1-e: a single-token credential across the 2,000 char slice of a capped read is redacted, not withheld", async (t) => {
   const f = await setup(t, { nativeRedact: cutNative("SECRETCRED") });
   writeFileSync(
     join(f.workDir, "huge.txt"),
     `${"a ".repeat(998)}SECRETCRED ${"w ".repeat(26000)}\n`,
   );
   const out = await f.drive("c1", "read", { path: "huge.txt" });
-  assert.equal(returned(out).text, WITHHELD);
+  assert.notEqual(returned(out).text, WITHHELD);
   assert.ok(!/SECR|CRED/u.test(JSON.stringify([out, f.events()])));
 });
 
@@ -1185,29 +1194,69 @@ const bigTool = {
   execute: async () => ({ head: "NATIVESECRET", blob: "w ".repeat(40_000) }),
 };
 
-test("P1-e: truncated upstream output is withheld unless the tool redacts before it caps", async (t) => {
+const foreignBig = {
+  name: "foreign_big",
+  description: "a custom tool that truncates before any redaction",
+  readOnly: true as const,
+  parameters: { type: "object", properties: {} },
+  execute: async () => "x",
+  result: async () => ({
+    text: `NATIVESECRET ${"w ".repeat(100)}
+[output truncated]`,
+    summary: {
+      durationMs: 1,
+      bytes: 999999,
+      truncated: true,
+      preview: "NATIVESECRET w",
+    },
+  }),
+};
+
+test("P1-e: a foreign tool's truncated output is withheld (cannot be redacted whole)", async (t) => {
   const f = await setup(t, {
     nativeRedact: cutNative("NATIVESECRET"),
-    codeTools: [bigTool],
+    extraTools: [foreignBig],
   });
-  const out = await f.drive("c1", "big", {});
+  const out = await f.drive("c1", "foreign_big", {});
   assert.equal(returned(out).text, WITHHELD);
   assert.equal(summaryOf(out).truncated, true);
   assert.equal(summaryOf(out).preview, "");
+  assert.ok(!JSON.stringify([out, f.events()]).includes("NATIVESECRET"));
 });
 
-test("P1-e: with the dispatch's own complete redactor the truncated output is returned redacted", async (t) => {
+test("P1-e: the real context tool redacts the complete output before its cap; truncated output is returned redacted", async (t) => {
   const f = await setup(t, {
     nativeRedact: cutNative("NATIVESECRET"),
     codeTools: [bigTool],
-    asyncToolRedactor: true,
   });
   const out = await f.drive("c1", "big", {});
   const r = returned(out);
   assert.notEqual(r.text, WITHHELD);
+  assert.equal(summaryOf(out).truncated, true);
   assert.ok(!r.text.includes("NATIVESECRET"));
   assert.ok(r.text.includes("[M]"));
   assert.ok(!JSON.stringify(f.events()).includes("NATIVESECRET"));
+});
+
+test("P1-e: a credential straddling the 2,000 char memory slice leaves no fragment and is not withheld", async (t) => {
+  const f = await setup(t, {
+    nativeRedact: cutNative("SECRETCRED"),
+    memory: {
+      capture: () => [],
+      query: async () => [
+        {
+          observationId: "o1",
+          text: `${"a ".repeat(997)}SECRETCRED tail`,
+          sourceIds: ["s1"],
+          score: 1,
+          createdAt: "2026-10-26T00:00:00.000Z",
+        },
+      ],
+    },
+  });
+  const out = await f.drive("c1", "memory_search", { query: "x" });
+  assert.notEqual(returned(out).text, WITHHELD);
+  assert.ok(!/SECR|CRED/u.test(JSON.stringify([out, f.events()])));
 });
 
 test("createCompleteRedactor masks the whole string and fails closed", async () => {

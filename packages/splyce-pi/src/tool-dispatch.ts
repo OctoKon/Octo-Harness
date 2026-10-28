@@ -251,12 +251,16 @@ export interface ToolDispatchDeps {
   >;
   limits?: { timeoutMs: number; maxOutputBytes: number };
   /**
-   * Set ONLY when the workspace/context tools redact before they cap (needs tools that accept async
-   * redactors; the current tools do not, so leave it unset until then), e.g. `createCompleteRedactor(...)`. Then upstream truncation happens
-   * after redaction and truncated output is still safe to return (it is redacted again here). When
-   * absent, any output the tool truncated is WITHHELD: it cannot be redacted whole here.
+   * Overrides the complete redactor the dispatch passes to its workspace and context tools (default:
+   * `createCompleteRedactor(deps)`). Those tools redact the COMPLETE output before any cap, so their
+   * truncation happens after redaction and truncated output is safe to return.
    */
   asyncToolRedactor?: CompleteRedactor;
+  /**
+   * Custom read-only tools NOT built with the complete redactor. Anything they truncate cannot be
+   * redacted whole here, so their truncated output is WITHHELD.
+   */
+  extraTools?: readonly ContextTool[];
 }
 
 interface Call {
@@ -356,6 +360,8 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     signal?: AbortSignal,
   ): Promise<string> => (await redactStrict(text, signal)) ?? UNAVAILABLE;
 
+  const complete: CompleteRedactor =
+    deps.asyncToolRedactor ?? createCompleteRedactor(deps);
   const workspaceTools = createWorkspaceTools({
     workspaces,
     grants,
@@ -363,9 +369,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     sessionId: caller.sessionId,
     workspaceId: deps.workspaceId,
     ...(deps.limits ? { limits: deps.limits } : {}),
-    // TODO(tools-redact-before-cap): pass asyncToolRedactor here once the tools accept async redactors;
-    // today they call the redactor synchronously, so the sync one stays.
-    redact: deps.redact,
+    redact: complete,
   });
   const root = workspaces.workspace(deps.workspaceId)?.canonicalPath;
   const contextTools: readonly ContextTool[] =
@@ -373,16 +377,20 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
       ? createAgentContextTools({
           ...deps.context,
           workspaceRoot: root,
-          redact: redactSync,
+          redact: complete,
         })
       : [];
+  const extraTools = deps.extraTools ?? [];
   const impls = new Map<string, WorkspaceTool | ContextTool>([
     ...Object.entries(workspaceTools),
     ...contextTools.map((t): [string, ContextTool] => [t.name, t]),
+    ...extraTools.map((t): [string, ContextTool] => [t.name, t]),
   ]);
+  const untrusted = new Set<WorkspaceTool | ContextTool>(extraTools);
   const caps = new Map<string, Capability>(Object.entries(CAPABILITY));
   // Context tools are read-only: fs.read (session grant, never consumed).
-  for (const tool of contextTools) caps.set(tool.name, "fs.read");
+  for (const tool of [...contextTools, ...extraTools])
+    caps.set(tool.name, "fs.read");
 
   /** Provenance: Pi copies `parameters` by reference into the AgentTool it builds from our definition. */
   const brand = new WeakMap<object, string>();
@@ -397,7 +405,6 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
   // here (a credential may straddle its cut): it is withheld unless the tool redacts before it caps.
   const truncatedUpstream = (text: string, truncated: boolean): boolean =>
     truncated || /\n\[output truncated\]$/u.test(text);
-  const canTrustTruncated = deps.asyncToolRedactor !== undefined;
   const owned = new WeakSet<object>();
 
   const tools: readonly DispatchTool[] = Object.freeze(
@@ -426,7 +433,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
             const r = await impl.result(args, signal, call.actionId);
             if (
               truncatedUpstream(r.text, r.summary.truncated) &&
-              !canTrustTruncated
+              untrusted.has(impl)
             ) {
               const { preview: _preview, ...rest } = r.summary;
               return {
@@ -456,7 +463,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
                 summary !== undefined &&
                 (summary.truncated || summary.preview.length >= PREVIEW_MAX);
               const preview =
-                summary && (!previewCut || canTrustTruncated)
+                summary && (!previewCut || !untrusted.has(impl))
                   ? (await redactFinal(summary.preview, signal)).slice(
                       0,
                       PREVIEW_MAX,
