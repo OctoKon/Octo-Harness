@@ -1,15 +1,16 @@
-// Splyce expo demo: page-based autoplay presentation with manual (wheel/touch/keyboard) control.
-// Classic script so the page works from file:// as well as over HTTP.
+// Splyce expo demo: manual, scroll-driven paged storytelling.
+// Each page is pinned; wheel/trackpad/touch/keys scrub its progress (reversible), and scrolling past
+// either end transitions to the neighbouring page. Classic script so file:// works as well as HTTP.
 (() => {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const clamp = (v, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
-  const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
   const root = document.documentElement;
   const pages = [...document.querySelectorAll('.deck > .page')];
-  const IDLE_RESUME_MS = 20000;
-  const WHEEL_PX_PER_TIMELINE = 1400;
-  const NAV_THRESHOLD = 120;
-  const NAV_COOLDOWN_MS = 750;
+  const NAV_THRESHOLD = 90; // px of extra scroll past a page end before moving on
+  const NAV_LOCK_MS = 650; // ignore input right after a page change
+  const INERTIA_GAP_MS = 140; // wheel events closer than this are one (inertial) gesture
+  const NAV_LOCK_MAX_MS = 1600;
+  const KEY_STEP = 0.2;
 
   /* ---------- theme ---------- */
 
@@ -40,6 +41,40 @@
     }
   });
 
+  /* ---------- word-masked headings ---------- */
+
+  // Wrap every word of the display headings so each can rise out of its own mask.
+  function splitWords(node) {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const frag = document.createDocumentFragment();
+        for (const part of child.textContent.split(/(\s+)/)) {
+          if (!part) continue;
+          if (/^\s+$/.test(part)) {
+            frag.append(' ');
+            continue;
+          }
+          const w = document.createElement('span');
+          w.className = 'w';
+          const inner = document.createElement('span');
+          inner.textContent = part;
+          w.append(inner);
+          frag.append(w);
+        }
+        child.replaceWith(frag);
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        splitWords(child);
+      }
+    }
+  }
+  for (const h of document.querySelectorAll('.page .display, .page .h2')) {
+    h.classList.remove('reveal');
+    h.querySelectorAll('.reveal').forEach((n) => n.classList.remove('reveal'));
+    h.setAttribute('aria-label', h.textContent.replace(/\s+/g, ' ').trim());
+    splitWords(h);
+    h.querySelectorAll('.w').forEach((w) => w.setAttribute('aria-hidden', 'true'));
+  }
+
   /* ---------- scripted app session ---------- */
 
   const sim = document.getElementById('sim');
@@ -54,13 +89,14 @@
 
   function renderSession(p) {
     let text = '';
-    if (p < 0.15) text = typeSlice(MSG1, p, 0.03, 0.11);
+    if (p < 0.15) text = typeSlice(MSG1, p, 0.02, 0.11);
     else if (p >= 0.38 && p < 0.55) text = typeSlice(MSG2, p, 0.38, 0.49);
     if (typed.textContent !== text) typed.textContent = text;
     composer.classList.toggle('typing', text.length > 0);
     sendBtn.classList.toggle('pressing', (p > 0.12 && p < 0.15) || (p > 0.51 && p < 0.55));
     allowBtn.classList.toggle('pressing', p > 0.66 && p < 0.71);
-    sim.dataset.mode = p >= 0.15 ? 'convo' : 'landing';
+    const mode = p >= 0.15 ? 'convo' : 'landing';
+    if (sim.dataset.mode !== mode) sim.dataset.mode = mode;
     for (const el of items) {
       el.classList.toggle('show', p >= Number(el.dataset.at));
       if (el.dataset.done) el.classList.toggle('done', p >= Number(el.dataset.done));
@@ -76,13 +112,13 @@
 
   function renderProvider(p) {
     fields.forEach((input, i) => {
-      const a = 0.05 + i * 0.16;
-      let value = typeSlice(input.dataset.full, p, a, a + 0.13);
-      if (input.type === 'password' && p >= 0.84) value = '';
+      const a = 0.04 + i * 0.17;
+      let value = typeSlice(input.dataset.full, p, a, a + 0.14);
+      if (input.type === 'password' && p >= 0.86) value = '';
       if (input.value !== value) input.value = value;
     });
-    saveBtn.classList.toggle('pressing', p > 0.78 && p < 0.84);
-    const msg = p >= 0.84 ? SAVED_TEXT : '';
+    saveBtn.classList.toggle('pressing', p > 0.8 && p < 0.86);
+    const msg = p >= 0.86 ? SAVED_TEXT : '';
     if (saved.textContent !== msg) saved.textContent = msg;
   }
   saveBtn.addEventListener('click', () => {
@@ -99,24 +135,24 @@
   function setupFlow(sec) {
     const stage = sec.querySelector('[data-stage]');
     const steps = [...sec.querySelectorAll('.steps li')];
-    const flow = { steps, diagram: null, placeholder: null };
+    let diagram = null;
+    let placeholder = null;
     const entry = window.SplyceFlows?.[sec.dataset.flow];
     try {
       if (typeof entry?.mount !== 'function') throw new Error('script not loaded');
       const host = document.createElement('div');
       stage.replaceChildren(host);
-      const api = entry.mount(host);
-      if (typeof api?.setProgress !== 'function') throw new Error('mount() returned no setProgress');
-      flow.diagram = api;
+      diagram = entry.mount(host);
+      if (typeof diagram?.setProgress !== 'function') throw new Error('mount() returned no setProgress');
       sec.classList.add('has-diagram');
     } catch (err) {
-      // Missing or broken diagram: show a step placeholder so the presentation keeps working.
+      // Missing or broken diagram: show a step placeholder so the page keeps working.
       console.warn(`Splyce demo: diagram "${sec.dataset.flow}" unavailable (${err.message}); showing placeholder.`);
-      const card = document.createElement('div');
-      card.className = 'ph-card';
-      card.innerHTML = `${MARK}<strong></strong><span></span>`;
-      stage.replaceChildren(card);
-      flow.placeholder = card;
+      diagram = null;
+      placeholder = document.createElement('div');
+      placeholder.className = 'ph-card';
+      placeholder.innerHTML = `${MARK}<strong></strong><span></span>`;
+      stage.replaceChildren(placeholder);
     }
     return (p) => {
       const n = steps.length;
@@ -125,50 +161,73 @@
         li.classList.toggle('on', i < count);
         li.classList.toggle('cur', i === count - 1);
       });
-      if (flow.diagram) flow.diagram.setProgress(easeInOut(p));
+      if (diagram) diagram.setProgress(p);
       else {
-        flow.placeholder.style.setProperty('--p', p.toFixed(3));
+        placeholder.style.setProperty('--p', p.toFixed(3));
         const label = steps[count - 1]?.textContent ?? '';
-        const strong = flow.placeholder.querySelector('strong');
+        const strong = placeholder.querySelector('strong');
         if (strong.textContent !== label) {
           strong.textContent = label;
-          flow.placeholder.querySelector('span').textContent = `Step ${count} of ${n}`;
+          placeholder.querySelector('span').textContent = `Step ${count} of ${n}`;
         }
       }
     };
   }
 
-  /* ---------- page timelines: D = animation ms, H = hold ms (about 2 minutes total) ---------- */
+  /* ---------- pages: L = scroll px to scrub the page, R = share of progress used by text reveals ---------- */
 
-  const timing = {
-    hero: [3200, 3000],
-    app: [30000, 3500],
-    architecture: [9000, 3000],
-    turn: [12000, 3000],
-    safety: [11000, 3000],
-    memory: [10000, 3000],
-    subagents: [10000, 3000],
-    provider: [8000, 3500],
-    team: [3000, 5000],
+  const config = {
+    hero: { L: 900, R: 0.4 },
+    app: { L: 4200, R: 0.12 },
+    architecture: { L: 2200, R: 0.2 },
+    turn: { L: 2800, R: 0.18 },
+    safety: { L: 2600, R: 0.18 },
+    memory: { L: 2400, R: 0.2 },
+    subagents: { L: 2400, R: 0.2 },
+    provider: { L: 1800, R: 0.25 },
+    team: { L: 1000, R: 0.6 },
   };
   const deck = pages.map((page) => {
-    const [D, H] = timing[page.id] ?? [3000, 3000];
+    const { L, R } = config[page.id] ?? { L: 1200, R: 0.4 };
     let render = () => {};
     if (page.id === 'app') render = renderSession;
     else if (page.id === 'provider') render = renderProvider;
     else if (page.dataset.flow) render = setupFlow(page);
-    return { page, D, H, render, scrub: render.length > 0 && page.id !== 'hero' };
+    // Reveal order: DOM order, except the visual (diagram, app window, form) follows right after the headline.
+    const all = [...page.querySelectorAll('.reveal, .w')];
+    const visual = all.filter((n) => n.matches('.stage, .win, .setup'));
+    const rest = all.filter((n) => !visual.includes(n));
+    const lastWord = rest.findLastIndex((n) => n.classList.contains('w'));
+    rest.splice(lastWord + 1, 0, ...visual);
+    return { page, L, R, render, reveals: rest, entry: page.id === 'hero' ? R : R * 0.6, last: -1 };
   });
 
-  /* ---------- player state ---------- */
+  function renderPage(d, p) {
+    if (Math.abs(p - d.last) < 0.0004) return;
+    d.last = p;
+    // Text and blocks reveal in DOM order across the first R of progress.
+    const n = d.reveals.length;
+    const span = d.R * 0.45;
+    d.reveals.forEach((el, i) => {
+      const start = n > 1 ? (i / (n - 1)) * (d.R - span) : 0;
+      el.style.setProperty('--r', clamp((p - start) / span).toFixed(3));
+    });
+    // The rest drives the page's own story, finishing a little before the end so it can be read.
+    const q = clamp((p - d.R) / (0.94 - d.R));
+    d.page.style.setProperty('--q', q.toFixed(4));
+    d.render(q);
+    // Small screens: content taller than the page pans with progress instead of scrolling natively.
+    const overflow = d.page.scrollHeight - d.page.clientHeight;
+    d.page.scrollTop = overflow > 2 ? overflow * clamp((p - d.entry) / (0.94 - d.entry)) : 0;
+  }
 
-  const el = (id) => document.getElementById(id);
-  const playBtn = el('p-play');
-  const fill = el('p-fill');
-  const bar = el('progress-bar');
-  const pIndex = el('p-index');
-  const dotsNav = el('dots');
-  el('p-total').textContent = String(pages.length);
+  /* ---------- navigation chrome ---------- */
+
+  const $ = (id) => document.getElementById(id);
+  const fill = $('p-fill');
+  const bar = $('progress-bar');
+  const pIndex = $('p-index');
+  $('p-total').textContent = String(pages.length).padStart(2, '0');
 
   const dots = pages.map((p, i) => {
     const a = document.createElement('a');
@@ -177,75 +236,58 @@
     a.innerHTML = `<span aria-hidden="true">${p.dataset.title}</span>`;
     a.addEventListener('click', (e) => {
       e.preventDefault();
-      pause();
       go(i);
     });
-    dotsNav.append(a);
+    $('dots').append(a);
     return a;
   });
 
+  /* ---------- state ---------- */
+
   let idx = -1;
-  let t = 0;
-  let playing = true;
-  let scrubbed = false;
-  let lastInput = 0;
-  let lastNav = 0;
-  let wheelOverflow = 0;
-  let last = performance.now();
+  let target = 0; // progress the input asks for
+  let shown = 0; // smoothed progress actually rendered
+  let overflowPx = 0;
+  let lockUntil = 0;
+  let lockStart = 0;
+  let lastWheel = 0;
 
-  function setPlaying(on) {
-    playing = on;
-    playBtn.setAttribute('aria-pressed', String(on));
-    playBtn.setAttribute('aria-label', on ? 'Pause autoplay' : 'Play autoplay');
-    el('p-mode').textContent = on ? 'Auto' : 'Manual';
-    if (on) scrubbed = false;
-  }
-  function pause() {
-    lastInput = performance.now();
-    if (playing) setPlaying(false);
-  }
-
-  function go(next, { atEnd = false, dir } = {}) {
-    const n = pages.length;
-    next = ((next % n) + n) % n;
+  function go(next, { atEnd = false } = {}) {
+    next = clamp(next, 0, pages.length - 1);
     if (next === idx) return;
-    const forward = dir ?? (idx === -1 || next > idx || (idx === n - 1 && next === 0) ? 1 : -1);
+    const forward = idx === -1 || next > idx;
     const prev = deck[idx];
     const cur = deck[next];
     if (prev) {
-      const out = prev.page;
-      out.classList.remove('active');
-      out.classList.toggle('up', forward > 0);
-      out.inert = true;
-      out.setAttribute('aria-hidden', 'true');
-      setTimeout(() => {
-        if (!out.classList.contains('active')) out.classList.remove('in');
-      }, 800);
+      prev.page.classList.remove('active');
+      prev.page.classList.toggle('up', forward);
+      prev.page.inert = true;
+      prev.page.setAttribute('aria-hidden', 'true');
     }
     const page = cur.page;
     page.classList.add('snap');
-    page.classList.toggle('up', forward < 0);
-    page.classList.remove('in');
+    page.classList.toggle('up', !forward);
     void page.offsetHeight; // commit the start position before animating in
     page.classList.remove('snap', 'up');
     page.classList.add('active');
     page.inert = false;
     page.removeAttribute('aria-hidden');
-    page.scrollTop = 0;
-    requestAnimationFrame(() => page.classList.add('in'));
 
     idx = next;
-    t = atEnd ? cur.D : 0;
-    scrubbed = atEnd;
-    wheelOverflow = 0;
-    lastNav = performance.now();
-    cur.render(clamp(t / cur.D));
+    target = atEnd ? 1 : cur.entry;
+    shown = atEnd ? 1 : 0; // forward entries animate their opening reveal up to `entry`
+    cur.last = -1;
+    renderPage(cur, shown);
+    overflowPx = 0;
+    lockStart = performance.now();
+    lockUntil = lockStart + NAV_LOCK_MS;
+
     dots.forEach((d, i) => d.setAttribute('aria-current', String(i === idx)));
-    pIndex.textContent = String(idx + 1);
+    pIndex.textContent = String(idx + 1).padStart(2, '0');
     pIndex.classList.remove('tick');
     void pIndex.offsetWidth;
     pIndex.classList.add('tick');
-    el('p-title').textContent = page.dataset.title;
+    $('p-title').textContent = page.dataset.title;
     try {
       history.replaceState(null, '', `#${page.id}`);
     } catch {
@@ -253,173 +295,139 @@
     }
   }
 
-  function frame(now) {
-    const dt = Math.min(now - last, 100);
-    last = now;
-    const cur = deck[idx];
-    if (!document.hidden) {
-      if (playing) {
-        t += dt;
-        if (t >= cur.D + cur.H) go(idx + 1, { dir: 1 });
-      } else if (!scrubbed && t < cur.D) {
-        t = Math.min(cur.D, t + dt);
-      } else if (now - lastInput > IDLE_RESUME_MS) {
-        setPlaying(true);
-      }
+  // Scroll input in pixels: scrub the page, then spill over into the next/previous page.
+  function scrub(deltaPx) {
+    const now = performance.now();
+    if (now < lockUntil) return;
+    const d = deck[idx];
+    const dir = Math.sign(deltaPx);
+    if (!dir) return;
+    const before = target;
+    target = clamp(target + deltaPx / d.L);
+    const used = (target - before) * d.L;
+    const atEdge = (dir > 0 && target >= 1) || (dir < 0 && target <= 0);
+    if (!atEdge) {
+      overflowPx = 0;
+      return;
     }
-    const c = deck[idx];
-    c.render(clamp(t / c.D));
-    const local = playing ? clamp(t / (c.D + c.H)) : clamp(t / c.D);
-    fill.style.transform = `scaleX(${local.toFixed(4)})`;
-    bar.style.transform = `scaleX(${((idx + local) / pages.length).toFixed(4)})`;
-    requestAnimationFrame(frame);
-  }
-
-  /* ---------- input ---------- */
-
-  const canScrollInside = (dir) => {
-    const page = deck[idx].page;
-    if (page.scrollHeight <= page.clientHeight + 2) return false;
-    return dir > 0 ? page.scrollTop + page.clientHeight < page.scrollHeight - 2 : page.scrollTop > 2;
-  };
-  const step = (dir) => {
-    if (performance.now() - lastNav < NAV_COOLDOWN_MS) return;
-    go(idx + dir, { atEnd: dir < 0 && deck[idx - 1 < 0 ? pages.length - 1 : idx - 1].scrub, dir });
-  };
-
-  // Manual mode: wheel scrubs the page timeline, then moves to the next/previous page at its ends.
-  function nudge(delta) {
-    pause();
-    const cur = deck[idx];
-    const dir = Math.sign(delta);
-    if (!dir || canScrollInside(dir)) return;
-    if (cur.scrub) {
-      const before = t;
-      t = clamp(t + (delta / WHEEL_PX_PER_TIMELINE) * cur.D, 0, cur.D);
-      scrubbed = true;
-      const overflow = delta - ((t - before) / cur.D) * WHEEL_PX_PER_TIMELINE;
-      if ((dir > 0 && t >= cur.D) || (dir < 0 && t <= 0)) wheelOverflow += Math.abs(overflow);
-      else wheelOverflow = 0;
-    } else {
-      wheelOverflow += Math.abs(delta);
-    }
-    if (wheelOverflow > NAV_THRESHOLD) {
-      wheelOverflow = 0;
-      step(dir);
-    }
+    overflowPx += Math.abs(deltaPx - used);
+    if (overflowPx < NAV_THRESHOLD) return;
+    if (dir > 0 && idx < pages.length - 1) go(idx + 1);
+    else if (dir < 0 && idx > 0) go(idx - 1, { atEnd: true });
+    overflowPx = 0;
   }
 
   addEventListener(
     'wheel',
     (e) => {
-      if (e.ctrlKey) return; // browser zoom
-      const dir = Math.sign(e.deltaY);
-      if (canScrollInside(dir)) {
-        pause();
-        return;
-      }
+      if (e.ctrlKey) return; // pinch / browser zoom
       e.preventDefault();
-      nudge(e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY);
+      const now = performance.now();
+      // An inertial trackpad stream that triggered a page change keeps the lock until it dies down.
+      if (now < lockUntil + INERTIA_GAP_MS && now - lastWheel < INERTIA_GAP_MS && now - lockStart < NAV_LOCK_MAX_MS) {
+        lockUntil = Math.max(lockUntil, now + 1);
+      }
+      lastWheel = now;
+      const dy = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      scrub(e.deltaMode === 1 ? dy * 32 : e.deltaMode === 2 ? dy * innerHeight : dy);
     },
     { passive: false },
   );
 
   let touchY = null;
-  addEventListener('touchstart', (e) => {
-    touchY = e.touches[0].clientY;
-    pause();
-  }, { passive: true });
-  addEventListener('touchend', (e) => {
-    if (touchY === null) return;
-    const dy = touchY - e.changedTouches[0].clientY;
-    touchY = null;
-    if (Math.abs(dy) < 50 || canScrollInside(Math.sign(dy))) return;
-    lastNav = 0;
-    step(Math.sign(dy));
-  }, { passive: true });
+  addEventListener('touchstart', (e) => (touchY = e.touches[0].clientY), { passive: true });
+  addEventListener(
+    'touchmove',
+    (e) => {
+      if (touchY === null) return;
+      e.preventDefault();
+      const y = e.touches[0].clientY;
+      scrub((touchY - y) * 2.4);
+      touchY = y;
+    },
+    { passive: false },
+  );
+  addEventListener('touchend', () => (touchY = null), { passive: true });
 
   function toggleFullscreen() {
     const req = document.fullscreenElement ? document.exitFullscreen() : root.requestFullscreen?.();
     req?.catch?.((err) => console.warn('Splyce demo: fullscreen unavailable.', err.message));
   }
 
+  function stepKey(dir) {
+    const d = deck[idx];
+    if ((dir > 0 && target >= 1) || (dir < 0 && target <= 0)) {
+      if (dir > 0 && idx < pages.length - 1) go(idx + 1);
+      else if (dir < 0 && idx > 0) go(idx - 1, { atEnd: true });
+      return;
+    }
+    target = clamp(target + dir * KEY_STEP);
+    if (dir > 0 && target < d.entry) target = d.entry;
+  }
+
   addEventListener('keydown', (e) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.target.closest?.('input:not([readonly]), textarea, select, [contenteditable="true"]')) return;
     const k = e.key;
-    if (k === ' ') {
-      e.preventDefault();
-      if (playing) pause();
-      else setPlaying(true);
-      return;
-    }
     if (k === 'f' || k === 'F') {
       e.preventDefault();
       toggleFullscreen();
       return;
     }
-    const fwd = ['ArrowRight', 'ArrowDown', 'PageDown'].includes(k);
-    const back = ['ArrowLeft', 'ArrowUp', 'PageUp'].includes(k);
-    if (!fwd && !back && k !== 'Home' && k !== 'End') return;
-    e.preventDefault();
-    pause();
-    lastNav = 0;
-    if (k === 'Home') go(0, { dir: -1 });
-    else if (k === 'End') go(pages.length - 1, { dir: 1 });
-    else go(idx + (fwd ? 1 : -1), { dir: fwd ? 1 : -1 });
+    let handled = true;
+    if (k === 'ArrowDown' || k === 'ArrowRight') stepKey(1);
+    else if (k === 'ArrowUp' || k === 'ArrowLeft') stepKey(-1);
+    else if (k === 'PageDown' || (k === ' ' && !e.shiftKey)) go(idx + 1);
+    else if (k === 'PageUp' || (k === ' ' && e.shiftKey)) go(idx - 1, { atEnd: true });
+    else if (k === 'Home') go(0);
+    else if (k === 'End') go(pages.length - 1, { atEnd: true });
+    else handled = false;
+    if (handled) e.preventDefault();
   });
 
-  playBtn.addEventListener('click', () => (playing ? pause() : setPlaying(true)));
-  el('p-prev').addEventListener('click', () => {
-    pause();
-    go(idx - 1, { dir: -1 });
-  });
-  el('p-next').addEventListener('click', () => {
-    pause();
-    go(idx + 1, { dir: 1 });
-  });
-  el('p-full').addEventListener('click', toggleFullscreen);
+  $('p-prev').addEventListener('click', () => go(idx - 1, { atEnd: true }));
+  $('p-next').addEventListener('click', () => go(idx + 1));
+  $('p-full').addEventListener('click', toggleFullscreen);
 
   // In-page links (#app, #hero) move the deck instead of scrolling.
   document.addEventListener('click', (e) => {
     const a = e.target.closest?.('a[href^="#"]');
-    if (!a || a.closest('#dots') || a.classList.contains('skip')) return;
-    const i = pages.findIndex((p) => `#${p.id}` === a.getAttribute('href'));
+    if (!a || a.closest('#dots')) return;
+    const href = a.getAttribute('href');
+    const i = pages.findIndex((p) => `#${p.id}` === href);
     if (i < 0) return;
     e.preventDefault();
-    pause();
     go(i);
   });
-  document.querySelector('.skip').addEventListener('click', (e) => {
-    e.preventDefault();
-    pause();
-    go(pages.findIndex((p) => p.id === 'app'));
-  });
 
-  // Booth mode: dim the player and hide the cursor while autoplay runs untouched.
-  let idleTimer = 0;
-  const wake = () => {
-    document.body.classList.remove('idle');
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => playing && document.body.classList.add('idle'), 2500);
-  };
-  addEventListener('pointermove', wake, { passive: true });
-  wake();
+  /* ---------- frame loop: ease rendered progress toward the input ---------- */
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(now - last, 64);
+    last = now;
+    const d = deck[idx];
+    shown = reduced.matches ? target : shown + (target - shown) * (1 - Math.exp(-dt / 110));
+    if (Math.abs(target - shown) < 0.0005) shown = target;
+    renderPage(d, shown);
+    fill.style.transform = `scaleX(${shown.toFixed(4)})`;
+    bar.style.transform = `scaleX(${((idx + shown) / pages.length).toFixed(4)})`;
+    requestAnimationFrame(frame);
+  }
 
   /* ---------- start ---------- */
 
   // Hash links and focus can scroll even an overflow:hidden container; the deck must never move.
-  const deckEl = document.getElementById('deck');
+  const deckEl = $('deck');
   deckEl.addEventListener('scroll', () => {
     if (deckEl.scrollTop || deckEl.scrollLeft) deckEl.scrollTo(0, 0);
   });
-
   pages.forEach((p) => {
     p.inert = true;
     p.setAttribute('aria-hidden', 'true');
   });
   const start = pages.findIndex((p) => `#${p.id}` === location.hash);
-  go(start < 0 ? 0 : start, { dir: 1 });
+  go(start < 0 ? 0 : start);
   requestAnimationFrame((now) => {
     last = now;
     requestAnimationFrame(frame);

@@ -53,17 +53,17 @@
             <path pathLength="1" d="M2 18h3.2c4.2 0 5-6 8.3-6" opacity=".55" />
             <path pathLength="1" d="M2 12h5.5c3.1 0 3.4-6 6.5-6H22" opacity=".3" />
           </svg>
-          <p class="eyebrow reveal" style="--d: 1">Splyce · Windows desktop coding agent</p>
+          <p class="eyebrow reveal">Splyce · Windows desktop coding agent</p>
           <h1 class="display">
-            <span class="reveal" style="--d: 2">Barebones by default.</span>
-            <span class="reveal" style="--d: 3">Modular by choice.</span>
-            <em class="reveal" style="--d: 4">Evidence by design.</em>
+            <span class="reveal">Barebones by default.</span>
+            <span class="reveal">Modular by choice.</span>
+            <em class="reveal">Evidence by design.</em>
           </h1>
-          <p class="lede reveal" style="--d: 5">
+          <p class="lede reveal">
             A local-first coding agent for Windows. Your project, your provider, your approval.
           </p>
-          <a class="cue reveal" style="--d: 6" href="#app">
-            See it work
+          <a class="cue reveal" href="#app">
+            Scroll to begin
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
           </a>
         </div>
@@ -72,12 +72,12 @@
       <!-- 2. The app -->
       <section class="page" id="app" data-title="The app">
         <div class="page-inner app-stage">
-          <div class="app-head reveal">
-            <p class="eyebrow">01 · The app</p>
+          <div class="app-head">
+            <p class="eyebrow reveal">01 · The app</p>
             <h2 class="h2">One conversation. <em>Every step visible.</em></h2>
           </div>
 
-          <div class="win reveal" style="--d: 1" role="img" aria-label="Simulated Splyce Work screen. The user asks Splyce to read README.md, Splyce reads it and answers, then the user asks to run echo splyce, approves it once, and the output splyce is shown.">
+          <div class="win reveal" role="img" aria-label="Simulated Splyce Work screen. The user asks Splyce to read README.md, Splyce reads it and answers, then the user asks to run echo splyce, approves it once, and the output splyce is shown.">
             <div class="win-bar" aria-hidden="true">
               <span class="win-title">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2 6h3.2c4.2 0 5 6 8.3 6H22" /><path d="M2 18h3.2c4.2 0 5-6 8.3-6" opacity=".55" /><path d="M2 12h5.5c3.1 0 3.4-6 6.5-6H22" opacity=".3" /></svg>
@@ -182,12 +182,12 @@
         <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">02 · Architecture</p>
-            <h2 class="h2 reveal" style="--d: 1">Three layers. <em>One agent loop.</em></h2>
-            <p class="body reveal" style="--d: 2">
+            <h2 class="h2 reveal">Three layers. <em>One agent loop.</em></h2>
+            <p class="body reveal">
               A Tauri 2 shell in Rust, a Svelte 5 interface, and a Node engine built on Pi. The window never talks to your
               provider directly; every request goes through the engine and its policy.
             </p>
-            <ol class="steps reveal" style="--d: 3">
+            <ol class="steps reveal">
               <li>Svelte UI shows the conversation and approvals</li>
               <li>Typed bridge into the Rust shell</li>
               <li>Pi-based engine runs the agent loop</li>
@@ -195,7 +195,7 @@
               <li>Requests go to the provider you chose</li>
             </ol>
           </div>
-          <div class="stage reveal" style="--d: 2" data-stage></div>
+          <div class="stage reveal" data-stage></div>
         </div>
       </section>
 
@@ -203,11 +203,11 @@
         <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">03 · A chat turn, end to end</p>
-            <h2 class="h2 reveal" style="--d: 1">From prompt <em>to proof.</em></h2>
-            <p class="body reveal" style="--d: 2">
+            <h2 class="h2 reveal">From prompt <em>to proof.</em></h2>
+            <p class="body reveal">
               Each turn follows the same path, and each step leaves something you can inspect afterwards.
             </p>
-            <ol class="steps reveal" style="--d: 3">
+            <ol class="steps reveal">
               <li>You describe the task</li>
               <li>Policy is checked before dispatch</li>
               <li>The model streams a reply or asks for a tool</li>
@@ -216,7 +216,7 @@
               <li>The answer lands with its evidence</li>
             </ol>
           </div>
-          <div class="stage reveal" style="--d: 2" data-stage></div>
+          <div class="stage reveal" data-stage></div>
         </div>
       </section>
 
@@ -224,18 +224,18 @@
         <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">04 · Safety by default</p>
-            <h2 class="h2 reveal" style="--d: 1">Nothing happens <em>behind your back.</em></h2>
-            <p class="body reveal" style="--d: 2">
+            <h2 class="h2 reveal">Nothing happens <em>behind your back.</em></h2>
+            <p class="body reveal">
               Safety is the default path, not a setting you have to find.
             </p>
-            <ol class="steps reveal" style="--d: 3">
+            <ol class="steps reveal">
               <li>Secrets are redacted before anything is shown or saved</li>
               <li>Tools are confined to the chosen workspace</li>
               <li>Commands and writes ask for approval</li>
               <li>When something is uncertain, it fails closed</li>
             </ol>
           </div>
-          <div class="stage reveal" style="--d: 2" data-stage></div>
+          <div class="stage reveal" data-stage></div>
         </div>
       </section>
 
@@ -243,18 +243,18 @@
         <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">05 · Memory and code search</p>
-            <h2 class="h2 reveal" style="--d: 1">Context it can find, <em>and you can see.</em></h2>
-            <p class="body reveal" style="--d: 2">
+            <h2 class="h2 reveal">Context it can find, <em>and you can see.</em></h2>
+            <p class="body reveal">
               Memory is optional and built from committed evidence, not every chat token. Code indexing is a separate path.
             </p>
-            <ol class="steps reveal" style="--d: 3">
+            <ol class="steps reveal">
               <li>Evidence is committed by the engine</li>
               <li>Memory is derived into a per-project store</li>
               <li>Code indexing runs as a separate path</li>
               <li>Answers point back to their sources</li>
             </ol>
           </div>
-          <div class="stage reveal" style="--d: 2" data-stage></div>
+          <div class="stage reveal" data-stage></div>
         </div>
       </section>
 
@@ -262,18 +262,18 @@
         <div class="page-inner split">
           <div class="copy">
             <p class="eyebrow reveal">06 · Helper agents</p>
-            <h2 class="h2 reveal" style="--d: 1">Split the work. <em>Keep it apart.</em></h2>
-            <p class="body reveal" style="--d: 2">
+            <h2 class="h2 reveal">Split the work. <em>Keep it apart.</em></h2>
+            <p class="body reveal">
               Write helpers work in their own Git worktrees; only a reviewed patch reaches your workspace. The engine module exists; desktop session wiring is still in progress.
             </p>
-            <ol class="steps reveal" style="--d: 3">
+            <ol class="steps reveal">
               <li>The main agent hands off a bounded task</li>
               <li>Read helpers share the project</li>
               <li>Write helpers get their own Git worktree</li>
               <li>Only a reviewed patch comes back</li>
             </ol>
           </div>
-          <div class="stage reveal" style="--d: 2" data-stage></div>
+          <div class="stage reveal" data-stage></div>
         </div>
       </section>
 
@@ -282,17 +282,17 @@
         <div class="split provider">
           <div class="copy">
             <p class="eyebrow reveal">07 · Bring your own provider</p>
-            <h2 class="h2 reveal" style="--d: 1">Your endpoint. <em>Your key. Your model.</em></h2>
-            <p class="body reveal" style="--d: 2">
+            <h2 class="h2 reveal">Your endpoint. <em>Your key. Your model.</em></h2>
+            <p class="body reveal">
               Any OpenAI-compatible endpoint works. Today's demo runs on Pollinations. Splyce never switches providers or
               models on its own, and never guesses token limits for a custom model.
             </p>
-            <p class="note reveal" style="--d: 3">
+            <p class="note reveal">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="4" /><path d="m11 11 9 9M16 16l2-2M19 19l2-2" /></svg>
               The API key is stored in Windows Credential Manager and the field is cleared after saving.
             </p>
           </div>
-          <form class="setup reveal" style="--d: 2" aria-label="Provider setup, illustration" onsubmit="return false">
+          <form class="setup reveal" aria-label="Provider setup, illustration" onsubmit="return false">
             <div class="s-eyebrow">Your workspace</div>
             <div class="s-title">Connect a provider</div>
             <label class="f">
@@ -328,17 +328,17 @@
             <path pathLength="1" d="M2 18h3.2c4.2 0 5-6 8.3-6" opacity=".55" />
             <path pathLength="1" d="M2 12h5.5c3.1 0 3.4-6 6.5-6H22" opacity=".3" />
           </svg>
-          <p class="eyebrow reveal" style="--d: 1">Built by the OctoKon team</p>
-          <h2 class="display sm reveal" style="--d: 2">Your project. Your provider. <em>Your approval.</em></h2>
-          <p class="lede reveal" style="--d: 3">Splyce is free software under the AGPL-3.0 license.</p>
-          <div class="chips reveal" style="--d: 4">
+          <p class="eyebrow reveal">Built by the OctoKon team</p>
+          <h2 class="display sm reveal">Your project. Your provider. <em>Your approval.</em></h2>
+          <p class="lede reveal">Splyce is free software under the AGPL-3.0 license.</p>
+          <div class="chips reveal">
             <span class="chip">Windows desktop</span>
             <span class="chip">Tauri 2 · Rust</span>
             <span class="chip">Svelte 5</span>
             <span class="chip">Pi-based engine</span>
             <span class="chip">AGPL-3.0</span>
           </div>
-          <a class="cue reveal" style="--d: 5" href="#hero">
+          <a class="cue reveal" href="#hero">
             Back to top
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 15 6-6 6 6" /></svg>
           </a>
@@ -346,19 +346,15 @@
       </section>
     </main>
 
-    <div class="player" id="player" role="group" aria-label="Presentation controls">
+    <div class="player" id="player" role="group" aria-label="Page navigation">
       <button type="button" class="p-btn" id="p-prev" aria-label="Previous page">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6" /></svg>
-      </button>
-      <button type="button" class="p-btn p-play" id="p-play" aria-label="Pause autoplay" aria-pressed="true">
-        <svg class="i-pause" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6.5" y="5" width="3.5" height="14" rx="1" /><rect x="14" y="5" width="3.5" height="14" rx="1" /></svg>
-        <svg class="i-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.9l10-6.5a1 1 0 0 0 0-1.8l-10-6.5A1 1 0 0 0 8 5.5z" /></svg>
       </button>
       <button type="button" class="p-btn" id="p-next" aria-label="Next page">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
       </button>
       <div class="p-info">
-        <div class="p-meta"><span class="p-count"><b id="p-index">1</b> / <span id="p-total">9</span></span><span class="p-title" id="p-title">Splyce</span><span class="p-mode" id="p-mode">Auto</span></div>
+        <div class="p-meta"><span class="p-count"><b id="p-index">1</b> / <span id="p-total">9</span></span><span class="p-title" id="p-title">Splyce</span></div>
         <div class="p-track"><span id="p-fill"></span></div>
       </div>
       <button type="button" class="p-btn" id="p-full" aria-label="Toggle fullscreen (F)">

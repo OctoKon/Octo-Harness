@@ -411,8 +411,8 @@ a {
   line-height: 1.04;
   letter-spacing: -0.01em;
 }
-.display span,
-.display em {
+.display > span:not(.w),
+.display > em {
   display: block;
 }
 .display em,
@@ -477,18 +477,31 @@ a {
   }
 }
 
-/* Staggered reveal, replayed each time a page becomes active. */
+/* Scroll-linked reveals: main.js sets --r (0..1) per element and --q (story progress) per page. */
 .reveal {
-  opacity: 0;
-  transform: translate3d(0, 22px, 0);
-  transition:
-    opacity 0.5s var(--ease),
-    transform 0.6s var(--ease);
+  opacity: var(--r, 0);
+  transform: translate3d(0, calc((1 - var(--r, 0)) * 28px + var(--q, 0) * var(--par, 0px)), 0);
 }
-.page.in .reveal {
-  opacity: 1;
-  transform: none;
-  transition-delay: calc(0.25s + var(--d, 0) * 0.11s);
+.copy,
+.app-head {
+  transform: translate3d(0, calc(var(--q, 0) * -28px), 0);
+}
+.stage.reveal,
+.win.reveal,
+.setup.reveal {
+  --par: -12px;
+}
+/* Each heading word rises out of its own mask. */
+.w {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  padding: 0 0.08em 0.16em;
+  margin: 0 -0.08em -0.16em;
+}
+.w > span {
+  display: inline-block;
+  transform: translate3d(0, calc((1 - var(--r, 0)) * 112%), 0);
 }
 
 /* ---------- hero ---------- */
@@ -523,26 +536,23 @@ a {
 }
 .hero-mark path {
   stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  transition: stroke-dashoffset 0.9s var(--ease);
+  stroke-dashoffset: calc(1 - var(--r, 0));
 }
-.page.in .hero-mark path {
-  stroke-dashoffset: 0;
-  transition-delay: 0.2s;
+.hero-mark path:nth-child(2) {
+  stroke-dashoffset: calc(1 - var(--r, 0) * 0.98);
 }
-.page.in .hero-mark path:nth-child(2) {
-  transition-delay: 0.4s;
+/* Hero scroll-out: the headline lifts and the cue fades as you start scrolling. */
+.hero .reveal {
+  --par: -56px;
 }
-.page.in .hero-mark path:nth-child(3) {
-  transition-delay: 0.6s;
+.hero .display {
+  transform: translate3d(0, calc(var(--q, 0) * -56px), 0);
 }
-.page.in .hero-mark {
-  animation: float 6s ease-in-out 1.4s infinite;
+.hero .cue.reveal {
+  opacity: calc(var(--r, 0) - var(--q, 0) * 2.5);
 }
-@keyframes float {
-  50% {
-    transform: translate3d(0, -6px, 0);
-  }
+.closing .chips.reveal {
+  --par: -16px;
 }
 
 /* ---------- player ---------- */
@@ -565,18 +575,6 @@ a {
   transition:
     opacity 0.4s var(--ease),
     transform 0.4s var(--ease);
-}
-.idle {
-  cursor: none;
-}
-.idle .player {
-  opacity: 0.28;
-  transform: translate(-50%, 6px);
-}
-.player:hover,
-.player:focus-within {
-  opacity: 1 !important;
-  transform: translateX(-50%) !important;
 }
 .p-btn {
   display: grid;
@@ -601,21 +599,6 @@ a {
 }
 .p-btn:active {
   transform: scale(0.92);
-}
-.p-play {
-  background: var(--primary);
-  color: var(--primary-contrast);
-}
-.p-play:hover {
-  background: var(--secondary);
-  color: var(--primary-contrast);
-}
-.p-play .i-play,
-.p-play[aria-pressed='false'] .i-pause {
-  display: none;
-}
-.p-play[aria-pressed='false'] .i-play {
-  display: block;
 }
 .p-info {
   width: 230px;
@@ -652,12 +635,6 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-soft);
-}
-.p-mode {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 .p-track {
   height: 3px;
@@ -1614,8 +1591,7 @@ pre {
   .page {
     display: block;
     padding: 72px 16px 96px;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    overflow: hidden;
   }
   .page.hero,
   .page.closing {
@@ -1688,8 +1664,15 @@ pre {
   .page.up,
   .page > :not(.hero-glow),
   .page.up > :not(.hero-glow),
-  .reveal {
+  .reveal,
+  .w > span,
+  .copy,
+  .app-head,
+  .hero .display {
     transform: none !important;
+  }
+  .w > span {
+    opacity: var(--r, 0);
   }
   .page {
     transition:
@@ -1699,23 +1682,14 @@ pre {
   .page.active {
     transition: opacity 0.4s linear;
   }
-  .reveal,
-  .page.in .reveal {
-    transition: opacity 0.4s linear;
-  }
   .bg-grid,
   .blob,
   .hero-glow,
   .cue svg,
-  .page.in .hero-mark,
   .s-run::after,
   .caret,
   .transcript > .show,
   .done .tool-out {
     animation: none !important;
-  }
-  .hero-mark path {
-    stroke-dashoffset: 0;
-    transition: none;
   }
 }
