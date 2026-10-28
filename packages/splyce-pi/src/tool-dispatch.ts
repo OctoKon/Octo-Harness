@@ -66,6 +66,48 @@ const ARGS_SUMMARY_MAX = 512;
 export const APPROVAL_ARGS_MAX = 16 * 1024;
 const UNAVAILABLE = "[unavailable]";
 
+/**
+ * Complete (fail-closed) redaction: sync scrub + live-secret redactor, then the native lane, on the
+ * WHOLE string. A lane failure yields `[unavailable]`, never raw text. Typed so it can be passed as the
+ * `redact` option of tools that accept async redactors (redact BEFORE any cap).
+ */
+export type CompleteRedactor = (
+  text: string,
+  signal?: AbortSignal,
+) => string | Promise<string>;
+export interface CompleteRedactorDeps {
+  /** Sync live-secret redactor (CredentialResolver.redact). */
+  redact(text: string): string;
+  /** NativeControl.redact (Rust credential.redact lane). */
+  nativeRedact(
+    text: string,
+    signal?: AbortSignal,
+  ): Promise<string | { text: string }>;
+}
+async function strictRedact(
+  deps: CompleteRedactorDeps,
+  text: string,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  try {
+    const out = await deps.nativeRedact(
+      scrubSecrets(deps.redact(text)),
+      signal,
+    );
+    const redacted = typeof out === "string" ? out : out.text;
+    return typeof redacted === "string" ? redacted : undefined;
+  } catch {
+    return undefined;
+  }
+}
+export const createCompleteRedactor =
+  (deps: CompleteRedactorDeps): CompleteRedactor =>
+  async (text, signal) =>
+    (await strictRedact(deps, text, signal)) ?? UNAVAILABLE;
+
+/** Returned instead of any text that an upstream tool truncated before it could be redacted whole. */
+export const WITHHELD = "[output withheld: truncated before redaction]";
+
 export class ToolDispatchError extends Error {
   readonly code:
     | "TOOL_REGISTRY_FROZEN"
@@ -208,6 +250,13 @@ export interface ToolDispatchDeps {
     "index" | "codeTools" | "memory" | "scopeId"
   >;
   limits?: { timeoutMs: number; maxOutputBytes: number };
+  /**
+   * Set ONLY when the workspace/context tools redact before they cap (needs tools that accept async
+   * redactors; the current tools do not, so leave it unset until then), e.g. `createCompleteRedactor(...)`. Then upstream truncation happens
+   * after redaction and truncated output is still safe to return (it is redacted again here). When
+   * absent, any output the tool truncated is WITHHELD: it cannot be redacted whole here.
+   */
+  asyncToolRedactor?: CompleteRedactor;
 }
 
 interface Call {
@@ -298,18 +347,10 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
 
   const redactSync = (text: string): string => scrubSecrets(deps.redact(text));
   /** Sync scrub, then the Rust lane; a lane failure yields a placeholder, never raw text. */
-  const redactStrict = async (
+  const redactStrict = (
     text: string,
     signal?: AbortSignal,
-  ): Promise<string | undefined> => {
-    try {
-      const out = await deps.nativeRedact(redactSync(text), signal);
-      const redacted = typeof out === "string" ? out : out.text;
-      return typeof redacted === "string" ? redacted : undefined;
-    } catch {
-      return undefined;
-    }
-  };
+  ): Promise<string | undefined> => strictRedact(deps, text, signal);
   const redactFinal = async (
     text: string,
     signal?: AbortSignal,
@@ -322,6 +363,8 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     sessionId: caller.sessionId,
     workspaceId: deps.workspaceId,
     ...(deps.limits ? { limits: deps.limits } : {}),
+    // TODO(tools-redact-before-cap): pass asyncToolRedactor here once the tools accept async redactors;
+    // today they call the redactor synchronously, so the sync one stays.
     redact: deps.redact,
   });
   const root = workspaces.workspace(deps.workspaceId)?.canonicalPath;
@@ -350,19 +393,11 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
     }
     return value;
   };
-  /**
-   * A tool caps its own output (preview 2048, text 50 KiB) before this adapter sees it, so a credential
-   * can straddle the cut. When the text may have been cut, drop its trailing partial token BEFORE the
-   * native lane runs; all previews are then derived from the already-redacted full text.
-   */
-  const cutSafe = (text: string, maybeCut: boolean): string => {
-    if (!maybeCut) return text;
-    // keep trailing tool notes such as "[output truncated]"; drop the partial token before them
-    const notes = /(?:\n\[[^\]\n]*\])*$/u.exec(text)?.[0] ?? "";
-    return (
-      text.slice(0, text.length - notes.length).replace(/\S*$/u, "") + notes
-    );
-  };
+  // Never cut before redacting. Output the upstream tool already truncated cannot be redacted whole
+  // here (a credential may straddle its cut): it is withheld unless the tool redacts before it caps.
+  const truncatedUpstream = (text: string, truncated: boolean): boolean =>
+    truncated || /\n\[output truncated\]$/u.test(text);
+  const canTrustTruncated = deps.asyncToolRedactor !== undefined;
   const owned = new WeakSet<object>();
 
   const tools: readonly DispatchTool[] = Object.freeze(
@@ -389,11 +424,20 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
           call.ownImpl = true;
           try {
             const r = await impl.result(args, signal, call.actionId);
-            // Redact the FULL text first, then derive the preview from the redacted text.
-            const body = await redactFinal(
-              cutSafe(r.text, r.summary.truncated),
-              signal,
-            );
+            if (
+              truncatedUpstream(r.text, r.summary.truncated) &&
+              !canTrustTruncated
+            ) {
+              const { preview: _preview, ...rest } = r.summary;
+              return {
+                content: [{ type: "text", text: WITHHELD }],
+                details: {
+                  summary: { ...rest, truncated: true, preview: "" },
+                },
+              };
+            }
+            // Redact the COMPLETE string first, then derive the preview from the redacted text.
+            const body = await redactFinal(r.text, signal);
             return {
               content: [{ type: "text", text: body }],
               details: {
@@ -407,18 +451,17 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
               error instanceof ContextToolError
             ) {
               const summary = (error as WorkspaceToolError).summary;
-              const preview = summary
-                ? (
-                    await redactFinal(
-                      cutSafe(
-                        summary.preview,
-                        summary.truncated ||
-                          summary.preview.length >= PREVIEW_MAX,
-                      ),
-                      signal,
+              // a preview at the 2048 cap (or flagged) was cut upstream: omit it rather than redact a cut
+              const previewCut =
+                summary !== undefined &&
+                (summary.truncated || summary.preview.length >= PREVIEW_MAX);
+              const preview =
+                summary && (!previewCut || canTrustTruncated)
+                  ? (await redactFinal(summary.preview, signal)).slice(
+                      0,
+                      PREVIEW_MAX,
                     )
-                  ).slice(0, PREVIEW_MAX)
-                : "";
+                  : "";
               return {
                 content: [
                   {
@@ -795,28 +838,37 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
         for (const [name, definition] of defs)
           if (session.getToolDefinition?.(name) !== definition) frozen();
       };
+      // A registry rejection must not leave a dangling reservation: discard (durable denied) first.
+      const gate = (toolCallId: string) => {
+        try {
+          registryIntact();
+        } catch (error) {
+          admission.discard(toolCallId, "denied");
+          throw error;
+        }
+      };
       const unbind = live.map((tool) => {
         const guarded: ToolAdmission = {
           check: (...a) => {
-            registryIntact();
+            gate(a[0]);
             admission.check(...a);
           },
           reserve: (...a) => {
-            registryIntact();
+            gate(a[0]);
             admission.reserve(...a);
           },
           prepare: async (...a) => {
-            registryIntact();
+            gate(a[0]);
             await admission.prepare(...a);
           },
           finish: (...a) => {
-            registryIntact();
+            gate(a[0]);
             admission.finish(...a);
           },
           // cleanup must always work
           discard: (...a) => admission.discard(...a),
           async execute(toolCallId, toolName, args, invoke, signal) {
-            registryIntact();
+            gate(toolCallId);
             return admission.execute(
               toolCallId,
               toolName,
