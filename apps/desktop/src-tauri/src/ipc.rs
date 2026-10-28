@@ -325,7 +325,7 @@ impl BridgeState {
                 Some("profile.select" | "session.start" | "setup.read")
             )
             && valid_setup(params["command"].as_str().unwrap(), &params);
-        let mut inner = self.inner.try_lock().map_err(|_| BridgeError::denied())?;
+        let mut inner = self.inner.lock().map_err(|_| BridgeError::engine())?;
         if inner.closed {
             return Err(BridgeError::engine());
         }
@@ -1609,6 +1609,27 @@ mod tests {
             let handshake = state.call("handshake", json!({"protocolVersion":2}))?;
             assert!(valid_handshake(&handshake, &spec));
             assert_eq!(handshake["readiness"]["ports"]["generation"], true);
+            let lease = state.inner.lock().unwrap();
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+            let (result_tx, result_rx) = std::sync::mpsc::channel();
+            let reader = state.clone();
+            let workspace_id = workspace_id.clone();
+            let concurrent = std::thread::spawn(move || {
+                ready_tx.send(()).unwrap();
+                result_tx.send(reader.call("send", json!({"frame":"setup", "command":"sessions.list",
+                    "requestId":"concurrent-read", "payload":{"requestId":"concurrent-read", "workspaceId":workspace_id}}))).ok();
+            });
+            ready_rx.recv().unwrap();
+            let blocked = result_rx.recv_timeout(std::time::Duration::from_millis(100));
+            drop(lease);
+            concurrent.join().unwrap();
+            assert!(
+                matches!(blocked, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
+                "concurrent native calls must queue instead of being denied"
+            );
+            let concurrent = result_rx.recv().unwrap()?;
+            assert!(valid_page_read_view("sessions.list", &concurrent));
+            assert_eq!(concurrent["sessions"].as_array().unwrap().len(), 1);
             Ok(())
         })();
         let stopped = state.stop();
