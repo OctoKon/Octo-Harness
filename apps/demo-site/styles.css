@@ -541,19 +541,6 @@ a {
 .hero-mark path:nth-child(2) {
   stroke-dashoffset: calc(1 - var(--r, 0) * 0.98);
 }
-/* Hero scroll-out: the headline lifts and the cue fades as you start scrolling. */
-.hero .reveal {
-  --par: -56px;
-}
-.hero .display {
-  transform: translate3d(0, calc(var(--q, 0) * -56px), 0);
-}
-.hero .cue.reveal {
-  opacity: calc(var(--r, 0) - var(--q, 0) * 2.5);
-}
-.closing .chips.reveal {
-  --par: -16px;
-}
 
 /* ---------- player ---------- */
 
@@ -1667,8 +1654,7 @@ pre {
   .reveal,
   .w > span,
   .copy,
-  .app-head,
-  .hero .display {
+  .app-head {
     transform: none !important;
   }
   .w > span {

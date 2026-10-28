@@ -1,16 +1,14 @@
-// Splyce expo demo: manual, scroll-driven paged storytelling.
-// Each page is pinned; wheel/trackpad/touch/keys scrub its progress (reversible), and scrolling past
-// either end transitions to the neighbouring page. Classic script so file:// works as well as HTTP.
+// Splyce expo demo: one scroll = one page. Each wheel notch, swipe or key press moves exactly one page;
+// on arrival the page plays its own animation timeline. The user decides when to move on.
+// Classic script so file:// works as well as HTTP.
 (() => {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const clamp = (v, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, v));
   const root = document.documentElement;
   const pages = [...document.querySelectorAll('.deck > .page')];
-  const NAV_THRESHOLD = 90; // px of extra scroll past a page end before moving on
-  const NAV_LOCK_MS = 650; // ignore input right after a page change
-  const INERTIA_GAP_MS = 140; // wheel events closer than this are one (inertial) gesture
-  const NAV_LOCK_MAX_MS = 1600;
-  const KEY_STEP = 0.2;
+  const NAV_LOCK_MS = 700; // ignore input while a page transition runs
+  const GESTURE_GAP_MS = 160; // wheel events closer than this belong to one gesture (trackpad momentum)
+  const SWIPE_PX = 40;
 
   /* ---------- theme ---------- */
 
@@ -174,21 +172,21 @@
     };
   }
 
-  /* ---------- pages: L = scroll px to scrub the page, R = share of progress used by text reveals ---------- */
+  /* ---------- pages: T = animation ms, R = share of the timeline used by text reveals ---------- */
 
   const config = {
-    hero: { L: 900, R: 0.4 },
-    app: { L: 4200, R: 0.12 },
-    architecture: { L: 2200, R: 0.2 },
-    turn: { L: 2800, R: 0.18 },
-    safety: { L: 2600, R: 0.18 },
-    memory: { L: 2400, R: 0.2 },
-    subagents: { L: 2400, R: 0.2 },
-    provider: { L: 1800, R: 0.25 },
-    team: { L: 1000, R: 0.6 },
+    hero: { T: 2400, R: 0.9 },
+    app: { T: 18000, R: 0.08 },
+    architecture: { T: 6500, R: 0.2 },
+    turn: { T: 7500, R: 0.18 },
+    safety: { T: 7000, R: 0.18 },
+    memory: { T: 6500, R: 0.2 },
+    subagents: { T: 6500, R: 0.2 },
+    provider: { T: 7000, R: 0.2 },
+    team: { T: 2600, R: 0.9 },
   };
   const deck = pages.map((page) => {
-    const { L, R } = config[page.id] ?? { L: 1200, R: 0.4 };
+    const { T, R } = config[page.id] ?? { T: 3000, R: 0.5 };
     let render = () => {};
     if (page.id === 'app') render = renderSession;
     else if (page.id === 'provider') render = renderProvider;
@@ -199,7 +197,7 @@
     const rest = all.filter((n) => !visual.includes(n));
     const lastWord = rest.findLastIndex((n) => n.classList.contains('w'));
     rest.splice(lastWord + 1, 0, ...visual);
-    return { page, L, R, render, reveals: rest, entry: page.id === 'hero' ? R : R * 0.6, last: -1 };
+    return { page, T, R, render, reveals: rest, last: -1 };
   });
 
   function renderPage(d, p) {
@@ -213,12 +211,12 @@
       el.style.setProperty('--r', clamp((p - start) / span).toFixed(3));
     });
     // The rest drives the page's own story, finishing a little before the end so it can be read.
-    const q = clamp((p - d.R) / (0.94 - d.R));
+    const q = clamp((p - d.R) / (0.97 - d.R));
     d.page.style.setProperty('--q', q.toFixed(4));
     d.render(q);
-    // Small screens: content taller than the page pans with progress instead of scrolling natively.
+    // Small screens: content taller than the page pans along with its animation.
     const overflow = d.page.scrollHeight - d.page.clientHeight;
-    d.page.scrollTop = overflow > 2 ? overflow * clamp((p - d.entry) / (0.94 - d.entry)) : 0;
+    d.page.scrollTop = overflow > 2 ? overflow * q : 0;
   }
 
   /* ---------- navigation chrome ---------- */
@@ -245,14 +243,11 @@
   /* ---------- state ---------- */
 
   let idx = -1;
-  let target = 0; // progress the input asks for
-  let shown = 0; // smoothed progress actually rendered
-  let overflowPx = 0;
+  let startedAt = 0; // when the current page's timeline started (replays on every arrival)
   let lockUntil = 0;
-  let lockStart = 0;
   let lastWheel = 0;
 
-  function go(next, { atEnd = false } = {}) {
+  function go(next) {
     next = clamp(next, 0, pages.length - 1);
     if (next === idx) return;
     const forward = idx === -1 || next > idx;
@@ -274,13 +269,10 @@
     page.removeAttribute('aria-hidden');
 
     idx = next;
-    target = atEnd ? 1 : cur.entry;
-    shown = atEnd ? 1 : 0; // forward entries animate their opening reveal up to `entry`
+    startedAt = performance.now();
     cur.last = -1;
-    renderPage(cur, shown);
-    overflowPx = 0;
-    lockStart = performance.now();
-    lockUntil = lockStart + NAV_LOCK_MS;
+    renderPage(cur, reduced.matches ? 1 : 0);
+    lockUntil = startedAt + NAV_LOCK_MS;
 
     dots.forEach((d, i) => d.setAttribute('aria-current', String(i === idx)));
     pIndex.textContent = String(idx + 1).padStart(2, '0');
@@ -295,26 +287,12 @@
     }
   }
 
-  // Scroll input in pixels: scrub the page, then spill over into the next/previous page.
-  function scrub(deltaPx) {
+  // One gesture = one page. A trackpad flick is a stream of wheel events; only its first event counts,
+  // and anything during the transition lock is dropped.
+  function step(dir) {
     const now = performance.now();
-    if (now < lockUntil) return;
-    const d = deck[idx];
-    const dir = Math.sign(deltaPx);
-    if (!dir) return;
-    const before = target;
-    target = clamp(target + deltaPx / d.L);
-    const used = (target - before) * d.L;
-    const atEdge = (dir > 0 && target >= 1) || (dir < 0 && target <= 0);
-    if (!atEdge) {
-      overflowPx = 0;
-      return;
-    }
-    overflowPx += Math.abs(deltaPx - used);
-    if (overflowPx < NAV_THRESHOLD) return;
-    if (dir > 0 && idx < pages.length - 1) go(idx + 1);
-    else if (dir < 0 && idx > 0) go(idx - 1, { atEnd: true });
-    overflowPx = 0;
+    if (!dir || now < lockUntil) return;
+    go(idx + dir);
   }
 
   addEventListener(
@@ -323,46 +301,31 @@
       if (e.ctrlKey) return; // pinch / browser zoom
       e.preventDefault();
       const now = performance.now();
-      // An inertial trackpad stream that triggered a page change keeps the lock until it dies down.
-      if (now < lockUntil + INERTIA_GAP_MS && now - lastWheel < INERTIA_GAP_MS && now - lockStart < NAV_LOCK_MAX_MS) {
-        lockUntil = Math.max(lockUntil, now + 1);
-      }
+      const fresh = now - lastWheel > GESTURE_GAP_MS;
       lastWheel = now;
       const dy = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
-      scrub(e.deltaMode === 1 ? dy * 32 : e.deltaMode === 2 ? dy * innerHeight : dy);
+      if (fresh && Math.abs(dy) >= 1) step(Math.sign(dy));
     },
     { passive: false },
   );
 
   let touchY = null;
   addEventListener('touchstart', (e) => (touchY = e.touches[0].clientY), { passive: true });
+  addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
   addEventListener(
-    'touchmove',
+    'touchend',
     (e) => {
       if (touchY === null) return;
-      e.preventDefault();
-      const y = e.touches[0].clientY;
-      scrub((touchY - y) * 2.4);
-      touchY = y;
+      const dy = touchY - e.changedTouches[0].clientY;
+      touchY = null;
+      if (Math.abs(dy) >= SWIPE_PX) step(Math.sign(dy));
     },
-    { passive: false },
+    { passive: true },
   );
-  addEventListener('touchend', () => (touchY = null), { passive: true });
 
   function toggleFullscreen() {
     const req = document.fullscreenElement ? document.exitFullscreen() : root.requestFullscreen?.();
     req?.catch?.((err) => console.warn('Splyce demo: fullscreen unavailable.', err.message));
-  }
-
-  function stepKey(dir) {
-    const d = deck[idx];
-    if ((dir > 0 && target >= 1) || (dir < 0 && target <= 0)) {
-      if (dir > 0 && idx < pages.length - 1) go(idx + 1);
-      else if (dir < 0 && idx > 0) go(idx - 1, { atEnd: true });
-      return;
-    }
-    target = clamp(target + dir * KEY_STEP);
-    if (dir > 0 && target < d.entry) target = d.entry;
   }
 
   addEventListener('keydown', (e) => {
@@ -375,17 +338,19 @@
       return;
     }
     let handled = true;
-    if (k === 'ArrowDown' || k === 'ArrowRight') stepKey(1);
-    else if (k === 'ArrowUp' || k === 'ArrowLeft') stepKey(-1);
-    else if (k === 'PageDown' || (k === ' ' && !e.shiftKey)) go(idx + 1);
-    else if (k === 'PageUp' || (k === ' ' && e.shiftKey)) go(idx - 1, { atEnd: true });
+    if (e.repeat && k !== 'Home' && k !== 'End') {
+      e.preventDefault(); // a held key must not race through pages
+      return;
+    }
+    if (k === 'ArrowDown' || k === 'ArrowRight' || k === 'PageDown' || (k === ' ' && !e.shiftKey)) step(1);
+    else if (k === 'ArrowUp' || k === 'ArrowLeft' || k === 'PageUp' || (k === ' ' && e.shiftKey)) step(-1);
     else if (k === 'Home') go(0);
-    else if (k === 'End') go(pages.length - 1, { atEnd: true });
+    else if (k === 'End') go(pages.length - 1);
     else handled = false;
     if (handled) e.preventDefault();
   });
 
-  $('p-prev').addEventListener('click', () => go(idx - 1, { atEnd: true }));
+  $('p-prev').addEventListener('click', () => go(idx - 1));
   $('p-next').addEventListener('click', () => go(idx + 1));
   $('p-full').addEventListener('click', toggleFullscreen);
 
@@ -400,18 +365,14 @@
     go(i);
   });
 
-  /* ---------- frame loop: ease rendered progress toward the input ---------- */
+  /* ---------- frame loop: play the current page's timeline ---------- */
 
-  let last = performance.now();
   function frame(now) {
-    const dt = Math.min(now - last, 64);
-    last = now;
     const d = deck[idx];
-    shown = reduced.matches ? target : shown + (target - shown) * (1 - Math.exp(-dt / 110));
-    if (Math.abs(target - shown) < 0.0005) shown = target;
-    renderPage(d, shown);
-    fill.style.transform = `scaleX(${shown.toFixed(4)})`;
-    bar.style.transform = `scaleX(${((idx + shown) / pages.length).toFixed(4)})`;
+    const p = reduced.matches ? 1 : clamp((now - startedAt) / d.T);
+    renderPage(d, p);
+    fill.style.transform = `scaleX(${p.toFixed(4)})`;
+    bar.style.transform = `scaleX(${((idx + p) / pages.length).toFixed(4)})`;
     requestAnimationFrame(frame);
   }
 
@@ -428,8 +389,5 @@
   });
   const start = pages.findIndex((p) => `#${p.id}` === location.hash);
   go(start < 0 ? 0 : start);
-  requestAnimationFrame((now) => {
-    last = now;
-    requestAnimationFrame(frame);
-  });
+  requestAnimationFrame(frame);
 })();
