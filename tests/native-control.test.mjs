@@ -23,6 +23,144 @@ function peer() {
 }
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+test("redaction sends the exact request and returns the exact result", async () => {
+  const p = peer();
+  p.bus.on("request", (frame) =>
+    p.reply(frame, { text: "clean", redactedCount: 1 }),
+  );
+  assert.deepEqual(await p.control.redact("input"), {
+    text: "clean",
+    redactedCount: 1,
+  });
+  assert.deepEqual(p.messages[0].native.method, "credential.redact");
+  assert.deepEqual(p.messages[0].native.params, { text: "input" });
+});
+
+test("redaction rejects invalid input without sending", async () => {
+  const p = peer();
+  for (const text of [null, "\ud800"]) {
+    await assert.rejects(p.control.redact(text), {
+      code: "PERSIST_REDACTION_UNAVAILABLE",
+    });
+  }
+  assert.equal(p.messages.length, 0);
+});
+
+test("oversized persistence entries fail locally without closing the channel", async () => {
+  const p = peer();
+  for (const text of ["é".repeat(524289), "\n".repeat(140000)])
+    await assert.rejects(p.control.redact(text), {
+      code: "PERSIST_ENTRY_TOO_LARGE",
+      message: "Persistence entry too large",
+    });
+  assert.equal(p.messages.length, 0);
+  p.bus.on("request", (frame) =>
+    p.reply(frame, { text: "clean", redactedCount: 0 }),
+  );
+  assert.deepEqual(await p.control.redact("small"), {
+    text: "clean",
+    redactedCount: 0,
+  });
+});
+
+test("redaction fails closed on malformed and oversized replies", async () => {
+  for (const value of [
+    {},
+    { text: "clean", redactedCount: 0, extra: true },
+    { text: 1, redactedCount: 0 },
+    { text: "\ud800", redactedCount: 0 },
+    { text: "clean", redactedCount: -1 },
+    { text: "clean", redactedCount: 1.5 },
+    { text: "clean", redactedCount: Number.MAX_SAFE_INTEGER + 1 },
+    { text: "\n".repeat(140000), redactedCount: 0 },
+  ]) {
+    const p = peer();
+    const request = p.control.redact("input");
+    await tick();
+    assert.throws(() => p.reply(p.messages[0], value));
+    await assert.rejects(request, { code: "PERSIST_REDACTION_UNAVAILABLE" });
+  }
+});
+
+test("redaction releases slots on abort, timeout and shutdown and ignores late delivery", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const p = peer();
+  const aborter = new AbortController();
+  const aborted = p.control.redact("first", aborter.signal);
+  await tick();
+  aborter.abort();
+  await assert.rejects(aborted, { code: "PERSIST_REDACTION_UNAVAILABLE" });
+  p.reply(p.messages[0], { text: "late", redactedCount: 0 });
+  const timed = p.control.redact("second");
+  await tick();
+  t.mock.timers.tick(10000);
+  await assert.rejects(timed, { code: "PERSIST_REDACTION_UNAVAILABLE" });
+  p.reply(p.messages[1], { text: "late", redactedCount: 0 });
+  const calls = Array.from({ length: 8 }, () => p.control.redact("next"));
+  await tick();
+  await assert.rejects(p.control.redact("overflow"), {
+    code: "PERSIST_REDACTION_UNAVAILABLE",
+  });
+  p.control.shutdown();
+  await Promise.all(
+    calls.map((call) =>
+      assert.rejects(call, { code: "PERSIST_REDACTION_UNAVAILABLE" }),
+    ),
+  );
+  await assert.rejects(p.control.redact("closed"), {
+    code: "PERSIST_REDACTION_UNAVAILABLE",
+  });
+});
+
+test("redaction hides remote denial and transport failures", async () => {
+  const p = peer();
+  p.bus.on("request", (frame) =>
+    p.control.accept({
+      native: {
+        id: frame.native.id,
+        ok: false,
+        error: { code: "PERSIST_REDACTION_UNAVAILABLE" },
+      },
+    }),
+  );
+  await assert.rejects(p.control.redact("input"), {
+    message: "Persistence redaction unavailable",
+    code: "PERSIST_REDACTION_UNAVAILABLE",
+  });
+  const failed = new NativeControl(async () => {
+    throw new Error("sensitive");
+  });
+  await assert.rejects(failed.redact("input"), {
+    message: "Persistence redaction unavailable",
+    code: "PERSIST_REDACTION_UNAVAILABLE",
+  });
+});
+
+test("redaction rejects a reply followed by shutdown before its continuation", async () => {
+  const p = peer();
+  const request = p.control.redact("input");
+  await tick();
+  p.reply(p.messages[0], { text: "clean", redactedCount: 0 });
+  p.control.shutdown();
+  await assert.rejects(request, { code: "PERSIST_REDACTION_UNAVAILABLE" });
+});
+
+test("redaction rejects an error belonging to the generation protocol", async () => {
+  const p = peer();
+  const request = p.control.redact("input");
+  await tick();
+  assert.throws(() =>
+    p.control.accept({
+      native: {
+        id: p.messages[0].native.id,
+        ok: false,
+        error: { code: "CREDENTIAL_UNAVAILABLE" },
+      },
+    }),
+  );
+  await assert.rejects(request, { code: "PERSIST_REDACTION_UNAVAILABLE" });
+});
+
 test("private peer receives exact bindings and enforces one read and close", async () => {
   const p = peer();
   p.bus.on("request", (frame) =>
@@ -208,4 +346,142 @@ test("pending calls expire and cleanup failure terminates the control", async (t
   t.mock.timers.tick(10_000);
   await Promise.resolve();
   assert.equal(fatal?.code, "CREDENTIAL_UNAVAILABLE");
+});
+
+test("credential status sends only its canonical target and returns only presence", async () => {
+  for (const present of [true, false]) {
+    const p = peer();
+    p.bus.on("request", (frame) => p.reply(frame, { present }));
+    assert.deepEqual(
+      await p.control.credentialStatus({ target: binding().target }),
+      { present },
+    );
+    assert.deepEqual(
+      p.messages.map(({ native }) => [native.method, native.params]),
+      [["credential.status", { target: binding().target }]],
+    );
+  }
+});
+
+test("credential status denies malformed targets and extra authority fields locally", async () => {
+  const p = peer();
+  for (const params of [
+    null,
+    [],
+    {},
+    { target: null },
+    { target: "wrong" },
+    { target: binding().target.toUpperCase() },
+    { target: `other-credential:v1:${"a".repeat(64)}` },
+    { target: binding().target, scopeId: "scope" },
+  ]) {
+    await assert.rejects(p.control.credentialStatus(params), {
+      code: "CREDENTIAL_UNAVAILABLE",
+      message: "Credential unavailable",
+    });
+  }
+  assert.equal(p.messages.length, 0);
+});
+
+test("credential status rejects malformed and mismatched reply shapes", async () => {
+  for (const value of [
+    {},
+    { secret: null },
+    { text: "clean", redactedCount: 0 },
+    { present: null },
+    { present: 1 },
+    { present: "true" },
+    { present: true, target: binding().target },
+  ]) {
+    const p = peer();
+    const request = p.control.credentialStatus({ target: binding().target });
+    await tick();
+    assert.throws(() => p.reply(p.messages[0], value), {
+      code: "CREDENTIAL_UNAVAILABLE",
+    });
+    await assert.rejects(request, { code: "CREDENTIAL_UNAVAILABLE" });
+  }
+  const p = peer();
+  const request = p.control.redact("input");
+  await tick();
+  assert.throws(() => p.reply(p.messages[0], { present: true }));
+  await assert.rejects(request, { code: "PERSIST_REDACTION_UNAVAILABLE" });
+});
+
+test("credential status releases slots on abort timeout and shutdown and fences late results", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const p = peer();
+  const params = { target: binding().target };
+  const aborter = new AbortController();
+  const first = p.control.credentialStatus(params, aborter.signal);
+  await tick();
+  aborter.abort();
+  await assert.rejects(first, { code: "CREDENTIAL_UNAVAILABLE" });
+  p.reply(p.messages[0], { present: true });
+  const timed = p.control.credentialStatus(params);
+  await tick();
+  t.mock.timers.tick(10000);
+  await assert.rejects(timed, { code: "CREDENTIAL_UNAVAILABLE" });
+  p.reply(p.messages[1], { present: true });
+  const calls = Array.from({ length: 8 }, () =>
+    p.control.credentialStatus(params),
+  );
+  await tick();
+  await assert.rejects(p.control.credentialStatus(params), {
+    code: "CREDENTIAL_UNAVAILABLE",
+  });
+  assert.equal(p.messages.length, 10);
+  p.control.shutdown();
+  await Promise.all(
+    calls.map((call) =>
+      assert.rejects(call, { code: "CREDENTIAL_UNAVAILABLE" }),
+    ),
+  );
+  for (const frame of p.messages.slice(2)) p.reply(frame, { present: true });
+  await assert.rejects(p.control.credentialStatus(params), {
+    code: "CREDENTIAL_UNAVAILABLE",
+  });
+});
+
+test("credential status fences a reply followed by abort or shutdown before continuation", async () => {
+  for (const shutdown of [false, true]) {
+    const p = peer();
+    const aborter = new AbortController();
+    const request = p.control.credentialStatus(
+      { target: binding().target },
+      aborter.signal,
+    );
+    await tick();
+    p.reply(p.messages[0], { present: true });
+    if (shutdown) p.control.shutdown();
+    else aborter.abort();
+    await assert.rejects(request, { code: "CREDENTIAL_UNAVAILABLE" });
+  }
+});
+
+test("credential status hides transport errors and remote denial without a missing fallback", async () => {
+  const p = peer();
+  p.bus.on("request", (frame) =>
+    p.control.accept({
+      native: {
+        id: frame.native.id,
+        ok: false,
+        error: { code: "CREDENTIAL_UNAVAILABLE" },
+      },
+    }),
+  );
+  await assert.rejects(
+    p.control.credentialStatus({ target: binding().target }),
+    {
+      code: "CREDENTIAL_UNAVAILABLE",
+      message: "Credential unavailable",
+    },
+  );
+  const failed = new NativeControl(async () => {
+    throw new Error("sensitive");
+  });
+  await assert.rejects(failed.credentialStatus({ target: binding().target }), {
+    code: "CREDENTIAL_UNAVAILABLE",
+    message: "Credential unavailable",
+  });
 });

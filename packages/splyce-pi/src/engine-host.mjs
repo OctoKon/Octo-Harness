@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { createNativeHost } from "./native-host.mjs";
 import { NativeControl } from "./native-control.mjs";
+import { StoreError } from "../dist/store.js";
 import {
   CONTRACT_VERSION,
   PROTOCOL_VERSION,
@@ -177,6 +178,77 @@ export async function runHost(
     } else if (request.method === "native.bootstrap") {
       throw new FrameError();
     } else if (
+      [
+        "native.provider.prepare",
+        "native.provider.commit",
+        "native.provider.read",
+      ].includes(request.method)
+    ) {
+      try {
+        const method = {
+          "native.provider.prepare": "prepareProviderSetup",
+          "native.provider.commit": "commitProviderSetup",
+          "native.provider.read": "readProviderSetup",
+        }[request.method];
+        reply = {
+          id: request.id,
+          ok: true,
+          value: host[method](request.params),
+        };
+      } catch (error) {
+        const codes = [
+          "SETUP_INVALID",
+          "SETUP_UNAVAILABLE",
+          "SETUP_WORKSPACE_UNAVAILABLE",
+          "SETUP_DESCRIPTOR_UNAVAILABLE",
+          "SETUP_REQUEST_CONFLICT",
+          "SETUP_STALE_REVISION",
+          "SETUP_CREDENTIAL_UNAVAILABLE",
+          "SETUP_OUTCOME_UNKNOWN",
+          "SETUP_MODEL_METADATA_REQUIRED",
+          "ENTITY_STALE_REVISION",
+        ];
+        const code = codes.includes(error?.code)
+          ? error.code
+          : "SETUP_OUTCOME_UNKNOWN";
+        reply = {
+          id: request.id,
+          ok: false,
+          error: {
+            code,
+            message: "Provider setup unavailable",
+            correlationId: request.id,
+            retryable: false,
+          },
+        };
+      }
+    } else if (request.method === "native.workspace.admit") {
+      try {
+        const workspace = host.admitWorkspace(request.params);
+        reply = { id: request.id, ok: true, value: workspace };
+      } catch (error) {
+        if (
+          !(error instanceof StoreError) ||
+          ![
+            "WORKSPACE_INPUT",
+            "WORKSPACE_PATH_INVALID",
+            "WORKSPACE_IDENTITY_CHANGED",
+            "WORKSPACE_ADMISSION_CHANGED",
+          ].includes(error.code)
+        )
+          throw error;
+        reply = {
+          id: request.id,
+          ok: false,
+          error: {
+            code: "POLICY_DENIED",
+            message: "Workspace admission unavailable",
+            correlationId: request.id,
+            retryable: false,
+          },
+        };
+      }
+    } else if (
       request.method === "handshake" &&
       Object.keys(request.params).length === 1 &&
       request.params.protocolVersion === PROTOCOL_VERSION
@@ -188,6 +260,45 @@ export async function runHost(
     ) {
       reply = { id: request.id, ok: true, value: { state: "stopped" } };
       shutdown = true;
+    } else if (request.method === "send" && request.params.frame === "setup") {
+      const params = request.params;
+      const validId =
+        typeof params.requestId === "string" &&
+        params.requestId.length > 0 &&
+        Buffer.byteLength(params.requestId, "utf8") <= 128 &&
+        !/[\s\\/]/u.test(params.requestId);
+      if (
+        Object.keys(params).length === 4 &&
+        ["frame", "command", "requestId", "payload"].every((key) =>
+          Object.hasOwn(params, key),
+        ) &&
+        params.command === "metadata" &&
+        validId &&
+        params.payload !== null &&
+        typeof params.payload === "object" &&
+        !Array.isArray(params.payload) &&
+        Object.keys(params.payload).length === 0
+      ) {
+        reply = {
+          id: request.id,
+          ok: true,
+          value: {
+            workspaces: host.listWorkspaces(),
+            readiness: host.handshakeReadiness,
+          },
+        };
+      } else {
+        reply = {
+          id: request.id,
+          ok: false,
+          error: {
+            code: "POLICY_DENIED",
+            message: "Native command unavailable",
+            correlationId: validId ? params.requestId : request.id,
+            retryable: false,
+          },
+        };
+      }
     } else {
       let code = "POLICY_DENIED";
       if (request.method === "send") {

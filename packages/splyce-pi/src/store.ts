@@ -3,21 +3,7 @@
 // never both). Single authority for operational receipts; everything else is a
 // rebuildable projection. Erasable-syntax-only (runs under Node type stripping).
 
-import {
-  CONTRACT_VERSION,
-  PROTOCOL_VERSION,
-  RECORD_SCHEMAS,
-  ContractError,
-  type ContractContext,
-  type RecordKind,
-  type RecordByKind,
-  type SplyceEvent,
-  type SplyceEventDraft,
-  validateEvent,
-  validateRecord,
-  snapshotPersistedJson,
-} from "./contracts.js";
-import { DatabaseSync } from "node:sqlite";
+import { createHash, randomUUID } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -26,6 +12,38 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import {
+  type ActionRecord,
+  type AdmittedWorkspaceRecord,
+  CONTRACT_VERSION,
+  type ContractContext,
+  ContractError,
+  type GrantRecord,
+  PROTOCOL_VERSION,
+  type ProviderEndpointRecord,
+  RECORD_SCHEMAS,
+  type RecordByKind,
+  type RecordKind,
+  type SplyceEvent,
+  type SplyceEventDraft,
+  snapshotPersistedJson,
+  validateEvent,
+  validateRecord,
+} from "./contracts.js";
+import {
+  type SetupInput,
+  SetupMetadataError,
+  type TrustedCatalog,
+  validateSetupMetadata,
+} from "./setup-metadata.js";
+
+export type {
+  SetupInput,
+  SetupMetadata,
+  TrustedCatalog,
+  TrustedCatalogEntry,
+} from "./setup-metadata.js";
 
 const LAYOUT_VERSION = 2 as const;
 
@@ -80,6 +98,8 @@ export interface CallerContext {
   profileRevision: string;
   policyRevision: string;
   resolveReference?: (id: string, scopeId: string) => boolean;
+  /** Native-supplied pinned model catalog; only it can vouch for a `catalog` model descriptor. */
+  trustedCatalog?: TrustedCatalog;
 }
 
 export interface AppendInput {
@@ -93,7 +113,7 @@ export interface Appended {
 }
 
 export interface EntityRevisionExpectation {
-  kind: "providerConnection" | "profileSnapshot";
+  kind: "providerConnection" | "profileSnapshot" | "providerEndpoint";
   scopeId: string;
   entityId: string;
   expectedRevision: string | null;
@@ -167,6 +187,140 @@ export interface WorkspaceOwnership {
   epoch: number;
 }
 
+/** TD-13 native directory identity (volume serial + file id, native-supplied). */
+export interface DirectoryIdentity {
+  volumeSerial: string;
+  fileId: string;
+}
+
+export interface WorkspaceAdmissionInput extends DirectoryIdentity {
+  /** Final absolute drive path from the native resolver; never renderer-visible. */
+  canonicalPath: string;
+}
+
+/** Engine/native-only view: carries the canonical path. */
+export type AdmittedWorkspace = AdmittedWorkspaceRecord & {
+  canonicalPath: string;
+};
+
+/** Renderer-safe workspace projection: no path, no directory identity. */
+export interface WorkspaceView {
+  workspaceId: string;
+  displayName: string;
+  admittedAt: string;
+  revision: string;
+}
+
+export function workspaceView(
+  workspace: AdmittedWorkspaceRecord,
+): WorkspaceView {
+  return {
+    workspaceId: workspace.workspaceId,
+    displayName: workspace.displayName,
+    admittedAt: workspace.admittedAt,
+    revision: workspace.revision,
+  };
+}
+
+/** Native identity encoding: canonical unsigned decimal (no sign, space or leading zero) within `max`. */
+function canonicalUnsigned(value: unknown, max: bigint): boolean {
+  return (
+    typeof value === "string" &&
+    /^(0|[1-9][0-9]*)$/u.test(value) &&
+    BigInt(value) <= max
+  );
+}
+
+export interface GrantInput {
+  workspaceId: string;
+  sessionId: string;
+  capability: GrantRecord["capability"];
+  scope: GrantRecord["scope"];
+  actionId?: string;
+  argumentsDigest?: string;
+  origin?: string;
+}
+
+/** What a dispatch presents to use a grant; `observedIdentity` is read natively at dispatch. */
+export interface GrantUse {
+  grantId: string;
+  workspaceId: string;
+  sessionId: string;
+  capability: GrantRecord["capability"];
+  observedIdentity: DirectoryIdentity;
+  actionId?: string;
+  argumentsDigest?: string;
+  /** net.provider only: the qualified `scheme://host:port` the dispatch targets. */
+  origin?: string;
+}
+
+export interface OnceGrantConsumption extends GrantUse {
+  actionId: string;
+  argumentsDigest: string;
+}
+
+interface NativeGrantPreconditions {
+  expectedOnceGrant?: OnceGrantConsumption;
+  expectedGrantMint?: Pick<
+    GrantInput,
+    "workspaceId" | "sessionId" | "capability"
+  >;
+  expectedActiveGrants?: readonly string[];
+  workspaceAdmission?: {
+    canonicalPath: string;
+    workspaceId: string;
+    expectedCurrent: string | null;
+  };
+}
+
+const NATIVE_ONLY_KINDS: readonly string[] = [
+  "admittedWorkspace",
+  "grant",
+  "providerEndpoint",
+];
+function assertNoNativeOnlyKinds(inputs: readonly AppendInput[]): void {
+  if (inputs.some((input) => NATIVE_ONLY_KINDS.includes(input.kind)))
+    throw new StoreError(
+      "NATIVE_API_REQUIRED",
+      "workspace, grant and providerEndpoint records are written only through their Store APIs (providerEndpoint: compareAndAppend)",
+    );
+}
+
+const RESERVED_DEVICE =
+  /^(?:con|prn|aux|nul|com\d|lpt\d|conin\$|conout\$)(?:\..*)?$/iu;
+/** Validates a final local drive path and returns its folder basename. */
+function workspaceDisplayName(path: unknown): string {
+  if (
+    typeof path !== "string" ||
+    path.length > 32767 ||
+    !/^[A-Za-z]:\\(?:[^\\/:*?"<>|\x00-\x1f]+(?:\\[^\\/:*?"<>|\x00-\x1f]+)*)?$/u.test(
+      path,
+    )
+  )
+    throw new StoreError(
+      "WORKSPACE_PATH_INVALID",
+      "workspace path must be an absolute local drive path (no UNC, device or relative form)",
+    );
+  const segments = path
+    .slice(3)
+    .split("\\")
+    .filter((segment) => segment !== "");
+  if (
+    segments.some(
+      (segment) =>
+        segment === "." ||
+        segment === ".." ||
+        /[ .]$/u.test(segment) ||
+        RESERVED_DEVICE.test(segment),
+    )
+  )
+    throw new StoreError(
+      "WORKSPACE_PATH_INVALID",
+      "workspace path has a non-canonical or device segment",
+    );
+  return segments.at(-1) ?? path.slice(0, 2);
+}
+
 const isRecordObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
@@ -214,6 +368,12 @@ function mapSqliteError(error: unknown): StoreError {
     "STORE_UNKNOWN",
     error instanceof Error ? error.message : String(error),
   );
+}
+
+export interface SetupResult {
+  endpoint: RecordByKind["providerEndpoint"];
+  connection: RecordByKind["providerConnection"];
+  profile: RecordByKind["profileSnapshot"];
 }
 
 export class Store {
@@ -431,6 +591,16 @@ export class Store {
       } else {
         Store.validateStamped(db, row.value);
       }
+      // TD-13 additive native-only table (no layout bump): older layout-2
+      // readers ignore it; canonical paths never enter exportable records.
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS workspace_paths (" +
+          "workspace_id TEXT PRIMARY KEY, canonical_path TEXT NOT NULL)",
+      );
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS workspace_paths_path " +
+          "ON workspace_paths (canonical_path)",
+      );
       db.exec("COMMIT;");
       return new Store(path, db, busyTimeoutMs, maxInlineBytes, false);
     } catch (error) {
@@ -575,6 +745,82 @@ export class Store {
         records.push({ seq: row.seq, kind: row.kind, record });
       }
       return { records, deletedRecordIds };
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  /**
+   * Native-only: everything setup needs from one scope, observed in ONE read
+   * transaction. `workspace` is the current admitted workspace (private
+   * canonicalPath and directory identity) or null if superseded/deleted/unknown.
+   */
+  readSetupState(workspaceId: string): {
+    records: StoredRecord[];
+    deletedRecordIds: string[];
+    workspace: AdmittedWorkspace | null;
+    deletionEpoch: number;
+  } {
+    this.assertOpen();
+    const kinds = [
+      "providerEndpoint",
+      "providerConnection",
+      "profileSnapshot",
+      "artifact",
+      "configurationTransition",
+      "admittedWorkspace",
+    ];
+    try {
+      this.db.exec("BEGIN;");
+      try {
+        const rows = this.db
+          .prepare(
+            "SELECT r.*, d.record_id AS deleted_record_id, d.generation, d.deleted_at, " +
+              "(SELECT value FROM store_meta WHERE key = 'deletion_epoch') AS deletion_epoch " +
+              "FROM records r LEFT JOIN deletions d ON d.record_id = r.record_id " +
+              `WHERE r.scope_id = ? AND r.kind IN (${kinds.map(() => "?").join(",")}) ORDER BY r.seq`,
+          )
+          .all(workspaceId, ...kinds) as Array<
+          Parameters<Store["validateStructuralRow"]>[0] & {
+            deleted_record_id: string | null;
+            generation: number | null;
+            deleted_at: string | null;
+            deletion_epoch: string | null;
+          }
+        >;
+        const records: StoredRecord[] = [];
+        const deletedRecordIds: string[] = [];
+        for (const row of rows) {
+          const record = this.validateStructuralRow(row);
+          if (row.deleted_record_id !== null) {
+            const epoch =
+              Store.parseEpoch(
+                row.deletion_epoch ?? undefined,
+                "deletion_epoch",
+              ) ?? 0;
+            if (
+              !Number.isSafeInteger(row.generation) ||
+              row.generation! < 1 ||
+              row.generation! > epoch ||
+              typeof row.deleted_at !== "string" ||
+              !Number.isFinite(Date.parse(row.deleted_at))
+            )
+              throw new StoreError(
+                "STORE_LAYOUT",
+                "invalid deletion tombstone",
+              );
+            deletedRecordIds.push(row.deleted_record_id);
+          }
+          records.push({ seq: row.seq, kind: row.kind, record });
+        }
+        const workspace = this.currentWorkspace(workspaceId) ?? null;
+        const deletionEpoch = this.deletionEpoch();
+        this.db.exec("COMMIT;");
+        return { records, deletedRecordIds, workspace, deletionEpoch };
+      } catch (error) {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK;");
+        throw error;
+      }
     } catch (error) {
       throw mapSqliteError(error);
     }
@@ -821,6 +1067,7 @@ export class Store {
         "EVENT_COMMIT_REQUIRED",
         "event records require commitEvents",
       );
+    assertNoNativeOnlyKinds([input]);
     const recordObject = input.record as Record<string, unknown> | undefined;
     const scopeId =
       isRecordObject(recordObject) && typeof recordObject.scopeId === "string"
@@ -872,6 +1119,211 @@ export class Store {
   }
 
   /**
+   * TD-26 first-run setup: endpoint, connection and profile revisions commit in
+   * ONE transaction with per-entity CAS under the same lock. Record ids derive
+   * from requestId, so an identical retry returns the stored result and appends
+   * nothing; the same requestId with a different payload is SETUP_REQUEST_CONFLICT.
+   * Only a credentialRef is accepted: unknown fields (apiKey, ...) are rejected.
+   */
+  commitSetup(
+    input: unknown,
+    caller: CallerContext,
+    expectedDeletionEpoch?: number,
+  ): SetupResult {
+    let setup: SetupInput;
+    try {
+      setup = validateSetupMetadata(
+        input,
+        caller.trustedCatalog === undefined
+          ? {}
+          : { trustedCatalog: caller.trustedCatalog },
+      );
+    } catch (error) {
+      if (error instanceof SetupMetadataError)
+        throw new StoreError(error.code, error.message);
+      throw error;
+    }
+    const scopeId = setup.workspaceId;
+    // Hashed so a 128-character requestId still fits the recordId bound.
+    const key = createHash("sha256")
+      .update(setup.requestId)
+      .digest("hex")
+      .slice(0, 32);
+    const ids = {
+      endpoint: `setup:${key}:endpoint`,
+      connection: `setup:${key}:connection`,
+      profile: `setup:${key}:profile`,
+    };
+    // Identity of the whole accepted request; replays compare it under the write lock.
+    const digestRef = `setup-request:sha256:${createHash("sha256")
+      .update(JSON.stringify(setup))
+      .digest("hex")}`;
+    const base = (recordId: string) => ({
+      schemaVersion: CONTRACT_VERSION,
+      recordId,
+      createdAt: new Date().toISOString(),
+      scopeId,
+      sourceIds: [digestRef],
+    });
+    const endpoint = {
+      ...base(ids.endpoint),
+      endpointId: setup.endpoint.endpointId,
+      canonicalUrl: setup.endpoint.canonicalUrl,
+      apiFamily: setup.endpoint.apiFamily,
+      locality: setup.endpoint.locality,
+      revision: setup.endpoint.revision,
+    };
+    // displayName is rejected as an unknown field: the connection record has no such field.
+    const connection = {
+      ...base(ids.connection),
+      providerConnectionId: setup.connection.providerConnectionId,
+      revision: setup.connection.revision,
+      apiFamily: setup.connection.apiFamily,
+      apiVersion: setup.descriptors.apiVersion,
+      endpointRef: setup.connection.endpointRef,
+      credentialRef: setup.connection.credentialRef,
+      adapterRevision: setup.descriptors.adapterRevision,
+      accountScopeRef: setup.descriptors.accountScopeRef,
+      locality: setup.connection.locality,
+    };
+    // One immutable artifact per described binding; the profile links it through sourceIds.
+    const descriptorArtifacts = setup.profile.bindings.flatMap((binding) => {
+      if (binding.modelDescriptor === undefined) return [];
+      const recordId = `setup:${key}:modeldesc:${binding.role}`;
+      const json = JSON.stringify(binding.modelDescriptor);
+      return [
+        {
+          ...base(recordId),
+          artifactId: recordId,
+          digest: `sha256:${createHash("sha256").update(json).digest("hex")}`,
+          mediaType: "application/vnd.splyce.model-descriptor+json",
+          byteLength: new TextEncoder().encode(json).length,
+          retentionClass: "workspace",
+          role: binding.role,
+          modelId: binding.modelId,
+          descriptor: binding.modelDescriptor,
+        },
+      ];
+    });
+    const profile = {
+      ...base(ids.profile),
+      sourceIds: [digestRef, ...descriptorArtifacts.map((a) => a.recordId)],
+      profileId: setup.profile.profileId,
+      profileRevision: setup.profile.profileRevision,
+      configRevision: this.configRevision(scopeId),
+      roleBindingRefs: [] as string[],
+      installedModuleRefs: [] as string[],
+      bindings: setup.profile.bindings.map(
+        ({ modelDescriptor: _descriptor, ...pinned }) => pinned,
+      ),
+      egressPolicyRefs: [...setup.descriptors.egressPolicyRefs],
+      limitsArtifactId: setup.descriptors.limitsArtifactId,
+    };
+    const resolve = (ref: string): boolean => {
+      try {
+        return caller.resolveReference?.(ref, scopeId) === true;
+      } catch {
+        return false;
+      }
+    };
+    const unresolved: [string, string][] = [
+      ["connection.credentialRef", setup.connection.credentialRef],
+      ["descriptors.accountScopeRef", setup.descriptors.accountScopeRef],
+      ["descriptors.limitsArtifactId", setup.descriptors.limitsArtifactId],
+      ...setup.descriptors.egressPolicyRefs.map((ref, i): [string, string] => [
+        `descriptors.egressPolicyRefs[${i}]`,
+        ref,
+      ]),
+    ];
+    for (const [field, ref] of unresolved)
+      if (!resolve(ref))
+        throw new StoreError(
+          "SETUP_INVALID",
+          `setup reference does not resolve: ${field}`,
+        );
+    // The endpoint revision exists only inside this batch; everything else is the caller's.
+    const batchCaller: CallerContext = {
+      ...caller,
+      resolveReference: (ref, refScope) =>
+        (refScope === scopeId &&
+          (ref === connection.endpointRef ||
+            ref === digestRef ||
+            descriptorArtifacts.some((a) => a.recordId === ref))) ||
+        resolve(ref),
+    };
+    let replayed: SetupResult | undefined;
+    try {
+      this.commitBatch(
+        [
+          { kind: "providerEndpoint", record: endpoint },
+          { kind: "providerConnection", record: connection },
+          { kind: "profileSnapshot", record: profile },
+          ...descriptorArtifacts.map((record) => ({
+            kind: "artifact" as const,
+            record,
+          })),
+        ],
+        [],
+        batchCaller,
+        {
+          expectedSetup: {
+            workspaceId: scopeId,
+            expectedDeletionEpoch,
+            recordIds: [
+              ...Object.values(ids),
+              ...descriptorArtifacts.map((a) => a.recordId),
+            ],
+            digestRef,
+            onReplay: (records) => {
+              replayed = {
+                endpoint: records[0] as RecordByKind["providerEndpoint"],
+                connection: records[1] as RecordByKind["providerConnection"],
+                profile: records[2] as RecordByKind["profileSnapshot"],
+              };
+            },
+            unresolved: (): string | undefined =>
+              unresolved.find(([, ref]) => !resolve(ref))?.[0],
+          },
+          expectedEntityRevision: [
+            {
+              kind: "providerEndpoint",
+              scopeId,
+              entityId: endpoint.endpointId,
+              expectedRevision: setup.expected.endpointRevision,
+            },
+            {
+              kind: "providerConnection",
+              scopeId,
+              entityId: connection.providerConnectionId,
+              expectedRevision: setup.expected.connectionRevision,
+            },
+            {
+              kind: "profileSnapshot",
+              scopeId,
+              entityId: profile.profileId,
+              expectedRevision: setup.expected.profileRevision,
+            },
+          ],
+        },
+      );
+    } catch (error) {
+      // The lock-time observation found all three records of this exact request.
+      if (
+        error instanceof StoreError &&
+        error.code === "SETUP_REPLAY" &&
+        replayed !== undefined
+      )
+        return replayed;
+      throw error;
+    }
+    return {
+      endpoint: endpoint as RecordByKind["providerEndpoint"],
+      connection: connection as RecordByKind["providerConnection"],
+      profile: profile as RecordByKind["profileSnapshot"],
+    };
+  }
+
+  /**
    * Ordered, atomic receipt commits: every input is validated first, then all
    * are committed in input order in one transaction. Any failure — including a
    * mid-batch constraint violation — rolls the whole batch back: the cursor
@@ -917,6 +1369,7 @@ export class Store {
         "EVENT_COMMIT_REQUIRED",
         "event records require commitEvents",
       );
+    assertNoNativeOnlyKinds(inputs);
     return this.commitBatch(inputs, [], caller, {
       ...(expectedAbsentActionKey === undefined
         ? {}
@@ -946,6 +1399,7 @@ export class Store {
         "EVENT_COMMIT_REQUIRED",
         "receipts cannot contain event records",
       );
+    assertNoNativeOnlyKinds(receiptInputs);
     return this.commitBatch(receiptInputs, eventDrafts, caller, preconditions);
   }
 
@@ -962,9 +1416,25 @@ export class Store {
       expectedScopeCursor,
       expectedSessionCursor,
       expectedEntityRevision,
+      expectedSetup,
+      expectedOnceGrant,
+      expectedGrantMint,
+      expectedActiveGrants,
+      workspaceAdmission,
     }: EventPreconditions & {
-      expectedEntityRevision?: EntityRevisionExpectation;
-    },
+      expectedEntityRevision?:
+        EntityRevisionExpectation | readonly EntityRevisionExpectation[];
+      expectedSetup?: {
+        workspaceId: string;
+        expectedDeletionEpoch: number | undefined;
+        recordIds: readonly string[];
+        digestRef: string;
+        /** Receives the stored records, read under the same lock, when the request is a replay. */
+        onReplay: (records: readonly unknown[]) => void;
+        /** Re-resolves the setup references; returns the first failing field. */
+        unresolved: () => string | undefined;
+      };
+    } & NativeGrantPreconditions,
     importedWatermarks: readonly EventWatermark[] = [],
   ): AppendBatchResult & { events: SplyceEvent[] } {
     this.assertWritable();
@@ -1023,22 +1493,120 @@ export class Store {
     }
     try {
       this.db.exec("BEGIN IMMEDIATE;");
-      if (expectedEntityRevision !== undefined) {
-        const { kind, scopeId, entityId, expectedRevision } =
-          expectedEntityRevision;
-        const entityField =
-          kind === "providerConnection" ? "providerConnectionId" : "profileId";
-        const revisionField =
-          kind === "providerConnection" ? "revision" : "profileRevision";
-        const input = prepared[0];
+      if (expectedSetup !== undefined) {
+        if (
+          expectedSetup.expectedDeletionEpoch !== undefined &&
+          (!Number.isSafeInteger(expectedSetup.expectedDeletionEpoch) ||
+            expectedSetup.expectedDeletionEpoch < 0 ||
+            this.deletionEpoch() !== expectedSetup.expectedDeletionEpoch)
+        )
+          throw new StoreError(
+            "SETUP_INVALID",
+            "deletion epoch changed before setup commit",
+          );
+        // The target must still be the current admitted, non-superseded, non-deleted workspace.
+        if (this.currentWorkspace(expectedSetup.workspaceId) === undefined)
+          throw new StoreError(
+            "SETUP_INVALID",
+            "setup reference does not resolve: workspace",
+          );
+        // One observation of all participating rows (tombstones included) under the lock.
+        const rows = expectedSetup.recordIds.map(
+          (id) =>
+            this.db
+              .prepare(
+                "SELECT seq, kind, schema_version, payload, json_extract(payload, '$.sourceIds[0]') AS digest, " +
+                  "EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = records.record_id) AS deleted " +
+                  "FROM records WHERE record_id = ?",
+              )
+              .get(id) as
+              | {
+                  seq: number;
+                  kind: string;
+                  schema_version: number;
+                  payload: string;
+                  digest: unknown;
+                  deleted: number | bigint;
+                }
+              | undefined,
+        );
+        if (rows.some((row) => row !== undefined)) {
+          // A tombstoned record is never replayed or resurrected.
+          if (
+            rows.some((row) => row !== undefined && Number(row.deleted) !== 0)
+          )
+            throw new StoreError(
+              "SETUP_DELETED",
+              "a record of this setup request was deleted; nothing appended",
+            );
+          if (
+            rows.every(
+              (row) =>
+                row !== undefined && row.digest === expectedSetup.digestRef,
+            )
+          ) {
+            expectedSetup.onReplay(
+              rows.map((row) => this.readRow(row!).record),
+            );
+            throw new StoreError(
+              "SETUP_REPLAY",
+              "setup request already committed; nothing appended",
+            );
+          }
+          throw new StoreError(
+            "SETUP_REQUEST_CONFLICT",
+            "requestId was already used with a different setup request; nothing appended",
+          );
+        }
+        // A descriptor removed after the early check must not commit.
+        const field = expectedSetup.unresolved();
+        if (field !== undefined)
+          throw new StoreError(
+            "SETUP_INVALID",
+            `setup reference does not resolve: ${field}`,
+          );
+      }
+      const expectations: readonly EntityRevisionExpectation[] =
+        expectedEntityRevision === undefined
+          ? []
+          : Array.isArray(expectedEntityRevision)
+            ? expectedEntityRevision
+            : [expectedEntityRevision as EntityRevisionExpectation];
+      // Every prepared record is guarded exactly once: one expectation per kind.
+      if (
+        expectedEntityRevision !== undefined &&
+        prepared.length !==
+          expectations.length +
+            (expectedSetup === undefined
+              ? 0
+              : prepared.filter(([kind]) => kind === "artifact").length)
+      )
+        throw new StoreError(
+          "ENTITY_GUARD_MISMATCH",
+          "entity guard must match the inserted kind, scope, identity and revision",
+        );
+      for (const expectation of expectations) {
+        const { kind, scopeId, entityId, expectedRevision } = expectation;
+        const [entityField, revisionField] = (
+          {
+            providerConnection: ["providerConnectionId", "revision"],
+            profileSnapshot: ["profileId", "profileRevision"],
+            providerEndpoint: ["endpointId", "revision"],
+          } as const
+        )[kind] ?? ["", ""];
+        const input = prepared.find(([k]) => k === kind);
         const opaque = (value: unknown) =>
           typeof value === "string" &&
           value.length > 0 &&
           !/\s|[\\/]/u.test(value);
         if (
-          !["providerConnection", "profileSnapshot"].includes(kind) ||
-          prepared.length !== 1 ||
-          input?.[0] !== kind ||
+          ![
+            "providerConnection",
+            "profileSnapshot",
+            "providerEndpoint",
+          ].includes(kind) ||
+          prepared.filter(([k]) => k === kind).length !== 1 ||
+          input === undefined ||
           !opaque(scopeId) ||
           !opaque(entityId) ||
           (expectedRevision !== null && !opaque(expectedRevision)) ||
@@ -1073,7 +1641,7 @@ export class Store {
             "ENTITY_STALE_REVISION",
             "entity revision changed; nothing appended",
           );
-        const nextRevision = prepared[0]![1][revisionField];
+        const nextRevision = input[1][revisionField];
         const reused = this.db
           .prepare(
             `SELECT 1 FROM records WHERE kind = ? AND scope_id = ? AND json_extract(payload, '$.${entityField}') = ? AND json_extract(payload, '$.${revisionField}') = ? LIMIT 1`,
@@ -1239,6 +1807,62 @@ export class Store {
           throw new StoreError(
             "ACTION_RESERVATION_CHANGED",
             "action reservation changed; nothing appended",
+          );
+      }
+      if (workspaceAdmission !== undefined) {
+        const latest = this.currentWorkspaceIdForPath(
+          workspaceAdmission.canonicalPath,
+        );
+        if (latest !== workspaceAdmission.expectedCurrent)
+          throw new StoreError(
+            "WORKSPACE_ADMISSION_CHANGED",
+            "workspace admission changed concurrently; nothing appended",
+          );
+        this.db
+          .prepare(
+            "INSERT INTO workspace_paths (workspace_id, canonical_path) VALUES (?, ?)",
+          )
+          .run(
+            workspaceAdmission.workspaceId,
+            workspaceAdmission.canonicalPath,
+          );
+      }
+      if (expectedGrantMint !== undefined) {
+        this.requireCurrentWorkspace(expectedGrantMint.workspaceId);
+        if (
+          expectedGrantMint.capability !== "net.provider" &&
+          this.db
+            .prepare(
+              "SELECT 1 FROM records WHERE kind = 'branchAnchor' AND json_extract(payload, '$.piSessionId') = ? LIMIT 1",
+            )
+            .get(expectedGrantMint.sessionId) === undefined
+        )
+          throw new StoreError(
+            "SESSION_UNKNOWN",
+            "grant session has no Pi-derived session record; nothing appended",
+          );
+      }
+      for (const grantId of expectedActiveGrants ?? []) {
+        const state = this.grantState(grantId);
+        if (state === undefined)
+          throw new StoreError("GRANT_REQUIRED", "grant does not exist");
+        if (state.revoked)
+          throw new StoreError("GRANT_REVOKED", "grant is already revoked");
+      }
+      if (expectedOnceGrant !== undefined) {
+        this.checkGrant(expectedOnceGrant, "once");
+        if (
+          !prepared.some(
+            ([kind, record]) =>
+              kind === "action" &&
+              record.actionId === expectedOnceGrant.actionId &&
+              record.state === "running" &&
+              record.argumentsDigest === expectedOnceGrant.argumentsDigest,
+          )
+        )
+          throw new StoreError(
+            "GRANT_MISMATCH",
+            "once-grant consumption must commit with its action's running receipt; nothing appended",
           );
       }
       const seqs: number[] = [];
@@ -2172,6 +2796,475 @@ export class Store {
     }
     this.commitBatch(inputs, [], caller, {}, watermarks);
     return inputs.length;
+  }
+
+  // ---- TD-13 admitted workspaces and grants (native write path only) ----
+
+  /**
+   * Admits a native-resolved directory. The same path with the same identity
+   * returns the existing workspace; the same path with another identity is
+   * WORKSPACE_IDENTITY_CHANGED unless `readmit` is set, which supersedes the
+   * old workspaceId (its grants stop working) with a fresh one.
+   */
+  admitWorkspace(
+    input: WorkspaceAdmissionInput,
+    caller: CallerContext,
+    { readmit = false }: { readmit?: boolean } = {},
+  ): AdmittedWorkspace {
+    this.assertWritable();
+    if (
+      !isRecordObject(input) ||
+      Object.keys(input).sort().join(",") !==
+        "canonicalPath,fileId,volumeSerial"
+    )
+      throw new StoreError("WORKSPACE_INPUT", "unexpected admission fields");
+    const { canonicalPath, volumeSerial, fileId } = input;
+    // Validated before the idempotent return: a stored row in any other
+    // encoding never equals decimal input, so it needs re-admission.
+    if (
+      !canonicalUnsigned(volumeSerial, 0xffff_ffffn) ||
+      !canonicalUnsigned(fileId, 0xffff_ffff_ffff_ffffn)
+    )
+      throw new StoreError(
+        "WORKSPACE_INPUT",
+        "directory identity must be canonical decimal u32 volumeSerial and u64 fileId",
+      );
+    const displayName = workspaceDisplayName(canonicalPath);
+    for (let attempt = 0; ; attempt += 1) {
+      const currentId = this.currentWorkspaceIdForPath(canonicalPath);
+      const current =
+        currentId === null ? undefined : this.workspaceRecord(currentId);
+      if (
+        current !== undefined &&
+        current.volumeSerial === volumeSerial &&
+        current.fileId === fileId
+      )
+        return { ...current, canonicalPath };
+      if (current !== undefined && !readmit)
+        throw new StoreError(
+          "WORKSPACE_IDENTITY_CHANGED",
+          "directory identity changed at this path; re-admit is required",
+        );
+      const workspaceId = `ws-${randomUUID()}`;
+      const now = new Date().toISOString();
+      const record: AdmittedWorkspaceRecord = {
+        schemaVersion: CONTRACT_VERSION,
+        recordId: `${workspaceId}.admitted`,
+        createdAt: now,
+        scopeId: workspaceId,
+        sourceIds: [],
+        workspaceId,
+        displayName,
+        admittedAt: now,
+        revision: String(Number(current?.revision ?? "0") + 1),
+        volumeSerial,
+        fileId,
+      };
+      try {
+        this.commitBatch([{ kind: "admittedWorkspace", record }], [], caller, {
+          workspaceAdmission: {
+            canonicalPath,
+            workspaceId,
+            expectedCurrent: currentId,
+          },
+        });
+        return { ...record, canonicalPath };
+      } catch (error) {
+        if (
+          attempt === 0 &&
+          error instanceof StoreError &&
+          error.code === "WORKSPACE_ADMISSION_CHANGED"
+        )
+          continue;
+        throw error;
+      }
+    }
+  }
+
+  /** Engine/native-only read (includes canonicalPath); project with workspaceView for the renderer. */
+  getWorkspace(workspaceId: string): AdmittedWorkspace | undefined {
+    this.assertOpen();
+    try {
+      const record = this.workspaceRecord(workspaceId);
+      const path = this.workspacePath(workspaceId);
+      return record === undefined || path === undefined
+        ? undefined
+        : { ...record, canonicalPath: path };
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  /**
+   * Engine/native-only: current admitted workspaces (includes canonicalPath),
+   * excluding superseded and deleted ones, ordered by admittedAt then workspaceId.
+   */
+  listWorkspaces(): AdmittedWorkspace[] {
+    this.assertOpen();
+    if (!this.hasWorkspacePaths()) return [];
+    try {
+      return (
+        this.db
+          .prepare(
+            "SELECT p.canonical_path, r.seq, r.kind, r.schema_version, r.payload FROM workspace_paths p " +
+              "JOIN records r ON r.record_id = p.workspace_id || '.admitted' " +
+              "WHERE p.rowid = (SELECT MAX(q.rowid) FROM workspace_paths q WHERE q.canonical_path = p.canonical_path) " +
+              "AND NOT EXISTS (SELECT 1 FROM deletions d WHERE d.record_id = r.record_id)",
+          )
+          .all() as Array<{ canonical_path: string }>
+      )
+        .map((row) => ({
+          ...(this.readRow(row).record as AdmittedWorkspaceRecord),
+          canonicalPath: row.canonical_path,
+        }))
+        .sort((a, b) =>
+          a.admittedAt < b.admittedAt
+            ? -1
+            : a.admittedAt > b.admittedAt
+              ? 1
+              : a.workspaceId < b.workspaceId
+                ? -1
+                : 1,
+        );
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  /** Renderer-safe listing: no path, no directory identity. */
+  listWorkspaceViews(): WorkspaceView[] {
+    return this.listWorkspaces().map(workspaceView);
+  }
+
+  /**
+   * Mints a grant on a current admitted workspace. fs.read/fs.write/shell.run
+   * require the Pi-derived session to already exist in this store.
+   */
+  mintGrant(input: GrantInput, caller: CallerContext): GrantRecord {
+    this.assertWritable();
+    if (
+      !isRecordObject(input) ||
+      Object.hasOwn(input, "consumedAt") ||
+      Object.hasOwn(input, "revokedAt")
+    )
+      throw new StoreError("GRANT_INPUT", "grant input is invalid");
+    const grantId = `grant-${randomUUID()}`;
+    const record = {
+      ...input,
+      schemaVersion: CONTRACT_VERSION,
+      recordId: grantId,
+      createdAt: new Date().toISOString(),
+      scopeId: input.workspaceId,
+      sourceIds: [],
+      grantId,
+    } as GrantRecord;
+    this.commitBatch([{ kind: "grant", record }], [], caller, {
+      expectedGrantMint: input,
+    });
+    return record;
+  }
+
+  /**
+   * Read-only check for a session grant at dispatch; same typed errors as consume.
+   * Caller contract: this cannot verify `use.observedIdentity` under a lock, so native
+   * dispatch MUST pass `observedIdentity` on every use (and once grants re-verify at consume).
+   */
+  requireGrant(use: GrantUse): GrantRecord {
+    this.assertOpen();
+    try {
+      return this.checkGrant(use, "session");
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  /**
+   * Read-only check for a once grant around effect handoff. Accepts the grant
+   * while unconsumed, or when it was consumed together with this action's
+   * running receipt and that receipt is still the action's latest (so the
+   * action's own consumption is not a replay). Every other state keeps the
+   * typed errors of consume.
+   */
+  checkOnceGrantForActive(use: OnceGrantConsumption): GrantRecord {
+    this.assertOpen();
+    try {
+      return this.checkGrant(use, "once", true);
+    } catch (error) {
+      throw mapSqliteError(error);
+    }
+  }
+
+  /**
+   * Consumes a once grant in the SAME transaction as the action's
+   * approved->running receipts: either both commit or neither does.
+   */
+  consumeOnceGrant(
+    consumption: OnceGrantConsumption,
+    receipts: readonly AppendInput[],
+    caller: CallerContext,
+    preconditions: EventPreconditions = {},
+  ): AppendBatchResult {
+    this.assertWritable();
+    assertNoNativeOnlyKinds(receipts);
+    if (receipts.some((input) => input.kind === "event"))
+      throw new StoreError(
+        "EVENT_COMMIT_REQUIRED",
+        "event records require commitEvents",
+      );
+    const state = this.grantState(consumption.grantId);
+    if (state === undefined)
+      throw new StoreError("GRANT_REQUIRED", "no such grant; nothing appended");
+    if (state.grant.scope !== "once")
+      throw new StoreError(
+        "GRANT_MISMATCH",
+        "only a once grant can be consumed; nothing appended",
+      );
+    const now = new Date().toISOString();
+    const consumed: GrantRecord = {
+      ...state.grant,
+      recordId: `${state.grant.grantId}.consumed`,
+      createdAt: now,
+      consumedAt: now,
+    };
+    const { seqs } = this.commitBatch(
+      [...receipts, { kind: "grant", record: consumed }],
+      [],
+      caller,
+      { ...preconditions, expectedOnceGrant: consumption },
+    );
+    return { seqs };
+  }
+
+  /** Revokes one grant (append-only `<grantId>.revoked`). */
+  revokeGrant(grantId: string, caller: CallerContext): void {
+    this.assertWritable();
+    this.revokeGrants([grantId], caller);
+  }
+
+  /** Profile change: revokes every live net.provider grant on a workspace; returns the count. */
+  revokeProviderGrants(workspaceId: string, caller: CallerContext): number {
+    this.assertWritable();
+    const ids = (
+      this.db
+        .prepare(
+          "SELECT DISTINCT json_extract(payload, '$.grantId') AS id FROM records WHERE kind = 'grant' " +
+            "AND json_extract(payload, '$.workspaceId') = ? AND json_extract(payload, '$.capability') = 'net.provider'",
+        )
+        .all(workspaceId) as Array<{ id: string }>
+    )
+      .map((row) => row.id)
+      .filter((id) => this.grantState(id)?.revoked === false);
+    if (ids.length > 0) this.revokeGrants(ids, caller);
+    return ids.length;
+  }
+
+  /** Native/engine-only: the canonical URL of an endpoint at a pinned revision. */
+  resolveEndpoint(
+    scopeId: string,
+    endpointRef: string,
+    revision: string,
+  ): string {
+    this.assertOpen();
+    const row = this.db
+      .prepare(
+        "SELECT seq, kind, schema_version, payload FROM records WHERE kind = 'providerEndpoint' AND scope_id = ? " +
+          "AND json_extract(payload, '$.endpointId') = ? AND json_extract(payload, '$.revision') = ? ORDER BY seq DESC LIMIT 1",
+      )
+      .get(scopeId, endpointRef, revision);
+    if (row === undefined)
+      throw new StoreError(
+        "ENDPOINT_UNKNOWN",
+        "no endpoint at that pinned revision",
+      );
+    return (this.readRow(row).record as ProviderEndpointRecord).canonicalUrl;
+  }
+
+  private revokeGrants(
+    grantIds: readonly string[],
+    caller: CallerContext,
+  ): void {
+    const now = new Date().toISOString();
+    const inputs = grantIds.map((grantId) => {
+      const state = this.grantState(grantId);
+      if (state === undefined)
+        throw new StoreError("GRANT_REQUIRED", "no such grant");
+      const record: GrantRecord = {
+        ...state.grant,
+        recordId: `${grantId}.revoked`,
+        createdAt: now,
+        revokedAt: now,
+      };
+      return { kind: "grant" as const, record };
+    });
+    this.commitBatch(inputs, [], caller, { expectedActiveGrants: grantIds });
+  }
+
+  private currentWorkspaceIdForPath(canonicalPath: string): string | null {
+    if (!this.hasWorkspacePaths()) return null;
+    const row = this.db
+      .prepare(
+        "SELECT workspace_id FROM workspace_paths WHERE canonical_path = ? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(canonicalPath) as { workspace_id: string } | undefined;
+    return row?.workspace_id ?? null;
+  }
+
+  private workspacePath(workspaceId: string): string | undefined {
+    if (!this.hasWorkspacePaths()) return undefined;
+    const row = this.db
+      .prepare(
+        "SELECT canonical_path FROM workspace_paths WHERE workspace_id = ?",
+      )
+      .get(workspaceId) as { canonical_path: string } | undefined;
+    return row?.canonical_path;
+  }
+
+  /** Read-only opens of a pre-TD-13 store have no path table (nothing admitted). */
+  private hasWorkspacePaths(): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workspace_paths'",
+        )
+        .get() !== undefined
+    );
+  }
+
+  private workspaceRecord(
+    workspaceId: string,
+  ): AdmittedWorkspaceRecord | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT seq, kind, schema_version, payload FROM records WHERE kind = 'admittedWorkspace' " +
+          "AND json_extract(payload, '$.workspaceId') = ? ORDER BY seq DESC LIMIT 1",
+      )
+      .get(workspaceId);
+    return row === undefined
+      ? undefined
+      : (this.readRow(row).record as AdmittedWorkspaceRecord);
+  }
+
+  /** The admitted workspace if it is still current: path mapped to it, not superseded, not deleted. */
+  private currentWorkspace(workspaceId: string): AdmittedWorkspace | undefined {
+    const record = this.workspaceRecord(workspaceId);
+    const path = this.workspacePath(workspaceId);
+    if (
+      record === undefined ||
+      path === undefined ||
+      this.currentWorkspaceIdForPath(path) !== workspaceId ||
+      this.db
+        .prepare("SELECT 1 FROM deletions WHERE record_id = ?")
+        .get(record.recordId) !== undefined
+    )
+      return undefined;
+    return { ...record, canonicalPath: path };
+  }
+
+  /** Fails unless the workspace was admitted natively and is not superseded. */
+  private requireCurrentWorkspace(
+    workspaceId: string,
+    observed?: DirectoryIdentity,
+  ): void {
+    const record = this.workspaceRecord(workspaceId);
+    const path = this.workspacePath(workspaceId);
+    if (record === undefined || path === undefined)
+      throw new StoreError(
+        "WORKSPACE_NOT_ADMITTED",
+        "workspace was not admitted by the native write path",
+      );
+    if (
+      this.currentWorkspaceIdForPath(path) !== workspaceId ||
+      (observed !== undefined &&
+        (observed.volumeSerial !== record.volumeSerial ||
+          observed.fileId !== record.fileId))
+    )
+      throw new StoreError(
+        "WORKSPACE_IDENTITY_CHANGED",
+        "workspace directory identity changed; re-admit is required",
+      );
+  }
+
+  /** Folds a grant's append-only history: the mint plus any consumed/revoked revisions. */
+  private grantState(
+    grantId: string,
+  ):
+    | { grant: GrantRecord; consumedSeq: number | undefined; revoked: boolean }
+    | undefined {
+    const history = this.db
+      .prepare(
+        "SELECT seq, kind, schema_version, payload FROM records WHERE kind = 'grant' " +
+          "AND json_extract(payload, '$.grantId') = ? ORDER BY seq ASC",
+      )
+      .all(grantId)
+      .map((row) => {
+        const { seq, record } = this.readRow(row);
+        return { seq, record: record as GrantRecord };
+      });
+    const grant = history.find(({ record }) => record.recordId === grantId);
+    if (grant === undefined) return undefined;
+    return {
+      grant: grant.record,
+      consumedSeq: history.find(({ record }) => record.consumedAt !== undefined)
+        ?.seq,
+      revoked: history.some(({ record }) => record.revokedAt !== undefined),
+    };
+  }
+
+  /** True when the consumption committed with this action's running receipt and nothing followed it. */
+  private consumedByActiveAction(consumedSeq: number, use: GrantUse): boolean {
+    const row = this.db
+      .prepare(
+        "SELECT seq, kind, schema_version, payload FROM records WHERE kind = 'action' " +
+          "AND json_extract(payload, '$.actionId') = ? ORDER BY seq DESC LIMIT 1",
+      )
+      .get(use.actionId ?? null);
+    if (row === undefined) return false;
+    const latest = this.readRow(row);
+    const action = latest.record as ActionRecord;
+    return (
+      latest.seq < consumedSeq &&
+      action.state === "running" &&
+      action.argumentsDigest === use.argumentsDigest
+    );
+  }
+
+  private checkGrant(
+    use: GrantUse,
+    scope: GrantRecord["scope"],
+    active = false,
+  ): GrantRecord {
+    const state = this.grantState(use.grantId);
+    if (state === undefined)
+      throw new StoreError("GRANT_REQUIRED", "no such grant; nothing appended");
+    if (state.revoked)
+      throw new StoreError(
+        "GRANT_REVOKED",
+        "grant was revoked; nothing appended",
+      );
+    if (
+      state.consumedSeq !== undefined &&
+      !(active && this.consumedByActiveAction(state.consumedSeq, use))
+    )
+      throw new StoreError(
+        "GRANT_CONSUMED",
+        "once grant was already consumed; nothing appended",
+      );
+    const { grant } = state;
+    if (
+      grant.scope !== scope ||
+      grant.workspaceId !== use.workspaceId ||
+      grant.sessionId !== use.sessionId ||
+      grant.capability !== use.capability ||
+      grant.actionId !== use.actionId ||
+      grant.argumentsDigest !== use.argumentsDigest ||
+      grant.origin !== use.origin
+    )
+      throw new StoreError(
+        "GRANT_MISMATCH",
+        "grant does not match this workspace, session, capability or action; nothing appended",
+      );
+    this.requireCurrentWorkspace(grant.workspaceId, use.observedIdentity);
+    return grant;
   }
 
   close(): void {

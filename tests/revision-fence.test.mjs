@@ -13,6 +13,7 @@ import {
   actionArgumentsDigest,
 } from "../packages/splyce-pi/dist/policy.js";
 import { Store } from "../packages/splyce-pi/dist/store.js";
+import { admitAndGrant } from "./fixtures/native-grants.mjs";
 
 const records = JSON.parse(
   await readFile(
@@ -46,7 +47,7 @@ async function fixture(t) {
     profileRevision: "profile1",
     policyRevision: "policy1",
     resolveReference: (id, scope) =>
-      scope === "w-demo" &&
+      (scope === "w-demo" || refs.has(scope)) &&
       (refs.has(id) ||
         store
           .list(scope)
@@ -57,23 +58,27 @@ async function fixture(t) {
               record.actionId === id,
           )),
   };
-  store.append({ kind: "run", record: records.run }, caller);
-  const ownership = store.acquireWorkspace("w-demo", "s1");
+  const args = { text: "changed" };
+  const granted = admitAndGrant(store, caller, refs, records, {
+    actionId: "a1",
+    argumentsDigest: actionArgumentsDigest(args),
+  });
+  store.append({ kind: "run", record: granted.run }, caller);
+  const ownership = store.acquireWorkspace(granted.workspaceId, "s1");
   let config = "cfg1";
   const source = { effectiveRevision: () => config };
   const fence = new RevisionFence(source, {
     scopeId: "w-demo",
     profileRevision: "profile1",
     policyRevision: "policy1",
-    grantIds: ["grant1"],
+    grantIds: [granted.grantId],
   });
-  const args = { text: "changed" };
   const permit = {
     toolCallId: "call-1",
     toolName: "fixture_write",
     actionId: "a1",
     runRecordId: "rec-run",
-    grantId: "grant1",
+    grantId: granted.grantId,
     parentActionId: null,
     capabilityId: "cap1",
     capabilityVersion: "1",
@@ -82,6 +87,7 @@ async function fixture(t) {
     targetScopeId: "w-demo",
     idempotencyKey: "effect-1",
     ownership,
+    capability: "fs.write",
   };
   const states = () =>
     store
@@ -92,6 +98,9 @@ async function fixture(t) {
     store,
     caller,
     ownership,
+    granted,
+    policy: () =>
+      new NativePolicy(store, caller, fence.current, granted.identity),
     fence,
     args,
     permit,
@@ -141,10 +150,10 @@ test("current() is a frozen snapshot that follows the committed config revision"
 
 test("a grant withdrawn before dispatch blocks the effect and records a denial", async (t) => {
   const f = await fixture(t);
-  const policy = new NativePolicy(f.store, f.caller, f.fence.current);
+  const policy = f.policy();
   policy.authorize(f.permit);
   await prepare(policy, f.permit, f.args);
-  f.fence.revokeGrant("grant1");
+  f.fence.revokeGrant(f.granted.grantId);
   const calls = { n: 0 };
   await assert.rejects(run(policy, f.permit, f.args, calls), {
     code: "POLICY_DENIED",
@@ -155,14 +164,14 @@ test("a grant withdrawn before dispatch blocks the effect and records a denial",
 
 test("a withdrawal racing the final handoff check still blocks the new effect", async (t) => {
   const f = await fixture(t);
-  const policy = new NativePolicy(f.store, f.caller, f.fence.current);
+  const policy = f.policy();
   policy.authorize(f.permit);
   await prepare(policy, f.permit, f.args);
-  const appendBatch = f.store.appendBatch.bind(f.store);
-  f.store.appendBatch = (...args) => {
-    const result = appendBatch(...args);
-    if (args[0].some(({ record }) => record.state === "running"))
-      f.fence.revokeGrant("grant1");
+  const consume = f.store.consumeOnceGrant.bind(f.store);
+  f.store.consumeOnceGrant = (...args) => {
+    const result = consume(...args);
+    if (args[1].some(({ record }) => record.state === "running"))
+      f.fence.revokeGrant(f.granted.grantId);
     return result;
   };
   const calls = { n: 0 };
@@ -176,7 +185,7 @@ test("a withdrawal racing the final handoff check still blocks the new effect", 
 
 test("a committed config change makes callers built on the old revision deny", async (t) => {
   const f = await fixture(t);
-  const policy = new NativePolicy(f.store, f.caller, f.fence.current);
+  const policy = f.policy();
   policy.authorize(f.permit);
   await prepare(policy, f.permit, f.args);
   f.setConfig("cfg2");
@@ -214,11 +223,11 @@ test("queued work re-checks the revisions it was queued under", async (t) => {
 
 test("a stale workspace epoch is rejected even after a valid handoff", async (t) => {
   const f = await fixture(t);
-  const policy = new NativePolicy(f.store, f.caller, f.fence.current);
+  const policy = f.policy();
   policy.authorize(f.permit);
   await prepare(policy, f.permit, f.args);
-  f.store.releaseWorkspace("w-demo", "s1", f.ownership.epoch);
-  const next = f.store.acquireWorkspace("w-demo", "s1");
+  f.store.releaseWorkspace(f.granted.workspaceId, "s1", f.ownership.epoch);
+  const next = f.store.acquireWorkspace(f.granted.workspaceId, "s1");
   assert.ok(next.epoch > f.ownership.epoch);
   const calls = { n: 0 };
   await assert.rejects(run(policy, f.permit, f.args, calls), {
@@ -229,7 +238,7 @@ test("a stale workspace epoch is rejected even after a valid handoff", async (t)
 
 test("with the grant intact and revisions current the effect runs once", async (t) => {
   const f = await fixture(t);
-  const policy = new NativePolicy(f.store, f.caller, f.fence.current);
+  const policy = f.policy();
   policy.authorize(f.permit);
   await prepare(policy, f.permit, f.args);
   const calls = { n: 0 };

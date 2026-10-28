@@ -1,9 +1,25 @@
 import { randomUUID } from "node:crypto";
+import { TRANSPORT_LIMITS } from "@splyce/pi/contracts";
 
 const unavailable = () =>
   Object.assign(new Error("Credential unavailable"), {
     code: "CREDENTIAL_UNAVAILABLE",
   });
+const redactionUnavailable = () =>
+  Object.assign(new Error("Persistence redaction unavailable"), {
+    code: "PERSIST_REDACTION_UNAVAILABLE",
+  });
+const entryTooLarge = () =>
+  Object.assign(new Error("Persistence entry too large"), {
+    code: "PERSIST_ENTRY_TOO_LARGE",
+  });
+const validText = (text) =>
+  typeof text === "string" &&
+  text.isWellFormed() &&
+  Buffer.byteLength(text) <= 1048576;
+const fitsFrame = (frame) =>
+  Buffer.byteLength(JSON.stringify(frame)) + 4 <=
+  TRANSPORT_LIMITS.maxEncodedFrameBytes;
 const exact = (value, keys) =>
   value !== null &&
   typeof value === "object" &&
@@ -46,6 +62,11 @@ export class NativeControl {
     )
       return Promise.reject(unavailable());
     const id = `${this.#epoch}-${++this.#sequence}`;
+    if (
+      method === "credential.redact" &&
+      !fitsFrame({ native: { id, method, params } })
+    )
+      return Promise.reject(entryTooLarge());
     return new Promise((resolve, reject) => {
       const finish = (error, value) => {
         if (!this.#pending.delete(id)) return;
@@ -97,7 +118,14 @@ export class NativeControl {
       if (
         !exact(reply, ["id", "ok", "error"]) ||
         !exact(reply.error, ["code"]) ||
-        reply.error.code !== "CREDENTIAL_UNAVAILABLE"
+        !["CREDENTIAL_UNAVAILABLE", "PERSIST_REDACTION_UNAVAILABLE"].includes(
+          reply.error.code,
+        ) ||
+        (pending &&
+          reply.error.code !==
+            (pending.method === "credential.redact"
+              ? "PERSIST_REDACTION_UNAVAILABLE"
+              : "CREDENTIAL_UNAVAILABLE"))
       )
         return fail();
       pending?.finish(true);
@@ -111,12 +139,64 @@ export class NativeControl {
         (typeof reply.value.secret === "string" &&
           Buffer.byteLength(reply.value.secret) <= 2560 &&
           !/\p{Cc}/u.test(reply.value.secret)));
+    const isStatus =
+      exact(reply.value, ["present"]) &&
+      typeof reply.value.present === "boolean";
+    const isRedaction =
+      exact(reply.value, ["text", "redactedCount"]) &&
+      validText(reply.value.text) &&
+      Number.isSafeInteger(reply.value.redactedCount) &&
+      reply.value.redactedCount >= 0 &&
+      fitsFrame(frame);
     if (
-      (!isEmpty && !isSecret) ||
-      (pending && (pending.method === "credential.read" ? !isSecret : !isEmpty))
+      (!isEmpty && !isSecret && !isRedaction && !isStatus) ||
+      (pending &&
+        (pending.method === "credential.read"
+          ? !isSecret
+          : pending.method === "credential.redact"
+            ? !isRedaction
+            : pending.method === "credential.status"
+              ? !isStatus
+              : !isEmpty))
     )
       return fail();
     pending?.finish(false, reply.value);
+  }
+
+  async credentialStatus(params, signal) {
+    if (
+      !exact(params, ["target"]) ||
+      typeof params.target !== "string" ||
+      !/^splyce-credential:v1:[0-9a-f]{64}$/.test(params.target)
+    )
+      throw unavailable();
+    const result = await this.#call(
+      "credential.status",
+      { target: params.target },
+      signal,
+    );
+    if (this.#closed || signal?.aborted) throw unavailable();
+    return result;
+  }
+
+  async redact(text, signal) {
+    if (!validText(text)) {
+      if (
+        typeof text === "string" &&
+        text.isWellFormed() &&
+        Buffer.byteLength(text) > 1048576
+      )
+        throw entryTooLarge();
+      throw redactionUnavailable();
+    }
+    try {
+      const result = await this.#call("credential.redact", { text }, signal);
+      if (this.#closed || signal?.aborted) throw redactionUnavailable();
+      return result;
+    } catch (error) {
+      if (error?.code === "PERSIST_ENTRY_TOO_LARGE") throw entryTooLarge();
+      throw redactionUnavailable();
+    }
   }
 
   async open(binding, signal) {

@@ -80,6 +80,8 @@ its pinned profile revision, rather than the latest written profile snapshot.
 Real workspace admission, credential writes,
 provider dispatch and port-flip production require their separate implementations
 and qualification.
+Native dispatch must pass the observed workspace identity on every grant use,
+because the Store cannot verify it under its lock; a use without it is a caller bug.
 
 Existing stored protocol version 1 event envelopes are projected to version 2 in
 memory before full validation and read/replay/export. Stored payload bytes,
