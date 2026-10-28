@@ -36,7 +36,10 @@
     { id: "extensions", label: "Extensions", icon: "layers" },
     { id: "settings", label: "Settings", icon: "settings" },
   ];
-  let collapsed = $state(false);
+  let collapsed = $state(
+    typeof localStorage !== "undefined" &&
+      localStorage.getItem("splyce.sidebar") === "closed",
+  );
   let mobileOpen = $state(false);
   let width = $state(window.innerWidth);
   let theme = $state<"light" | "dark">("light");
@@ -56,6 +59,9 @@
   async function toggleSidebar() {
     if (narrow) mobileOpen = !mobileOpen;
     else collapsed = !collapsed;
+    if (!narrow && typeof localStorage !== "undefined") {
+      localStorage.setItem("splyce.sidebar", collapsed ? "closed" : "open");
+    }
     await tick();
     if (narrow && mobileOpen) closeButton?.focus();
     else if (narrow) mobileButton?.focus();
