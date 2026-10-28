@@ -27,6 +27,10 @@
       "The project changed. Select it again before configuring a provider.",
     POLICY_DENIED:
       "The engine refused this provider setup. Nothing was saved and the key was discarded.",
+    SETUP_CREDENTIAL_UNAVAILABLE:
+      "Provider setup was blocked because Windows Credential Manager could not be read safely. Check Splyce credentials in Windows Credential Manager before retrying. The key was discarded from this form.",
+    SETUP_CREDENTIAL_INVENTORY_UNAVAILABLE:
+      "Windows credential inventory could not be validated. Review Splyce entries in Windows Credential Manager. Nothing was saved and the key was discarded.",
   };
   const FAILED =
     "Could not confirm the provider save. Check the provider configuration before trying again. The key was discarded from this form.";

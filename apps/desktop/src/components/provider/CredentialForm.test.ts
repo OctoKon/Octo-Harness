@@ -96,6 +96,14 @@ describe("provider setup form", () => {
   it.each([
     ["STALE_REVISION", "changed since this form was opened"],
     ["POLICY_DENIED", "engine refused this provider setup"],
+    [
+      "SETUP_CREDENTIAL_UNAVAILABLE",
+      "Check Splyce credentials in Windows Credential Manager",
+    ],
+    [
+      "SETUP_CREDENTIAL_INVENTORY_UNAVAILABLE",
+      "Windows credential inventory could not be validated. Review Splyce entries in Windows Credential Manager. Nothing was saved and the key was discarded.",
+    ],
     [undefined, "Could not confirm the provider save"],
   ])(
     "rejection %s shows fixed copy, clears the key and never echoes it",
