@@ -23,12 +23,13 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { listWorkspaceFiles } from "./index.js";
 
 export type WorktreeErrorCode =
@@ -37,6 +38,8 @@ export type WorktreeErrorCode =
   | "WORKSPACE_UNKNOWN"
   | "WORKTREE_UNKNOWN"
   | "WORKTREE_LIMIT"
+  | "WORKTREE_PATH_INVALID"
+  | "PATCH_TOO_LARGE"
   | "BASE_REF_INVALID"
   | "PATCH_REJECTED"
   | "APPLY_CONFLICT"
@@ -122,6 +125,7 @@ interface Meta extends WorktreeInfo {
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/;
 const REF = /^[A-Za-z0-9][A-Za-z0-9._/@^~-]{0,254}$/;
 const MAX_OUTPUT = 1 << 28;
+export const MAX_WORKTREE_DIFF_BYTES = 1 << 20;
 const GIT_TIMEOUT_MS = 120_000;
 const win = process.platform === "win32";
 const DEVICE =
@@ -408,7 +412,51 @@ export class WorktreeManager {
     if (!existsSync(wsDir)) return [];
     return readdirSync(wsDir)
       .filter((n) => n.endsWith(".json"))
-      .map((n) => JSON.parse(readFileSync(join(wsDir, n), "utf8")) as Meta);
+      .map((n) => this.readMeta(join(wsDir, n)));
+  }
+
+  private assertWorktreeDir(dir: string): void {
+    const invalid = () =>
+      new WorktreeError("WORKTREE_PATH_INVALID", "invalid worktree directory");
+    if (typeof dir !== "string" || resolve(dir) !== dir) throw invalid();
+    const inside = (root: string, target: string) => {
+      const rel = relative(root, target);
+      return (
+        rel !== "" &&
+        rel !== ".." &&
+        !rel.startsWith(`..${sep}`) &&
+        !isAbsolute(rel)
+      );
+    };
+    if (!inside(this.base, dir)) throw invalid();
+    let probe = dir;
+    while (!existsSync(probe) && dirname(probe) !== probe)
+      probe = dirname(probe);
+    if (!inside(realpathSync(this.base), realpathSync(probe))) throw invalid();
+  }
+
+  private readMeta(file: string): Meta {
+    let meta: Meta;
+    try {
+      meta = JSON.parse(readFileSync(file, "utf8")) as Meta;
+    } catch (cause) {
+      throw new WorktreeError(
+        "WORKTREE_PATH_INVALID",
+        "invalid worktree metadata",
+        { cause },
+      );
+    }
+    if (
+      !meta ||
+      meta.dir !== file.slice(0, -5) ||
+      meta.worktreeId !== file.slice(dirname(file).length + 1, -5)
+    )
+      throw new WorktreeError(
+        "WORKTREE_PATH_INVALID",
+        "invalid worktree metadata",
+      );
+    this.assertWorktreeDir(meta.dir);
+    return meta;
   }
 
   private writeMeta(meta: Meta): void {
@@ -422,8 +470,7 @@ export class WorktreeManager {
     if (!existsSync(this.base)) return null;
     for (const ws of readdirSync(this.base)) {
       const file = join(this.base, ws, `${worktreeId}.json`);
-      if (existsSync(file))
-        return JSON.parse(readFileSync(file, "utf8")) as Meta;
+      if (existsSync(file)) return this.readMeta(file);
     }
     return null;
   }
@@ -630,6 +677,11 @@ export class WorktreeManager {
       });
     }
     const patch = buf.toString("utf8");
+    if (buf.byteLength > MAX_WORKTREE_DIFF_BYTES)
+      throw new WorktreeError(
+        "PATCH_TOO_LARGE",
+        "child patch exceeds the byte limit",
+      );
     assertPatchConfined(patch);
     return {
       buf,
@@ -717,8 +769,17 @@ export class WorktreeManager {
     worktreeId: string,
     input: { grantId: string },
   ): Promise<{ applied: true; files: WorktreeFile[] }> {
+    return (await this.prepareApply(worktreeId))(input);
+  }
+
+  async prepareApply(
+    worktreeId: string,
+  ): Promise<
+    (input: {
+      grantId: string;
+    }) => Promise<{ applied: true; files: WorktreeFile[] }>
+  > {
     const meta = this.known(worktreeId);
-    const grantId = checkId(input?.grantId, "grantId");
     if (this.workspaceRoot(meta.workspaceId) !== meta.workspaceRoot)
       throw new WorktreeError(
         "WORKSPACE_UNKNOWN",
@@ -745,6 +806,22 @@ export class WorktreeManager {
         },
       );
     }
+    let used = false;
+    return (input) => {
+      if (used)
+        throw new WorktreeError("GRANT_DENIED", "prepared apply already used");
+      used = true;
+      return this.applyChecked(input, diff, args, cwd);
+    };
+  }
+
+  private async applyChecked(
+    input: { grantId: string },
+    diff: WorktreeDiff & { buf: Buffer },
+    args: string[],
+    cwd: string,
+  ): Promise<{ applied: true; files: WorktreeFile[] }> {
+    const grantId = checkId(input?.grantId, "grantId");
     try {
       await this.opts.consumeGrant(grantId, {
         actionId: diff.actionId,
@@ -769,6 +846,7 @@ export class WorktreeManager {
   }
 
   private async remove(meta: Meta): Promise<void> {
+    this.assertWorktreeDir(meta.dir);
     let gitError: unknown = null;
     const repo =
       meta.repoRoot && existsSync(meta.repoRoot) ? meta.repoRoot : null;
@@ -847,12 +925,11 @@ export class WorktreeManager {
           continue;
         }
         if (!name.endsWith(".json") && names.includes(`${name}.json`)) continue;
-        let meta: Meta | null = null;
-        if (name.endsWith(".json")) {
-          meta = JSON.parse(readFileSync(join(wsDir, name), "utf8")) as Meta;
-          if (this.opts.isChildLive(meta.childId)) continue;
-        }
         try {
+          const meta = name.endsWith(".json")
+            ? this.readMeta(join(wsDir, name))
+            : null;
+          if (meta && this.opts.isChildLive(meta.childId)) continue;
           await this.remove(
             meta ?? ({ dir: join(wsDir, id), repoRoot: null } as Meta),
           );

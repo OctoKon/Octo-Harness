@@ -13,13 +13,16 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { Agent, bindSplyceToolAdmission } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createBashTool } from "@earendil-works/pi-coding-agent";
 import {
   CodeIndex,
   codeIndexTools,
@@ -28,6 +31,7 @@ import { WorktreeManager } from "../../packages/splyce-index/dist/worktrees.js";
 import { RevisionFence } from "../../packages/splyce-pi/dist/admission.js";
 import { AdmissionError } from "../../packages/splyce-pi/dist/policy.js";
 import { Store, StoreError } from "../../packages/splyce-pi/dist/store.js";
+import { isSecretPath } from "../../packages/splyce-pi/dist/secret-path.js";
 import {
   type SpawnResult,
   SubagentError,
@@ -290,6 +294,7 @@ async function harness(
     streamFn,
     tools: {
       ...childToolFactories({ codeTools: () => codeIndexTools(index!) }),
+      "shell.run": (root: string) => [createBashTool(root)],
       ...options.tools,
     },
     worktrees,
@@ -497,6 +502,345 @@ test("read child path arguments are confined to the workspace", async (t) => {
   assert.equal(results[0]!.status, "failed");
   if (results[0]!.status === "failed")
     assert.equal(results[0]!.reason, "PATH_OUTSIDE_WORKSPACE");
+});
+
+for (const mode of ["read", "write"] as const)
+  for (const form of [
+    "at-drive",
+    "at-parent",
+    "drive",
+    "url",
+    "home",
+    "device",
+    "unicode",
+  ])
+    test(`${mode} child rejects Pi path alias ${form}`, async (t) => {
+      let path = "";
+      const returned: string[] = [];
+      const h = await harness(t, ({ turn, messages }) => {
+        returned.push(
+          JSON.stringify(messages.filter((m) => m.role === "toolResult")),
+        );
+        return turn === 0
+          ? call(mode === "write" ? "write" : "read", {
+              path,
+              ...(mode === "write" ? { content: "changed" } : {}),
+            })
+          : say("done");
+      });
+      const drive = h.outside
+        .replace(/^([A-Za-z]):[\\/]/, (_, d: string) => `/${d.toLowerCase()}/`)
+        .replaceAll("\\", "/");
+      path = {
+        "at-drive": `@${drive}`,
+        "at-parent": "@../../outside.txt",
+        drive,
+        url: pathToFileURL(h.outside).href,
+        home: "~/outside.txt",
+        device: `\\\\?\\${h.outside}`,
+        unicode: "src/ali\u00a0as.ts",
+      }[form]!;
+      writeFileSync(h.outside, "private outside sentinel");
+      const { results } = await h.spawn({ tasks: [{ prompt: form, mode }] });
+      assert.equal(results[0]!.status, "failed");
+      if (results[0]!.status === "failed")
+        assert.equal(results[0]!.reason, "PATH_OUTSIDE_WORKSPACE");
+      assert.equal(readFileSync(h.outside, "utf8"), "private outside sentinel");
+      assert.ok(!returned.join("").includes("private outside sentinel"));
+      assert.equal(h.actions().length, 0, "denial precedes native receipts");
+      assert.equal(h.live(), 0);
+    });
+
+for (const mode of ["read", "write"] as const)
+  for (const path of [".env", "server.pem", ".ssh/config"])
+    test(`${mode} child denies secret path ${path} without returning content`, async (t) => {
+      const returned: string[] = [];
+      const h = await harness(t, ({ turn, messages }) => {
+        returned.push(JSON.stringify(messages));
+        return turn === 0 ? call("read", { path }) : say("done");
+      });
+      mkdirSync(join(h.workspace, ".ssh"));
+      writeFileSync(join(h.workspace, path), "private child fixture value");
+      execFileSync("git", ["-C", h.workspace, "add", "-A"]);
+      execFileSync("git", [
+        "-C",
+        h.workspace,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "fixture",
+      ]);
+      const { results } = await h.spawn({ tasks: [{ prompt: "read", mode }] });
+      assert.equal(results[0]!.status, "failed");
+      if (results[0]!.status === "failed")
+        assert.equal(results[0]!.reason, "POLICY_DENIED");
+      assert.ok(!returned.join("").includes("private child fixture value"));
+      assert.equal(h.actions().length, 0);
+    });
+
+test("secret path matching normalizes every Windows path segment", () => {
+  for (const path of [
+    ".env.",
+    ".env ",
+    ".ENV",
+    "id_rsa::$DATA",
+    ".env:x",
+    "src\\.SSH. \\config",
+    "src/.aws:stream/config",
+    "src/.gnupg /config",
+  ])
+    assert.equal(isSecretPath(path), true, path);
+  assert.equal(isSecretPath("src/.ENV.EXAMPLE. "), false);
+  assert.equal(isSecretPath("src/ordinary.txt"), false);
+});
+
+for (const mode of ["read", "write"] as const)
+  for (const path of [
+    ".env.",
+    ".env ",
+    ".ENV",
+    "id_rsa::$DATA",
+    ".env:x",
+    ".SSH. /config",
+    ".aws:stream/config",
+    ".gnupg /config",
+  ])
+    test(`${mode} child denies Windows secret alias ${path}`, async (t) => {
+      const returned: string[] = [];
+      const factories = childToolFactories();
+      const roots: string[] = [];
+      const h = await harness(
+        t,
+        ({ turn, messages }) => {
+          returned.push(JSON.stringify(messages));
+          return turn === 0
+            ? call(mode, {
+                path,
+                ...(mode === "write" ? { content: "changed" } : {}),
+              })
+            : say("done");
+        },
+        {
+          tools: {
+            "fs.read": (root: string) => {
+              roots.push(root);
+              writeFileSync(join(root, ".env"), "private alias fixture value");
+              writeFileSync(
+                join(root, "id_rsa"),
+                "private alias fixture value",
+              );
+              for (const dir of [".ssh", ".aws", ".gnupg"]) {
+                mkdirSync(join(root, dir));
+                writeFileSync(
+                  join(root, dir, "config"),
+                  "private alias fixture value",
+                );
+              }
+              return factories["fs.read"](root);
+            },
+          },
+        },
+      );
+      const { results } = await h.spawn({ tasks: [{ prompt: "alias", mode }] });
+      assert.equal(results[0]!.status, "failed");
+      if (results[0]!.status === "failed")
+        assert.equal(results[0]!.reason, "POLICY_DENIED");
+      assert.ok(!returned.join("").includes("private alias fixture value"));
+      assert.ok(
+        !JSON.stringify(h.events()).includes("private alias fixture value"),
+      );
+      assert.equal(h.actions().length, 0, "denial precedes native receipts");
+      for (const root of roots)
+        for (const file of [".env", "id_rsa"])
+          if (existsSync(join(root, file)))
+            assert.equal(
+              readFileSync(join(root, file), "utf8"),
+              "private alias fixture value",
+            );
+      assert.equal(h.live(), 0);
+    });
+
+test("read and write children deny a real Windows 8.3 secret alias", async (t) => {
+  if (process.platform !== "win32")
+    return t.skip("Windows 8.3 names require Windows");
+  const shortName = (file: string) =>
+    execFileSync(
+      "cmd.exe",
+      ["/d", "/c", `for %I in ("${file}") do @echo %~sI`],
+      {
+        encoding: "utf8",
+      },
+    )
+      .trim()
+      .split(/[\\/]/)
+      .at(-1)!;
+  for (const mode of ["read", "write"] as const) {
+    let path = "";
+    const returned: string[] = [];
+    const factories = childToolFactories();
+    const h = await harness(
+      t,
+      ({ turn, messages }) => {
+        returned.push(JSON.stringify(messages));
+        return turn === 0
+          ? call(mode, {
+              path,
+              ...(mode === "write" ? { content: "changed" } : {}),
+            })
+          : say("done");
+      },
+      {
+        tools: {
+          "fs.read": (root: string) => {
+            const file = join(root, ".env.production");
+            writeFileSync(file, "private short-name fixture value");
+            path = shortName(file);
+            assert.match(path, /~\d/);
+            assert.equal(
+              realpathSync.native(join(root, path)),
+              realpathSync.native(file),
+            );
+            return factories["fs.read"](root);
+          },
+        },
+      },
+    );
+    const probe = join(h.workspace, ".env.production");
+    await h.ready;
+    writeFileSync(probe, "private short-name fixture value");
+    if (!/~\d/.test(shortName(probe)))
+      return t.skip("8.3 short names are disabled on this filesystem");
+    const { results } = await h.spawn({
+      tasks: [{ prompt: "short alias", mode }],
+    });
+    assert.equal(results[0]!.status, "failed");
+    if (results[0]!.status === "failed")
+      assert.equal(results[0]!.reason, "POLICY_DENIED");
+    assert.ok(!returned.join("").includes("private short-name fixture value"));
+    assert.equal(h.actions().length, 0);
+    assert.equal(h.live(), 0);
+  }
+});
+
+test("read child refuses unchecked Pi missing-file aliases", async (t) => {
+  const returned: string[] = [];
+  const h = await harness(t, ({ turn, messages }) => {
+    returned.push(JSON.stringify(messages));
+    return turn === 0
+      ? call("read", { path: "alias'/outside.txt" })
+      : say("done");
+  });
+  writeFileSync(h.outside, "private fallback fixture value");
+  symlinkSync(
+    h.dir,
+    join(h.workspace, "alias’"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const { results } = await h.spawn({ tasks: [{ prompt: "read alias" }] });
+  assert.equal(results[0]!.status, "failed");
+  if (results[0]!.status === "failed")
+    assert.equal(results[0]!.reason, "PATH_OUTSIDE_WORKSPACE");
+  assert.ok(!returned.join("").includes("private fallback fixture value"));
+  assert.equal(h.actions().length, 0);
+});
+
+test("read child denies canonical secret aliases and permits .env.example", async (t) => {
+  const returned: string[] = [];
+  const h = await harness(t, ({ task, turn, messages }) => {
+    returned.push(JSON.stringify(messages));
+    return turn === 0 ? call("read", { path: task }) : say("done");
+  });
+  mkdirSync(join(h.workspace, ".ssh"));
+  writeFileSync(
+    join(h.workspace, ".ssh", "config"),
+    "private alias fixture value",
+  );
+  writeFileSync(join(h.workspace, ".env.example"), "allowed example");
+  symlinkSync(
+    join(h.workspace, ".ssh"),
+    join(h.workspace, "public"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const { results } = await h.spawn({
+    tasks: [{ prompt: "public/config" }, { prompt: ".env.example" }],
+  });
+  assert.equal(results[0]!.status, "failed");
+  if (results[0]!.status === "failed")
+    assert.equal(results[0]!.reason, "POLICY_DENIED");
+  assert.equal(results[1]!.status, "completed");
+  assert.ok(!returned.join("").includes("private alias fixture value"));
+  assert.ok(returned.join("").includes("allowed example"));
+});
+
+for (const tool of ["write", "edit"])
+  test(`write child denies ${tool} to secret paths before mutation`, async (t) => {
+    const h = await harness(t, ({ turn }) =>
+      turn === 0
+        ? call(
+            tool,
+            tool === "write"
+              ? { path: ".env", content: "changed" }
+              : { path: ".env", edits: [{ oldText: "old", newText: "new" }] },
+          )
+        : say("done"),
+    );
+    writeFileSync(join(h.workspace, ".env"), "old");
+    execFileSync("git", ["-C", h.workspace, "add", "-A"]);
+    execFileSync("git", [
+      "-C",
+      h.workspace,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-qm",
+      "fixture",
+    ]);
+    const { results } = await h.spawn({
+      tasks: [{ prompt: tool, mode: "write" }],
+    });
+    assert.equal(results[0]!.status, "failed");
+    if (results[0]!.status === "failed")
+      assert.equal(results[0]!.reason, "POLICY_DENIED");
+    assert.equal(readFileSync(join(h.workspace, ".env"), "utf8"), "old");
+    assert.equal(h.actions().length, 0);
+    assert.equal(h.live(), 0);
+  });
+
+test("write child denies a new file through a canonical secret directory alias", async (t) => {
+  const factories = childToolFactories();
+  const h = await harness(
+    t,
+    ({ turn }) =>
+      turn === 0
+        ? call("write", { path: "public/new.txt", content: "changed" })
+        : say("done"),
+    {
+      tools: {
+        "fs.write": (root: string) => {
+          mkdirSync(join(root, ".ssh"));
+          symlinkSync(
+            join(root, ".ssh"),
+            join(root, "public"),
+            process.platform === "win32" ? "junction" : "dir",
+          );
+          return factories["fs.write"](root);
+        },
+      },
+    },
+  );
+  const { results } = await h.spawn({
+    tasks: [{ prompt: "write", mode: "write" }],
+  });
+  assert.equal(results[0]!.status, "failed");
+  if (results[0]!.status === "failed")
+    assert.equal(results[0]!.reason, "POLICY_DENIED");
+  assert.equal(h.actions().length, 0);
+  assert.equal(h.live(), 0);
 });
 
 test("turn budget exhaustion fails only that child; parent and sibling continue", async (t) => {
@@ -830,6 +1174,149 @@ test("subagent.diff truncates large patches; subagent.discard drops the worktree
       e instanceof SubagentError && e.code === "CHILD_NOT_APPLICABLE",
   );
 });
+
+test("oversize child diff is rejected and its worktree is removed", async (t) => {
+  const h = await harness(t, ({ turn }) =>
+    turn === 0
+      ? call("write", { path: "big.txt", content: "é".repeat(524_289) })
+      : say("done"),
+  );
+  const { results } = await h.spawn({
+    tasks: [{ prompt: "big", mode: "write" }],
+  });
+  assert.equal(results[0]!.status, "failed");
+  if (results[0]!.status === "failed") {
+    assert.equal(results[0]!.reason, "ENGINE_ERROR");
+    assert.equal(results[0]!.message, "child patch exceeds the byte limit");
+  }
+  assert.equal(h.live(), 0);
+  assert.equal(existsSync(join(h.workspace, "big.txt")), false);
+});
+
+test("subagent.diff redacts bare password assignments on added and removed lines", async (t) => {
+  const longPassword = `${"a".repeat(513)} private long tail`;
+  const escapedPassword = String.raw`PASS="prefix\" private escaped tail"`;
+  const h = await harness(t, ({ turn }) =>
+    turn === 0
+      ? call("write", {
+          path: "settings.txt",
+          content: `DB_PASS="new database value"\nPASS=newpass\nPASS="${longPassword}"\n${escapedPassword}\nPASS='unfinished private value\ncompass=north\n`,
+        })
+      : say("done"),
+  );
+  writeFileSync(
+    join(h.workspace, "settings.txt"),
+    "DB_PASS=olddbvalue\nPASS='old pass value'\n",
+  );
+  execFileSync("git", ["-C", h.workspace, "add", "-A"]);
+  execFileSync("git", [
+    "-C",
+    h.workspace,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "commit",
+    "-qm",
+    "fixture",
+  ]);
+  const { results } = await h.spawn({
+    tasks: [{ prompt: "settings", mode: "write" }],
+  });
+  const diff = await h.supervisor.diff({ childId: results[0]!.childId });
+  for (const value of [
+    "new database value",
+    "newpass",
+    "olddbvalue",
+    "old pass value",
+    "private long tail",
+    "private escaped tail",
+    "unfinished private value",
+  ])
+    assert.ok(!diff.patch.includes(value), value);
+  assert.match(diff.patch, /\+DB_PASS=\[REDACTED\]/);
+  assert.match(diff.patch, /-PASS=\[REDACTED\]/);
+  assert.ok(diff.patch.includes("compass=north"));
+});
+
+for (const stale of ["dirty", "committed"])
+  test(`stale ${stale} supervisor apply returns APPLY_CONFLICT and retries with a fresh grant`, async (t) => {
+    const h = await harness(t, ({ turn }) =>
+      turn === 0
+        ? call("write", {
+            path: "src/helper.ts",
+            content: "export const result = 99;\n",
+          })
+        : say("done"),
+    );
+    const file = join(h.workspace, "src/helper.ts");
+    const original = readFileSync(file, "utf8");
+    const base = execFileSync("git", ["-C", h.workspace, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim();
+    const { results } = await h.spawn({
+      tasks: [{ prompt: "edit", mode: "write" }],
+    });
+    const childId = results[0]!.childId;
+    const diff = await h.supervisor.diff({ childId });
+    const grantId = h.approve(diff);
+    writeFileSync(file, "parent changed\n");
+    if (stale === "committed") {
+      execFileSync("git", ["-C", h.workspace, "add", "-A"]);
+      execFileSync("git", [
+        "-C",
+        h.workspace,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "parent",
+      ]);
+    }
+    await assert.rejects(h.supervisor.apply(childId, { grantId }), {
+      code: "APPLY_CONFLICT",
+    });
+    assert.equal(readFileSync(file, "utf8"), "parent changed\n");
+    assert.equal(
+      h.actions().filter((a) => a.capabilityId === "worktree.apply").length,
+      0,
+    );
+    h.supervisor.confirmApplyGrant(grantId, {
+      actionId: diff.actionId,
+      argumentsDigest: (await h.worktrees.diff(diff.worktreeId))
+        .argumentsDigest,
+    });
+    if (stale === "committed")
+      execFileSync("git", [
+        "-C",
+        h.workspace,
+        "checkout",
+        base,
+        "--",
+        "src/helper.ts",
+      ]);
+    else writeFileSync(file, original);
+    if (stale === "committed")
+      execFileSync("git", [
+        "-C",
+        h.workspace,
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "restore",
+      ]);
+    const fresh = h.approve(diff);
+    assert.equal(
+      (await h.supervisor.apply(childId, { grantId: fresh })).applied,
+      true,
+    );
+    assert.equal(readFileSync(file, "utf8"), "export const result = 99;\n");
+  });
 
 test("write child cannot change a parent-workspace file before apply: no shell, fs confined to the worktree", async (t) => {
   const target = (workspace: string) => join(workspace, "src", "main.ts");

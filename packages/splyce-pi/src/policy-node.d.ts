@@ -10,4 +10,7 @@ declare module "node:crypto" {
 // TD-70 child path confinement (node:path comes from workspace-tools-node.d.ts).
 declare module "node:fs" {
   export function realpathSync(path: string): string;
+  export namespace realpathSync {
+    export function native(path: string): string;
+  }
 }

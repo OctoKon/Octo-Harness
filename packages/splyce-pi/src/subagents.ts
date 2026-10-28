@@ -52,6 +52,7 @@ import {
   type WorkspaceIdentityPort,
 } from "./policy.js";
 import { type Redactor, redactSecrets } from "./provider-auth.js";
+import { isSecretPath } from "./secret-path.js";
 import type { CallerContext, Store, WorkspaceOwnership } from "./store.js";
 
 export type SubagentMode = (typeof SUBAGENT_MODES)[number];
@@ -181,6 +182,13 @@ export interface WorktreeManager {
     worktreeId: string,
     input: { grantId: string },
   ): Promise<{ applied: true; files: WorktreeFile[] }>;
+  prepareApply(
+    worktreeId: string,
+  ): Promise<
+    (input: {
+      grantId: string;
+    }) => Promise<{ applied: true; files: WorktreeFile[] }>
+  >;
   discard(worktreeId: string): Promise<void>;
   sweepOrphans(): Promise<{
     removed: string[];
@@ -670,6 +678,7 @@ export class SubagentSupervisor {
     if (!this.host.fence.current().grantIds.includes(grantId))
       throw new AdmissionError("POLICY_DENIED");
     this.confirmApplyGrant(grantId, diff);
+    const apply = await worktrees.prepareApply(worktreeId);
     const policy = this.policy();
     const toolName = "worktree.apply";
     const toolCallId = `apply:${childId}:${randomUUID()}`;
@@ -692,7 +701,7 @@ export class SubagentSupervisor {
       args,
       async () => ({
         isError: false,
-        value: await worktrees.apply(worktreeId, { grantId }),
+        value: await apply({ grantId }),
       }),
       undefined,
     );
@@ -1246,6 +1255,30 @@ class ChildAdmission implements ToolAdmission {
           "PATH_OUTSIDE_WORKSPACE",
           `${toolName} path is outside the child root`,
         );
+      const target = resolve(this.root, rel);
+      if (isSecretPath(rel))
+        this.deny("POLICY_DENIED", `${toolName} secret path is denied`);
+      // Pi read aliases missing files; only admit the exact target we checked.
+      if (toolName === "read" && !existsSync(target))
+        this.deny(
+          "PATH_OUTSIDE_WORKSPACE",
+          "read path must exist without aliases",
+        );
+      let probe = target;
+      while (!existsSync(probe) && dirname(probe) !== probe)
+        probe = dirname(probe);
+      if (
+        isSecretPath(
+          relative(
+            realpathSync.native(this.root),
+            // Native resolution expands Windows short names before matching.
+            resolve(realpathSync.native(probe), relative(probe, target)),
+          )
+            .split(sep)
+            .join("/"),
+        )
+      )
+        this.deny("POLICY_DENIED", `${toolName} secret path is denied`);
       if (cap === "fs.write") {
         try {
           this.supervisor.claim(this.run.childId, rel);
@@ -1310,15 +1343,27 @@ class ChildAdmission implements ToolAdmission {
 
 /** Workspace-relative posix path inside `root`, or undefined when it escapes (incl. links). */
 export function confine(root: string, path: string): string | undefined {
-  if (!path || path.startsWith("~") || path.includes("\0")) return undefined;
-  const target = resolve(root, path);
+  if (
+    !path ||
+    /^[@~\/\\]/.test(path) ||
+    /file:/i.test(path) ||
+    path.includes("\0")
+  )
+    return undefined;
+  // Pi resolveToCwd's remaining normalization after excluding its path aliases.
+  const normalized = path.replace(
+    /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g,
+    " ",
+  );
+  if (normalized !== path) return undefined;
+  const target = resolve(root, normalized);
   const rel = relative(root, target);
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
     return undefined;
   let probe = target;
   while (!existsSync(probe) && dirname(probe) !== probe) probe = dirname(probe);
-  const realRoot = realpathSync(root);
-  const realRel = relative(realRoot, realpathSync(probe));
+  const realRoot = realpathSync.native(root);
+  const realRel = relative(realRoot, realpathSync.native(probe));
   if (realRel === ".." || realRel.startsWith(`..${sep}`) || isAbsolute(realRel))
     return undefined;
   return rel.split(sep).join("/") || ".";
