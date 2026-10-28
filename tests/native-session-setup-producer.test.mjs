@@ -212,7 +212,8 @@ test("native provider commit/read/replay output supplies real descriptors for se
     );
     assert.equal(started.result.sessionId, "pi-producer-storage-fixture");
     assert.deepEqual(started.result.readiness, { state: "unavailable" });
-    assert.equal(started.grantIds.length, 1);
+    assert.equal(started.grantIds.length, 2);
+    assert.equal(f.store.get(started.grantIds[1]).record.capability, "fs.read");
     assert.equal(
       f.store.get(started.grantIds[0]).record.origin,
       f.produced.view.endpointOrigin,

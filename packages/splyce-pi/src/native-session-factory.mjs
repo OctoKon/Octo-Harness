@@ -26,6 +26,8 @@ import {
 import { AuthStorage } from "../../../vendor/pi/packages/coding-agent/dist/core/auth-storage.js";
 import { InMemoryCodingAgentModelsStore } from "../../../vendor/pi/packages/coding-agent/dist/core/models-store.js";
 import { createSplyceOwner } from "../../../vendor/pi/packages/agent/dist/splyce-readiness.js";
+import { bindSplyceToolAdmission } from "../../../vendor/pi/packages/agent/dist/splyce-admission.js";
+import { createToolDispatch } from "../dist/tool-dispatch.js";
 import { NativeControl } from "./native-control.mjs";
 import { acquireNativeSessionWriter } from "./native-session-writer.mjs";
 import { serializeActionArguments } from "../dist/policy.js";
@@ -909,6 +911,18 @@ export function createNativeSessionFactory({
         );
         if (direct.length)
           return direct.length === 1 && !deleted.has(direct[0].record.recordId);
+        if (store.deletionEpoch() !== deletionEpoch) return false;
+        const current = store.list(input.workspaceId, 0, piSessionId).records;
+        if (
+          current.some(
+            ({ kind, record }) =>
+              (kind === "action" && record.actionId === ref) ||
+              (kind === "event" &&
+                record.envelope?.kind === "approval.requested" &&
+                record.envelope.payload.approvalRequestId === ref),
+          )
+        )
+          return true;
         const anchors = scoped.filter(
           ({ kind, record }) =>
             kind === "branchAnchor" &&
@@ -1070,7 +1084,9 @@ export function createNativeSessionFactory({
           .records.some(
             ({ record }) =>
               !state.deleted.has(record.recordId) &&
-              (record.recordId === ref || record.actionId === ref),
+              (record.recordId === ref ||
+                record.actionId === ref ||
+                record.artifactId === ref),
           );
       },
     };
@@ -1228,8 +1244,6 @@ export function createNativeSessionFactory({
       },
       assertCurrent,
     });
-    await runtime.registerNativeProvider(provider);
-    assertCurrent();
     const agentDir = join(directory, "agent");
     mkdirSync(agentDir, { recursive: true });
     const settingsManager = SettingsManager.inMemory({
@@ -1249,6 +1263,256 @@ export function createNativeSessionFactory({
     });
     state.owner.bind(settingsManager, "settings-manager");
     state.owner.bind(resourceLoader, "resource-loader");
+    const active = (allowAborted = false) => {
+      assertCurrent();
+      if (
+        !state.activeRun ||
+        (!allowAborted && state.activeRun.controller.signal.aborted)
+      )
+        throw unavailable();
+      return state.activeRun;
+    };
+    const dispatch = createToolDispatch({
+      store,
+      policy,
+      caller: policyCaller,
+      scopeId: state.key.scopeId,
+      workspaceId: state.key.scopeId,
+      get runId() {
+        return active(true).runId;
+      },
+      get runRecordId() {
+        return active(true).runRecordId;
+      },
+      get ownership() {
+        return active(true).ownership;
+      },
+      get readGrantId() {
+        const ids = active().run.grantIds.filter(
+          (id) => store.get(id).record.capability === "fs.read",
+        );
+        if (ids.length !== 1) throw unavailable();
+        return ids[0];
+      },
+      attachGrant(grantId) {
+        const run = active();
+        state.dynamicReferences.set(grantId, () => {
+          const row = store.get(grantId);
+          if (
+            store.deletionEpoch() !== state.selected.state.deletionEpoch ||
+            row.kind !== "grant" ||
+            row.record.workspaceId !== state.key.scopeId ||
+            row.record.sessionId !== state.key.sessionId
+          )
+            throw unavailable();
+        });
+        const updated = {
+          ...run.run,
+          recordId: randomUUID(),
+          grantIds: [...run.run.grantIds, grantId],
+        };
+        store.append({ kind: "run", record: updated }, policyCaller);
+        run.run = updated;
+      },
+      approve(request, signal) {
+        const run = active();
+        if (run.approval || signal?.aborted) return Promise.resolve(false);
+        const approvalRequestId = randomUUID();
+        return new Promise((resolve) => {
+          const finish = (result) => {
+            signal?.removeEventListener("abort", cancel);
+            run.controller.signal.removeEventListener("abort", cancel);
+            if (run.approval?.id === approvalRequestId)
+              run.approval = undefined;
+            resolve(result);
+          };
+          const cancel = () => finish(false);
+          run.approval = {
+            id: approvalRequestId,
+            actionId: request.actionId,
+            finish,
+          };
+          for (const id of [approvalRequestId, request.actionId])
+            state.dynamicReferences.set(id, () => {
+              if (state.activeRun === run) return;
+              if (
+                store.deletionEpoch() !== state.selected.state.deletionEpoch ||
+                !store
+                  .list(state.key.scopeId, 0, state.key.sessionId)
+                  .records.some(
+                    ({ kind, record }) =>
+                      kind === "event" &&
+                      record.envelope?.kind === "approval.requested" &&
+                      record.envelope.payload.runId === run.runId &&
+                      record.envelope.payload.approvalRequestId ===
+                        approvalRequestId &&
+                      record.envelope.payload.actionId === request.actionId,
+                  )
+              )
+                throw unavailable();
+            });
+          signal?.addEventListener("abort", cancel, { once: true });
+          run.controller.signal.addEventListener("abort", cancel, {
+            once: true,
+          });
+          if (signal?.aborted || run.controller.signal.aborted) return cancel();
+          try {
+            publish(
+              state,
+              run,
+              "approval.requested",
+              {
+                approvalRequestId,
+                runId: run.runId,
+                actionId: request.actionId,
+                capabilityId: `workspace.${request.toolName}`,
+                targetScope: state.key.scopeId,
+                normalizedTarget: state.key.scopeId,
+                riskRationale: request.argsSummary,
+              },
+              true,
+            );
+          } catch (error) {
+            finish(false);
+            throw error;
+          }
+        });
+      },
+      redact: (text) => resolver.redact(text),
+      nativeRedact: (text, signal) => control.redact(text, signal),
+      async argumentsArtifactId(actionId, digest, args, signal) {
+        const run = active();
+        const serialized = serializeActionArguments(args);
+        const redacted = await control.redact(serialized, signal);
+        if (
+          resolver.redact(serialized) !== serialized ||
+          redacted.text !== serialized ||
+          redacted.redactedCount !== 0 ||
+          signal?.aborted ||
+          active() !== run
+        )
+          throw unavailable();
+        const bytes = Buffer.from(serialized);
+        if (
+          bytes.length > 4194304 ||
+          `sha256:${createHash("sha256").update(bytes).digest("hex")}` !==
+            digest
+        )
+          throw unavailable();
+        const id = `native-tool-arguments:${randomUUID()}`;
+        const path = join(
+          directory,
+          "arguments",
+          `${id.replace(":", "-")}.json`,
+        );
+        mkdirSync(join(directory, "arguments"), { recursive: true });
+        writeFileSync(path, bytes, { flag: "wx" });
+        const verify = () => {
+          const stat = lstatSync(path);
+          if (
+            !stat.isFile() ||
+            stat.isSymbolicLink() ||
+            stat.nlink !== 1 ||
+            !readFileSync(path).equals(bytes)
+          )
+            throw unavailable();
+        };
+        verify();
+        store.append(
+          {
+            kind: "artifact",
+            record: {
+              schemaVersion: 1,
+              recordId: id,
+              artifactId: id,
+              scopeId: state.key.scopeId,
+              createdAt: new Date().toISOString(),
+              sourceIds: [],
+              digest,
+              mediaType: "application/json",
+              byteLength: bytes.length,
+              retentionClass: "workspace",
+              locationRef: id,
+            },
+          },
+          run.caller,
+        );
+        run.argumentReferences.set(id, verify);
+        return id;
+      },
+      registerNativeProvider: async () => {
+        await runtime.registerNativeProvider(provider);
+        assertCurrent();
+      },
+      bindTool: bindSplyceToolAdmission,
+      onEventsCommitted: () => forwardToolEvents(state, active(true)),
+    });
+    for (const tool of dispatch.tools) {
+      const artifactId = `workspace.${tool.name}`;
+      const recordId = `native-tool:${createHash("sha256").update(`${state.key.scopeId}\0${artifactId}`).digest("hex")}`;
+      const descriptor = {
+        kind: "native-workspace-capability",
+        capabilityId: artifactId,
+        capabilityVersion: "1",
+      };
+      const bytes = Buffer.from(JSON.stringify(descriptor));
+      const digest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      const observation = store.readSetupState(state.key.scopeId);
+      let rows = observation.records.filter(
+        ({ record }) =>
+          record.recordId === recordId || record.artifactId === artifactId,
+      );
+      if (!rows.length) {
+        store.append(
+          {
+            kind: "artifact",
+            record: {
+              schemaVersion: 1,
+              recordId,
+              artifactId,
+              scopeId: state.key.scopeId,
+              createdAt: new Date().toISOString(),
+              sourceIds: [],
+              mediaType: "application/vnd.splyce.workspace-capability+json",
+              retentionClass: "workspace",
+              digest,
+              byteLength: bytes.length,
+              descriptor,
+            },
+          },
+          policyCaller,
+        );
+        rows = store
+          .readSetupState(state.key.scopeId)
+          .records.filter(
+            ({ record }) =>
+              record.recordId === recordId || record.artifactId === artifactId,
+          );
+      }
+      if (
+        rows.length !== 1 ||
+        rows[0].kind !== "artifact" ||
+        observation.deletedRecordIds.includes(recordId) ||
+        rows[0].record.recordId !== recordId ||
+        rows[0].record.artifactId !== artifactId ||
+        rows[0].record.digest !== digest ||
+        rows[0].record.byteLength !== bytes.length ||
+        !isDeepStrictEqual(rows[0].record.descriptor, descriptor)
+      )
+        throw unavailable();
+      state.dynamicReferences.set(artifactId, () => {
+        const row = store.get(recordId);
+        if (
+          store.deletionEpoch() !== state.selected.state.deletionEpoch ||
+          row.kind !== "artifact" ||
+          row.record.scopeId !== state.key.scopeId ||
+          row.record.artifactId !== artifactId ||
+          row.record.digest !== digest ||
+          !isDeepStrictEqual(row.record.descriptor, descriptor)
+        )
+          throw unavailable();
+      });
+    }
     const options = {
       cwd: state.selected.state.workspace.canonicalPath,
       agentDir,
@@ -1257,17 +1521,27 @@ export function createNativeSessionFactory({
       sessionManager: state.manager,
       settingsManager,
       resourceLoader,
-      tools: [],
+      tools: dispatch.allowlist,
+      customTools: dispatch.tools,
     };
     state.owner.bind(options, "sdk-options");
     const { session } = await createAgentSession(options);
     try {
       assertCurrent();
+      const unbind = await dispatch.bind(session);
+      return {
+        session,
+        policy,
+        resolver,
+        requests,
+        assertCurrent,
+        dispatch,
+        unbind,
+      };
     } catch (error) {
       session.dispose();
       throw error;
     }
-    return { session, policy, resolver, requests, assertCurrent };
   }
   async function bind(value) {
     const state = value && prepared.get(value.handle);
@@ -1363,6 +1637,7 @@ export function createNativeSessionFactory({
       activated = true;
     } finally {
       if (!activated) {
+        initialized?.unbind();
         initialized?.session.dispose();
         state.sessionMap.dispose(state.key);
       }
@@ -1393,6 +1668,7 @@ export function createNativeSessionFactory({
         sessions.delete(state.key.sessionId);
         state.sessionMap.dispose(state.key);
         try {
+          state.runtime?.unbind();
           state.runtime?.session.dispose();
         } catch (error) {
           failure ??= error;
@@ -1441,6 +1717,7 @@ export function createNativeSessionFactory({
       },
       receipts,
     );
+    active.lastEventSeq = published.event.seq;
     if (published.frame) state.outbox = [published.frame.event];
     for (const listener of eventListeners) {
       try {
@@ -1448,6 +1725,37 @@ export function createNativeSessionFactory({
       } catch (error) {
         state.deliveryError = error;
       }
+    }
+  }
+  function forwardToolEvents(state, active) {
+    const events = store.replayEvents(
+      state.key.scopeId,
+      state.key.sessionId,
+      active.lastEventSeq,
+    );
+    for (const event of events) {
+      if (
+        event.kind !== "turn.tool_intent" &&
+        event.kind !== "turn.tool_outcome"
+      )
+        throw unavailable();
+      const verify = () => {
+        const row = store.get(event.recordId);
+        if (
+          row.kind !== "action" ||
+          row.record.scopeId !== state.key.scopeId ||
+          row.record.runId !== active.runId ||
+          row.record.actionId !== event.payload.actionId
+        )
+          throw unavailable();
+      };
+      verify();
+      state.dynamicReferences.set(event.recordId, verify);
+      state.dynamicReferences.set(event.payload.actionId, verify);
+      const frame = state.channel?.bridge.submit(event);
+      if (frame) state.outbox = [frame.event];
+      active.lastEventSeq = event.seq;
+      for (const listener of eventListeners) listener(state.key.sessionId);
     }
   }
   async function runPrompt(state, active) {
@@ -1569,6 +1877,7 @@ export function createNativeSessionFactory({
     }
     state.finishing = true;
     try {
+      state.runtime.dispatch.onTurnEnd({ state: terminal.state });
       store.releaseWorkspace(
         state.key.scopeId,
         state.key.sessionId,
@@ -1762,6 +2071,29 @@ export function createNativeSessionFactory({
       throw unavailable();
     return { canceled: true };
   }
+  function respondApproval(command) {
+    const state = live(command?.sessionId);
+    const run = state.activeRun;
+    const pending = run?.approval;
+    if (
+      command.op !== "approval.respond" ||
+      command.scopeId !== state.key.scopeId ||
+      command.expectedConfigRevision !==
+        state.selected.effective.configRevision ||
+      command.expectedProfileRevision !==
+        state.selected.effective.profileRevision ||
+      command.expectedPolicyRevision !== state.policyRevision ||
+      !pending ||
+      run.controller.signal.aborted ||
+      command.payload?.runId !== run.runId ||
+      command.payload.approvalRequestId !== pending.id ||
+      command.payload.actionId !== pending.actionId ||
+      !["approve", "deny"].includes(command.payload.decision)
+    )
+      throw unavailable();
+    pending.finish(command.payload.decision === "approve");
+    return { accepted: true };
+  }
   function subscribe(sessionId, afterSeq) {
     const state = live(sessionId);
     const followed = state.sessionMap.follow(state.key, afterSeq);
@@ -1813,6 +2145,7 @@ export function createNativeSessionFactory({
     dispose,
     preparePrompt,
     cancel,
+    respondApproval,
     onEvents,
     subscribe,
     unsubscribe,
@@ -1825,6 +2158,35 @@ export function createNativeSessionFactory({
           return true;
         } catch (error) {
           state.deliveryError ??= error;
+        }
+      }
+      return false;
+    },
+    get hasWorkspaceReadySession() {
+      for (const state of sessions.values()) {
+        if (state.deliveryError || !state.runtime?.dispatch) continue;
+        try {
+          state.runtime.assertCurrent();
+          const ids = state.committed.grantIds.filter(
+            (id) => store.get(id).record.capability === "fs.read",
+          );
+          if (ids.length !== 1) continue;
+          const stat = statSync(state.selected.state.workspace.canonicalPath, {
+            bigint: true,
+          });
+          store.requireGrant({
+            grantId: ids[0],
+            workspaceId: state.key.scopeId,
+            sessionId: state.key.sessionId,
+            capability: "fs.read",
+            observedIdentity: {
+              volumeSerial: String(stat.dev),
+              fileId: String(stat.ino),
+            },
+          });
+          return true;
+        } catch {
+          continue;
         }
       }
       return false;

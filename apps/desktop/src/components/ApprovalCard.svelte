@@ -7,10 +7,12 @@
   let {
     request,
     decision = null,
+    pending = false,
     onRespond,
   }: {
     request: ApprovalRequestedPayload;
     decision?: "approve" | "deny" | null;
+    pending?: boolean;
     onRespond?: (decision: "approve" | "deny") => void;
   } = $props();
 </script>
@@ -26,7 +28,7 @@
   <div class="card-header">
     <span class="badge" class:pending={decision === null} class:denied={decision === "deny"} class:approved={decision === "approve"}>
       {#if decision === null}
-        Waiting for approval
+        {pending ? "Submitting response" : "Waiting for approval"}
       {:else if decision === "deny"}
         Denied · no effects executed
       {:else}
@@ -44,6 +46,7 @@
         type="button"
         class="btn-approve"
         data-testid="approval-allow-button"
+        disabled={pending}
         onclick={() => onRespond?.("approve")}
       >
         Approve
@@ -52,6 +55,7 @@
         type="button"
         class="btn-deny"
         data-testid="approval-deny-button"
+        disabled={pending}
         onclick={() => onRespond?.("deny")}
       >
         Deny

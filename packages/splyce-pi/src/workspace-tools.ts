@@ -659,11 +659,15 @@ export function createWorkspaceTools(
       }, ms);
       const onAbort = () => {
         killTree();
-        settle(() =>
-          reject(new WorkspaceToolError("ABORTED", "command aborted")),
+        settle(() => {
+          void closed.then(
+            () => reject(new WorkspaceToolError("ABORTED", "command aborted")),
+            reject,
         );
+        });
       };
       signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
       child.on("error", (e) =>
         settle(() =>
           reject(

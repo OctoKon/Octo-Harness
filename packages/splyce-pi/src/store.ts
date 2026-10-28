@@ -1356,7 +1356,10 @@ export class Store {
     });
   }
 
-  private nativeProviderGrants(workspaceId: string): GrantRecord[] {
+  private nativeProviderGrants(
+    workspaceId: string,
+    includeReads = false,
+  ): GrantRecord[] {
     const rows = this.db
       .prepare(
         "SELECT * FROM records WHERE scope_id = ? AND kind = 'grant' ORDER BY seq",
@@ -1368,7 +1371,10 @@ export class Store {
       const grant = this.validateStructuralRow(row) as GrantRecord;
       if (
         grant.workspaceId !== workspaceId ||
-        grant.capability !== "net.provider"
+        !(
+          grant.capability === "net.provider" ||
+          (includeReads && grant.capability === "fs.read")
+        )
       )
         continue;
       if (grant.recordId === grant.grantId) minted.set(grant.grantId, grant);
@@ -1653,7 +1659,8 @@ export class Store {
     const origins = [
       ...new Set(bindings.map(({ endpoint }) => originView(endpoint))),
     ].sort();
-    if (receipt.grantIds.length !== origins.length)
+    // Older starts contain only provider grants; retain their replay shape.
+    if (![origins.length, origins.length + 1].includes(receipt.grantIds.length))
       nativeSetupInvalid("SETUP_REQUEST_CONFLICT");
     for (let index = 0; index < receipt.grantIds.length; index++) {
       const grant = this.nativeSetupRecord(
@@ -1664,7 +1671,8 @@ export class Store {
       if (
         grant.sessionId !== receipt.sessionId ||
         grant.workspaceId !== workspaceId ||
-        grant.capability !== "net.provider" ||
+        grant.capability !==
+          (index < origins.length ? "net.provider" : "fs.read") ||
         grant.scope !== "session" ||
         grant.origin !== origins[index] ||
         grant.recordId !== grant.grantId
@@ -1845,7 +1853,12 @@ export class Store {
               : request.expectedConfigRevision;
           const grantIds =
             command === "session.start"
-              ? authority.origins.map((_, index) => `${key}:grant:${index}`)
+              ? [
+                  ...authority.origins.map(
+                    (_, index) => `${key}:grant:${index}`,
+                  ),
+                  `${key}:grant:read`,
+                ]
               : [];
           receipt = {
             version: 1,
@@ -1929,6 +1942,17 @@ export class Store {
                   origin,
                 },
               })),
+              {
+                kind: "grant",
+                record: {
+                  ...base(grantIds.at(-1)!),
+                  grantId: grantIds.at(-1)!,
+                  workspaceId: request.workspaceId,
+                  sessionId: piSessionId!,
+                  capability: "fs.read",
+                  scope: "session",
+                },
+              },
             ];
           }
           inputs.push(
@@ -2070,12 +2094,17 @@ export class Store {
           nativeSetupInvalid("STALE_REVISION");
         const grantRows = this.db
           .prepare(
-            "SELECT * FROM records WHERE kind = 'grant' AND json_extract(payload, '$.sessionId') = ? AND json_extract(payload, '$.capability') = 'net.provider' ORDER BY seq",
+            "SELECT * FROM records WHERE kind = 'grant' AND json_extract(payload, '$.sessionId') = ? AND json_extract(payload, '$.capability') IN ('net.provider', 'fs.read') ORDER BY seq",
           )
           .all(sessionId) as Parameters<Store["validateStructuralRow"]>[0][];
         const grants = grantRows
           .map((row) => this.validateStructuralRow(row) as GrantRecord)
-          .filter((grant) => grant.recordId === grant.grantId);
+          .filter(
+            (grant) =>
+              grant.recordId === grant.grantId &&
+              (grant.capability === "net.provider" ||
+                receipt.grantIds.includes(grant.grantId)),
+          );
         const live = grants.filter((grant) => {
           const state = this.grantState(grant.grantId);
           return (
@@ -2092,7 +2121,8 @@ export class Store {
               grant.workspaceId !== workspaceId ||
               grant.scopeId !== workspaceId ||
               grant.scope !== "session" ||
-              !current.origins.includes(grant.origin!),
+              (grant.capability === "net.provider" &&
+                !current.origins.includes(grant.origin!)),
           )
         )
           nativeSetupInvalid("STALE_REVISION");
@@ -2104,8 +2134,8 @@ export class Store {
               grantId,
               workspaceId,
               sessionId,
-              capability: "net.provider",
-              origin: grant.origin!,
+              capability: grant.capability,
+              ...(grant.origin === undefined ? {} : { origin: grant.origin }),
               observedIdentity: current.workspace,
             },
             "session",
@@ -2221,7 +2251,10 @@ export class Store {
           };
           if (original.result.sessionRevision !== captured.sessionRevision)
             nativeSetupInvalid("STALE_REVISION");
-          const inputs: AppendInput[] = this.nativeProviderGrants(workspaceId)
+          const inputs: AppendInput[] = this.nativeProviderGrants(
+            workspaceId,
+            true,
+          )
             .filter((grant) => grant.sessionId === sessionId)
             .map((grant) => ({
               kind: "grant",

@@ -177,6 +177,7 @@ export interface ToolAdmission {
 
 export interface ApprovalRequest {
   toolCallId: string;
+  toolName: string;
   actionId: string;
   capability: Capability;
   /** Redacted. */
@@ -245,7 +246,13 @@ export interface ToolDispatchDeps {
   registerNativeProvider(): Promise<void>;
   /** Pi's bindSplyceToolAdmission. */
   bindTool(tool: object, admission: ToolAdmission): () => void;
-  argumentsArtifactId?(actionId: string, digest: string): string;
+  onEventsCommitted?(): void;
+  argumentsArtifactId?(
+    actionId: string,
+    digest: string,
+    args: unknown,
+    signal?: AbortSignal,
+  ): Promise<string>;
   context?: Pick<
     AgentContextToolsOptions,
     "index" | "codeTools" | "memory" | "scopeId"
@@ -575,6 +582,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
             .approve(
               {
                 toolCallId,
+                toolName,
                 actionId,
                 capability,
                 target: await redactFinal(target, signal),
@@ -609,7 +617,12 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
         capabilityId: `workspace.${toolName}`,
         capabilityVersion: "1",
         argumentsArtifactId:
-          deps.argumentsArtifactId?.(actionId, digest) ?? `args-${actionId}`,
+          (await deps.argumentsArtifactId?.(
+            actionId,
+            digest,
+            validatedArgs,
+            signal,
+          )) ?? `args-${actionId}`,
         argumentsDigest: digest,
         targetScopeId: deps.scopeId,
         idempotencyKey: `${deps.runId}:${toolCallId}`,
@@ -706,6 +719,7 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
           toolName,
           args,
           async (admittedArgs) => {
+            deps.onEventsCommitted?.();
             call.admitted = true;
             const out = await invoke(admittedArgs);
             // A foreign implementation behind a bound name never marks itself: its effect is
@@ -722,9 +736,13 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
         if (call.reserved) policy.discard(toolCallId, "denied");
         throw error;
       } finally {
+        try {
+          deps.onEventsCommitted?.();
+      } finally {
         call.admitted = false;
         byAction.delete(call.actionId);
         calls.delete(toolCallId);
+      }
       }
     },
   };

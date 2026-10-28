@@ -447,8 +447,11 @@ test("real setup service orders prepare, atomic commit and bind and projects pub
   const grants = f.store
     .list(f.workspaceId)
     .records.filter(({ kind }) => kind === "grant");
-  assert.equal(grants.length, 1);
+  assert.equal(grants.length, 2);
   assert.equal(grants[0].record.capability, "net.provider");
+  assert.equal(grants[1].record.capability, "fs.read");
+  assert.equal(grants[1].record.scope, "session");
+  assert.equal(grants[1].record.sessionId, result.sessionId);
   assert.equal(grants[0].record.scope, "session");
   assert.equal(grants[0].record.sessionId, result.sessionId);
 });
@@ -631,7 +634,7 @@ test("ready replay rechecks genuine credential presence without minting another 
       .records.filter(
         ({ kind, record }) => kind === "grant" && !record.revokedAt,
       ).length,
-    1,
+    2,
     "revocation records do not mint another grant",
   );
 });

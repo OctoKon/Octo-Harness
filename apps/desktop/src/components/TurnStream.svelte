@@ -9,9 +9,7 @@
     run,
     stale = false,
     showApprovalControls = true,
-    // Fail closed: a caller that does not state who may answer must not get live
-    // approval controls. App.svelte already passes () => false because session
-    // revisions are not delivered to the renderer yet.
+    // Fail closed unless the caller supplies a live, revision-bound responder.
     canRespond = () => false,
     onApproval,
   }: {
@@ -24,7 +22,7 @@
       runId: string,
       actionId: string,
       decision: ApprovalDecision,
-    ) => void;
+    ) => void | Promise<void>;
   } = $props();
 
   let actions = $derived(

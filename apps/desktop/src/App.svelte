@@ -440,8 +440,29 @@
     if (nav.lostSelection) clearSession();
   });
 
-  function onApproval() {
-    // Session context arrives with the workbench (TD-08/TD-30); never invent revisions here.
+  function canRespond(actionId: string) {
+    return (
+      !!workspace && !!profileSelection && !!startedSession &&
+      (status === "ready" || status === "busy") && subscription.state === "live" &&
+      !turns.stale && !turns.needsResync &&
+      $selectedSession?.sessionId === startedSession.sessionId &&
+      $selectedSession?.scopeId === workspace.workspaceId &&
+      currentRun?.actions.some((action) => action.actionId === actionId && action.approval?.state === "requested") === true
+    );
+  }
+
+  async function onApproval(approvalRequestId: string, runId: string, actionId: string, decision: "approve" | "deny") {
+    const project = workspace;
+    const selected = profileSelection;
+    const session = startedSession;
+    if (!project || !selected || !session || currentRun?.runId !== runId || !canRespond(actionId) ||
+      !currentRun.actions.some((action) => action.actionId === actionId && action.approval?.approvalRequestId === approvalRequestId && action.approval.runId === runId)) throw new Error("Approval unavailable");
+    await invoke("approval.respond", { approvalRequestId, runId, actionId, decision }, {
+      sessionId: session.sessionId, scopeId: project.workspaceId,
+      expectedConfigRevision: selected.configRevision,
+      expectedProfileRevision: selected.profileRevision,
+      expectedPolicyRevision: session.policyRevision,
+    });
   }
 
   async function connect() {
@@ -623,9 +644,8 @@
         <section class="turn-pane" aria-label="Transcript">
           <TurnStream
             run={currentRun}
-            stale={turns.stale || turns.needsResync || status !== "ready"}
-            showApprovalControls={false}
-            canRespond={() => false}
+            stale={turns.stale || turns.needsResync || (status !== "ready" && status !== "busy")}
+            {canRespond}
             {onApproval}
           />
         </section>

@@ -57,6 +57,9 @@ function lazyFactory(options) {
     get hasReadySession() {
       return instance?.hasReadySession === true;
     },
+    get hasWorkspaceReadySession() {
+      return instance?.hasWorkspaceReadySession === true;
+    },
     onEvents(fn) {
       const listener = { fn, release: instance?.onEvents?.(fn) };
       listeners.add(listener);
@@ -82,6 +85,9 @@ function lazyFactory(options) {
     },
     cancel(...args) {
       return existing().cancel(...args);
+    },
+    respondApproval(...args) {
+      return existing().respondApproval(...args);
     },
     subscribe(...args) {
       return existing().subscribe(...args);
@@ -279,7 +285,7 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
         ports: Object.freeze({
           generation: factory?.hasReadySession === true,
           provider: factory?.hasReadySession === true,
-          workspace: false,
+          workspace: factory?.hasWorkspaceReadySession === true,
           modules: false,
         }),
       });
@@ -328,6 +334,10 @@ export function createNativeHost(appDataDir, nativeControl, sessionFactory) {
     cancelSession(input) {
       if (!factory?.cancel) fail("NATIVE_SESSION_UNAVAILABLE");
       return factory.cancel(input);
+    },
+    respondApproval(command) {
+      if (!factory?.respondApproval) fail("NATIVE_SESSION_UNAVAILABLE");
+      return factory.respondApproval(command);
     },
     subscribeSession(sessionId, afterSeq) {
       if (!factory?.subscribe) fail("NATIVE_SESSION_UNAVAILABLE");

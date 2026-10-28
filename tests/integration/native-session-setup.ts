@@ -388,7 +388,7 @@ test("start commits the supplied anchor and exact session grant before reporting
     selected.result.configRevision,
   );
   const grants = mintedGrants(f);
-  assert.equal(grants.length, 1);
+  assert.equal(grants.length, 2);
   assert.deepEqual(
     started.grantIds,
     grants.map(({ grantId }) => grantId),
@@ -396,6 +396,13 @@ test("start commits the supplied anchor and exact session grant before reporting
   assert.equal(grants[0]!.sessionId, started.result.sessionId);
   assert.equal(grants[0]!.scope, "session");
   assert.equal(grants[0]!.origin, originView(f.a.endpoint));
+  assert.equal(grants[1]!.capability, "fs.read");
+  assert.equal(grants[1]!.scope, "session");
+  assert.equal(grants[1]!.sessionId, started.result.sessionId);
+  assert.equal(
+    f.store.requireGrant(use(f, grants[1]!)).grantId,
+    grants[1]!.grantId,
+  );
   assert.equal(
     f.store.requireGrant(use(f, grants[0]!)).grantId,
     grants[0]!.grantId,
@@ -421,10 +428,13 @@ test("start deduplicates shared origins and mints one grant for each distinct or
     currentNativePolicyRevision,
   );
   const grants = mintedGrants(f);
-  assert.equal(grants.length, 2);
-  assert.equal(new Set(grants.map(({ grantId }) => grantId)).size, 2);
+  assert.equal(grants.length, 3);
+  assert.equal(new Set(grants.map(({ grantId }) => grantId)).size, 3);
   assert.deepEqual(
-    grants.map(({ origin }) => origin).sort(),
+    grants
+      .filter(({ capability }) => capability === "net.provider")
+      .map(({ origin }) => origin)
+      .sort(),
     [...prepared.origins].sort(),
   );
   assert.ok(
@@ -872,7 +882,7 @@ test("bind compensation is atomic and idempotent when another handle already rev
     sessionId: started.result.sessionId,
     sessionRevision: started.result.sessionRevision,
   };
-  assert.equal(started.grantIds.length, 2);
+  assert.equal(started.grantIds.length, 3);
   trigger(
     f,
     "CREATE TRIGGER fail_native_compensation BEFORE INSERT ON records WHEN NEW.kind = 'grant' BEGIN SELECT RAISE(ABORT, 'fixture compensation failure'); END;",

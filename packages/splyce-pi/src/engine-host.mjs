@@ -496,7 +496,8 @@ export async function runHost(
     } else if (request.method === "send") {
       try {
         const command = request.params;
-        if (command.op !== "session.prompt") throw new FrameError();
+        if (!["session.prompt", "approval.respond"].includes(command.op))
+          throw new FrameError();
         validateCommand(command, {
           sessionId: command.sessionId,
           scopeId: command.scopeId,
@@ -505,19 +506,33 @@ export async function runHost(
           policyRevision: command.expectedPolicyRevision,
           lastDurableSeq: 0,
           maxInlineBytes: TRANSPORT_LIMITS.maxEncodedFrameBytes,
-          resolveReference: () => false,
+          resolveReference: (ref) =>
+            command.op === "approval.respond" &&
+            [
+              command.payload?.approvalRequestId,
+              command.payload?.runId,
+              command.payload?.actionId,
+            ].includes(ref),
         });
         await host.assertCurrent(command.scopeId, {
           configRevision: command.expectedConfigRevision,
           profileRevision: command.expectedProfileRevision,
           policyRevision: command.expectedPolicyRevision,
         });
-        const value = await host.preparePrompt(command, lifetime.signal);
+        const value =
+          command.op === "approval.respond"
+            ? await host.respondApproval(command)
+            : await host.preparePrompt(command, lifetime.signal);
         if (
-          !exact(value, ["accepted", "runId", "turnId"]) ||
+          !exact(
+            value,
+            command.op === "approval.respond"
+              ? ["accepted"]
+              : ["accepted", "runId", "turnId"],
+          ) ||
           value.accepted !== true ||
-          !validId(value.runId) ||
-          !validId(value.turnId)
+          (command.op === "session.prompt" &&
+            (!validId(value.runId) || !validId(value.turnId)))
         )
           throw new FrameError();
         reply = { id: request.id, ok: true, value };

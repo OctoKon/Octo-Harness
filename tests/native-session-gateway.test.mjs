@@ -121,6 +121,42 @@ test("prompt ack precedes background completion and cancel waits for cleanup", a
   await f.stop();
 });
 
+test("approval responses reach native authority and preserve denial", async () => {
+  const observed = [];
+  const f = fixture({
+    respondApproval(value) {
+      observed.push(value);
+      if (value.payload.approvalRequestId !== "pending")
+        throw new Error("stale approval");
+      return { accepted: true };
+    },
+  });
+  const approval = {
+    ...command,
+    op: "approval.respond",
+    payload: {
+      approvalRequestId: "pending",
+      runId: "run",
+      actionId: "action",
+      decision: "deny",
+    },
+  };
+  f.send("native-bootstrap", "native.bootstrap", { appDataDir: "ignored" });
+  f.send("decision", "send", approval);
+  await f.waitFor(() => f.frames.some((frame) => frame.id === "decision"));
+  assert.deepEqual(f.frames.find((frame) => frame.id === "decision").value, {
+    accepted: true,
+  });
+  assert.deepEqual(observed, [approval]);
+  f.send("stale", "send", {
+    ...approval,
+    payload: { ...approval.payload, approvalRequestId: "expired" },
+  });
+  await f.waitFor(() => f.frames.some((frame) => frame.id === "stale"));
+  assert.equal(f.frames.find((frame) => frame.id === "stale").ok, false);
+  await f.stop();
+});
+
 test("subscribe ack precedes replay and notifications drain only subscribed sessions", async () => {
   let drains = 0;
   const f = fixture({
