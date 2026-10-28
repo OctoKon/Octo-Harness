@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Splyce diagrams · Browser checks</title>
+    <style>
+      body { margin:24px; font:14px/1.6 'Segoe UI',system-ui,sans-serif; background:#fff; color:#0d0d0d; }
+      a { color:inherit; } h1 { font:36px Georgia,serif; }
+      #status { padding:12px 16px; border:1px solid #e5e7eb; border-radius:8px; }
+      .pass { color:#067647; } .fail { color:#d92d20; }
+      #fixture { margin-top:24px; max-width:none; }
+    </style>
+  </head>
+  <body>
+    <a href="./demo.html">Back to demo</a>
+    <h1>Browser checks</h1>
+    <p>Real SVG rendering, progress, geometry, responsive layouts, themes, accessibility names, and cleanup. No dependencies or mocked DOM.</p>
+    <p id="status" role="status">Running…</p>
+    <ol id="results"></ol>
+    <div id="fixture"></div>
+    <script type="module">
+      const results = document.querySelector('#results');
+      const fixture = document.querySelector('#fixture');
+      const status = document.querySelector('#status');
+      const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const failures = [];
+      let assertions = 0;
+      const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const assert = (condition, message) => { assertions++; if (!condition) throw new Error(message); };
+      const check = async (name, run) => {
+        const row = document.createElement('li');
+        try { await run(); row.textContent = `PASS · ${name}`; row.className = 'pass'; }
+        catch (error) { row.textContent = `FAIL · ${name}: ${error.message}`; row.className = 'fail'; failures.push(row.textContent); }
+        results.append(row);
+      };
+      const bounds = (node) => {
+        const rect = node.querySelector('.flow-card');
+        return { w:Number(rect.getAttribute('width')), h:Number(rect.getAttribute('height')) };
+      };
+      const ids = ['architecture', 'turn-flow', 'safety', 'memory', 'subagents'];
+      for (const id of ids) {
+        const { mount, specification } = await import(`./${id}.js`);
+        let api;
+        await check(`${id}: mount, accessible names, progress and rewind`, () => {
+          api = mount(fixture);
+          const root = fixture.querySelector('.splyce-flow');
+          const svg = root.querySelector('svg');
+          assert(svg.getAttribute('role') === 'img', 'SVG needs an image role');
+          assert(document.getElementById(svg.getAttribute('aria-labelledby'))?.textContent === specification.title, 'Missing title reference');
+          assert(document.getElementById(svg.getAttribute('aria-describedby'))?.textContent === specification.description, 'Missing description reference');
+          assert(root.querySelectorAll('[data-node]').length === specification.nodes.length, 'Missing nodes');
+          api.setProgress(1);
+          assert([...root.querySelectorAll('.flow-node-inner')].every((node) => node.dataset.revealed === 'true'), 'Final state must reveal every node');
+          assert([...root.querySelectorAll('.flow-wire-live')].every((path) => Number(path.style.strokeDashoffset) === 0), 'Final state must complete every arrow');
+          api.setProgress(-1);
+          assert(Number(root.dataset.progress) === (reduced ? 1 : 0), 'Negative progress must clamp to zero');
+          for (const progress of [.1, .35, .65, .95]) {
+            api.setProgress(progress);
+            assert(Number(root.dataset.progress) === (reduced ? 1 : progress), 'Progress must remain deterministic');
+            for (const path of root.querySelectorAll('.flow-wire-live')) {
+              const offset = Number(path.style.strokeDashoffset);
+              assert(Number.isFinite(offset) && offset >= 0 && offset <= path.getTotalLength() + .01, 'Invalid path offset');
+            }
+          }
+          api.setProgress(4);
+          assert(Number(root.dataset.progress) === 1, 'High progress must clamp to one');
+          api.setProgress(NaN);
+          assert(Number(root.dataset.progress) === (reduced ? 1 : 0), 'NaN must not enter SVG geometry');
+          api.setProgress(Infinity);
+          assert(Number(root.dataset.progress) === (reduced ? 1 : 0), 'Infinity must not enter SVG geometry');
+          api.setProgress(0);
+          assert([...root.querySelectorAll('.flow-dot')].every((dot) => dot.style.opacity === '0'), 'Rewind must hide all dots');
+        });
+        for (const width of [1080, 390, 320]) {
+          await check(`${id}: ${width}px layout, readable card text and connected arrows`, async () => {
+            fixture.style.width = `${width}px`;
+            await nextFrame();
+            api.setProgress(1);
+            const root = fixture.querySelector('.splyce-flow');
+            const mobile = width < 640;
+            assert(root.dataset.layout === (mobile ? 'mobile' : 'desktop'), 'Resize did not select the expected layout');
+            const svg = root.querySelector('svg');
+            assert(svg.viewBox.baseVal.width === (mobile ? specification.mobile[0] : specification.desktop[0]), 'Wrong viewBox');
+            for (const node of root.querySelectorAll('[data-node]')) {
+              const { w, h } = bounds(node);
+              for (const text of node.querySelectorAll('text')) {
+                const box = text.getBBox();
+                assert(box.x >= 10 && box.x + box.width <= w - 8, `${node.dataset.node}: text outside card: ${text.textContent}`);
+                assert(box.y >= 5 && box.y + box.height <= h - 7, `${node.dataset.node}: text exceeds card height: ${text.textContent}`);
+                const scale = width / svg.viewBox.baseVal.width;
+                if (text.classList.contains('flow-body')) assert(Number.parseFloat(getComputedStyle(text).fontSize) * scale >= 11.5, 'Body text too small');
+              }
+            }
+            const rectangles = specification.nodes.map((node) => ({ id:node.id, box:mobile ? node.m : node.d }));
+            const paths = [...root.querySelectorAll('.flow-wire-live')];
+            for (const [i, edge] of specification.edges.entries()) {
+              const path = paths[i];
+              for (const [key, distance] of [['from', 0], ['to', path.getTotalLength()]]) {
+                const point = path.getPointAtLength(distance);
+                const [x,y,w,h] = rectangles.find((node) => node.id === edge[key]).box;
+                const onSide = (Math.abs(point.x - x) < 1 || Math.abs(point.x - x - w) < 1) && point.y >= y - 1 && point.y <= y + h + 1;
+                const onTop = (Math.abs(point.y - y) < 1 || Math.abs(point.y - y - h) < 1) && point.x >= x - 1 && point.x <= x + w + 1;
+                assert(onSide || onTop, `${edge.from} → ${edge.to} disconnected at ${key}`);
+              }
+            }
+            assert(svg.getBoundingClientRect().width <= width + 1, 'SVG overflows its container');
+          });
+        }
+        await check(`${id}: explicit light/dark, remount and cleanup`, () => {
+          fixture.dataset.theme = 'dark';
+          let root = fixture.querySelector('.splyce-flow');
+          assert(getComputedStyle(root).getPropertyValue('--flow-ink').trim() === '#f3f3ef', 'Dark theme missing');
+          fixture.dataset.theme = 'light';
+          assert(getComputedStyle(root).getPropertyValue('--flow-ink').trim() === '#0d0d0d', 'Light theme missing');
+          const previous = api;
+          api = mount(fixture);
+          assert(fixture.querySelectorAll('.splyce-flow').length === 1, 'Remount duplicates the diagram');
+          previous.destroy();
+          root = fixture.querySelector('.splyce-flow');
+          assert(root !== null, 'Old destroy removed a newer instance');
+          api.destroy(); api.destroy(); api.setProgress(.5);
+          assert(fixture.children.length === 0, 'Destroy must remove mounted content');
+          delete fixture.dataset.theme;
+        });
+      }
+      await check('Multiple instances: unique accessible and marker IDs', async () => {
+        const { mount } = await import('./architecture.js');
+        const a = document.createElement('div'); const b = document.createElement('div');
+        fixture.append(a,b);
+        const one = mount(a); const two = mount(b);
+        const all = [...fixture.querySelectorAll('[id]')].map((node) => node.id);
+        assert(new Set(all).size === all.length, 'Duplicate SVG IDs');
+        one.setProgress(.3); two.setProgress(.8);
+        assert(Number(a.firstChild.dataset.progress) === (reduced ? 1 : .3), 'First instance lost its state');
+        assert(Number(b.firstChild.dataset.progress) === (reduced ? 1 : .8), 'Second instance lost its state');
+        one.destroy(); two.destroy(); fixture.replaceChildren();
+      });
+      status.textContent = `${failures.length ? 'FAIL' : 'PASS'} · ${results.children.length} browser checks · ${assertions} assertions · reduced motion ${reduced ? 'on (final state checked)' : 'off'}`;
+      status.className = failures.length ? 'fail' : 'pass';
+      document.documentElement.dataset.testResult = failures.length ? 'fail' : 'pass';
+      document.title = `${failures.length ? 'FAIL' : 'PASS'} · Splyce diagram checks`;
+    </script>
+  </body>
+</html>
