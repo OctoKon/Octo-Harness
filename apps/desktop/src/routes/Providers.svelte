@@ -47,7 +47,7 @@
   );
 </script>
 
-<main aria-labelledby="providers-title">
+<section aria-labelledby="providers-title">
   <h2 id="providers-title">Provider connections</h2>
   <CredentialForm
     submit={credentialSubmit}
@@ -66,11 +66,15 @@
             : ""}</span
         >
         {#if profile.credential}
-          <span>{profile.apiFamily} · {profile.modelId} · {profile.endpointOrigin} · Credential {profile.credential}</span>
+          <span
+            >{profile.apiFamily} · {profile.modelId} · {profile.endpointOrigin} ·
+            Credential {profile.credential}</span
+          >
         {/if}
         <button
           type="button"
-          disabled={profile.credential === "missing" || !workspaceSelected ||
+          disabled={profile.credential === "missing" ||
+            !workspaceSelected ||
             !selectProfile ||
             profilePending ||
             !credentialSubmit}
@@ -107,7 +111,7 @@
     {/if}
     <CustomEndpointForm {existing} onAdd={(draft) => onAddCustom?.(draft)} />
   </fieldset>
-</main>
+</section>
 
 <style>
   .custom {

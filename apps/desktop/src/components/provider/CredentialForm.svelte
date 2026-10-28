@@ -51,7 +51,7 @@
     submit
       ? null
       : (unavailableReason ??
-        "The native provider setup route is not available yet. Nothing can be saved."),
+          "The native provider setup route is not available yet. Nothing can be saved."),
   );
 
   const FIELD_IDS: Readonly<Record<SetupField, string>> = {
@@ -87,7 +87,8 @@
     pending = true;
     try {
       await submit(draft);
-      result = "Provider saved. The key went to the engine and the renderer kept nothing.";
+      result =
+        "Provider saved. The key went to the engine and the renderer kept nothing.";
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
       result =
@@ -110,9 +111,15 @@
 <section class="connect" aria-labelledby="connect-provider-title">
   <h3 id="connect-provider-title">Connect a provider</h3>
   <p id="setup-note" class="note">
-    {blockedReason ?? "The key goes to the engine in one request and is not stored in the renderer."}
+    {blockedReason ??
+      "The key goes to the engine in one request and is not stored in the renderer."}
   </p>
-  <form aria-label="Provider setup" aria-describedby="setup-note" novalidate {onsubmit}>
+  <form
+    aria-label="Provider setup"
+    aria-describedby="setup-note"
+    novalidate
+    {onsubmit}
+  >
     <fieldset disabled={blockedReason !== null || pending}>
       <label for="setup-endpoint">Endpoint URL</label>
       <input
@@ -144,7 +151,9 @@
       />
       {@render error("modelId")}
       <p id="setup-limits-note" class="note">
-        Token limits: leave both blank only for a known catalog model. A custom model needs both from your provider; Splyce never guesses them. Cost is shown as unknown for custom models.
+        Token limits: leave both blank only for a known catalog model. A custom
+        model needs both from your provider; Splyce never guesses them. Cost is
+        shown as unknown for custom models.
       </p>
       <label for="setup-context">Context window (tokens)</label>
       <input
@@ -153,7 +162,9 @@
         bind:value={contextWindow}
         autocomplete="off"
         aria-invalid={errors.contextWindow ? "true" : undefined}
-        aria-describedby={errors.contextWindow ? "setup-context-error setup-limits-note" : "setup-limits-note"}
+        aria-describedby={errors.contextWindow
+          ? "setup-context-error setup-limits-note"
+          : "setup-limits-note"}
       />
       {@render error("contextWindow")}
       <label for="setup-output">Max output tokens</label>
@@ -163,11 +174,19 @@
         bind:value={maxOutputTokens}
         autocomplete="off"
         aria-invalid={errors.maxOutputTokens ? "true" : undefined}
-        aria-describedby={errors.maxOutputTokens ? "setup-output-error setup-limits-note" : "setup-limits-note"}
+        aria-describedby={errors.maxOutputTokens
+          ? "setup-output-error setup-limits-note"
+          : "setup-limits-note"}
       />
       {@render error("maxOutputTokens")}
-      <label class="check"><input id="setup-reasoning" type="checkbox" bind:checked={reasoning} /> Reasoning model</label>
-      <label class="check"><input id="setup-image" type="checkbox" bind:checked={image} /> Accepts image input</label>
+      <label class="check"
+        ><input id="setup-reasoning" type="checkbox" bind:checked={reasoning} /> Reasoning
+        model</label
+      >
+      <label class="check"
+        ><input id="setup-image" type="checkbox" bind:checked={image} /> Accepts image
+        input</label
+      >
       <label for="setup-key">API key</label>
       <input
         id="setup-key"
@@ -178,21 +197,49 @@
         aria-describedby={errors.apiKey ? "setup-key-error" : "connect-status"}
       />
       {@render error("apiKey")}
-      <button type="submit" disabled={blockedReason !== null || pending}>{pending ? "Saving…" : "Save provider"}</button>
+      <button type="submit" disabled={blockedReason !== null || pending}
+        >{pending ? "Saving…" : "Save provider"}</button
+      >
     </fieldset>
   </form>
   <p id="connect-status" role="status">{result}</p>
 </section>
 
 <style>
-  .connect { border: 1px solid currentColor; padding: 0.5rem; margin: 0.5rem 0; }
-  fieldset { border: 0; margin: 0; padding: 0; }
-  .note { font-size: 0.875rem; }
-  label { display: block; font-weight: 600; margin-top: 0.25rem; }
-  .check { font-weight: 400; }
+  .connect {
+    padding: 0;
+    margin: 20px 0;
+  }
+  fieldset {
+    border: 0;
+    margin: 0;
+    padding: 0;
+  }
+  .note {
+    font-size: 0.875rem;
+  }
+  label {
+    display: block;
+    font-weight: 600;
+    margin-top: 0.75rem;
+  }
+  .check {
+    font-weight: 400;
+  }
   input:not([type="checkbox"]),
-  select { display: block; width: 100%; }
-  .error { font-weight: 600; margin: 0.125rem 0; }
-  button { margin-top: 0.5rem; }
-  :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+  select {
+    display: block;
+    width: 100%;
+  }
+  .error {
+    font-weight: 600;
+    margin: 0.125rem 0;
+  }
+  button {
+    margin-top: 0.5rem;
+  }
+  :focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
 </style>

@@ -9,7 +9,10 @@
   import SessionTree from "./components/SessionTree.svelte";
   import SessionActions from "./components/SessionActions.svelte";
   import TurnStream from "./components/TurnStream.svelte";
-  import Shell from "./components/shell/Shell.svelte";
+  import Workbench from "./components/shell/Workbench.svelte";
+  import Icon from "./components/shell/Icon.svelte";
+  import MemoryList from "./components/memory/MemoryList.svelte";
+  import ModelSwitcher from "./components/model/ModelSwitcher.svelte";
   import UsageView from "./components/usage/UsageView.svelte";
   import ApprovalSurface from "./components/ApprovalSurface.svelte";
   import PermissionModeSelect from "./components/PermissionModeSelect.svelte";
@@ -75,15 +78,7 @@
     type TurnsState,
   } from "./stores/turns";
 
-  type View = "conversation" | "setup" | "modules" | "providers" | "usage";
-  const VIEWS: readonly (readonly [View, string])[] = [
-    ["conversation", "Conversation"],
-    ["setup", "Setup"],
-    ["modules", "Modules"],
-    ["providers", "Providers"],
-    ["usage", "Usage"],
-  ];
-
+  type View = "work" | "runs" | "memory" | "models" | "extensions" | "settings";
   // No setup/module service is connected: the screens stay honest and disabled
   // instead of implying a catalog, plan or installation.
   const moduleSnapshot = unavailableModuleSnapshot(
@@ -125,7 +120,7 @@
     loadSessions,
   }: { loadSessions?: () => Promise<readonly SplyceEvent[]> } = $props();
 
-  let view = $state<View>("conversation");
+  let view = $state<View>("work");
   let nav = $state.raw<SessionNavState>(createSessionNav());
   // sessionId -> scopeId, as carried by the engine's own events; never invented.
   const scopes = new Map<string, string>();
@@ -150,7 +145,10 @@
   let chooserError = $state<string | null>(null);
   let profiles = $state<ConfiguredProfile[]>([]);
   let profileSelection = $state<ProfileSelectionResult | null>(null);
-  let startReplay: { requestId: string; payload: ReturnType<typeof sessionStartPayload> } | null = null;
+  let startReplay: {
+    requestId: string;
+    payload: ReturnType<typeof sessionStartPayload>;
+  } | null = null;
   let activeRunId = $state<string | null>(null);
   let cancelPending = $state(false);
   let profilePending = $state(false);
@@ -180,10 +178,10 @@
     profilePending || configuring
       ? "Provider setup is already in progress."
       : readiness?.state !== "ready"
-      ? "The engine is not connected. Nothing can be saved."
-      : workspace === null
-        ? "Choose a project first. Provider setup is saved for a project."
-        : undefined,
+        ? "The engine is not connected. Nothing can be saved."
+        : workspace === null
+          ? "Choose a project first. Provider setup is saved for a project."
+          : undefined,
   );
 
   async function chooseProject() {
@@ -210,22 +208,31 @@
     const epoch = ++setupEpoch;
     const requestId = crypto.randomUUID();
     try {
-      const result = validateSetupReadResult(await sendSetup("setup.read", requestId, {
-        requestId, workspaceId: project.workspaceId,
-      }));
+      const result = validateSetupReadResult(
+        await sendSetup("setup.read", requestId, {
+          requestId,
+          workspaceId: project.workspaceId,
+        }),
+      );
       if (epoch !== setupEpoch) return;
       profiles = result.profiles;
       profileSelection = result.selection;
       startedSession = null;
       profileStatus = "Saved profiles loaded. Start a session before sending.";
     } catch {
-      if (epoch === setupEpoch) profileStatus = "Saved profiles could not be loaded.";
+      if (epoch === setupEpoch)
+        profileStatus = "Saved profiles could not be loaded.";
     }
   }
 
   // The secret lives only in this one send; the payload object is not kept.
   async function configureProvider(draft: ProviderSetupDraft) {
-    if (!workspace || readiness?.state !== "ready" || configuring || profilePending)
+    if (
+      !workspace ||
+      readiness?.state !== "ready" ||
+      configuring ||
+      profilePending
+    )
       throw new Error("Setup unavailable");
     const project = workspace;
     const epoch = ++setupEpoch;
@@ -255,7 +262,14 @@
   }
 
   async function useProfile(profile: ConfiguredProfile) {
-    if (!workspace || readiness?.state !== "ready" || profilePending || configuring || profile.credential === "missing") return;
+    if (
+      !workspace ||
+      readiness?.state !== "ready" ||
+      profilePending ||
+      configuring ||
+      profile.credential === "missing"
+    )
+      return;
     const project = workspace;
     const epoch = ++setupEpoch;
     profilePending = true;
@@ -289,7 +303,11 @@
       // A saved profile never proves session readiness. Only this native receipt can.
       profileStatus = "Starting session…";
       const startRequestId = crypto.randomUUID();
-      const startPayload = sessionStartPayload(selected, project.workspaceId, startRequestId);
+      const startPayload = sessionStartPayload(
+        selected,
+        project.workspaceId,
+        startRequestId,
+      );
       const started = validateSessionStartResult(
         await sendSetup("session.start", startRequestId, startPayload),
       );
@@ -303,14 +321,19 @@
           if (epoch !== setupEpoch) return;
           readiness = verified.readiness;
           sessionPortWitness = true;
-          selectSession({ sessionId: started.sessionId, scopeId: project.workspaceId });
+          selectSession({
+            sessionId: started.sessionId,
+            scopeId: project.workspaceId,
+          });
           profileStatus = "Profile selected. Session ready.";
         } catch {
           if (epoch !== setupEpoch) return;
-          profileStatus = "Profile selected. Engine readiness could not be confirmed. Sending stays blocked.";
+          profileStatus =
+            "Profile selected. Engine readiness could not be confirmed. Sending stays blocked.";
         }
       } else {
-        profileStatus = "Profile selected. The session is unavailable. Sending stays blocked.";
+        profileStatus =
+          "Profile selected. The session is unavailable. Sending stays blocked.";
       }
     } catch (error) {
       if (epoch === setupEpoch) {
@@ -324,7 +347,12 @@
     }
   }
   function isOpaqueId(value: string) {
-    return !/[\uD800-\uDFFF]/u.test(value) && value.length > 0 && value.length <= 128 && !/[\s\p{Cc}\p{Cf}\/\\]/u.test(value);
+    return (
+      !/[\uD800-\uDFFF]/u.test(value) &&
+      value.length > 0 &&
+      value.length <= 128 &&
+      !/[\s\p{Cc}\p{Cf}\/\\]/u.test(value)
+    );
   }
 
   async function refreshStaleSession(epoch: number) {
@@ -333,8 +361,16 @@
     sessionPortWitness = false;
     if (!replay || !previous) return;
     try {
-      const refreshed = validateSessionStartResult(await sendSetup("session.start", replay.requestId, replay.payload));
-      if (epoch !== setupEpoch || refreshed.sessionId !== previous.sessionId || refreshed.sessionRevision !== previous.sessionRevision || refreshed.readiness.state !== "ready") return;
+      const refreshed = validateSessionStartResult(
+        await sendSetup("session.start", replay.requestId, replay.payload),
+      );
+      if (
+        epoch !== setupEpoch ||
+        refreshed.sessionId !== previous.sessionId ||
+        refreshed.sessionRevision !== previous.sessionRevision ||
+        refreshed.readiness.state !== "ready"
+      )
+        return;
       const verified = await handshake();
       if (epoch !== setupEpoch) return;
       startedSession = refreshed;
@@ -342,7 +378,9 @@
       sessionPortWitness = true;
       retry();
     } catch {
-      if (epoch === setupEpoch) profileStatus = "Session readiness could not be refreshed. Sending stays blocked.";
+      if (epoch === setupEpoch)
+        profileStatus =
+          "Session readiness could not be refreshed. Sending stays blocked.";
     }
   }
 
@@ -432,7 +470,10 @@
       profileStatus =
         "Readiness has not been reported for the selected session.";
     }
-    if (node && scopeId) selectSession({ sessionId: node.sessionId, scopeId });
+    if (node && scopeId) {
+      selectSession({ sessionId: node.sessionId, scopeId });
+      view = "work";
+    }
   }
 
   // The selected branch vanished from the latest snapshot: drop the selection with it.
@@ -442,27 +483,57 @@
 
   function canRespond(actionId: string) {
     return (
-      !!workspace && !!profileSelection && !!startedSession &&
-      (status === "ready" || status === "busy") && subscription.state === "live" &&
-      !turns.stale && !turns.needsResync &&
+      !!workspace &&
+      !!profileSelection &&
+      !!startedSession &&
+      (status === "ready" || status === "busy") &&
+      subscription.state === "live" &&
+      !turns.stale &&
+      !turns.needsResync &&
       $selectedSession?.sessionId === startedSession.sessionId &&
       $selectedSession?.scopeId === workspace.workspaceId &&
-      currentRun?.actions.some((action) => action.actionId === actionId && action.approval?.state === "requested") === true
+      currentRun?.actions.some(
+        (action) =>
+          action.actionId === actionId &&
+          action.approval?.state === "requested",
+      ) === true
     );
   }
 
-  async function onApproval(approvalRequestId: string, runId: string, actionId: string, decision: "approve" | "deny") {
+  async function onApproval(
+    approvalRequestId: string,
+    runId: string,
+    actionId: string,
+    decision: "approve" | "deny",
+  ) {
     const project = workspace;
     const selected = profileSelection;
     const session = startedSession;
-    if (!project || !selected || !session || currentRun?.runId !== runId || !canRespond(actionId) ||
-      !currentRun.actions.some((action) => action.actionId === actionId && action.approval?.approvalRequestId === approvalRequestId && action.approval.runId === runId)) throw new Error("Approval unavailable");
-    await invoke("approval.respond", { approvalRequestId, runId, actionId, decision }, {
-      sessionId: session.sessionId, scopeId: project.workspaceId,
-      expectedConfigRevision: selected.configRevision,
-      expectedProfileRevision: selected.profileRevision,
-      expectedPolicyRevision: session.policyRevision,
-    });
+    if (
+      !project ||
+      !selected ||
+      !session ||
+      currentRun?.runId !== runId ||
+      !canRespond(actionId) ||
+      !currentRun.actions.some(
+        (action) =>
+          action.actionId === actionId &&
+          action.approval?.approvalRequestId === approvalRequestId &&
+          action.approval.runId === runId,
+      )
+    )
+      throw new Error("Approval unavailable");
+    await invoke(
+      "approval.respond",
+      { approvalRequestId, runId, actionId, decision },
+      {
+        sessionId: session.sessionId,
+        scopeId: project.workspaceId,
+        expectedConfigRevision: selected.configRevision,
+        expectedProfileRevision: selected.profileRevision,
+        expectedPolicyRevision: session.policyRevision,
+      },
+    );
   }
 
   async function connect() {
@@ -485,7 +556,13 @@
     const transport = createTurnStreamTransport({
       onState: (next) => {
         turns = next;
-        if (activeRunId && ["completed", "failed", "canceled", "stopped"].includes(next.runs[activeRunId]?.status ?? "")) activeRunId = null;
+        if (
+          activeRunId &&
+          ["completed", "failed", "canceled", "stopped"].includes(
+            next.runs[activeRunId]?.status ?? "",
+          )
+        )
+          activeRunId = null;
       },
       onResync: (fromSeq, sessionId) => {
         void binding.resubscribe(sessionId, fromSeq);
@@ -526,6 +603,15 @@
       clearSession();
     };
   });
+  const selectedProfile = $derived(
+    profiles.find((p) => p.profileId === profileSelection?.selectedProfileId),
+  );
+  function unavailableModelSwitch() {
+    throw new Error("The model catalog is unavailable.");
+  }
+  async function unavailableForget() {
+    throw new Error("The memory feed is unavailable.");
+  }
 </script>
 
 <div
@@ -536,124 +622,258 @@
   data-readiness-receipts={readiness ? readiness.receipts : "unknown"}
   data-readiness-generation={ports ? ports.generation : "unknown"}
 >
-  <Shell {rail} {transcript} {composer} {evidence} />
+  <Workbench
+    {view}
+    onNavigate={(next) => (view = next)}
+    workspaceName={workspace?.displayName}
+    {choosing}
+    projectUnavailable={chooserReason !== null || choosing}
+    projectStatus={chooserReason ?? chooserError}
+    onChooseProject={() => void chooseProject()}
+    engineReady={readiness?.state === "ready"}
+    engineStatus={stopped
+      ? "Engine stopped"
+      : readiness?.state === "ready"
+        ? "Pi engine · local"
+        : "Pi engine · unavailable"}
+  >
+    <div class="work-panel" hidden={view !== "work"}>
+      <div class="page work-page" class:has-session={$selectedSession !== null}>
+        <div class="work-stage">
+          {#if $selectedSession === null && !currentRun}
+            <h1 class="work-motto">
+              Barebones by default.<br />Modular by choice.<br /><em
+                >Evidence by design.</em
+              >
+            </h1>
+          {:else}
+            <header class="page-head">
+              <div>
+                <div class="eyebrow">
+                  Work · {workspace?.displayName ?? "Project unavailable"}
+                </div>
+                <h1>Session</h1>
+                <p class="sub">{$selectedSession?.sessionId}</p>
+              </div>
+            </header>
+          {/if}
+          <ApprovalSurface
+            requests={approvalRequests}
+            context={approvalContext}
+          />
+          {#if subscription.state === "failed"}
+            <div class="notice" role="alert" data-testid="subscribe-error">
+              <span
+                >Could not subscribe to the session: {subscription.error}</span
+              ><button type="button" onclick={retry}>Retry</button>
+            </div>
+          {/if}
+          {#if currentRun}
+            <section class="turn-pane" aria-label="Transcript">
+              <TurnStream
+                run={currentRun}
+                stale={turns.stale ||
+                  turns.needsResync ||
+                  (status !== "ready" && status !== "busy")}
+                {canRespond}
+                {onApproval}
+              />
+            </section>
+          {:else if $selectedSession}
+            <p class="session-empty">
+              No transcript events have been received for this session.
+            </p>
+          {/if}
+          {@render composer()}
+          {#if view !== "runs"}<section
+              class="work-recents"
+              aria-labelledby="recents-label"
+            >
+              <h2 class="recents-label" id="recents-label">Recents</h2>
+              {@render sessions()}
+            </section>{/if}
+          <div class="work-hint">
+            <span
+              ><Icon name="shield" size={11} /> Policy checked before dispatch</span
+            ><span
+              ><Icon name="lock" size={11} /> Local only · no cloud fallback</span
+            >
+          </div>
+          <p class="locality-note">
+            Local workspace and engine. Requests use your explicitly selected
+            provider.
+          </p>
+          {@render engineNotice()}
+          {#if view !== "runs"}<details class="session-details">
+              <summary>Session actions and evidence</summary><SessionActions
+                context={sessionActionContext}
+              />
+              <p>No changes or evidence available.</p>
+            </details>{/if}
+        </div>
+      </div>
+    </div>
+    {#if view !== "work"}
+      <div class="page settings-page">
+        <header class="page-head">
+          <div>
+            <div class="eyebrow">Your workspace</div>
+            <h1>
+              {{
+                runs: "Runs",
+                memory: "Memory",
+                models: "Models",
+                extensions: "Extensions",
+                settings: "Settings",
+              }[view]}
+            </h1>
+            <p class="sub">
+              {{
+                runs: "Sessions reported by the engine.",
+                memory: "Remembered items, with their source and scope.",
+                models:
+                  "Connect a provider and select a profile for this project.",
+                extensions:
+                  "Optional modules. Install and enable only what you choose.",
+                settings: "Setup, permissions and usage for your workspace.",
+              }[view]}
+            </p>
+          </div>
+        </header>
+        {#if view === "runs"}
+          <div class="surface-card">
+            {@render sessions()}<SessionActions
+              context={sessionActionContext}
+            />
+          </div>
+        {:else if view === "memory"}
+          <div class="surface-card">
+            <MemoryList
+              entries={[]}
+              status="unavailable"
+              onForget={unavailableForget}
+            />
+            <p>
+              The renderer memory feed is not connected. Stored engine memory is
+              not shown here.
+            </p>
+          </div>
+        {:else if view === "models"}
+          <div class="surface-card providers" data-testid="providers-view">
+            <Providers
+              connections={[]}
+              families={[]}
+              {profiles}
+              workspaceSelected={workspace !== null}
+              selectedProfileId={profileSelection?.selectedProfileId ?? null}
+              selectProfile={useProfile}
+              {profilePending}
+              {profileStatus}
+              credentialSubmit={providerUnavailable
+                ? undefined
+                : configureProvider}
+              credentialUnavailable={providerUnavailable}
+            />
+          </div>
+          <div class="surface-card">
+            <ModelSwitcher
+              selection={{
+                currentRef:
+                  startedSession?.readiness.state === "ready"
+                    ? (selectedProfile?.modelId ?? "Unavailable")
+                    : "Unavailable",
+                transition: null,
+              }}
+              options={[]}
+              catalogStatus="error"
+              onRequest={unavailableModelSwitch}
+            />
+            <p>
+              Use a saved profile above to start a session. Live model switching
+              has no connected catalog.
+            </p>
+          </div>
+          <SupportStatus cells={null} />
+        {:else if view === "extensions"}
+          <div class="surface-card">
+            <Modules
+              snapshot={moduleSnapshot}
+              onConfigureProvider={() => (view = "models")}
+            />
+          </div>
+        {:else if view === "settings"}
+          <div class="surface-card">
+            <Setup
+              snapshot={moduleSnapshot}
+              onEnterWorkbench={() => (view = "work")}
+              onOpenModules={() => (view = "extensions")}
+              onConfigureProvider={() => (view = "models")}
+            />
+          </div>
+          <section
+            class="surface-card supervisor"
+            aria-label="Supervisor"
+            data-testid="supervisor"
+          >
+            <h2>Supervisor</h2>
+            <PermissionModeSelect
+              modeState={permissionModeState}
+              context={permissionContext}
+            />
+          </section>
+          <div class="surface-card">
+            <UsageView usage={null} status="unavailable" />
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </Workbench>
 </div>
 
-{#snippet rail()}
-  <div class="brand">
-    <h1>Splyce</h1>
-    <span class="status-badge" class:ready={status === "ready"} class:unavailable={status !== "ready"}>
-      {stopped ? "engine stopped" : status}
-    </span>
-  </div>
-  <nav class="views-nav" aria-label="Views">
-    {#each VIEWS as [id, label] (id)}
-      <button type="button" aria-current={view === id ? "page" : undefined} onclick={() => (view = id)}>
-        {label}
-      </button>
-    {/each}
-  </nav>
-  <section class="project" aria-labelledby="project-title">
-    <h2 id="project-title">Project</h2>
-    <p data-testid="project-name">{workspace ? workspace.displayName : "No project selected."}</p>
-    <button
-      type="button"
-      disabled={chooserReason !== null || choosing}
-      aria-describedby="project-status"
-      onclick={() => void chooseProject()}
-    >
-      {choosing ? "Choosing…" : "Choose project"}
-    </button>
-    <p id="project-status" role="status">{chooserReason ?? chooserError}</p>
-  </section>
+{#snippet sessions()}
   <SessionTree
     {nav}
     {onSelect}
-    canRetry={status === "ready"}
+    unavailableReason={!loadSessions &&
+    nav.load === "loading" &&
+    status === "ready"
+      ? "Session history is unavailable until the engine delivers session records."
+      : undefined}
+    canRetry={status === "ready" && !!loadSessions}
     onFocus={(key) => dispatchNav({ type: "focus", key })}
     onMove={(to) => dispatchNav({ type: "move", to })}
     onRetry={() => {
       if (status === "ready" && loadSessions) void runLoad();
     }}
   />
-  <SessionActions context={sessionActionContext} />
-  <section class="supervisor" aria-label="Supervisor" data-testid="supervisor">
-    <h2>Supervisor</h2>
-    <PermissionModeSelect modeState={permissionModeState} context={permissionContext} />
-  </section>
 {/snippet}
 
-{#snippet transcript()}
-  <!-- TD-30: engine-facing approval mount. Empty until requests carry revisions. -->
-  <ApprovalSurface requests={approvalRequests} context={approvalContext} />
-  {#if subscription.state === "failed"}
-    <div class="subscribe-error" role="alert" data-testid="subscribe-error">
-      <span>Could not subscribe to the session: {subscription.error}</span>
-      <button type="button" onclick={retry}>Retry</button>
-    </div>
-  {/if}
-  {#if view === "providers"}
-    <!-- No profile service is connected: the list is empty and custom endpoints stay disabled, not faked. -->
-    <div class="providers" data-testid="providers-view">
-      <Providers
-        connections={[]}
-        families={[]}
-        {profiles}
-        workspaceSelected={workspace !== null}
-        selectedProfileId={profileSelection?.selectedProfileId ?? null}
-        selectProfile={useProfile}
-        {profilePending}
-        {profileStatus}
-        credentialSubmit={providerUnavailable ? undefined : configureProvider}
-        credentialUnavailable={providerUnavailable}
-      />
-    </div>
-    <SupportStatus cells={null} />
-  {:else if view === "setup"}
-    <Setup
-      snapshot={moduleSnapshot}
-      onEnterWorkbench={() => (view = "conversation")}
-      onOpenModules={() => (view = "modules")}
-      onConfigureProvider={() => (view = "providers")}
-    />
-  {:else if view === "modules"}
-    <Modules
-      snapshot={moduleSnapshot}
-      onConfigureProvider={() => (view = "providers")}
-    />
-  {:else if view === "usage"}
-    <UsageView usage={null} status="unavailable" />
-  {:else}
-    <div class="app-content" class:conversation={currentRun !== undefined}>
-      {#if status !== "ready"}
-        <div class="unavailable-view" data-testid="unavailable-banner" role="status" aria-live="polite">
-          <h2>{stopped ? "Engine stopped" : readiness?.state === "ready" ? "Generation unconfigured" : "Engine Unavailable"}</h2>
-          <p>
-            {stopped
-              ? "The native engine exited. Reconnect to resume or restart the app; the last transcript may be incomplete."
-              : readiness?.state === "ready"
-                ? "Generation requires a configured provider and workspace."
-              : "Backend native services (policy, durable store, and receipts) are currently initializing or unavailable. Release qualification requires all three subsystems verified before task execution."}
-          </p>
-          {#if stopped || status === "unavailable" || status === "error"}
-            <button type="button" class="retry-btn" onclick={() => void connect()}>Retry</button>
-          {/if}
-        </div>
-      {/if}
-      {#if currentRun}
-        <section class="turn-pane" aria-label="Transcript">
-          <TurnStream
-            run={currentRun}
-            stale={turns.stale || turns.needsResync || (status !== "ready" && status !== "busy")}
-            {canRespond}
-            {onApproval}
-          />
-        </section>
-      {:else if status === "ready"}
-        <div class="workspace-view">
-          <p>Ready for workspace execution.</p>
-        </div>
-      {/if}
+{#snippet engineNotice()}
+  {#if status !== "ready" && status !== "busy"}
+    <div
+      class="notice engine-notice"
+      data-testid="unavailable-banner"
+      role="status"
+      aria-live="polite"
+    >
+      <h2>
+        {stopped
+          ? "Engine stopped"
+          : readiness?.state === "ready"
+            ? "Generation unconfigured"
+            : "Engine Unavailable"}
+      </h2>
+      <p>
+        {stopped
+          ? "The native engine exited. Reconnect to resume or restart the app; the last transcript may be incomplete."
+          : readiness?.state === "ready"
+            ? "Generation requires a configured provider and workspace."
+            : "The native engine is unavailable. Open the desktop app to connect your project and provider."}
+      </p>
+      {#if stopped || status === "unavailable" || status === "error"}<button
+          type="button"
+          onclick={() => void connect()}>Retry</button
+        >{/if}
     </div>
   {/if}
 {/snippet}
@@ -663,6 +883,11 @@
     <p role="status">Workspace tools unavailable</p>
   {/if}
   <Composer
+    workspaceName={workspace?.displayName}
+    runtimeName={selectedProfile?.modelId}
+    onChooseProject={() => void chooseProject()}
+    projectUnavailable={chooserReason !== null || choosing}
+    onOpenModels={() => (view = "models")}
     connection={status}
     sessionId={startedSession?.sessionId ?? $selectedSession?.sessionId ?? null}
     {generationReady}
@@ -670,9 +895,13 @@
     profileSelected={profileSelection !== null}
     sessionReadiness={startedSession?.readiness.state}
     stale={turns.stale || turns.needsResync}
-    unavailable={subscription.state !== "live" || $selectedSession?.sessionId !== startedSession?.sessionId || $selectedSession?.scopeId !== workspace?.workspaceId
+    unavailable={subscription.state !== "live" ||
+    $selectedSession?.sessionId !== startedSession?.sessionId ||
+    $selectedSession?.scopeId !== workspace?.workspaceId
       ? "Session subscription is unavailable. Sending stays blocked."
-      : activeRunId ? "A turn is running." : undefined}
+      : activeRunId
+        ? "A turn is running."
+        : undefined}
     cancellable={activeRunId !== null && !cancelPending}
     cancel={async () => {
       if (!startedSession || !activeRunId || cancelPending) return;
@@ -684,203 +913,70 @@
         await cancelSession(sessionId);
         if (epoch === setupEpoch && activeRunId === runId) activeRunId = null;
       } catch {
-        if (epoch === setupEpoch) profileStatus = "Cancellation could not be confirmed.";
-      } finally { if (epoch === setupEpoch) cancelPending = false; }
+        if (epoch === setupEpoch)
+          profileStatus = "Cancellation could not be confirmed.";
+      } finally {
+        if (epoch === setupEpoch) cancelPending = false;
+      }
     }}
     send={async (payload) => {
       const project = workspace;
       const selected = profileSelection;
       const session = startedSession;
       const epoch = setupEpoch;
-      if (!project || !selected || !session || status !== "ready" || generationReady !== true || subscription.state !== "live" || !sessionPortWitness || turns.stale || turns.needsResync || $selectedSession?.sessionId !== session.sessionId || $selectedSession?.scopeId !== project.workspaceId) throw new Error("Session unavailable");
+      if (
+        !project ||
+        !selected ||
+        !session ||
+        status !== "ready" ||
+        generationReady !== true ||
+        subscription.state !== "live" ||
+        !sessionPortWitness ||
+        turns.stale ||
+        turns.needsResync ||
+        $selectedSession?.sessionId !== session.sessionId ||
+        $selectedSession?.scopeId !== project.workspaceId
+      )
+        throw new Error("Session unavailable");
       try {
         const result = await invoke("session.prompt", payload, {
-          sessionId: session.sessionId, scopeId: project.workspaceId,
+          sessionId: session.sessionId,
+          scopeId: project.workspaceId,
           expectedConfigRevision: selected.configRevision,
           expectedProfileRevision: selected.profileRevision,
           expectedPolicyRevision: session.policyRevision,
         });
-        if (result === null || typeof result !== "object" || Array.isArray(result) || Object.keys(result).length !== 3 ||
+        if (
+          result === null ||
+          typeof result !== "object" ||
+          Array.isArray(result) ||
+          Object.keys(result).length !== 3 ||
           (result as { accepted?: unknown }).accepted !== true ||
-          typeof (result as { runId?: unknown }).runId !== "string" || !isOpaqueId((result as { runId: string }).runId) ||
-          typeof (result as { turnId?: unknown }).turnId !== "string" || !isOpaqueId((result as { turnId: string }).turnId)) throw new Error("Invalid acknowledgement");
+          typeof (result as { runId?: unknown }).runId !== "string" ||
+          !isOpaqueId((result as { runId: string }).runId) ||
+          typeof (result as { turnId?: unknown }).turnId !== "string" ||
+          !isOpaqueId((result as { turnId: string }).turnId)
+        )
+          throw new Error("Invalid acknowledgement");
         if (epoch !== setupEpoch) throw new Error("Session changed");
         const runId = (result as { runId: string }).runId;
-        if (!["completed", "failed", "canceled", "stopped"].includes(turns.runs[runId]?.status ?? "")) activeRunId = runId;
+        if (
+          !["completed", "failed", "canceled", "stopped"].includes(
+            turns.runs[runId]?.status ?? "",
+          )
+        )
+          activeRunId = runId;
       } catch (error) {
-        if (epoch === setupEpoch && error !== null && typeof error === "object" && Object.hasOwn(error, "code") && (error as { code?: unknown }).code === "STALE_REVISION") void refreshStaleSession(epoch);
+        if (
+          epoch === setupEpoch &&
+          error !== null &&
+          typeof error === "object" &&
+          Object.hasOwn(error, "code") &&
+          (error as { code?: unknown }).code === "STALE_REVISION"
+        )
+          void refreshStaleSession(epoch);
         throw error;
       }
     }}
   />
 {/snippet}
-
-{#snippet evidence()}
-  <p>No changes or evidence available.</p>
-{/snippet}
-
-<style>
-  :global(html),
-  :global(body) {
-    margin: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color: #111827;
-    background: #f9fafb;
-  }
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-  }
-  .brand h1 {
-    font-size: 1.125rem;
-    margin: 0;
-    font-weight: 700;
-  }
-  .views-nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    padding: 0 12px 12px 12px;
-    border-bottom: 1px solid #e5e7eb;
-  }
-  .views-nav button {
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: #4b5563;
-    background: transparent;
-    border: 1px solid transparent;
-    cursor: pointer;
-    transition: background 0.15s, color 0.15s;
-  }
-  .views-nav button:hover {
-    background: #f3f4f6;
-    color: #111827;
-  }
-  .views-nav button[aria-current="page"] {
-    background: #ffffff;
-    color: #111827;
-    font-weight: 600;
-    border-color: #d1d5db;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  }
-  .status-badge {
-    padding: 2px 8px;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    background: #f3f4f6;
-    color: #4b5563;
-  }
-  .status-badge.ready {
-    background: #d1fae5;
-    color: #065f46;
-  }
-  .status-badge.unavailable {
-    background: #fee2e2;
-    color: #991b1b;
-  }
-  [aria-current="page"] {
-    font-weight: 700;
-  }
-  .project {
-    display: grid;
-    gap: 4px;
-    padding: 12px;
-    border-bottom: 1px solid #e5e7eb;
-  }
-  .project h2 {
-    margin: 0;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: #4b5563;
-  }
-  .project p {
-    margin: 0;
-    font-size: 0.8125rem;
-  }
-  .supervisor {
-    display: grid;
-    gap: 8px;
-    padding: 12px;
-    border-top: 1px solid #e5e7eb;
-    margin-top: 8px;
-  }
-  .supervisor h2 {
-    margin: 0;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #4b5563;
-  }
-  .providers {
-    padding: 12px;
-  }
-  .subscribe-error {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 20px;
-    background: #fee2e2;
-    color: #991b1b;
-    font-size: 0.875rem;
-  }
-  .app-content {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    min-height: 100%;
-    box-sizing: border-box;
-  }
-  .app-content.conversation {
-    flex-direction: column;
-    gap: 16px;
-    align-items: stretch;
-    justify-content: flex-start;
-  }
-  .turn-pane {
-    width: 100%;
-    max-width: 880px;
-    margin: 0 auto;
-  }
-  .unavailable-view {
-    max-width: 480px;
-    text-align: center;
-    padding: 32px;
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  }
-  .unavailable-view h2 {
-    margin-top: 0;
-    color: #b91c1c;
-  }
-  .unavailable-view p {
-    color: #4b5563;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    margin-bottom: 20px;
-  }
-  .retry-btn {
-    padding: 8px 20px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #ffffff;
-    background: #111827;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .retry-btn:hover {
-    background: #374151;
-  }
-</style>

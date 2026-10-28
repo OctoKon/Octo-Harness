@@ -256,6 +256,8 @@ describe("TD-71 composer", () => {
       "Composer",
     );
     expect(document.querySelector('label[for="composer-input"]')).toBeTruthy();
-    expect(c.ta.getAttribute("aria-describedby")).toBe("composer-status");
+    expect(c.ta.getAttribute("aria-describedby")).toBe(
+      "composer-status composer-hint",
+    );
   });
 });

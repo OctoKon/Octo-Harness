@@ -33,7 +33,8 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 const q = (sel: string) => document.querySelector<HTMLElement>(sel);
 const button = (name: string) =>
   [...document.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === name,
+    (b) =>
+      b.getAttribute("aria-label") === name || b.textContent?.trim() === name,
   )!;
 const subscribes = () =>
   ipc.invoke.mock.calls.filter(([c]) => c === "subscribe");
@@ -237,7 +238,7 @@ describe("App wiring", () => {
 
   it("mounts each surface from shell navigation", async () => {
     await boot();
-    button("Providers").click();
+    button("Models").click();
     flushSync();
     const providers = q("[data-testid=providers-view]")!;
     expect(providers).not.toBeNull();
@@ -254,13 +255,13 @@ describe("App wiring", () => {
     );
     expect(q("[data-testid=support-status] table")).toBeNull();
 
-    button("Usage").click();
+    button("Settings").click();
     flushSync();
     expect(q("[data-testid=usage-unavailable-note]")).not.toBeNull();
     expect(q("[data-testid=providers-view]")).toBeNull();
 
     // Setup and Modules are mounted from the shell and stay honest with no service.
-    button("Setup").click();
+    button("Settings").click();
     flushSync();
     expect(q("[data-testid=setup]")).not.toBeNull();
     expect(q("[data-testid=engine-unavailable]")?.textContent).toContain(
@@ -278,14 +279,14 @@ describe("App wiring", () => {
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
 
     // Skip setup must enter the workbench too, not leave a dead button.
-    button("Setup").click();
+    button("Settings").click();
     flushSync();
     button("Skip setup").click();
     flushSync();
     expect(q("[data-testid=setup]")).toBeNull();
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
 
-    button("Modules").click();
+    button("Extensions").click();
     flushSync();
     expect(q("[data-testid=modules]")).not.toBeNull();
     expect(
@@ -298,7 +299,7 @@ describe("App wiring", () => {
       (q("[data-testid=refresh-catalog]") as HTMLButtonElement).disabled,
     ).toBe(true);
 
-    button("Conversation").click();
+    button("Work").click();
     flushSync();
     expect(q("[data-testid=unavailable-banner]")).not.toBeNull();
   });
@@ -578,6 +579,8 @@ describe("App wiring", () => {
 
   it("mounts the Supervisor permission mode disabled with the revision reason", async () => {
     await boot();
+    button("Settings").click();
+    flushSync();
     const supervisor = q("[data-testid=supervisor]")!;
     expect(supervisor.textContent).toContain("Supervisor");
     const select = supervisor.querySelector<HTMLSelectElement>(
@@ -641,9 +644,7 @@ describe("App wiring", () => {
   it("shows only the display name of a chosen project and keeps it on cancel", async () => {
     ipc.ready = true;
     await boot();
-    expect(q("[data-testid=project-name]")?.textContent).toBe(
-      "No project selected.",
-    );
+    expect(q("[data-testid=project-name]")?.textContent).toBe("Choose project");
     await chooseProject();
     expect(q("[data-testid=project-name]")?.textContent).toBe("splyce-demo");
     // Cancel returns null: the chosen project stays.
@@ -699,7 +700,7 @@ describe("App wiring", () => {
         payload: { state: "ready", activeWorkers: 0, ports: providerPorts },
       } as SplyceEvent);
       await settle();
-      button("Providers").click();
+      button("Models").click();
       flushSync();
     }
 
@@ -810,5 +811,119 @@ describe("App wiring", () => {
       expect((q("#setup-key") as HTMLInputElement).value).toBe("");
       expect(document.body.innerHTML).not.toMatch(/private|sk-app/);
     });
+  });
+});
+
+describe("approved prototype shell", () => {
+  it("shows unavailable history until real session records arrive", async () => {
+    ipc.ready = true;
+    await boot();
+    const history = q("[data-testid=session-tree]")!;
+    expect(history.textContent).toContain("Session history is unavailable");
+    expect(history.textContent).not.toMatch(/Loading sessions|No sessions yet/);
+    dispatchEngineEvent(treeEvent("received_session", "received_scope"));
+    await settle();
+    expect(q("[role=treeitem]")?.textContent).toContain("received_session");
+  });
+
+  it("renders Work first with the approved hero and truthful unavailable pages", async () => {
+    await boot();
+    const links = [
+      ...document.querySelectorAll('[aria-label="Workspace"] button'),
+    ];
+    expect(links.map((b) => b.textContent?.trim())).toEqual([
+      "Work",
+      "Runs",
+      "Memory",
+      "Models",
+      "Extensions",
+      "Settings",
+    ]);
+    expect(q("h1 em")?.textContent).toBe("Evidence by design.");
+    expect(document.body.textContent).not.toContain("payments-api");
+    expect(document.body.textContent).toContain("Pi engine · unavailable");
+    button("Memory").click();
+    flushSync();
+    expect(q("[data-testid=memory-empty]")?.textContent).toContain(
+      "Memory is unavailable",
+    );
+    button("Models").click();
+    flushSync();
+    expect(q("[data-testid=model-catalog-error]")).not.toBeNull();
+    expect(document.querySelectorAll("main")).toHaveLength(1);
+    button("Runs").click();
+    flushSync();
+    expect(
+      document.querySelectorAll("[data-testid=session-tree]"),
+    ).toHaveLength(1);
+    expect(q("[data-testid=session-tree]")?.textContent).toContain(
+      "could not be loaded",
+    );
+    expect(
+      ipc.invoke.mock.calls.filter(([command]) => command === "send"),
+    ).toHaveLength(0);
+  });
+
+  it("preserves the unsent draft across navigation and exposes runtime setup", async () => {
+    await boot();
+    const input = q("textarea") as HTMLTextAreaElement;
+    input.value = "keep this task";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    button("Configure runtime").click();
+    flushSync();
+    expect(q(".work-panel")?.hidden).toBe(true);
+    expect(q("[data-testid=providers-view]")).not.toBeNull();
+    button("Work").click();
+    flushSync();
+    expect(q(".work-panel")?.hidden).toBe(false);
+    expect(q("textarea")).toBe(input);
+    expect(input.value).toBe("keep this task");
+    expect(button("Send").disabled).toBe(true);
+  });
+
+  it("toggles the theme and collapses the sidebar using the keyboard", async () => {
+    await boot();
+    button("Switch to dark theme").click();
+    flushSync();
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "b", ctrlKey: true }),
+    );
+    await settle();
+    expect(q("#app-sidebar")?.inert).toBe(true);
+    expect(document.activeElement?.getAttribute("aria-label")).toBe(
+      "Open sidebar",
+    );
+    button("Open sidebar").click();
+    await settle();
+    expect(q("#app-sidebar")?.inert).toBe(false);
+    button("Switch to light theme").click();
+    flushSync();
+    expect(document.documentElement.dataset.theme).toBe("light");
+  });
+
+  it("keeps mobile navigation focus inside the drawer and restores it on Escape", async () => {
+    window.innerWidth = 390;
+    await boot();
+    button("Open navigation").click();
+    await settle();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe(
+      "Close navigation",
+    );
+    expect(q("main")?.inert).toBe(true);
+    button("Switch to dark theme").focus();
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", cancelable: true }),
+    );
+    expect(document.activeElement?.getAttribute("aria-label")).toBe(
+      "Close navigation",
+    );
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await settle();
+    expect(q("main")?.inert).toBe(false);
+    expect(document.activeElement?.getAttribute("aria-label")).toBe(
+      "Open navigation",
+    );
   });
 });

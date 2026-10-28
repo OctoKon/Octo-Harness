@@ -26,7 +26,12 @@
   data-testid="approval-card"
 >
   <div class="card-header">
-    <span class="badge" class:pending={decision === null} class:denied={decision === "deny"} class:approved={decision === "approve"}>
+    <span
+      class="badge"
+      class:pending={decision === null}
+      class:denied={decision === "deny"}
+      class:approved={decision === "approve"}
+    >
       {#if decision === null}
         {pending ? "Submitting response" : "Waiting for approval"}
       {:else if decision === "deny"}
@@ -49,7 +54,7 @@
         disabled={pending}
         onclick={() => onRespond?.("approve")}
       >
-        Approve
+        Allow once
       </button>
       <button
         type="button"
@@ -97,11 +102,11 @@
   }
   .badge.approved {
     background: rgba(16, 185, 129, 0.12);
-    color: #047857;
+    color: var(--status-success, #047857);
   }
   .badge.denied {
     background: rgba(239, 68, 68, 0.12);
-    color: #b91c1c;
+    color: var(--error, #b91c1c);
   }
   .card-actions {
     display: flex;
@@ -118,7 +123,7 @@
   }
   .btn-approve {
     background: var(--primary, #0d0d0d);
-    color: #ffffff;
+    color: var(--primary-contrast, #ffffff);
   }
   .btn-deny {
     background: transparent;
@@ -131,10 +136,10 @@
     font-size: 0.8125rem;
     font-weight: 500;
     background: rgba(16, 185, 129, 0.08);
-    color: #047857;
+    color: var(--status-success, #047857);
   }
   .resolution-banner.denied {
     background: rgba(239, 68, 68, 0.08);
-    color: #b91c1c;
+    color: var(--error, #b91c1c);
   }
 </style>

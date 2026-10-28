@@ -39,7 +39,8 @@ const tick = async () => {
 };
 const button = (text: string) =>
   [...document.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === text,
+    (b) =>
+      b.getAttribute("aria-label") === text || b.textContent?.trim() === text,
   )!;
 const sends = (op: string) =>
   ipc.invoke.mock.calls.filter(
@@ -106,7 +107,7 @@ async function configured() {
   await tick();
   button("Choose project").click();
   await tick();
-  button("Providers").click();
+  button("Models").click();
   flushSync();
   for (const [id, value] of Object.entries({
     "setup-endpoint": "https://example.test/v1",
@@ -166,7 +167,7 @@ describe("native profile and session setup", () => {
     await tick();
     button("Choose project").click();
     await tick();
-    button("Providers").click();
+    button("Models").click();
     flushSync();
     const read = sends("setup.read")[0]![1];
     expect(read.payload).toEqual({
@@ -371,7 +372,7 @@ describe("native profile and session setup", () => {
       cleanupComplete: true,
     });
     await tick();
-    button("Conversation").click();
+    button("Work").click();
     flushSync();
     button("Retry").click();
     await tick();
@@ -410,7 +411,7 @@ describe("native profile and session setup", () => {
       ],
     });
     await tick();
-    button("Providers").click();
+    button("Models").click();
     flushSync();
     expect(document.body.textContent).not.toContain("old_profile");
   });
@@ -459,7 +460,7 @@ describe("native profile and session setup", () => {
       await tick();
       button("Choose project").click();
       await tick();
-      button("Providers").click();
+      button("Models").click();
       flushSync();
       expect(document.getElementById("profile-status")?.textContent).toContain(
         "could not be loaded",
@@ -662,6 +663,8 @@ describe("native profile and session setup", () => {
     reply = async () => {
       throw new Error("private-native-message");
     };
+    button("Models").click();
+    flushSync();
     button("Use this profile").click();
     await tick();
     expect(get(selectedSession)?.sessionId).toBe("old_session");
