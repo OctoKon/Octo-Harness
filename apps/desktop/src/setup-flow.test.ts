@@ -153,6 +153,9 @@ describe("native profile and session setup", () => {
     });
     app = mount(App, { target: document.body });
     await tick();
+    expect(document.body.textContent).not.toContain(
+      "Sessions could not be loaded",
+    );
     button("Choose project").click();
     await tick();
     expect(sends("sessions.list")).toHaveLength(1);

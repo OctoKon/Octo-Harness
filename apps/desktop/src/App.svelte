@@ -465,8 +465,12 @@
 
   // Readiness never completes a load: without a snapshot the previous navigation state is kept, selection included.
   $effect(() => {
-    if (!loadSessions && readiness?.state === "ready" && workspace) {
-      void runLoad();
+    if (!loadSessions && readiness?.state === "ready" &&
+      (status === "ready" || status === "busy" || status === "unavailable")) {
+      if (workspace) void runLoad();
+      else if (untrack(() => Object.keys(nav.branches).length > 0))
+        dispatchNav({ type: "loaded" });
+      else nav = createSessionNav();
     } else if (status === "ready") {
       if (loadSessions) void runLoad();
       else if (untrack(() => Object.keys(nav.branches).length > 0))
@@ -851,7 +855,7 @@
     {onSelect}
     unavailableReason={!loadSessions &&
     nav.load === "loading" &&
-    status === "ready"
+    readiness?.state === "ready"
       ? "Session history is unavailable until the engine delivers session records."
       : undefined}
     canRetry={readiness?.state === "ready" && (!!loadSessions || !!workspace)}
