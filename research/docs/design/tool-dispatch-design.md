@@ -95,6 +95,7 @@ scope: once|session}` iff req.actionId == permit.toolCallId, req.argumentsDigest
 - summary mapping: tool `result().summary` verbatim (preview already <=2048, scrubbed by `scrubSecrets` +
   host `redact`); then `await native.redact(preview)` (Rust lane, text-only, fail closed -> preview "" on
   NATIVE_REDACTION error, never raw). `error` = WorkspaceToolError.code only (message is path-bearing).
+
 - Gap: NativePolicy.execute commits action receipts with `commitEvents(receipts, [], ...)` (policy.ts:~395) so the
   outcome event is a SECOND commit after `policy.execute`; between them a crash leaves receipts without an event.
   Acceptable (memory/renderer reconcile from receipts); strict atomicity would need a policy.ts `events` option.
