@@ -17,7 +17,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -517,6 +517,61 @@ test(
     assert.equal(child.error, undefined);
     assert.equal(child.status, 0, child.stderr || child.stdout);
     assert.match(child.stdout, /restricted-shell: splyce/);
+  },
+);
+
+test(
+  "shell timeout keeps SHELL_TIMEOUT when an outside process pins the owned temp dir",
+  { skip: !win },
+  async () => {
+    const h = harness({ timeoutMs: 8000 });
+    const cmd =
+      "Set-Content -Path (Join-Path (Get-Location) 'tp.txt') -Value $env:TEMP; Start-Sleep 60";
+    h.grants.approve("shell.run", `${sh}:${cmd}`);
+    const pending = codeOf(run(h, sh, { command: cmd }));
+    let temp = "";
+    for (let i = 0; i < 60 && !temp; i += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+      try {
+        temp = readFileSync(join(h.root, "tp.txt"), "utf8").trim();
+      } catch {
+        // the shell has not written the temp path yet
+      }
+    }
+    assert.ok(temp.includes(".splyce-shell-"), `owned temp recorded: ${temp}`);
+    // Not a child of the killed shell, so the tree kill cannot release it.
+    const holder = spawn(
+      join(
+        process.env.SystemRoot!,
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      ),
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `$fs=[IO.File]::Open('${join(temp, "held.txt").replace(/'/g, "''")}','OpenOrCreate','ReadWrite','None'); Start-Sleep 60; $fs.Dispose()`,
+      ],
+      { stdio: "ignore" },
+    );
+    try {
+      assert.equal(await pending, "SHELL_TIMEOUT");
+    } finally {
+      holder.kill("SIGKILL");
+    }
+    assert.equal(h.log.length, 1);
+    assert.equal(h.log[0]?.ok, false);
+    assert.equal(h.log[0]?.summary, "SHELL_TIMEOUT");
+    for (let i = 0; i < 20; i += 1) {
+      try {
+        rmSync(temp, { recursive: true, force: true });
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
   },
 );
 
