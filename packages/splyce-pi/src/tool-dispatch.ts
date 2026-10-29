@@ -738,11 +738,11 @@ export function createToolDispatch(deps: ToolDispatchDeps): ToolDispatch {
       } finally {
         try {
           deps.onEventsCommitted?.();
-      } finally {
-        call.admitted = false;
-        byAction.delete(call.actionId);
-        calls.delete(toolCallId);
-      }
+        } finally {
+          call.admitted = false;
+          byAction.delete(call.actionId);
+          calls.delete(toolCallId);
+        }
       }
     },
   };
