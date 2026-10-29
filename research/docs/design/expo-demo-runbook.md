@@ -21,7 +21,7 @@ The packaged demo build installs in place over 3058 and is expected to add the f
 - **Code search** — `code_search`, `code_outline`, `code_related`, `code_dependencies`, `code_dependents`, `code_symbol` over the workspace index.
 - **Cited memory** — `memory_search` returns observations captured from earlier turns of this workspace, each listing the source event ids it cites; read-only.
 - **Provider save** - the form is headed `Connect a provider` (accessible name `Provider setup`) with Endpoint URL, API family, Model ID, Context window (tokens), Max output tokens, optional `Reasoning model` / `Accepts image input`, and API key (password), submitted with `Save provider` (`Saving…` while pending).
-- **Still off in 3058** — the installed build showed `Workspace tools unavailable` above the composer with tools OFF. If the freshly packaged build still shows that banner, the tool steps (5 to 8 and 11) cannot run live: show the banner, skip those steps and say tools are not in this build.
+- **Still off in 3058** — the installed build showed `Workspace tools unavailable` above the composer with tools OFF. That banner reports the current tool-port readiness; it does not establish whether the tools were included in the build. If the freshly packaged build shows it, record those steps (5 to 8 and 11) as unavailable and diagnose readiness, workspace admission and the tool bind separately — never conclude from the banner alone that the build lacks the tool code.
 
 Everything in "What staging actually has" still applies to any build cut from `staging`.
 
@@ -75,7 +75,7 @@ If a reply goes off-track, re-run prompt 2 (the most reliable step) rather than 
 - **Action:** press the `Choose project` button (`Choosing…` while the dialog is open) and select the empty demo folder in the native Windows dialog. On the expo build do this before step 2's `Use this profile`.
 - **Expected UI:** the project line reads `Choose project` until chosen, then the folder's display name only; the full path never appears in the renderer (title bar, tooltip or error text). The engine receives `workspace.select` with a `selectionRef`, never a path from the UI. On a staging-only build neither the `Choose project` button nor the project line exists; both come from the demo build (`apps/desktop/src/components/shell/Workbench.svelte` and `apps/desktop/src/components/Composer.svelte`).
 - **Pass / Fail:** pass when the workspace is admitted and only `displayName` is visible. Fail if the absolute path, drive letter or user profile appears anywhere (title bar, tooltip, error text).
-- **If a port is unavailable:** show the workspace view's "Ready for workspace execution." only if the engine is ready; otherwise show step 1's state. Say "project selection is a native dialog not in this build". Do not type a path into any field.
+- **If a port is unavailable:** show the workspace view's step 1 state; do not type a path into any field. Say "project selection is a native dialog not in this build". The staging-only line "Ready for workspace execution." is not in the demo build — `Itachi-1824/demo-final3` asserts its absence — so never quote it as the demo state.
 
 ## 4. First chat turn streams (`demo build only`)
 
@@ -98,7 +98,7 @@ If a reply goes off-track, re-run prompt 2 (the most reliable step) rather than 
 - **Deny path:** card shows "Denied"; `notes.txt` does not exist (check Explorer or `Test-Path`).
 - **Allow path:** card reaches "OK"; `notes.txt` contains `hello`. The grant is one-time: asking again shows "Waiting for approval" again. A reused grant reads "That approval was already used. Request the action again." (`GRANT_CONSUMED`); an action without approval reads "This action needs a one-time approval for its exact target." (`GRANT_REQUIRED`). For fs.edit a missing match reads "The text to replace was not found."
 - **Pass / Fail:** pass when the filesystem agrees with the card in both paths and the second write asks again. Fail on a file written after Deny, a second write without a prompt, or a card "OK" with no file.
-- **If a port is unavailable:** if the composer shows `Workspace tools unavailable`, tools are OFF in this build — skip steps 5 to 8 and 11, show the banner, and say tools are not in this build. On a staging-only build the approval controls are not mounted (`Approval controls are not available in this view.`). Do not click through a fixture and call it the product.
+- **If a port is unavailable:** if the composer shows `Workspace tools unavailable`, record this step unavailable and diagnose the tool port (engine ready from step 1, workspace admitted from step 3, tool bind reported) before saying anything about the build — the banner reports readiness, not whether the tools were included. On a staging-only build the approval controls are not mounted (`Approval controls are not available in this view.`). Do not click through a fixture and call it the product.
 
 ### Mode selector (`demo build only`)
 
@@ -115,7 +115,7 @@ If a reply goes off-track, re-run prompt 2 (the most reliable step) rather than 
 - **Action:** send "Run `echo hi` in the workspace", then "Run a command that sleeps longer than the timeout".
 - **Expected UI:** card action "Run shell", approval for the exact command, then a summary line "Exit code 0", duration in ms, bytes, "Truncated" when output is cut, and an "Output preview" block (secret-shaped text shown as `[redacted]`). Timeout reads "The command timed out and was stopped." (`SHELL_TIMEOUT`). Large output must show "Truncated" or compaction, never the full dump.
 - **Pass / Fail:** pass when the exit code matches reality, truncation is flagged, and the timed-out process is gone (check Task Manager). Fail on a missing exit code, an unflagged cut, or a surviving child process.
-- **If a port is unavailable:** if `Workspace tools unavailable` shows above the composer, skip this step and say shell execution needs the tool build. The denial copy is wired in `apps/desktop/src/tool-view.ts` on the demo build but needs live engine events — do not fabricate the card. Remember the shell is not OS-confined (see Known limits); never run anything destructive on stage.
+- **If a port is unavailable:** if `Workspace tools unavailable` shows above the composer, record this step unavailable and diagnose readiness and the tool bind; the banner is not evidence about the build's contents. The denial copy is wired in `apps/desktop/src/tool-view.ts` on the demo build but needs live engine events — do not fabricate the card. Remember the shell is not OS-confined (see Known limits); never run anything destructive on stage.
 
 ## 8. Path escape is denied
 
@@ -126,9 +126,9 @@ If a reply goes off-track, re-run prompt 2 (the most reliable step) rather than 
 
 ## 9. Secret hygiene
 
-- **Action:** paste the test key into a prompt ("remember this: <key>"), then end the session. Afterwards search the persisted session JSONL and the app log folder for the key and its first 12 characters (for example `Select-String -Path <session dir>\*.jsonl -Pattern <key-prefix> -SimpleMatch`; use a prefix, never print the key).
-- **Expected UI:** the renderer redacts secret-shaped text (`sk-...`, bearer tokens, `api_key=...`) in tool text as `[redacted]`. Persisted transcripts must contain neither the key nor its prefix.
-- **Pass / Fail:** pass when the search finds nothing in the transcript, logs, crash dumps and `%APPDATA%` app data. Fail on any hit; stop the demo, rotate the key, and file a security issue. Note: renderer-side redaction is defence in depth only; persistence redaction is `(planned, not on staging yet)`, so a hit on the unredacted prompt text is a known gap to record, not hide.
+- **Action:** send one prompt containing an inert marker shaped like a secret: "remember this: sk-demo-inert-0000000000". The marker is not a credential and authorizes nothing; never paste a working provider key into a prompt. End the session, then search the persisted session JSONL and the app log folder for the marker and its first 12 characters (for example `Select-String -Path <session dir>\*.jsonl -Pattern sk-demo-inert -SimpleMatch`).
+- **Expected UI:** the renderer redacts secret-shaped text (`sk-...`, bearer tokens, `api_key=...`) in tool text as `[redacted]`. Persisted transcripts must contain neither the marker nor its prefix.
+- **Pass / Fail:** pass when the search finds nothing in the transcript, logs, crash dumps and `%APPDATA%` app data. Fail on any hit: stop the demo and file a security issue, because the same path would have persisted a real key; there is nothing to rotate, since the marker is inert, so a hit is a defect to record, not a leak to clean up. Note: renderer-side redaction is defence in depth only; persistence redaction is `(planned, not on staging yet)`, so a hit on the unredacted prompt text is a known gap to record, not hide.
 - **If a port is unavailable:** skip, say so, and do not claim hygiene is proven.
 
 ## 10. Crash and restart recovery (`planned, not on staging yet`)
@@ -143,13 +143,13 @@ If a reply goes off-track, re-run prompt 2 (the most reliable step) rather than 
 - **Action:** ask "Find where `hello` appears in the project." (code_search), then "Search memory for demo." (memory_search).
 - **Expected UI:** read-only tool cards (no approval). `code_search` searches the workspace index (camelCase/snake_case aware; exact phrase in double quotes; `pathGlob` filters). `memory_search` returns observations captured from earlier turns, each citing its source event ids.
 - **Pass / Fail:** pass when results come from the real index with a card per call and nothing written. Fail on a write, an approval for a read, or results invented by the model. If `memory_search` returns nothing, say memory has not captured anything yet — an empty result is honest, a made-up one is not.
-- **If a port is unavailable:** if `Workspace tools unavailable` shows or the tools are not bound, say "search tools are not in this build" and skip.
+- **If a port is unavailable:** if `Workspace tools unavailable` shows or the tools are not bound, record this step unavailable and diagnose readiness and the bind; do not say the build lacks the search tools on the banner's word alone. Skip the step; an honest gap beats a fabricated result.
 
 ## 12. Shutdown, cleanup and evidence
 
-- **Action:** close the app; confirm no engine child process remains. Delete the demo folder and remove the test credential in Credential Manager. Revoke the test key at the provider.
-- **Collect:** screenshots for each passed step (window title bar visible, no key), `Get-FileHash -Algorithm SHA256` of the installer and of `notes.txt`, the installed version string, `git rev-parse origin/staging` of the build, the session JSONL hash, the step 9 search output, and the pass/fail row for each step.
-- **Pass / Fail:** pass when no process, credential or file remains and the evidence set is complete. Fail if a process survives or the credential remains.
+- **Collect before deleting anything:** screenshots for each passed step (window title bar visible, no key), `Get-FileHash -Algorithm SHA256` of the installer, of `notes.txt` (hash it while the folder still exists) and of the engine manifest the build printed (`ENGINE_MANIFEST_SHA256` from `npm run build:engine`), the installed version string, the exact `branch@sha` the installer was built from (`git rev-parse <branch>`, plus the gate PR's head if the cut included one — a bare `origin/staging` ref does not identify a demo-branch build), the session JSONL hash, the step 9 search output, and the pass/fail row for each step.
+- **Action after collecting:** close the app; confirm no engine child process remains. Delete the demo folder and remove the recorded credential in Credential Manager. Revoke the test key used in step 2 at the provider.
+- **Pass / Fail:** pass when no process, credential or file remains and the evidence set is complete, with provenance that names the packaged commit. Fail if a process survives, the credential remains, or the only revision recorded is a ref that does not name the built commit.
 - **If a port is unavailable:** record "step N unavailable (port: name)" in the evidence set. An honest gap is acceptable; a missing record is not.
 
 ## Known limits
