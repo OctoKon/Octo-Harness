@@ -100,6 +100,16 @@ If a reply goes off-track, re-run prompt 2 (the most reliable step) rather than 
 - **Pass / Fail:** pass when the filesystem agrees with the card in both paths and the second write asks again. Fail on a file written after Deny, a second write without a prompt, or a card "OK" with no file.
 - **If a port is unavailable:** if the composer shows `Workspace tools unavailable`, tools are OFF in this build — skip steps 5 to 8 and 11, show the banner, and say tools are not in this build. On a staging-only build the approval controls are not mounted (`Approval controls are not available in this view.`). Do not click through a fixture and call it the product.
 
+### Mode selector (`demo build only`)
+
+- **Source:** copy below was read from `apps/desktop/src/App.svelte`, `apps/desktop/src/components/PermissionModeSelect.svelte` and `apps/desktop/src/stores/permission-mode.ts` at `Itachi-1824/demo-final3@59a5427`.
+- **Action:** find the "Supervisor" card or the compact control above the composer (label "Permission mode"), then choose "Bypass (unsafe) — needs confirmation".
+- **Expected UI:** the three options are "Manual", "Auto" and "Bypass (unsafe) — needs confirmation", above a line reading "Effective: **Manual**" (only the mode name is bold). The Supervisor card carries the note "Saved for this workspace and used by new chats." Choosing bypass opens the dialog "Enable Bypass (unsafe)?" with the body "Bypass (unsafe) removes approval prompts for this session. This is a separate, explicit choice and it applies to this session only. The safe choice keeps Manual.", **Keep Manual** focused and **Enable Bypass (unsafe)** beside it. Escape, or Keep Manual, changes nothing. A requested mode reads "<mode> (pending engine) — not effective until the engine acknowledges it."; a rejection keeps the previous mode and says "The previous mode is still effective."
+- **What the modes do:** Auto and Bypass auto-approve workspace file writes only. Shell runs without an approval only for the literal diagnostics `pwd` (bash) and `Get-Location` (powershell); every other command still asks. The mode is read again when the call executes, so switching back to Manual while a call is waiting denies it.
+- **Pitfall:** a new chat starts in the workspace's last mode, because the note says so. Put the demo back on Manual before step 6, or say out loud which mode is active.
+- **Pass / Fail:** pass when the safe button holds focus, Escape keeps the mode, "Effective" matches the engine after acknowledgement, and a non-diagnostic command still asks under Auto and under Bypass. Fail if bypass applies without the dialog, or a shell command runs without approval.
+- **If a port is unavailable:** with no engine the select is disabled and the card shows "Engine unavailable; the mode cannot be changed." Say the mode selector needs the engine.
+
 ## 7. shell.run
 
 - **Action:** send "Run `echo hi` in the workspace", then "Run a command that sleeps longer than the timeout".
