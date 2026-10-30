@@ -25,6 +25,28 @@ The packaged demo build installs in place over 3058 and is expected to add the f
 
 Everything in "What staging actually has" still applies to any build cut from `staging`.
 
+## Build the installer (not on the demo host)
+
+The cut needs a machine with a Windows native toolchain. The demo host has **no** `rustc`/`cargo`, **no** MSVC `link.exe` (no Visual Studio Build Tools) and **no** NSIS, so it cannot produce an installer at all. The recipe below was read from the tree at `1039b24`; it has **not** been executed end to end on any machine yet (n=0 for the build itself), so treat the first real run as the one that proves it.
+
+Prerequisites on the build machine:
+
+- Windows 10/11 x64 with the WebView2 runtime present.
+- Node `24.22.1`: `package.json` pins `engines.node` to `>=24.22.1 <25` and `packageManager` to `npm@11.19.1`.
+- Rust stable for the MSVC target (`rustup default stable-x86_64-pc-windows-msvc`); `rustc -V` and `cargo -V` must answer.
+- Visual Studio Build Tools with the "Desktop development with C++" workload, so `link.exe` exists. Check before starting with `vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`; without it the build fails at link time, not at startup.
+- NSIS: Tauri fetches its NSIS tooling on the first bundle; on a machine that cannot reach it, install NSIS and put `makensis` on `PATH`.
+
+Recipe, from a clean checkout of the exact commit that will be shown:
+
+1. `git rev-parse HEAD` — record `branch@sha`. Every later claim (screenshots, hashes, gate result) must name this identity.
+2. `npm ci`
+3. `npm run build:desktop`
+
+Step 3 runs three things in order: `build:engine` (contracts, memory and index packages, the vendored Pi build, the bundled engine and its `resources/engine/manifest.json`), the renderer build (`vite build` into `apps/desktop/dist`), then `node scripts/build-tauri.mjs`. That script refuses to bundle unless the engine manifest is `schemaVersion: 1`, `piRevision: d5b3de22d0e24a3e9c38a9410d3329b099717283`, and every listed file exists with a matching SHA-256; it passes the manifest digest to Tauri as `SPLYCE_ENGINE_MANIFEST_SHA256`. A digest failure is a broken engine payload, not a bundling problem — rebuild the engine, never edit the manifest to make it pass.
+
+`apps/desktop/src-tauri/tauri.conf.json` fixes the shipped identity: product `Splyce`, version `0.1.0`, bundle target `nsis`, `resources/engine/` mapped to `engine/`. The installer lands in `apps/desktop/src-tauri/target/release/bundle/nsis/` as `Splyce_0.1.0_x64-setup.exe`. Hash it (`Get-FileHash -Algorithm SHA256`) and install that file on the demo machine — not `vite dev`, and never a build from a commit other than the one recorded in step 1. `npm run build:desktop:e2e` is the WebDriver harness (`--no-bundle`) and produces no installer.
+
 ## How to read each step
 
 Each step lists **Action**, **Expected UI**, **Pass / Fail** and **If a port is unavailable**. A step passes only when the visible state matches and the evidence in step 12 exists. A model's narration, or a screenshot alone, never proves an effect; check the file, hash or log.
