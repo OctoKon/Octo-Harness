@@ -31,9 +31,9 @@ The cut needs a machine with a Windows native toolchain. The demo host has **no*
 
 Prerequisites on the build machine:
 
-- Windows 10/11 x64 with the WebView2 runtime present.
-- Node `24.22.1`: `package.json` pins `engines.node` to `>=24.22.1 <25` and `packageManager` to `npm@11.19.1`.
-- Rust stable for the MSVC target (`rustup default stable-x86_64-pc-windows-msvc`); `rustc -V` and `cargo -V` must answer.
+- Windows 10/11 x64 with the WebView2 runtime present. `runtime-pins.json` names the minimum (`155.0.4283.45`, `qualified: false` — read it, do not assume an older runtime is fine).
+- Node `24.22.1`: `runtime-pins.json` pins the exact build and its SHA-256, `package.json` pins `engines.node` to `>=24.22.1 <25` and `packageManager` to `npm@11.19.1`. The first stage of `build:desktop` (`prepare:runtime`) downloads that exact runtime and verifies the digest, so any Node new enough to run `npm` will do — but do not pass an unverified `node.exe` to a bundle.
+- Rust `1.99.1` for `x86_64-pc-windows-msvc`. It is pinned in `runtime-pins.json` and in the repo-root `rust-toolchain.toml` (`channel`, `components`, `targets`), so `rustup toolchain install 1.99.1 --profile minimal --target x86_64-pc-windows-msvc` plus a plain `cargo` is enough — `rustup` selects the pinned channel on its own. Do not substitute a distro Rust or a different stable; `.github/workflows/staging-gate.yml` installs the same toolchain and sets `RUSTUP_TOOLCHAIN=1.99.1`.
 - Visual Studio Build Tools with the "Desktop development with C++" workload, so `link.exe` exists. Check before starting with `vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`; without it the build fails at link time, not at startup.
 - NSIS: Tauri fetches its NSIS tooling on the first bundle; on a machine that cannot reach it, install NSIS and put `makensis` on `PATH`.
 
@@ -46,6 +46,8 @@ Recipe, from a clean checkout of the exact commit that will be shown:
 Step 3 runs three things in order: `build:engine` (contracts, memory and index packages, the vendored Pi build, the bundled engine and its `resources/engine/manifest.json`), the renderer build (`vite build` into `apps/desktop/dist`), then `node scripts/build-tauri.mjs`. That script refuses to bundle unless the engine manifest is `schemaVersion: 1`, `piRevision: d5b3de22d0e24a3e9c38a9410d3329b099717283`, and every listed file exists with a matching SHA-256; it passes the manifest digest to Tauri as `SPLYCE_ENGINE_MANIFEST_SHA256`. A digest failure is a broken engine payload, not a bundling problem — rebuild the engine, never edit the manifest to make it pass.
 
 `apps/desktop/src-tauri/tauri.conf.json` fixes the shipped identity: product `Splyce`, version `0.1.0`, bundle target `nsis`, `resources/engine/` mapped to `engine/`. The installer lands in `apps/desktop/src-tauri/target/release/bundle/nsis/` as `Splyce_0.1.0_x64-setup.exe`. Hash it (`Get-FileHash -Algorithm SHA256`) and install that file on the demo machine — not `vite dev`, and never a build from a commit other than the one recorded in step 1. `npm run build:desktop:e2e` is the WebDriver harness (`--no-bundle`) and produces no installer.
+
+**CI is not a shortcut today.** On this lineage `.github/workflows/staging-gate.yml` does run `npm run build:desktop` and `cargo test` on `windows-latest` with the pinned Rust toolchain, so the app is genuinely built there — but it uploads no artifact, so the `.exe` it produced is not retrievable. On `staging` itself the same workflow has no app build at all. Until an artifact upload exists, a machine with the prerequisites above is the only way to obtain the installer.
 
 ## How to read each step
 
