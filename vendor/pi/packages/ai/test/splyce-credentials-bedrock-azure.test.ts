@@ -1,6 +1,7 @@
 // TD-22 / C4: the Bedrock and Azure adapters honour a leased credential the way the Anthropic, Google and Vertex
 // bindings already do (splyce-credentials.test.ts, splyce-credentials-routing.test.ts): the gate admits their APIs,
-// the secret comes from the lease per request attempt / per send instead of sitting in client options, every ambient
+// the secret comes from the lease per send instead of sitting in client options (Bedrock leases a fresh identity
+// for each send and reuses it for that send's retries; Azure reads the lease per fetch), every ambient
 // source loses to the lease, malformed leases fail closed, and no secret reaches an error message.
 // The AWS SDK boundary is replaced as in bedrock-credentials.test.ts; Azure runs its real SDK against a recording fetch.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -129,9 +130,10 @@ describe("TD-22 bedrock: a lease is the only identity", () => {
 		expect(result.errorMessage).toBe("mock send");
 	});
 
-	it("builds an async credential provider and leases only on an attempt", async () => {
+	it("leases on first use, and every send builds a client that leases again", async () => {
 		let uses = 0;
-		const config = await captureConfig({ credentials: bedrockLease(() => uses++) });
+		const credentials = bedrockLease(() => uses++);
+		const config = await captureConfig({ credentials });
 		expect(typeof config.credentials).toBe("function");
 		expect(uses).toBe(0); // building the client leases nothing
 		expect(await provider(config)()).toEqual({
@@ -140,8 +142,15 @@ describe("TD-22 bedrock: a lease is the only identity", () => {
 			sessionToken: "leased-session-token",
 		});
 		expect(uses).toBe(1);
-		await provider(config)();
-		expect(uses).toBe(2); // every attempt leases again
+		// A resolved identity with no expiration is memoized inside the client, so a retry in this send reuses
+		// this lease; what makes a revoked lease fail is that the next send builds a new client to lease from.
+		await stream(bedrockModel(), context, { cacheRetention: "none", credentials }).result();
+		expect(bedrockMock.constructorCalls).toHaveLength(2);
+		expect(uses).toBe(1); // the second client has leased nothing until it signs
+		const second = bedrockMock.constructorCalls[1] as Record<string, unknown> | undefined;
+		expect(second).toBeDefined();
+		await provider(second ?? {})();
+		expect(uses).toBe(2);
 	});
 
 	it("fails the attempt when the lease is revoked", async () => {
