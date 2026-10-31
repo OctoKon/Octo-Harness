@@ -181,9 +181,11 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			// The secret never sits in client options: the provider leases it on invocation. @aws-sdk/core wraps
 			// this provider in @smithy/core memoizeIdentityProvider, so a resolved identity that carries no
 			// expiration is reused for the life of the client: retries inside one send share the first lease and a
-			// mid-send revocation is not re-checked. A new BedrockRuntimeClient is built for every stream() call,
-			// so the next send leases again and a revoked or denied lease fails there. The secret is the
-			// platform's access-key identity as JSON (see parseLeasedBedrockCredentials).
+			// mid-send revocation is not re-checked. A lease authorises exactly one physical send, so the SDK's own
+			// retry policy is off for this client; a new BedrockRuntimeClient is built for every stream() call, so
+			// the next send leases again and a revoked or denied lease fails there. The secret is the platform's
+			// access-key identity as JSON (see parseLeasedBedrockCredentials).
+			config.maxAttempts = 1;
 			config.credentials = async () => withLeasedSecret(leasedCredentials, parseLeasedBedrockCredentials);
 		}
 		const configuredRegion = getConfiguredBedrockRegion(options);
