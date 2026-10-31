@@ -539,7 +539,10 @@ test(
       }
     }
     assert.ok(temp.includes(".splyce-shell-"), `owned temp recorded: ${temp}`);
-    // Not a child of the killed shell, so the tree kill cannot release it.
+    // Not a child of the killed shell, so the tree kill cannot release it. The holder writes READY only after
+    // the exclusive lock is actually held: without that witness a slow or failed acquisition would let the
+    // ordinary timeout satisfy this test while the owned temp dir was never pinned at all.
+    const held = join(temp, "held.txt").replace(/'/g, "''");
     const holder = spawn(
       join(
         process.env.SystemRoot!,
@@ -552,14 +555,64 @@ test(
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        `$fs=[IO.File]::Open('${join(temp, "held.txt").replace(/'/g, "''")}','OpenOrCreate','ReadWrite','None'); Start-Sleep 60; $fs.Dispose()`,
+        `$ErrorActionPreference='Stop'; $fs=[IO.File]::Open('${held}','OpenOrCreate','ReadWrite','None'); [Console]::Out.WriteLine('READY'); [Console]::Out.Flush(); Start-Sleep 60; $fs.Dispose()`,
       ],
-      { stdio: "ignore" },
+      { stdio: ["ignore", "pipe", "pipe"] },
     );
+    let holderStderr = "";
+    const ready = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `lock holder never held the owned temp dir${holderStderr ? `: ${holderStderr}` : ""}`,
+            ),
+          ),
+        30_000,
+      );
+      holder.stdout?.on("data", (chunk) => {
+        if (!String(chunk).includes("READY")) return;
+        clearTimeout(timer);
+        resolve();
+      });
+      holder.stderr?.on("data", (chunk) => {
+        holderStderr += String(chunk);
+      });
+      holder.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      holder.once("exit", (code, signal) => {
+        clearTimeout(timer);
+        reject(
+          new Error(
+            `lock holder exited before READY (code=${code} signal=${signal})${holderStderr ? `: ${holderStderr}` : ""}`,
+          ),
+        );
+      });
+    });
+    // A failure before READY must fail the lock witness, not surface as an unhandled rejection when the
+    // timeout path settles first.
+    ready.catch(() => undefined);
     try {
+      const settled = await Promise.race([
+        ready.then(() => "ready" as const),
+        pending.then((code) => `settled:${code}` as const),
+      ]);
+      assert.equal(
+        settled,
+        "ready",
+        `the shell settled before the lock holder pinned the owned temp dir (${settled})`,
+      );
       assert.equal(await pending, "SHELL_TIMEOUT");
     } finally {
       holder.kill("SIGKILL");
+      // Await the holder's exit so the handles it held are gone before the temp dir is removed.
+      await new Promise<void>((resolve) => {
+        if (holder.exitCode !== null || holder.signalCode !== null)
+          return resolve();
+        holder.once("exit", () => resolve());
+      });
     }
     assert.equal(h.log.length, 1);
     assert.equal(h.log[0]?.ok, false);
